@@ -1,0 +1,7 @@
+.harness/design.md
+.harness/implementation/
+.harness/review-*.md
+.harness/codex-review.md
+.harness/state.json
+.harness/harness-review.md
+.harness/task.md
