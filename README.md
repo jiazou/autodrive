@@ -22,7 +22,7 @@ surface. Independent of `/drive`; see `mission-control/README.md`.
     /drive <task>   -> runs the whole pipeline below, autonomously
 
     PLAN (gstack brain)
-    0. Premises (human)
+    0. Premises (human) + set the session goal (native /goal, you paste it)
     1. /drive-plan: author design + a ## Phases & Slices breakdown
        -> autoplan -> dual-voice design review converges -> [Gate A]
 

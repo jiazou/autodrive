@@ -59,8 +59,31 @@ with a spend summary (budget circuit-breaker).
 
 ## Pipeline
 
-### Stage 0 — Premises
-If the task is ambiguous about WHAT problem to solve, pause and ask. → `stage = plan`
+### Stage 0 — Premises & session goal
+1. **Premises:** if the task is ambiguous about WHAT problem to solve, pause and ask.
+2. **Set the session goal** (do this once, at the start of the run — the session is
+   fresh and the user is present). `/drive` is autonomous across many turns, and
+   Claude Code's native **`/goal`** keeps a session driving turn-to-turn instead of
+   stopping mid-pipeline (after each turn a fast model checks the condition; if unmet,
+   it continues). It **cannot be set programmatically** — only the user can type it —
+   so derive a tailored completion condition from the (now-resolved) task and present
+   the exact line for them to paste, then **continue regardless** (never block the
+   pipeline waiting for them to set it). Bind `<task>` = the resolved premise (`$ARGUMENTS`).
+   Present:
+
+   > Set the session goal so this run drives autonomously through the stages and only
+   > rests when it needs you — paste this:
+   >
+   > ```
+   > /goal The /drive run for "<task>" has opened its PR (Gate B passed, stage=done), OR is paused awaiting my input at Gate A, Gate B, a non-decision STOP, or an AskUserQuestion. Treat the goal as NOT met while autonomous plan/implement/review/ship work remains and nothing is awaiting my decision.
+   > ```
+
+   This complements the gates rather than overriding them: `/goal` continues the
+   autonomous stages, while Gate A / Gate B / STOPs still pause for you (an
+   AskUserQuestion blocks the turn regardless of any goal). The user may skip it;
+   if so, `/drive` still advances — it just won't auto-continue across turns.
+
+   → `stage = plan`
 
 ### Stage 1 — Plan (gstack brain)
 Run the PLAN stage (`/drive-plan` — `~/.claude/commands/drive-plan.md`): planner authors
