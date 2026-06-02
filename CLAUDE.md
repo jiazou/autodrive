@@ -79,8 +79,8 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
 - Pass file **paths** between subagents, not file contents.
 - Never include the implementer's notes/rationale in the reviewer's prompt — the
   reviewer judges the code against the spec on its own merits.
-- Cap the implement→review loop at **2**. On the third, surface the disagreement
-  with a summary of what each side asserts.
+- Cap the implement→review loop at **8** rounds. Beyond that, surface the
+  disagreement with a summary of what each side asserts.
 - Run codex from the **main** context (background + log file), never inside a
   subagent that waits on it.
 

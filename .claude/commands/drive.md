@@ -77,8 +77,8 @@ Execute the REVIEW stage (`.claude/commands/review.md`). It writes
 `state.reviewCount`, and returns a verdict. Read `state.reviewCount` for the cap
 (do not count files):
 - **FINDINGS** (BLOCKING/MAJOR from either the reviewer or codex):
-  - if `reviewCount < 2` → `stage = implement`, loop to Stage 2 to address them.
-  - if `reviewCount >= 2` → STOP (non-convergence); summarize what each side
+  - if `reviewCount < 8` → `stage = implement`, loop to Stage 2 to address them.
+  - if `reviewCount >= 8` → STOP (non-convergence); summarize what each side
     asserts.
 - **CLEAN** → continue. → `stage = verify`
 

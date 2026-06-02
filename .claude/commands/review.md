@@ -9,7 +9,7 @@ The design must exist at .harness/design.md and the implementation on disk.
 Determine N from the authoritative loop counter: `N = state.reviewCount + 1`
 (if `.harness/state.json` is absent OR has no `reviewCount` — e.g. a standalone
 /review run — fall back to counting `.harness/review-*.md` files and adding 1).
-If N > 2, STOP and
+If N > 8, STOP and
 surface — the implementer and reviewer are not converging; summarize what each
 side has been asserting.
 
@@ -85,5 +85,5 @@ Record to `.harness/state.json`: set `codexVerdict` to the combined verdict and
 **increment `reviewCount`** (the single authoritative loop counter `/drive` reads
 for the cap — do not rely on file counts). After this stage:
 - FINDINGS → suggest /implement to address them. Do NOT auto-loop here — `/drive`
-  owns the loop and the cap-of-2.
+  owns the loop and its non-convergence cap.
 - CLEAN → suggest the verify stage (if UI) then /ship.

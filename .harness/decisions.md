@@ -141,3 +141,13 @@ task and stage to maintain consistency.
 **Reasoning:** The repo ships fresh; explaining-by-negation against an uninstalled tool is noise for a new reader. AC8 updated to "no wshobson reference outside this ledger"; D1 remains the single home for the rationale.
 **Reversibility:** easy
 **Classification:** Taste
+
+### 2026-06-02 -- D12: Raise impl↔review loop cap from 2 to 8
+**Stage:** review
+**Task:** /drive (PR-review tuning)
+**Question:** The non-convergence cap was 2, but real reviews legitimately run 5–6 rounds — we hit the cap and overrode it (see D9). What should it be?
+**Options considered:** (a) bump the count to 8 (headroom above observed 5–6); (b) replace the raw count with content-based convergence (STOP when a round adds no NEW BLOCKING/MAJOR)
+**Chosen:** (a) bump to 8, user-requested; (b) noted as a future option
+**Reasoning:** Simple, matches observed reality with buffer; still flags a true runaway at 9+. Updated all references; de-magic-numbered the incidental review.md mention to prevent future drift.
+**Reversibility:** easy
+**Classification:** Taste (tuning)
