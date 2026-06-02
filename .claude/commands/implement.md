@@ -6,8 +6,8 @@ Read .harness/decisions.md to load prior decisions you must stay consistent
 with. Then check .harness/ for the highest-numbered review-N.md file; if any
 exist, you are addressing review findings, not doing a fresh implementation.
 
-Spawn a generic implementer subagent (the Agent tool — NOT a wshobson team-*
-subagent) with the scope below. Pass file PATHS, never file contents.
+Spawn a generic implementer subagent (the Agent tool) with the scope below.
+Pass file PATHS, never file contents.
 
 ----- BEGIN SUBAGENT SCOPE -----
 You are the implementer. Read these files (paths, not contents, are given so

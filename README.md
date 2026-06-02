@@ -12,8 +12,9 @@ gstack skills normally reserve for the human.
   classification as the decision policy — overrides the default "ask the human"
   reflex, pausing only at genuine checkpoints
 
-Not used: wshobson `agent-teams` (it solves parallelism with file ownership, not
-sequential stage-autonomy). Generic `Agent` subagents fill the roles.
+Roles (planner / implementer / reviewer) are generic `Agent` subagents — a
+sequential single-coordinator pipeline, not a parallel-team framework. (Why not a
+parallel-team framework: see `.harness/decisions.md` D1.)
 
 ## Workflow
 

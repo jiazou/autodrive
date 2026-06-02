@@ -7,8 +7,7 @@ consistent with.
 
 ## Step 1 — Author a rough design (planner subagent)
 
-Spawn a generic planner subagent (the Agent tool — NOT a wshobson team-*
-subagent) with the scope below.
+Spawn a generic planner subagent (the Agent tool) with the scope below.
 
 ----- BEGIN SUBAGENT SCOPE -----
 Produce a rough design document for the task. Do NOT implement anything.

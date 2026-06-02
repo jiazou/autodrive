@@ -40,9 +40,9 @@ gstack skills split into two classes:
   **owns** implement / review / ship directly (calling the codex CLI, git, and
   the test runner).
 
-We do **not** use wshobson `agent-teams` — it solves parallelism with file
-ownership, not sequential stage-autonomy. Generic `Agent` subagents fill the
-implementer/reviewer/planner roles.
+The implementer/reviewer/planner roles are generic `Agent` subagents — a
+sequential single-coordinator pipeline, not a parallel-team framework (rationale:
+`.harness/decisions.md` D1).
 
 ## Decision policy (the coordinator's brain)
 

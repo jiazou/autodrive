@@ -131,3 +131,13 @@ task and stage to maintain consistency.
 **Reasoning:** Adversarial review surfaces marginal findings indefinitely; the /drive happy path is validated. Applied: changed-files from git (not ephemeral list), ship decisions scoped by Task field, ledgers marked never-cleared, manual-stepping claim made honest, 6-principles list de-duplicated to a CLAUDE.md reference. Per "if review scope balloons, re-establish the hierarchy" + anti-gold-plating. Kept agent-instruction precision (every binding/error-path explicit) over codex's terser rewrites.
 **Reversibility:** easy
 **Classification:** Taste (scope call)
+
+### 2026-06-02 -- D11: Remove vestigial wshobson references outside this ledger
+**Stage:** review
+**Task:** /drive (PR-review cleanup)
+**Question:** The repo never invokes wshobson, but command/README/CLAUDE files still mentioned it by negation ("NOT a wshobson team-*"). Keep or remove?
+**Options considered:** (a) keep the clarifications (prior AC8 permitted them); (b) strip them — scar tissue from the migration; keep the rationale only here in D1
+**Chosen:** (b), user-requested during PR review
+**Reasoning:** The repo ships fresh; explaining-by-negation against an uninstalled tool is noise for a new reader. AC8 updated to "no wshobson reference outside this ledger"; D1 remains the single home for the rationale.
+**Reversibility:** easy
+**Classification:** Taste

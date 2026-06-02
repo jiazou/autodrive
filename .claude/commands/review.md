@@ -19,8 +19,7 @@ CRITICAL CONTEXT BOUNDARY: do NOT include any of the implementer's notes,
 rationale, or summary in the reviewer's prompt. Pass file PATHS only. The
 reviewer judges the code against the spec on its own merits.
 
-Spawn a generic reviewer subagent (the Agent tool — NOT a wshobson team-*
-subagent):
+Spawn a generic reviewer subagent (the Agent tool):
 
 ----- BEGIN SUBAGENT SCOPE -----
 Audit the diff against the spec.
