@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# mc — Mission Control launcher. One entry point for the harness.
+set -euo pipefail
+MC="$HOME/mission-control/bin"
+PY="$(command -v python3)"
+if [ $# -gt 0 ]; then cmd="$1"; shift; else cmd="help"; fi
+case "$cmd" in
+  harvest)        exec "$PY" "$MC/harvest.py" "$@" ;;
+  standup|plan)   exec "$PY" "$MC/standup.py" "$@" ;;
+  today)          exec "$PY" "$MC/today.py" "$@" ;;
+  weekly|review)  exec "$PY" "$MC/weekly.py" "$@" ;;
+  tasks)          exec "$PY" "$MC/vault_tasks.py" "$@" ;;
+  bind)           exec bash "$MC/mc-bind.sh" "$@" ;;
+  help|-h|--help)
+    cat <<'EOF'
+mc — Mission Control (Jia's personal operating harness)
+
+  mc harvest [--log]     live Claude session digest (+ log to today's daily note)
+  mc standup [--draft]   plan the day for max parallelism (+ write the daily note)
+  mc today [--swiftbar]  today's tasks in one glance
+  mc weekly              weekly review agenda
+  mc tasks               vault task buckets (overdue/due/waiting)
+  mc bind <id> --project "<P>" [--task <slug>]   bind a session to a task/project
+EOF
+    ;;
+  *) echo "mc: unknown command '$cmd' (try: mc help)" >&2; exit 1 ;;
+esac
