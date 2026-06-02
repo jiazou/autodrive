@@ -55,13 +55,12 @@ a) **autoplan** — run gstack `autoplan` on it (the rich CEO → Design → Eng
    load ~/.claude/skills/gstack/autoplan/SKILL.md and follow it. Ensure the
    reviewed design lands back in .harness/design.md.
 
-b) **Dual-voice design-review convergence** — run the review primitive (see
-   review.md / the design.md "Review primitive" section) on .harness/design.md:
-   a Claude reviewer subagent AND `codex exec` both audit the design for P1s
-   (BLOCKING/MAJOR — e.g. an unbuildable interface, a slice dependency cycle,
-   overlapping slice ownership). If either flags a P1, the planner subagent
-   revises design.md and you re-run the primitive — loop until **converged**
-   (neither voice has an open P1), capped at 8 rounds.
+b) **Dual-voice design-review convergence** — run `/review` scoped `design`
+   (`.claude/commands/review.md`): a Claude reviewer subagent AND `codex exec`
+   both audit `.harness/design.md` for P1s (BLOCKING/MAJOR — e.g. an unbuildable
+   interface, a slice dependency cycle, overlapping slice ownership). If either
+   flags a P1, the planner subagent revises design.md and you re-run — loop until
+   **converged** (neither voice has an open P1), capped at 8 rounds.
 
 ## Gate A (the single human checkpoint for direction)
 

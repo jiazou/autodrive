@@ -1,20 +1,25 @@
 You are running the REVIEW stage (Stage 3) — the harness's **dual-voice review
 primitive**. It does NOT call gstack `/review` (fix-first, mutates code). It runs
 a passive Claude reviewer AND a direct codex pass over the SAME scope, then
-combines them. `/drive` invokes it with a **scope**:
+combines them. `/drive` (or `/plan`) invokes it with a **scope**:
 
+- `design` — review `.harness/design.md` itself, before Gate A: buildable
+  interfaces, testable acceptance criteria, and a sound `## Phases & Slices`
+  breakdown (no slice dependency cycle; parallel slices own disjoint files).
 - `slice <id>` — review that slice's diff against that slice's acceptance criteria
   (owned files only).
 - `phase <P>` — review the assembled phase diff (all the phase's slices) for
   integration issues (interfaces, cross-slice contracts).
 
-Let `<scope>` be the slice id (e.g. `1.2`) or `phase<P>` (e.g. `phase1`). The
-design must exist at .harness/design.md and the scope's implementation on disk.
+Let `<scope>` be `design`, a slice id (e.g. `1.2`), or `phase<P>` (e.g. `phase1`).
+.harness/design.md must exist; for slice/phase scopes the implementation must be
+on disk.
 
-**Loop counter:** `N = (this scope's counter) + 1` — `state.slices[<id>].reviewCount`
-for a slice, or the round count in `state.phaseReview[<P>]` for a phase (fall back
-to counting `.harness/review-<scope>-*.md` files + 1 if state is absent). If
-N > 8, STOP — this scope is not converging; summarize what each side asserts.
+**Loop counter:** `N = (this scope's counter) + 1` — `state.designReview` for
+`design`, `state.slices[<id>].reviewCount` for a slice, or the round count in
+`state.phaseReview[<P>]` for a phase (fall back to counting
+`.harness/review-<scope>-*.md` files + 1 if state is absent). If N > 8, STOP —
+this scope is not converging; summarize what each side asserts.
 
 ## Step 1 — Claude reviewer (passive, separation-preserving)
 
@@ -24,14 +29,17 @@ reviewer's prompt. Pass file PATHS only.
 Spawn a generic reviewer subagent (the Agent tool):
 
 ----- BEGIN SUBAGENT SCOPE -----
-Audit the <scope> diff against the spec.
-Spec: .harness/design.md — for a slice, judge against THAT slice's acceptance
-  criteria under "Phases & Slices"; for a phase, judge the phase's slices together
-  for integration correctness.
-Prior decisions to respect: .harness/decisions.md
-Changed files: derive authoritatively from git (`git status --short` +
-`git diff --name-only` vs the base branch), restricted to the scope's files — do
-NOT rely on an ephemeral implementer list.
+Audit the <scope>:
+- `design`: audit `.harness/design.md` ITSELF — are the interfaces buildable, the
+  acceptance criteria testable, and the `## Phases & Slices` breakdown sound (no
+  dependency cycle; parallel slices own disjoint files)? There is no code diff.
+- a slice: audit the slice's diff against THAT slice's acceptance criteria under
+  "Phases & Slices".
+- a phase: audit the assembled phase diff for integration correctness.
+Spec + prior decisions: .harness/design.md, .harness/decisions.md.
+For slice/phase, derive changed files authoritatively from git (`git status
+--short` + `git diff --name-only` vs the base branch), restricted to the scope's
+files — do NOT rely on an ephemeral implementer list.
 
 Severity (P-levels) — pick one per finding, don't ask:
 - BLOCKING (P1): prod incident risk, data loss, security hole, spec violation that
@@ -58,10 +66,12 @@ Run codex DIRECTLY from this (main) context — NEVER inside a subagent that wai
 on it (subagents bail on codex ~50% of the time). Background + a log:
 
 ```
-codex exec "Review the <scope> diff on this branch against the spec in
-.harness/design.md (for a slice: only its acceptance criteria + owned files; for a
-phase: the assembled slices for integration). Flag issues BLOCKING/MAJOR/MINOR,
-specific to file:line. Prioritized list." > .harness/codex-raw.log 2>&1
+codex exec "Review <scope> in this repo. For 'design': audit .harness/design.md
+itself (buildable interfaces, testable criteria, sound Phases & Slices — no
+dependency cycle or overlapping parallel ownership). For a slice: only its
+acceptance criteria + owned files. For a phase: the assembled slices for
+integration. Flag issues BLOCKING/MAJOR/MINOR, specific to file:line. Prioritized
+list." > .harness/codex-raw.log 2>&1
 ```
 
 run_in_background; wait for the completion notification; then a bounded

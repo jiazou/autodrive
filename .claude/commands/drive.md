@@ -47,8 +47,8 @@ cross-task ledgers — never cleared.) Then initialize and write:
 
 ```json
 { "task": "<task>", "stage": "premises", "phase": 1,
-  "slices": {}, "phaseReview": {},
-  "codexVerdict": null, "lastGate": null, "designPath": ".harness/design.md" }
+  "designReview": 0, "slices": {}, "phaseReview": {},
+  "lastGate": null, "designPath": ".harness/design.md" }
 ```
 
 (`slices` maps `<id>` → `{status, reviewCount}`; `phaseReview` maps `<P>` →

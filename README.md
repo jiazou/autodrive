@@ -20,15 +20,22 @@ parallel-team framework: see `.harness/decisions.md` D1.)
 
     /drive <task>   -> runs the whole pipeline below, autonomously
 
-    PLAN (gstack brain)                     EXECUTE (harness-owned)
-    0. Premises (human)                     2. /implement  subagent + STATUS contract
-    1. /plan: author rough design           3. /review     reviewer + codex CLI (loop ≤2)
-       -> autoplan reviews -> [Gate A]      4. verify      qa-only / browse (optional)
-                                            5. /ship       thin stage -> [Gate B] -> push
+    PLAN (gstack brain)
+    0. Premises (human)
+    1. /plan: author design + a ## Phases & Slices breakdown
+       -> autoplan -> dual-voice design review converges -> [Gate A]
 
-Two human gates: **Gate A** (approve direction, = autoplan's terminal gate) and
-**Gate B** (approve diff before push). Plus dynamic Taste/User-Challenge
-surfacing. Everything else is auto-decided and logged.
+    EXECUTE (harness-owned) - for each PHASE in order:
+    2. /implement per slice   (independent slices run in PARALLEL)
+    3. /review per slice + phase-integration  (Claude subagent + codex; cap 8)
+    4. verify (optional)      (qa-only / browse)
+    5. /ship ONCE             -> [Gate B] -> push
+
+Every review (design + code) runs a Claude reviewer subagent AND codex; a review
+**converges** when neither flags a P1 (BLOCKING/MAJOR). Two human gates: **Gate A**
+(direction) and **Gate B** (diff before push) — everything else is auto-decided
+and logged. **See [`docs/flow.md`](docs/flow.md) for the full annotated diagram**
+(phases, slices, every command invocation).
 
 ## Portable config — reproduce this Claude on a new machine
 
@@ -79,6 +86,7 @@ See `CLAUDE.md` for the full decision policy and invariants.
 - `CLAUDE.md` -- imports OPERATING.md, plus the coordinator pipeline + decision policy
 - `.claude/commands/drive.md` -- the autonomous lifecycle orchestrator
 - `.claude/commands/{plan,implement,review,ship}.md` -- single-sourced stage runners
+- `docs/flow.md` -- annotated execution-flow diagram (phases, slices, every command)
 - `workflows/gstack-pipeline.md` -- the opt-in gstack review pipeline (alternative to /drive)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries

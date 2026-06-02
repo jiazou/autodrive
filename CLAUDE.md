@@ -106,8 +106,8 @@ followups.md     -- out-of-scope items for later (append-only)
 review-N.md      -- review-stage outputs, numbered 1, 2, ...
 codex-review.md  -- codex cross-model findings (distilled)
 codex-raw.log    -- raw codex output (gitignored)
-state.json       -- coordinator ledger: stage, reviewCount (authoritative loop
-                    counter), codexVerdict, lastGate
+state.json       -- coordinator ledger: stage, phase, designReview, per-slice
+                    status + reviewCount, phaseReview, lastGate
 verify.md        -- verify-stage evidence (gitignored)
 ```
 
