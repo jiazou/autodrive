@@ -4,7 +4,7 @@ description: |
   End-of-session distillation. Surveys memory entries written during the
   session, classifies each as universal (global candidate) vs workflow-specific,
   checks for duplicates, identifies missing lessons, and recommends promotions
-  to ~/CLAUDE.md. Surfaces the meta-pattern under the session's corrections.
+  to the canonical OPERATING.md. Surfaces the meta-pattern under the session's corrections.
   Use at the end of any non-trivial session — especially before clearing
   context, switching to a different effort, or after the user gives
   methodological feedback that should outlive this conversation.
@@ -47,8 +47,8 @@ For each new entry, label as ONE of:
 
 - **Universal** — applies across every codebase and language. Examples: design
   doc updates before implementation; cite evidence as OLD/NEW; present choices
-  with English + technical. Candidates for `~/CLAUDE.md` (or `/Users/<user>/CLAUDE.md`,
-  whichever is global per system).
+  with English + technical. Candidates for the canonical operating rules in
+  **`claude-harness/OPERATING.md`** (which the global `~/CLAUDE.md` imports).
 - **Workflow-specific** — tied to a specific review pattern, tooling, or
   collaboration setup. Stays in project memory. Example: "every architectural
   decision gets parallel Claude+Codex review" assumes that workflow exists.
@@ -65,9 +65,9 @@ Two checks:
 - `ls` the project memory directory for files with overlapping concepts.
   Duplicate filenames or near-duplicate descriptions = the user (or another
   subagent) already saved it; delete one.
-- `grep` the global CLAUDE.md for promotion markers (the
-  `**promoted to global ~/CLAUDE.md** YYYY-MM-DD` line in the MEMORY.md index
-  is the authoritative signal). If an entry already shows that marker, it's
+- `grep` MEMORY.md for promotion markers (the
+  `**promoted to canonical claude-harness/OPERATING.md** YYYY-MM-DD` line in the
+  index is the authoritative signal). If an entry already shows that marker, it's
   promoted; don't propose it again.
 
 ## Step 4 — Identify missing lessons
@@ -93,14 +93,14 @@ Sometimes the individual corrections cluster around a single principle (e.g.,
 not as a new rule. Meta-patterns usually don't survive as standalone rules —
 they're observation about the rules' shared structure, useful for the user.
 
-## Step 6 — Recommend promotions; don't auto-edit global CLAUDE.md
+## Step 6 — Recommend promotions; don't auto-edit OPERATING.md
 
-Editing the user's global CLAUDE.md is consequential. Present recommendations
-as a question with explicit options:
+Editing the canonical `OPERATING.md` (the rules everything imports) is
+consequential. Present recommendations as a question with explicit options:
 
 ```
 AskUserQuestion(
-  question: "Promote these N universal rules to /Users/<user>/CLAUDE.md?",
+  question: "Promote these N universal rules to claude-harness/OPERATING.md?",
   options: [
     { label: "Yes — add all N + memory pointers (Recommended)",
       description: "<English: what changes for future sessions> ... <Technical: which files edited, format of added lines>" },
@@ -112,9 +112,10 @@ AskUserQuestion(
 )
 ```
 
-If the user approves, perform the edits with care: add each rule with a
-one-line pointer at the end of the appropriate section, and update MEMORY.md
-to mark the entry with the promotion marker.
+If the user approves, perform the edits with care: add each rule to the
+appropriate section of `claude-harness/OPERATING.md`, and update MEMORY.md to
+mark the entry with the `**promoted to canonical claude-harness/OPERATING.md**`
+marker.
 
 ## Step 7 — Final output
 
@@ -131,7 +132,7 @@ read the source of truth themselves.
 
 ## Anti-patterns to avoid
 
-- **Don't auto-edit the global CLAUDE.md without explicit user confirmation.**
+- **Don't auto-edit `OPERATING.md` without explicit user confirmation.**
 - **Don't propose promotion of rules that are workflow- or domain-specific.**
   Just because a lesson was useful here doesn't make it universal.
 - **Don't write new memory entries that duplicate existing ones.** Search
