@@ -30,6 +30,24 @@ if you move the clone.
 EOF
 
 echo "Wrote ~/CLAUDE.md -> @$OPERATING"
+
+# Install bundled skills (e.g. /decant, referenced by OPERATING.md) into
+# ~/.claude/skills/ via symlink, so those references resolve on a fresh checkout.
+SKILLS_SRC="$REPO_DIR/skills"
+SKILLS_DST="$HOME/.claude/skills"
+if [ -d "$SKILLS_SRC" ]; then
+  mkdir -p "$SKILLS_DST"
+  for s in "$SKILLS_SRC"/*/; do
+    s="${s%/}"; name="$(basename "$s")"; target="$SKILLS_DST/$name"
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+      mv "$target" "$target.bak.$(date +%Y%m%d-%H%M%S)"
+      echo "Backed up existing skill: $name"
+    fi
+    ln -sfn "$s" "$target"
+    echo "Linked skill: $name -> repo"
+  done
+fi
+
 echo
-echo "Operating rules are now active machine-wide."
+echo "Operating rules + bundled skills are active machine-wide."
 echo "To run the /drive pipeline you also need gstack + codex — see README 'Setup'."

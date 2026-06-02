@@ -44,10 +44,11 @@ fresh machine behave the same:
 
        ~/workspace/claude-harness/bin/install-operating-rules.sh
 
-   It backs up any existing `~/CLAUDE.md`, then writes an `@import` of this repo's
-   `OPERATING.md`. Operating rules now apply machine-wide; the `/drive` pipeline
-   stays opt-in (active only inside this repo). Manual alternative: put
-   `@<clone-path>/OPERATING.md` in `~/CLAUDE.md` yourself.
+   It backs up any existing `~/CLAUDE.md`, writes an `@import` of this repo's
+   `OPERATING.md`, and symlinks bundled skills (e.g. `/decant`) into
+   `~/.claude/skills/` so `OPERATING.md`'s references resolve. Operating rules now
+   apply machine-wide; the `/drive` pipeline stays opt-in (active only inside this
+   repo). Manual alternative: put `@<clone-path>/OPERATING.md` in `~/CLAUDE.md`.
 
 3. Install gstack + codex so `/drive` can run — see Setup below.
 
@@ -76,7 +77,8 @@ See `CLAUDE.md` for the full decision policy and invariants.
 ## Files
 
 - `OPERATING.md` -- canonical, portable operating rules (imported by CLAUDE.md + global)
-- `bin/install-operating-rules.sh` -- point a machine's global ~/CLAUDE.md at OPERATING.md
+- `bin/install-operating-rules.sh` -- link global ~/CLAUDE.md at OPERATING.md + bundled skills
+- `skills/decant/` -- bundled `/decant` skill (symlinked into ~/.claude/skills by the installer)
 - `CLAUDE.md` -- imports OPERATING.md, plus the coordinator pipeline + decision policy
 - `.claude/commands/drive.md` -- the autonomous lifecycle orchestrator
 - `.claude/commands/{plan,implement,review,ship}.md` -- single-sourced stage runners
