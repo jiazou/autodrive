@@ -16,11 +16,12 @@ cp -R "$MC/bin" "$DATA/bin"
 cp -R "$MC/swiftbar-plugins" "$DATA/swiftbar-plugins"
 rm -rf "$DATA/bin/__pycache__"
 
-# 2. skills (real copies)
+# 2. skills (real copies — every dir under skills/, so new skills deploy automatically)
 mkdir -p "$HOME/.claude/skills"
-for s in harvest standup weekly; do
+for d in "$MC"/skills/*/; do
+  s=$(basename "$d")
   rm -rf "$HOME/.claude/skills/$s"
-  cp -R "$MC/skills/$s" "$HOME/.claude/skills/$s"
+  cp -R "$d" "$HOME/.claude/skills/$s"
 done
 
 # 3. CLI on PATH (point at the deploy, not the repo)

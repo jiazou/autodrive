@@ -73,7 +73,10 @@ session files and the vault directly. If your Mac is asleep at 6:45, it runs whe
 next wakes. (If the Mac is fully powered off, it's skipped — you just run `mc standup --draft`
 by hand that morning.)
 
-**When you want to act, open any terminal and type a command — it prints and exits:**
+**Two ways to run a command.** Inside a Claude Code session, use the **`/mc` skill** —
+`/mc harvest`, `/mc today`, `/mc standup`, etc. (this is the Claude-native front door; the
+`harvest`/`standup`/`weekly` skills also exist standalone). Or, in any plain terminal, type the
+`mc` executable — it prints and exits:
 
 ```bash
 mc today        # what's on my plate + which agents are running (also: just `today`)
