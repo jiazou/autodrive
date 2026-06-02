@@ -37,11 +37,12 @@ SKILLS_SRC="$REPO_DIR/skills"
 SKILLS_DST="$HOME/.claude/skills"
 if [ -d "$SKILLS_SRC" ]; then
   mkdir -p "$SKILLS_DST"
+  BK="$HOME/.claude/skill-backups"   # OUTSIDE skills/, so a backup is never re-registered as a skill
   for s in "$SKILLS_SRC"/*/; do
     s="${s%/}"; name="$(basename "$s")"; target="$SKILLS_DST/$name"
     if [ -e "$target" ] && [ ! -L "$target" ]; then
-      mv "$target" "$target.bak.$(date +%Y%m%d-%H%M%S)"
-      echo "Backed up existing skill: $name"
+      mkdir -p "$BK"; mv "$target" "$BK/$name.$(date +%Y%m%d-%H%M%S)"
+      echo "Backed up existing skill: $name -> $BK"
     fi
     ln -sfn "$s" "$target"
     echo "Linked skill: $name -> repo"
