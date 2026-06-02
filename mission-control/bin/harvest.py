@@ -14,8 +14,10 @@ Read-only unless --log is passed (which appends the digest to today's daily note
 """
 import json
 import os
+import re
 import sys
 import glob
+import subprocess
 from datetime import datetime
 
 HOME = os.path.expanduser("~")
@@ -75,15 +77,21 @@ def log_to_vault(digest, now):
     return path, created
 
 
+def transcript_path(sid):
+    hits = glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl"))
+    return hits[0] if hits else None
+
+
 def session_meta(sid):
-    """Read the session's TUI color (/color) and name (/rename) straight from its
-    transcript at ~/.claude/projects/<slug>/<sid>.jsonl. Latest event wins.
-    These match exactly what the user sees in the TUI — no manual entry needed."""
-    color = name = None
+    """Read the session's TUI color (/color), name (/rename), and ai-title (the
+    auto-generated goal) straight from its transcript. Latest event of each wins.
+    These match what the user sees in the TUI — no manual entry needed."""
+    color = name = ai_title = None
     for f in glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl")):
         try:
             for line in open(f):
-                if "agent-color" not in line and "agent-name" not in line:
+                if ("agent-color" not in line and "agent-name" not in line
+                        and "ai-title" not in line):
                     continue
                 try:
                     e = json.loads(line)
@@ -91,13 +99,66 @@ def session_meta(sid):
                     continue
                 if e.get("sessionId") != sid:
                     continue
-                if e.get("type") == "agent-color":
+                t = e.get("type")
+                if t == "agent-color":
                     color = e.get("agentColor")
-                elif e.get("type") == "agent-name":
+                elif t == "agent-name":
                     name = e.get("agentName")
+                elif t == "ai-title":
+                    ai_title = e.get("aiTitle")
         except Exception:
             continue
-    return color, name
+    return color, name, ai_title
+
+
+def iterm_tab_names():
+    """Map controlling-tty -> live iTerm tab name via one osascript call. The tab
+    name is what the user sees and reads as the session's goal. Empty dict if iTerm
+    isn't running or automation permission is denied (the caller falls back to
+    ai-title). One call per harvest, not per session."""
+    script = (
+        'tell application "iTerm2"\n'
+        '  set out to ""\n'
+        '  repeat with w in windows\n'
+        '    repeat with t in tabs of w\n'
+        '      repeat with s in sessions of t\n'
+        '        set out to out & (tty of s) & "\t" & (name of s) & linefeed\n'
+        '      end repeat\n'
+        '    end repeat\n'
+        '  end repeat\n'
+        '  return out\n'
+        'end tell')
+    try:
+        r = subprocess.run(["osascript", "-e", script], capture_output=True,
+                           text=True, timeout=5)
+    except Exception:
+        return {}
+    out = {}
+    for ln in r.stdout.splitlines():
+        if "\t" in ln:
+            tty, _, name = ln.partition("\t")
+            out[tty.strip()] = name.strip()
+    return out
+
+
+def clean_goal(name):
+    """Strip iTerm's own decorations from a tab name: a leading activity glyph
+    (✳ ⠐ ⠂ …) and the trailing foreground-process badge like ' (caffeinate)'."""
+    if not name:
+        return name
+    name = re.sub(r"^[^\w一-鿿]+", "", name)          # leading symbols/space
+    name = re.sub(r"\s*\([^)\s]+\)\s*$", "", name)            # trailing (process)
+    return name.strip()
+
+
+def pid_tty(pid):
+    try:
+        r = subprocess.run(["ps", "-o", "tty=", "-p", str(pid)],
+                           capture_output=True, text=True, timeout=3)
+        t = r.stdout.strip()
+        return "/dev/" + t if t and t != "??" else None
+    except Exception:
+        return None
 
 
 def pid_alive(pid):
@@ -112,6 +173,7 @@ def load_live_sessions():
     """Return {sessionId: {...}} for every Claude session whose pid is still alive."""
     out = {}
     overlay = load_status_overlay()
+    tabs = iterm_tab_names()   # one osascript call, shared across sessions
     for f in glob.glob(os.path.join(SESSIONS_DIR, "*.json")):
         try:
             d = json.load(open(f))
@@ -123,17 +185,21 @@ def load_live_sessions():
         sid = d.get("sessionId")
         if not sid:
             continue
-        color, name = session_meta(sid)
+        color, name, ai_title = session_meta(sid)
         status = d.get("status", "?")
         # a hook-reported "waiting" overrides idle/busy — it means Claude pinged YOU
         if overlay.get(sid) == "waiting":
             status = "waiting"
+        # goal = the iTerm tab name the user sees; fall back to the ai-title
+        tty = pid_tty(pid)
+        goal = clean_goal(tabs.get(tty) if tty else None) or ai_title
         out[sid] = {
             "pid": pid,
             "cwd": d.get("cwd", "?"),
             "status": status,
-            "color": color,   # from /color, auto-resolved
-            "name": name,     # from /rename, auto-resolved
+            "color": color,    # from /color, auto-resolved
+            "name": name,      # from /rename, auto-resolved
+            "goal": goal,      # iTerm tab name (or ai-title fallback)
         }
     return out
 
@@ -176,7 +242,7 @@ STATUS_GLYPH = {
 }
 
 
-def render(live, binds, now_str):
+def render(live, binds, now_str, summaries=None):
     lines = []
     lines.append(f"🛰️  MISSION CONTROL — Session Harvest · {now_str}")
     lines.append("")
@@ -204,24 +270,26 @@ def render(live, binds, now_str):
     for sid, s, b in rows:
         glyph = STATUS_GLYPH.get(s["status"], s["status"])
         tag = "  ⟵ this session" if sid == SELF_ID else ""
+        goal = s.get("goal") or "(untitled session)"
+        color = s.get("color")
         proj = b.get("project")
-        task = b.get("task")
-        color = s.get("color")   # auto-resolved from /color
-        name = s.get("name")     # auto-resolved from /rename
-        tab = b.get("tab_name")
-        bits = []
+        meta = []
         if color:
-            bits.append(f"🎨{color}")
-        if name:
-            bits.append(f"“{name}”")
+            meta.append(f"🎨{color}")
+        meta.append(short(sid))
+        meta.append(home_rel(s["cwd"]))
         if proj:
-            bits.append(proj)
-        if task:
-            bits.append(f"task:{task}")
-        if tab:
-            bits.append(f"⧉{tab}")
-        bind_str = "  —  " + " · ".join(bits) if bits else "  —  (unbound)"
-        lines.append(f"  {short(sid):<9} {glyph:<18} {home_rel(s['cwd']):<30}{bind_str}{tag}")
+            meta.append(f"→ {proj}")
+        # header line = the goal (iTerm tab name); detail line = status + meta
+        lines.append("")
+        lines.append(f"● {goal}{tag}")
+        lines.append(f"    {glyph} · " + " · ".join(meta))
+        summ = (summaries or {}).get(sid)
+        if summ:
+            if summ.get("progress"):
+                lines.append(f"    progress: {summ['progress']}")
+            if summ.get("next"):
+                lines.append(f"    next:     {summ['next']}")
 
     if unbound:
         lines.append("")
@@ -232,11 +300,25 @@ def render(live, binds, now_str):
     return "\n".join(lines)
 
 
+def build_summaries(live):
+    """Per-session {progress, next} via headless claude, run in PARALLEL (each is an
+    independent claude call, so N sessions take ~1 call's time, not N). Used by
+    --summarize. Failures degrade to {} for that session."""
+    import session_summary
+    from concurrent.futures import ThreadPoolExecutor
+    items = list(live.items())
+    with ThreadPoolExecutor(max_workers=min(8, len(items) or 1)) as ex:
+        results = ex.map(lambda kv: (kv[0], session_summary.summarize(
+            kv[0], kv[1].get("goal") or "")), items)
+    return {sid: summ for sid, summ in results if summ}
+
+
 def main():
     now = datetime.now()
     live = load_live_sessions()
     binds = load_bindings()
-    out = render(live, binds, now.strftime("%Y-%m-%d %H:%M"))
+    summaries = build_summaries(live) if "--summarize" in sys.argv else None
+    out = render(live, binds, now.strftime("%Y-%m-%d %H:%M"), summaries)
     print(out)
     if "--log" in sys.argv:
         path, created = log_to_vault(out, now)

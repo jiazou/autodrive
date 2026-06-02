@@ -8,27 +8,30 @@ description: >-
   "what are my agents doing", "morning briefing", or "what's running".
 ---
 
-# harvest — Orchard morning briefing
+# harvest — Mission Control morning briefing
 
 `harvest` answers one question: **"What is the state of everything right now, and what needs me?"**
-It is the read-side of Mission Control, the personal operating harness. It never mutates state
-unless explicitly run with `--prep` (see below).
-
-## What it does
-
-1. **Session status** — joins Claude Code's live session ledger (`~/.claude/sessions/*.json`,
-   ground truth for what's running) with Orchard's binding overlay
-   (`~/mission-control/bindings.jsonl`, which session ↔ task/project/color/iTerm tab). Surfaces
-   sessions **waiting on you** first — that's the only state that demands action.
-2. **Vault tasks** — what's overdue / due today across the projects (read from the Obsidian
-   vault frontmatter; the existing Bases dashboards are the canonical view).
+It is the read-side of Mission Control. For each live Claude session it shows, headed by the
+session's **goal** (its iTerm tab name, auto-resolved): the **goal**, a **progress** summary,
+and **what to do next**. Sessions **waiting on you** sort first. Read-only.
 
 ## How to run
 
-**Default (read-only) — always start here:**
+**Rich version (what the user wants — goal + progress + next per session):**
 
 ```bash
-python3 ~/mission-control/bin/harvest.py
+mc harvest --summarize
+```
+
+`--summarize` reads the recent tail of each session's transcript and summarizes Progress + Next
+via headless `claude`. It makes one `claude` call per live session, so it takes a few seconds
+each — fine on demand and for the 6:45am run. The Goal line (iTerm tab name) is always shown;
+if a summary fails, that session degrades to Goal + status.
+
+**Fast version (goal + status only, no LLM):**
+
+```bash
+mc harvest          # or: python3 ~/mission-control/bin/harvest.py
 ```
 
 Then read the vault's due/overdue tasks (do NOT modify anything):
@@ -39,6 +42,14 @@ ls "$HOME/Documents/Jia's Personal Vault/01 Projects"/*/Tasks/*.md 2>/dev/null
 
 Present the session digest first (it's the novel part), then a one-line vault summary
 (`N overdue · M due today`), then — only if asked — propose the day's parallel plan.
+
+## How the goal/progress/next are derived
+
+- **Goal** = the iTerm tab name (`pid → tty → osascript`), which Claude Code auto-titles with the
+  session's task. Falls back to the transcript's latest `ai-title` if iTerm automation is
+  unavailable. No manual entry.
+- **Progress / Next** = `bin/session_summary.py` summarizes the recent transcript tail. The
+  6:45am job and `mc harvest --summarize` share this one path (no divergence).
 
 ## Binding sessions (enrichment)
 

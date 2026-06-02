@@ -101,7 +101,7 @@ commands are there for when you want more than a glance.
 
 | Command | What it does |
 |---|---|
-| `mc harvest [--log]` | Live session digest (waiting-on-you first); `--log` appends it to today's daily note. |
+| `mc harvest [--summarize] [--log]` | Per-session digest, each headed by its **goal** (the iTerm tab name, auto). `--summarize` adds an LLM **Progress** + **Next** per session (one `claude` call each, run in parallel). `--log` appends to today's daily note. |
 | `mc standup [--draft\|--json]` | Plan the day for parallelism; `--draft` writes a self-contained `Today's Focus` + `Parallel Plan` into the daily note. |
 | `mc today [--swiftbar]` | Today's tasks in one glance — terminal or SwiftBar menu-bar format. |
 | `mc weekly` | Weekly review agenda (clear Needs Review, sweep By Project, reset the week). |
@@ -109,8 +109,15 @@ commands are there for when you want more than a glance.
 | `mc bind <id> --project "<P>" [--task <slug>] [--tab <name>]` | Bind a session ↔ task. |
 
 Automated: SwiftBar menu bar (auto-launch at login) · 6:45am `standup --draft` + `harvest
---log` (launchd) · passive `waiting` capture via Claude Code hooks. Skills: `harvest`,
-`standup`, `weekly`.
+--log --summarize` (launchd) so you wake to a per-session Goal/Progress/Next brief · passive
+`waiting` capture via Claude Code hooks. Skills: `harvest`, `standup`, `weekly`.
+
+**Per-session Goal / Progress / Next.** Harvest heads each live session with its **goal** —
+the iTerm tab name, which Claude Code auto-titles with the session's task (resolved via
+`pid → tty → osascript`, falling back to the transcript's `ai-title`). With `--summarize`, it
+adds a **Progress** summary and a **Next** step per session, produced by `bin/session_summary.py`
+reading the recent transcript tail through headless `claude`. The 6:45am job and
+`mc harvest --summarize` share that one summarizer.
 
 ## Design decisions (locked)
 

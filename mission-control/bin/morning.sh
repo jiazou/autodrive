@@ -1,13 +1,15 @@
 #!/bin/bash
 # Mission Control — pre-wake morning run (driven by the launchd agent ~6:45am).
-# Deterministic: writes today's single surface so Jia wakes to a plan already written.
-# The intelligent two-lane refinement happens later when Jia runs the `standup` skill.
-export PATH="/opt/homebrew/bin:/usr/bin:/bin:$PATH"
+# Writes today's single surface so Jia wakes to a plan already written, plus a
+# per-session harvest enriched with Goal / Progress / Next (Progress+Next are
+# summarized from each session's transcript via headless claude).
+# claude must be on PATH for --summarize; it degrades to Goal+status if absent.
+export PATH="$HOME/.local/bin:/opt/homebrew/bin:/usr/bin:/bin:$PATH"
 PY=/opt/homebrew/bin/python3
 MC="$HOME/mission-control/bin"
 LOG="$HOME/mission-control/morning.log"
 
 echo "=== morning run $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$LOG"
-"$PY" "$MC/standup.py" --draft  >> "$LOG" 2>&1   # Today's Focus + Parallel Plan into Daily/<date>.md
-"$PY" "$MC/harvest.py" --log    >> "$LOG" 2>&1   # session digest appended to the same note
+"$PY" "$MC/standup.py" --draft              >> "$LOG" 2>&1   # Today's Focus + Parallel Plan
+"$PY" "$MC/harvest.py" --log --summarize    >> "$LOG" 2>&1   # per-session Goal/Progress/Next digest
 echo "--- done ---" >> "$LOG"

@@ -64,6 +64,7 @@ def gather():
             "cwd": s["cwd"].replace(harvest.HOME, "~"),
             "color": s.get("color"),
             "name": s.get("name"),
+            "goal": s.get("goal"),   # iTerm tab name
             "project": bd.get("project"),
             "task": bd.get("task"),
             "is_self": sid == harvest.SELF_ID,

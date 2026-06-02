@@ -47,8 +47,8 @@ def render_terminal(d):
         L.append("")
         L.append("  ⏸ agents waiting on you:")
         for s in waiting:
-            proj = f" → {s['project']}" if s["project"] else ""
-            L.append(f"     {s['id']} {s['cwd']}{proj}")
+            label = s.get("goal") or s.get("name") or s["id"]
+            L.append(f"     {label}  ({s['cwd']})")
     idle = d["spare_capacity"]
     if idle:
         L.append("")
@@ -69,10 +69,11 @@ def render_swiftbar(d):
     L.append("Sessions | size=11 color=gray")
     for s in d["sessions"]:
         glyph = {"waiting": "⏸", "busy": "▶", "idle": "●", "shell": "○"}.get(s["status"], "·")
-        proj = f"  → {s['project']}" if s["project"] else "  (unbound)"
         col = s["color"] or "white"
-        name = f" “{s['name']}”" if s.get("name") else ""
-        L.append(f"{glyph} {s['id']}{name}{proj} | color={col}")
+        # lead with the goal (iTerm tab name); fall back to id when untitled
+        label = (s.get("goal") or s.get("name") or s["id"]).replace("|", "/")
+        proj = f"  → {s['project']}" if s["project"] else ""
+        L.append(f"{glyph} {label}{proj} | color={col}")
     L.append("---")
     L.append("Refresh | refresh=true")
     L.append("Open today's note | href=" + _obsidian_href(d["generated_at"].split(" ")[0]))
