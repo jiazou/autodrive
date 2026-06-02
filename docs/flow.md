@@ -5,7 +5,7 @@ at each one annotated. Example shape: **2 phases × 2 slices per phase**, each s
 taking **3 implement→review rounds** to converge.
 
 `[C+X]` = the **dual-voice review** = a Claude reviewer subagent **+** `codex exec`.
-The Claude subagent and `codex exec` are mechanics *inside* `/review`, not slash
+The Claude subagent and `codex exec` are mechanics *inside* `/drive-review`, not slash
 commands themselves.
 
 ```
@@ -13,10 +13,10 @@ commands themselves.
 │
 ├─ STAGE 0  PREMISES                               (no command — /drive inspects the task)
 │
-├─ STAGE 1  PLAN ─────────────────────────────────  runs  /plan
+├─ STAGE 1  PLAN ─────────────────────────────────  runs  /drive-plan
 │    1a  planner subagent → design.md + Phases&Slices      (Agent subagent, no command)
 │    1b  autoplan review ───────────────────────────────   runs  /autoplan      (gstack)
-│    1c  design-review convergence [C+X] ↺ ────────────    runs  /review · design
+│    1c  design-review convergence [C+X] ↺ ────────────    runs  /drive-review · design
 │    ◆ GATE A  (human: approve direction)                                   ◀── PAUSE 1
 │
 ├─ EXECUTE ──────────────────────────────────────  loop driven by  /drive
@@ -25,24 +25,24 @@ commands themselves.
 │  │   slice 1.1 & 1.2 own DISJOINT files → run IN PARALLEL                     │
 │  │                                                                            │
 │  │   SLICE 1.1 (parallel)                  SLICE 1.2 (parallel)               │
-│  │   R1  /implement 1.1 → /review 1.1[C+X] ↺P1   R1  /implement 1.2 → /review 1.2[C+X] ↺P1
-│  │   R2  /implement 1.1 → /review 1.1[C+X] ↺P1   R2  /implement 1.2 → /review 1.2[C+X] ↺P1
-│  │   R3  /implement 1.1 → /review 1.1[C+X] ✓CONV  R3  /implement 1.2 → /review 1.2[C+X] ✓CONV
+│  │   R1  /drive-implement 1.1 → /drive-review 1.1[C+X] ↺P1   R1  /drive-implement 1.2 → /drive-review 1.2[C+X] ↺P1
+│  │   R2  /drive-implement 1.1 → /drive-review 1.1[C+X] ↺P1   R2  /drive-implement 1.2 → /drive-review 1.2[C+X] ↺P1
+│  │   R3  /drive-implement 1.1 → /drive-review 1.1[C+X] ✓CONV  R3  /drive-implement 1.2 → /drive-review 1.2[C+X] ✓CONV
 │  │                         └──────────────┬───────────────┘                   │
-│  │   PHASE-1 INTEGRATION ──────────────────────────────  runs  /review · phase 1[C+X] → ✓
+│  │   PHASE-1 INTEGRATION ──────────────────────────────  runs  /drive-review · phase 1[C+X] → ✓
 │  └────────────────────────────────────────────────────────────────────────────┘
 │                          │  (phases are SEQUENTIAL)
 │  ┌── PHASE 2 ────────────────────────────────────────────────────────────────┐
 │  │   SLICE 2.1 (parallel)                  SLICE 2.2 (parallel)               │
-│  │   R1  /implement 2.1 → /review 2.1[C+X] ↺P1   R1  /implement 2.2 → /review 2.2[C+X] ↺P1
-│  │   R2  /implement 2.1 → /review 2.1[C+X] ↺P1   R2  /implement 2.2 → /review 2.2[C+X] ↺P1
-│  │   R3  /implement 2.1 → /review 2.1[C+X] ✓CONV  R3  /implement 2.2 → /review 2.2[C+X] ✓CONV
-│  │   PHASE-2 INTEGRATION ──────────────────────────────  runs  /review · phase 2[C+X] → ✓
+│  │   R1  /drive-implement 2.1 → /drive-review 2.1[C+X] ↺P1   R1  /drive-implement 2.2 → /drive-review 2.2[C+X] ↺P1
+│  │   R2  /drive-implement 2.1 → /drive-review 2.1[C+X] ↺P1   R2  /drive-implement 2.2 → /drive-review 2.2[C+X] ↺P1
+│  │   R3  /drive-implement 2.1 → /drive-review 2.1[C+X] ✓CONV  R3  /drive-implement 2.2 → /drive-review 2.2[C+X] ✓CONV
+│  │   PHASE-2 INTEGRATION ──────────────────────────────  runs  /drive-review · phase 2[C+X] → ✓
 │  └────────────────────────────────────────────────────────────────────────────┘
 │
 ├─ STAGE 4b  VERIFY (optional) ───────────────────  runs  /qa-only   or  /browse   (gstack)
 │
-├─ STAGE 5   SHIP (once, whole feature) ──────────  runs  /ship
+├─ STAGE 5   SHIP (once, whole feature) ──────────  runs  /drive-ship
 │            preconditions; tests (red→STOP); build ONE commit + PR
 │    ◆ GATE B  (human: approve diff)                                        ◀── PAUSE 2
 │            → push + open PR
@@ -53,7 +53,7 @@ commands themselves.
 ## Legend
 
 - `[C+X]` — dual-voice review: Claude reviewer subagent + `codex exec`
-- `↺P1` — a P1 (BLOCKING/MAJOR) was found → loop back to `/implement` (cap 8 rounds)
+- `↺P1` — a P1 (BLOCKING/MAJOR) was found → loop back to `/drive-implement` (cap 8 rounds)
 - `✓CONV` — **converged**: neither voice has an open P1
 - `◆` — a human gate. The only two pauses in the whole run.
 - slices in a phase run **in parallel** (disjoint file ownership); phases are **sequential**
@@ -63,13 +63,13 @@ commands themselves.
 | Command | Times | Where |
 |---|---|---|
 | `/drive` | 1 | top-level orchestrator |
-| `/plan` | 1 | Stage 1 |
-| `/autoplan` | 1 | inside `/plan` (gstack) |
-| `/implement` | 12 | 4 slices × 3 rounds |
-| `/review` | 15 | 12 per-slice + 2 phase-integration + 1 design |
+| `/drive-plan` | 1 | Stage 1 |
+| `/autoplan` | 1 | inside `/drive-plan` (gstack) |
+| `/drive-implement` | 12 | 4 slices × 3 rounds |
+| `/drive-review` | 15 | 12 per-slice + 2 phase-integration + 1 design |
 | `/qa-only` | 1 | verify (optional) |
-| `/ship` | 1 | Stage 5 |
-| **Total** | **32** | + ~15 `codex exec` calls inside the `/review`s (CLI, not a command) |
+| `/drive-ship` | 1 | Stage 5 |
+| **Total** | **32** | + ~15 `codex exec` calls inside the `/drive-review`s (CLI, not a command) |
 
 ## Notes
 

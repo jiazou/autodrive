@@ -18,18 +18,18 @@ machine-global `~/CLAUDE.md`):
 ```
 PLAN (gstack brain)
 0. Premises (human; never auto-decided)
-1. /plan: planner authors design + a ## Phases & Slices breakdown
+1. /drive-plan: planner authors design + a ## Phases & Slices breakdown
    → autoplan reviews → dual-voice design review converges (no P1) → Gate A
 
 EXECUTE (harness-owned) — for each PHASE in order:
-2. /implement per slice — independent slices run in PARALLEL (file-ownership scoped)
-3. /review per slice — Claude subagent + codex; converged = no P1; cap 8
-   then a phase-integration /review over the assembled phase
+2. /drive-implement per slice — independent slices run in PARALLEL (file-ownership scoped)
+3. /drive-review per slice — Claude subagent + codex; converged = no P1; cap 8
+   then a phase-integration /drive-review over the assembled phase
 4. verify — qa-only / browse (optional), after all phases converge
-5. /ship ONCE → Gate B → push
+5. /drive-ship ONCE → Gate B → push
 ```
 
-The stage commands (`/plan`, `/implement`, `/review`, `/ship`) are single-sourced
+The stage commands (`/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-ship`) are single-sourced
 runners that `/drive` invokes in order; you can also step them manually within an
 existing run (a new task is a new run-id).
 

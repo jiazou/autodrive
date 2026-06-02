@@ -1,3 +1,7 @@
+---
+description: IMPLEMENT stage (Stage 2) of /drive — implements one slice in its own worktree against the design spec, slice-local tests green, commits to the slice branch. Usually invoked by /drive.
+argument-hint: <slice id> (within an existing run)
+---
 You are running the IMPLEMENT stage (Stage 2) for **one slice**. Harness-owned —
 no gstack skill. `/drive` invokes it per slice; independent slices run in parallel,
 each in **its own git worktree**.
@@ -35,7 +39,7 @@ every P1 (BLOCKING/MAJOR) from BOTH the review and codex files. **Commit your wo
 to the slice branch** (`git add -A && git commit`) before returning.
 
 Decision protocol (overrides "ask the human") — apply the 6 Decision Principles
-(see CLAUDE.md). Decide implementation details per conventions; don't return
+(see the harness `CLAUDE.md`). Decide implementation details per conventions; don't return
 questions for normal choices. Flag spec deviations in your return note + append to
 `$RUN_DIR/decisions.md` (Classification field). Out-of-scope discoveries →
 `$RUN_DIR/followups.md`.

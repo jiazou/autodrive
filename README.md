@@ -5,7 +5,7 @@ with **gstack for planning** and **harness-owned stages for execution**.
 
 - gstack `autoplan` + `plan-*-review` — autonomous planning/review brain
 - `codex` — cross-model second opinion (run via the codex CLI directly)
-- Slash commands: `/drive`, `/plan`, `/implement`, `/review`, `/ship`
+- Slash commands: `/drive`, `/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-ship`
 - Decision policy: autoplan's 6 principles + Mechanical/Taste/User-Challenge
   classification (auto-decides; pauses only at the gates)
 
@@ -23,14 +23,14 @@ surface. Independent of `/drive`; see `mission-control/README.md`.
 
     PLAN (gstack brain)
     0. Premises (human)
-    1. /plan: author design + a ## Phases & Slices breakdown
+    1. /drive-plan: author design + a ## Phases & Slices breakdown
        -> autoplan -> dual-voice design review converges -> [Gate A]
 
     EXECUTE (harness-owned) - for each PHASE in order:
-    2. /implement per slice   (independent slices run in PARALLEL)
-    3. /review per slice + phase-integration  (Claude subagent + codex; cap 8)
+    2. /drive-implement per slice   (independent slices run in PARALLEL)
+    3. /drive-review per slice + phase-integration  (Claude subagent + codex; cap 8)
     4. verify (optional)      (qa-only / browse)
-    5. /ship ONCE             -> [Gate B] -> push
+    5. /drive-ship ONCE             -> [Gate B] -> push
 
 Two human gates (A: direction, B: diff before push); every review is dual-voice
 (Claude + codex), converging when neither flags a P1. Full annotated diagram +
@@ -50,10 +50,13 @@ fresh machine behave the same:
        ~/workspace/claude-harness/bin/install-operating-rules.sh
 
    It backs up any existing `~/CLAUDE.md`, writes an `@import` of this repo's
-   `OPERATING.md`, and symlinks bundled skills (e.g. `/decant`) into
-   `~/.claude/skills/` so `OPERATING.md`'s references resolve. Operating rules now
-   apply machine-wide; the `/drive` pipeline stays opt-in (active only inside this
-   repo). Manual alternative: put `@<clone-path>/OPERATING.md` in `~/CLAUDE.md`.
+   `OPERATING.md`, symlinks bundled skills (e.g. `/decant`) into `~/.claude/skills/`
+   so `OPERATING.md`'s references resolve, and symlinks the pipeline commands
+   (`/drive` `/drive-plan` `/drive-implement` `/drive-review` `/drive-ship`) into `~/.claude/commands/` so
+   they're discoverable from any directory. Operating rules and the `/drive`
+   pipeline both apply machine-wide; the pipeline stays *opt-in per task* (it only
+   acts when you invoke `/drive`, and STOPs unless run from a clean git repo).
+   Manual alternative: put `@<clone-path>/OPERATING.md` in `~/CLAUDE.md`.
 
 3. Install gstack + codex so `/drive` can run — see Setup below.
 
@@ -69,7 +72,8 @@ fresh machine behave the same:
    used directly by the review stage; install it separately if you want the
    cross-model pass — it degrades gracefully if absent.)
 
-2. Start a session in this directory:
+2. Start a session in whatever repo you want to drive (the commands are global,
+   so any directory works):
 
        claude
 
@@ -86,7 +90,7 @@ See `CLAUDE.md` for the full decision policy and invariants.
 - `skills/decant/` -- bundled `/decant` skill (symlinked into ~/.claude/skills by the installer)
 - `CLAUDE.md` -- imports OPERATING.md, plus the coordinator pipeline + decision policy
 - `.claude/commands/drive.md` -- the autonomous lifecycle orchestrator
-- `.claude/commands/{plan,implement,review,ship}.md` -- single-sourced stage runners
+- `.claude/commands/{drive-plan,drive-implement,drive-review,drive-ship}.md` -- single-sourced stage runners
 - `docs/flow.md` -- annotated execution-flow diagram (phases, slices, every command)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries

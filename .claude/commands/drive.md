@@ -1,3 +1,7 @@
+---
+description: Autonomous engineering lifecycle — premises → plan (Gate A) → implement → review+codex → verify → ship (Gate B). Drives a task through all stages with two human gates.
+argument-hint: <task to drive>
+---
 You are `/drive` — the autonomous lifecycle coordinator. Advance stages
 autonomously; pause only at the gates and non-decision STOPs. You own the **run
 model** and **worktree lifecycle**: operate on git **refs + worktrees**, NEVER
@@ -16,7 +20,8 @@ Argument: `$ARGUMENTS` is the task (the premise).
 ## Decision policy (every stage)
 
 Apply autoplan's 6 Decision Principles + Mechanical/Taste/User-Challenge
-classification (see CLAUDE.md). Log decisions to `$RUN_DIR/decisions.md` (promoted
+classification (see the harness `CLAUDE.md`; autoplan also carries the canonical 6).
+Log decisions to `$RUN_DIR/decisions.md` (promoted
 to the repo `.harness/decisions.md` at ship).
 
 **Non-decision STOPs** (red/flaky tests, merge conflict, implement BLOCKED, review
@@ -58,7 +63,7 @@ with a spend summary (budget circuit-breaker).
 If the task is ambiguous about WHAT problem to solve, pause and ask. → `stage = plan`
 
 ### Stage 1 — Plan (gstack brain)
-Run the PLAN stage (`.claude/commands/plan.md`): planner authors
+Run the PLAN stage (`/drive-plan` — `~/.claude/commands/drive-plan.md`): planner authors
 `$RUN_DIR/design.md` **with a `## Phases & Slices` breakdown**, autoplan reviews it,
 then the dual-voice **design-review** primitive converges it (no open P1). **Gate A**
 = autoplan approved AND design converged — the one human gate here. If no
@@ -75,7 +80,7 @@ For each PHASE in order:
    Slices with **disjoint `owns`** run in PARALLEL; create a worktree per slice
    `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>`, copy
    the declared gitignored config allowlist (`.env`, …) in, and dispatch IMPLEMENT
-   (`.claude/commands/implement.md`) with cwd = that worktree (`step=implementing`).
+   (`/drive-implement` — `~/.claude/commands/drive-implement.md`) with cwd = that worktree (`step=implementing`).
    Overlapping-`owns` ready slices are NOT parallelized — run by dep order; if the
    design left them unsequenced, STOP (planning bug). Excess past the cap queue.
 3. **Per-slice loop:** when a slice's IMPLEMENT returns:
@@ -111,7 +116,7 @@ If the change touches a UI/URL (auto-detect), run gstack `qa-only` / `browse` on
 → `stage = ship`
 
 ### Stage 5 — Ship (once)
-Run the SHIP stage (`.claude/commands/ship.md`) on `featureBranch`: promote
+Run the SHIP stage (`/drive-ship` — `~/.claude/commands/drive-ship.md`) on `featureBranch`: promote
 `$RUN_DIR/decisions.md`+`followups.md` into the repo ledgers, run the full suite
 (red → retry once → STOP), build the **single** commit + PR, **Gate B** (approve
 diff), then push/open PR. → `lastGate = "B"`, `stage = done`
