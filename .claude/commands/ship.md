@@ -1,24 +1,54 @@
-You are completing the engineering task. This is the second and final
-human checkpoint.
+You are running the SHIP stage (Stage 5) — harness-owned, ONCE for the feature, on
+`featureBranch` in a dedicated **ship worktree** (`$RUN_DIR/wt/ship`), never the
+main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR.
 
-Verify all of these:
-1. .harness/design.md exists and was approved (look for my approval in the
-   session, or the existence of any .harness/review-*.md as evidence
-   implementation already proceeded)
-2. Implementation changes are on disk
-3. At least one .harness/review-N.md exists with verdict CLEAN
-4. .harness/codex-review.md exists with verdict AGREES_CLEAN
-5. Tests pass (run them now if not already run since the last change)
+## Preconditions (non-decision STOPs)
 
-If any check fails, STOP and tell me which one and what to do.
+1. **Gate A passed:** `$RUN_DIR/state.json` has `lastGate == "A"`. Do NOT infer it
+   from a review file existing.
+2. **All phases converged:** every `state.phaseReview[*].status == "converged"` and
+   no slice left non-`converged` in `state.slices`. Gate on state, not review files.
+3. **`featureBranch` exists** with each phase's integration merged in.
+4. **Tooling:** git remote, `gh` (or `glab`), `jq`, a runnable test runner.
 
-If all pass:
-- Read .harness/decisions.md and surface a one-line summary of every
-  decision made autonomously during this task
-- Read .harness/followups.md and surface anything added during this task
-- Propose a commit message and PR description based on the design and the
-  changes
-- Do NOT actually open the PR or push -- that's my call
-- Wait for my approval to proceed
+If any fails → STOP with which one + what to do.
 
-After my approval, run the actual git commit and PR creation.
+## Ship worktree + ledger promotion
+
+- `git worktree add $RUN_DIR/wt/ship <featureBranch>` and work there (cwd).
+- **Promote the run ledgers into the repo's committed ones:** append this run's
+  `$RUN_DIR/decisions.md` + `$RUN_DIR/followups.md` entries to the repo's
+  `.harness/decisions.md` + `.harness/followups.md` (the cross-task ledgers), then
+  `git commit` that on `featureBranch`. (Slice subagents wrote to `$RUN_DIR`; this
+  is where it lands in the repo.)
+
+## Run the full suite (flaky-retry)
+
+Run the FULL test suite in the ship worktree. **Red → retry once**; green →
+continue (log the flake to `$RUN_DIR/event-log.jsonl`); **still red → STOP** and
+report the failures (a human-fix blocker, not a decision).
+
+## Build the PR (no push yet)
+
+- Surface a one-line summary of every decision promoted this run (with
+  Classification) + any followups added.
+- Propose a commit/PR title + body from `$RUN_DIR/design.md` + the
+  `git diff <baseRef>..<featureBranch>`.
+
+## Gate B — approval before push
+
+Surface the diff summary + proposed PR text and WAIT for explicit approval. Do NOT
+push or open the PR until approved.
+
+End commit messages with:
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+End PR bodies with:
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## After approval
+
+Push `featureBranch`; open ONE PR (`gh pr create --base <baseRef>` / `glab`).
+Update `$RUN_DIR/state.json` (`lastGate="B"`, `stage="done"`). `git worktree
+remove` the ship worktree. Report the PR link and the `$RUN_DIR` path (kept for
+the run record). The user's main working tree was never touched.

@@ -1,92 +1,127 @@
-# Project: Autonomous Engineering Pipeline
+# Project: Autonomous Engineering Pipeline (`/drive`)
 
-You are the coordinator of an engineering pipeline driven by slash commands
-that wrap the wshobson agent-teams subagents (team-lead, team-implementer,
-team-reviewer, team-debugger) and gstack's /codex cross-model review.
+`/drive` coordinates the pipeline: **gstack for planning**, **harness-owned stages
+for execution**. It advances autonomously between two human gates (A, B) and
+non-decision STOPs.
 
-## Workflow
+## Operating rules (canonical, imported)
 
-Four-stage pipeline, each stage driven by a slash command:
+Canonical operating rules live in `OPERATING.md` (imported here, and by the
+machine-global `~/CLAUDE.md`):
 
-1. /plan <task>        -> invokes team-lead to write the design
-2. /implement          -> invokes team-implementer
-3. /review             -> invokes team-reviewer
-4. /codex              -> cross-model second opinion via gstack
-5. /ship               -> final verification and PR prep
+@OPERATING.md
 
-## Pause-for-human checkpoints (the ONLY ones)
+## Pipeline
 
-Surface to me at exactly two moments. Everywhere else, decide and document.
+`/drive <task>` runs:
 
-- After /plan, before /implement: I read the design and approve direction.
-- After /codex returns CLEAN, before /ship: I read the diff and approve.
+```
+PLAN (gstack brain)
+0. Premises (human; never auto-decided)
+1. /plan: planner authors design + a ## Phases & Slices breakdown
+   → autoplan reviews → dual-voice design review converges (no P1) → Gate A
 
-No other pauses. Not for ambiguous design choices, not for severity calls,
-not for "should I use X or Y" -- see Decision policy below.
+EXECUTE (harness-owned) — for each PHASE in order:
+2. /implement per slice — independent slices run in PARALLEL (file-ownership scoped)
+3. /review per slice — Claude subagent + codex; converged = no P1; cap 8
+   then a phase-integration /review over the assembled phase
+4. verify — qa-only / browse (optional), after all phases converge
+5. /ship ONCE → Gate B → push
+```
 
-## Decision policy
+The stage commands (`/plan`, `/implement`, `/review`, `/ship`) are single-sourced
+runners that `/drive` invokes in order; you can also step them manually within an
+existing run (a new task is a new run-id).
 
-When any subagent or command would surface a question for me, follow this
-policy instead.
+## Why this shape
 
-1. **Default: decide and document.** If you have a recommended answer, take
-   it. Append an entry to .harness/decisions.md with the question, options,
-   choice, and reasoning. Do not pause.
+gstack skills split into two classes:
+- **Advisory** (`plan-*-review`, `autoplan`, `codex`) — gstack's sweet spot;
+  `/drive` drives them autonomously.
+- **Operational / terminal** (gstack `/review`, `/ship`, `/qa`) — fix-first /
+  auto-push / test-fix. They resist passive autonomous wrapping, so the harness
+  **owns** implement / review / ship directly (calling the codex CLI, git, and
+  the test runner).
 
-2. **Escalate only when ALL of these hold:**
-   - The decision is irreversible or expensive to undo (data loss, public
-     API change, security-sensitive defaults, dependency you can't remove,
-     anything that touches production data).
-   - You have no clear recommendation, OR your top two options are roughly
-     equally good AND the choice meaningfully affects downstream work.
-   - The decision is in scope for the current task.
+The implementer/reviewer/planner roles are generic `Agent` subagents:
+**sequential phases**, with **independent slices fanned out in parallel** via file
+ownership — no parallel-team framework needed (rationale: `.harness/decisions.md`
+D1).
 
-3. **Out-of-scope discoveries** (bugs unrelated to the task, refactor ideas,
-   suspicious code, dependency upgrades): append to .harness/followups.md.
-   Do not pause for these. Do not address them inline.
+## Decision policy (the coordinator's brain)
 
-4. **When in doubt, lean toward deciding.** I would rather review a
-   documented decision afterward than be interrupted. The cost of you
-   deciding wrong is low (I'll tell you and we revise). The cost of constant
-   interruptions is high.
+Auto-answer intermediate questions with autoplan's **6 Decision Principles**:
+1) completeness, 2) boil-lakes (in blast radius AND < 1 day CC effort),
+3) pragmatic, 4) DRY, 5) explicit-over-clever, 6) bias-to-action.
 
-5. **Contradictions with prior decisions** in .harness/decisions.md ARE a
-   legitimate escalation. Surface those.
+Classify every decision:
+- **Mechanical** → decide silently; log to `.harness/decisions.md`.
+- **Taste** → decide with a recommendation; log; surface at the next gate.
+- **User-Challenge** → never auto-decide; surface immediately with full context
+  (what you'd do, why, what you might be missing, the cost if wrong).
 
-## Default opinions (use these unless the task says otherwise)
+**Non-decision STOPs** (red tests, merge conflicts, implement BLOCKED, review
+non-convergence) pause regardless — they are facts, not judgments the principles
+can answer.
 
-- Storage: use the existing primary store; do not introduce new dependencies
-- Error handling: fail loud in dev, graceful degradation in prod, log either way
-- API style: match the codebase's existing patterns
-- Testing: unit tests at the function boundary, integration tests at the
-  public API; one test per acceptance criterion minimum
-- Naming: match adjacent code in the same file or module
-- Severity calls: BLOCKING = production incident risk, MAJOR = spec
-  violation or clear bug, MINOR = code quality, NIT = style
-- Performance: correctness first, optimize only if the design specifies it
+If `AskUserQuestion` is unavailable, report `BLOCKED — AUQ unavailable` rather
+than silently auto-deciding a Taste/Challenge.
+
+## Human checkpoints (the only ones)
+
+- **Premises** (Stage 0) — what problem to solve.
+- **Gate A** — autoplan's terminal approval gate (after plan).
+- **Gate B** — approve the diff before push (ship).
+- Plus dynamic surfacing of **Taste** (at gates) and **User-Challenge**
+  (immediately).
+
+No other pauses. Not for ambiguous design choices, not for severity calls — the
+6 principles decide and the decision is logged.
 
 ## Invariants
 
-- Pass file paths between subagents, not file contents.
-- Never include the implementer's notes, rationale, or summary in the
-  reviewer's prompt. The reviewer judges the code against the spec on its
-  own merits.
-- Cap the /implement -> /review loop at 2 iterations. On the third, surface
-  the disagreement with a summary of what each side asserts.
+- Pass file **paths** between subagents, not file contents.
+- Never include the implementer's notes/rationale in the reviewer's prompt — the
+  reviewer judges the code against the spec on its own merits.
+- **Every review — the design review and every code review — runs both a Claude
+  reviewer subagent AND codex.** A review is **converged** only when neither voice
+  has an open **P1** (BLOCKING or MAJOR); P2/P3 are logged, not blocking.
+- Each slice/phase implement→review loop caps at **8** rounds (own `reviewCount`).
+  Beyond that, surface the disagreement with what each side asserts.
+- **File ownership is the parallelism contract:** independent slices own disjoint
+  files and run in parallel; a slice never writes outside its owned files.
+- Run codex from the **main** context (background + per-scope log), never inside a
+  subagent that waits on it.
+- The coordinator operates on git **refs + worktrees** only — it **never mutates
+  the user's main working tree**. A run starts from a clean tree on a fresh
+  `featureBranch` (from `baseRef`).
+- Each parallel slice runs in its **own coordinator-created worktree** on a
+  `slice/<runId>/<id>` branch cut from the frozen `phaseBaseSha = rev-parse
+  featureBranch`. The phase integration branch is **rebuilt idempotently** from
+  `phaseBaseSha` each assembly — that rebuild *is* the conflict/crash rollback
+  (never `git merge --abort`).
+- All per-run artifacts live in the external **`$RUN_DIR`** (absolute,
+  worktree-reachable); the committed repo ledgers are promoted at ship.
 
-## Decisions ledger
+## Run state & shared memory
 
-Before starting any new task or stage, read .harness/decisions.md so you
-stay consistent with prior choices. When you make a decision per the policy
-above, append an entry using the format defined in that file.
+Per-run state lives in **`$RUN_DIR` = `~/.claude/harness-runs/<run-id>/`** (external,
+so every worktree reaches it by absolute path; not committed, not portable):
 
-## Shared memory
+```
+task.md / design.md          -- premise; planner design (+ ## Phases & Slices)
+state.json                   -- run model: runId, baseRef, featureBranch, phase,
+                                phaseBaseSha, concurrencyCap, budget, per-slice
+                                {step,reviewCount,branch,worktree,baseSha}, phaseReview
+event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
+review-<scope>-N.md          -- per-scope (design/slice/phase) review outputs
+codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw
+decisions.md / followups.md  -- run-local ledgers (promoted to the repo at ship)
+verify.md                    -- verify-stage evidence
+wt/                          -- per-slice + integration + ship worktrees
+```
 
-All artifacts live in .harness/:
-  task.md            -- original task description
-  design.md          -- team-lead's output
-  implementation/    -- team-implementer's changes (when not in main src)
-  review-N.md        -- team-reviewer's outputs, numbered 1, 2, ...
-  decisions.md       -- autonomous decisions log (append-only)
-  followups.md       -- out-of-scope items for later (append-only)
-  state.json         -- coordinator's ledger: stage, iteration count
+The **committed** cross-task ledgers stay in the repo: `.harness/decisions.md`,
+`.harness/followups.md`. Read `.harness/decisions.md` at the start of a task to
+stay consistent; the coordinator promotes a run's `$RUN_DIR` ledgers into them at
+ship.

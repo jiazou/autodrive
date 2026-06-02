@@ -1,40 +1,63 @@
-You are starting the implementation phase. The design must already exist at
-.harness/design.md -- if it doesn't, stop and tell me to run /plan first.
+You are running the IMPLEMENT stage (Stage 2) for **one slice**. Harness-owned —
+no gstack skill. `/drive` invokes it per slice; independent slices run in parallel,
+each in **its own git worktree**.
 
-Read .harness/decisions.md to load prior decisions you must stay consistent
-with. Then check .harness/ for the highest-numbered review-N.md file; if any
-exist, you are addressing review findings, not doing a fresh implementation.
+`/drive` passes: the slice id (e.g. `1.2`), the absolute **worktree path** (the
+subagent's cwd), the slice **branch** (`slice/<runId>/<id>`), and `$RUN_DIR`
+(absolute path to the run dir — all artifacts live there). The slice's spec
+(acceptance criteria, **owned files**, deps) is in `$RUN_DIR/design.md` under
+`## Phases & Slices`.
 
-Invoke the `team-implementer` subagent with the following scope:
+Check for the slice's latest review (`$RUN_DIR/review-<sliceId>-N.md`); if any
+exist you are addressing its findings, not starting fresh.
+
+Spawn a generic implementer subagent (the Agent tool) with **cwd = the slice
+worktree**. Pass file PATHS, never contents.
 
 ----- BEGIN SUBAGENT SCOPE -----
-Read .harness/design.md. Read .harness/decisions.md. If a review file
-exists at .harness/review-N.md (highest N), also read it.
+You are the implementer for slice <sliceId>. Your cwd is its git worktree on branch
+`slice/<runId>/<id>`. **Code paths are relative to this worktree; artifact paths are
+the absolute `$RUN_DIR`** (never edit code via absolute paths to the main repo —
+that hits the wrong tree). Read (current versions yourself):
+- $RUN_DIR/design.md          (the spec; find slice <sliceId> under "Phases &
+                               Slices" for YOUR acceptance criteria, owned files, deps)
+- $RUN_DIR/decisions.md        (prior decisions to stay consistent with)
+- $RUN_DIR/review-<sliceId>-N.md + codex-review-<sliceId>.md  (IF they exist — the
+                               cross-model findings for THIS slice; codex-only
+                               findings live only in the codex file, so read it)
 
-Implement code to satisfy every acceptance criterion in the design.
-If addressing review findings, address every BLOCKING and MAJOR finding.
-Match codebase conventions. Write tests for each acceptance criterion.
+Implement ONLY this slice: satisfy its acceptance criteria, writing **only within
+its owned files** (in this worktree). Do NOT touch files outside your ownership —
+parallel slices own them; if you need one, that's a missing dependency or shared
+interface → return NEEDS_CONTEXT, do not reach in. Write ≥1 test per acceptance
+criterion and **run the slice-local tests** until green. If a review exists, fix
+every P1 (BLOCKING/MAJOR) from BOTH the review and codex files. **Commit your work
+to the slice branch** (`git add -A && git commit`) before returning.
 
-Decision protocol (this overrides any "ask the human" reflex):
-- For implementation choices not specified by the design (variable names,
-  internal structure, helper extraction, test organization, library
-  choices within the existing stack), DECIDE based on codebase conventions
-  and the default opinions in CLAUDE.md. Do not return questions.
-- If you must deviate from the design to make it work, DO SO and flag the
-  deviation in your one-line return note. Append the deviation as a
-  decision entry in .harness/decisions.md.
-- Out-of-scope discoveries (unrelated bugs, refactor ideas): append to
-  .harness/followups.md. Do not address them inline.
-- Escalate to me only if you hit something that meets ALL the criteria in
-  the CLAUDE.md decision policy (irreversible AND no clear recommendation
-  AND in scope). Otherwise, decide.
+Decision protocol (overrides "ask the human") — apply the 6 Decision Principles
+(see CLAUDE.md). Decide implementation details per conventions; don't return
+questions for normal choices. Flag spec deviations in your return note + append to
+`$RUN_DIR/decisions.md` (Classification field). Out-of-scope discoveries →
+`$RUN_DIR/followups.md`.
 
-Return only:
-- List of changed file paths, one line per file describing what changed
-- Any spec deviations or autonomous decisions you want flagged
-- DO NOT include reasoning, justifications, or design discussion. Keep
-  the return tight. The reviewer will not see this summary.
+Return a STATUS contract as the FIRST line, then the changed-file list:
+- `STATUS: DONE` — every acceptance criterion met, its test passes, and the work is
+  committed to the slice branch. List changed files (all within your ownership).
+  Add a "Flagged:" line only for deviations / Taste / User-Challenge. No other
+  rationale — the reviewer won't see this summary.
+- `STATUS: BLOCKED — <reason>` — a non-decision blocker (missing tool, env failure,
+  contradictory spec). State it + what would unblock it.
+- `STATUS: NEEDS_CONTEXT — <question>` — a User-Challenge, OR you need a file
+  outside your ownership (name it). State the one question; do not guess or reach out.
 ----- END SUBAGENT SCOPE -----
 
-After team-implementer returns, surface the changed-file list to me. Do not
-invoke any other subagent on this command. Suggest I run /review next.
+After the subagent returns, act on STATUS:
+- **DONE** → `step = awaiting_review`; `/drive` runs the per-slice REVIEW on the
+  slice branch.
+- **BLOCKED** → `step = blocked`, STOP this slice; surface. Other in-flight slices
+  continue; the phase can't integrate until it resolves.
+- **NEEDS_CONTEXT** → STOP this slice; surface via AskUserQuestion (else
+  `BLOCKED — AUQ unavailable`). If it needs files outside ownership, `/drive`
+  triggers the **plan-amendment** protocol.
+
+Never include the implementer's notes/rationale in the slice's review prompt.

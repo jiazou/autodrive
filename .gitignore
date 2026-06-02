@@ -2,6 +2,12 @@
 .harness/implementation/
 .harness/review-*.md
 .harness/codex-review.md
+.harness/codex-raw.log
+.harness/verify.md
 .harness/state.json
 .harness/harness-review.md
 .harness/task.md
+.harness/*.log
+.harness/codex-review-*.md
+.harness/enhancements-proposal.md
+# per-run state now lives in ~/.claude/harness-runs/<run-id>/ (external, never committed)

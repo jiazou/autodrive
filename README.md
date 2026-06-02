@@ -1,49 +1,93 @@
 # Claude Harness
 
-Autonomous engineering pipeline for Claude Code. Combines:
+Autonomous engineering pipeline for Claude Code. `/drive` runs the task lifecycle
+with **gstack for planning** and **harness-owned stages for execution**.
 
-- wshobson `agent-teams` plugin (team-lead, team-implementer, team-reviewer subagents)
-- gstack `/codex` for cross-model second-opinion review
-- Custom slash commands: `/plan`, `/implement`, `/review`, `/codex`, `/ship`
-- A "decide and document" decision policy that overrides the default "ask the human" reflex
+- gstack `autoplan` + `plan-*-review` — autonomous planning/review brain
+- `codex` — cross-model second opinion (run via the codex CLI directly)
+- Slash commands: `/drive`, `/plan`, `/implement`, `/review`, `/ship`
+- Decision policy: autoplan's 6 principles + Mechanical/Taste/User-Challenge
+  classification (auto-decides; pauses only at the gates)
+
+Roles are generic `Agent` subagents (no parallel-team framework — see
+`.harness/decisions.md` D1).
 
 ## Workflow
 
-    /plan <task>   -> team-lead writes .harness/design.md  [PAUSE for approval]
-    /implement     -> team-implementer writes code
-    /review        -> team-reviewer writes .harness/review-N.md (loop up to 2x with /implement)
-    /codex         -> cross-model review                   [PAUSE for approval]
-    /ship          -> final verification + PR prep
+    /drive <task>   -> runs the whole pipeline below, autonomously
+
+    PLAN (gstack brain)
+    0. Premises (human)
+    1. /plan: author design + a ## Phases & Slices breakdown
+       -> autoplan -> dual-voice design review converges -> [Gate A]
+
+    EXECUTE (harness-owned) - for each PHASE in order:
+    2. /implement per slice   (independent slices run in PARALLEL)
+    3. /review per slice + phase-integration  (Claude subagent + codex; cap 8)
+    4. verify (optional)      (qa-only / browse)
+    5. /ship ONCE             -> [Gate B] -> push
+
+Two human gates (A: direction, B: diff before push); every review is dual-voice
+(Claude + codex), converging when neither flags a P1. Full annotated diagram +
+decision policy: **[`docs/flow.md`](docs/flow.md)** and `CLAUDE.md`.
+
+## Portable config — reproduce this Claude on a new machine
+
+This repo is the canonical home of the operating rules (`OPERATING.md`). To make a
+fresh machine behave the same:
+
+1. Clone the repo:
+
+       git clone https://github.com/jiazou/claude-harness ~/workspace/claude-harness
+
+2. Point your global `~/CLAUDE.md` at the rules — one command, path auto-detected:
+
+       ~/workspace/claude-harness/bin/install-operating-rules.sh
+
+   It backs up any existing `~/CLAUDE.md`, writes an `@import` of this repo's
+   `OPERATING.md`, and symlinks bundled skills (e.g. `/decant`) into
+   `~/.claude/skills/` so `OPERATING.md`'s references resolve. Operating rules now
+   apply machine-wide; the `/drive` pipeline stays opt-in (active only inside this
+   repo). Manual alternative: put `@<clone-path>/OPERATING.md` in `~/CLAUDE.md`.
+
+3. Install gstack + codex so `/drive` can run — see Setup below.
 
 ## Setup
 
-1. Install wshobson `agent-teams`:
-
-       gh repo clone wshobson/agents /tmp/wshobson
-       mkdir -p .claude/agents
-       cp /tmp/wshobson/plugins/agent-teams/agents/team-*.md .claude/agents/
-
-2. Install gstack (for `/codex`):
+1. Install gstack:
 
        git clone --single-branch --depth 1 \
          https://github.com/garrytan/gstack.git ~/.claude/skills/gstack \
          && cd ~/.claude/skills/gstack && ./setup
 
-3. Start a session in this directory:
+   (Provides `autoplan`, `plan-*-review`, `qa-only`, `browse`. The codex CLI is
+   used directly by the review stage; install it separately if you want the
+   cross-model pass — it degrades gracefully if absent.)
+
+2. Start a session in this directory:
 
        claude
 
-See `CLAUDE.md` for the full workflow and decision policy.
+3. Run the pipeline:
+
+       /drive <your task>
+
+See `CLAUDE.md` for the full decision policy and invariants.
 
 ## Files
 
-- `CLAUDE.md` -- coordinator workflow, decision policy, invariants
+- `OPERATING.md` -- canonical, portable operating rules (imported by CLAUDE.md + global)
+- `bin/install-operating-rules.sh` -- link global ~/CLAUDE.md at OPERATING.md + bundled skills
+- `skills/decant/` -- bundled `/decant` skill (symlinked into ~/.claude/skills by the installer)
+- `CLAUDE.md` -- imports OPERATING.md, plus the coordinator pipeline + decision policy
+- `.claude/commands/drive.md` -- the autonomous lifecycle orchestrator
+- `.claude/commands/{plan,implement,review,ship}.md` -- single-sourced stage runners
+- `docs/flow.md` -- annotated execution-flow diagram (phases, slices, every command)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
-- `.claude/commands/{plan,implement,review,codex,ship}.md` -- slash command wrappers
 
-## Generated artifacts (gitignored)
+## Run artifacts (not committed)
 
-`.harness/design.md`, `.harness/implementation/`, `.harness/review-*.md`,
-`.harness/codex-review.md`, `.harness/state.json` are produced per task and
-not committed.
+Per-run state — design, `state.json`, review files, worktrees — lives in an
+external run dir `~/.claude/harness-runs/<run-id>/`. The committed `.harness/`
+holds only the cross-task ledgers (`decisions.md`, `followups.md`).
