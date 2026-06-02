@@ -1,3 +1,7 @@
+---
+description: SHIP stage (Stage 5) of /drive — promotes run ledgers, runs the full suite, builds one commit + PR in a ship worktree, then Gate B before push. Usually invoked by /drive.
+argument-hint: (operates on the run's featureBranch)
+---
 You are running the SHIP stage (Stage 5) — harness-owned, ONCE for the feature, on
 `featureBranch` in a dedicated **ship worktree** (`$RUN_DIR/wt/ship`), never the
 main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR.

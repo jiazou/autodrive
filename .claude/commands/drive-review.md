@@ -1,7 +1,11 @@
+---
+description: REVIEW stage (Stage 3) of /drive — dual-voice review (Claude reviewer subagent + codex) over a design/slice/phase scope; converged when neither voice has an open P1. Usually invoked by /drive.
+argument-hint: design | slice <id> | phase <P>
+---
 You are running the REVIEW stage (Stage 3) — the harness's **dual-voice review
 primitive** (a passive Claude reviewer + a direct codex pass over the same scope,
 combined). NOT gstack `/review` (fix-first, mutates). `/drive`
-(or `/plan`) invokes it with a **scope** and passes `$RUN_DIR` + the scope's git
+(or `/drive-plan`) invokes it with a **scope** and passes `$RUN_DIR` + the scope's git
 refs:
 
 - `design` — review `$RUN_DIR/design.md` itself, before Gate A: buildable
@@ -79,6 +83,6 @@ open **P1** (BLOCKING/MAJOR); P2/P3 logged, not blocking. Record to
 `$RUN_DIR/state.json`: this scope's verdict + increment its `reviewCount`.
 
 After this stage:
-- **FINDINGS** → `/drive` loops /implement on this scope (it owns the cap-8).
+- **FINDINGS** → `/drive` loops `/drive-implement` on this scope (it owns the cap-8).
 - **CONVERGED** → `/drive` proceeds (next slice → phase-integration → after all
   phases, verify/ship).

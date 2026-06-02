@@ -17,19 +17,19 @@ machine-global `~/CLAUDE.md`):
 
 ```
 PLAN (gstack brain)
-0. Premises (human; never auto-decided)
-1. /plan: planner authors design + a ## Phases & Slices breakdown
+0. Premises (human; never auto-decided) + set the session goal (native /goal — see below)
+1. /drive-plan: planner authors design + a ## Phases & Slices breakdown
    → autoplan reviews → dual-voice design review converges (no P1) → Gate A
 
 EXECUTE (harness-owned) — for each PHASE in order:
-2. /implement per slice — independent slices run in PARALLEL (file-ownership scoped)
-3. /review per slice — Claude subagent + codex; converged = no P1; cap 8
-   then a phase-integration /review over the assembled phase
+2. /drive-implement per slice — independent slices run in PARALLEL (file-ownership scoped)
+3. /drive-review per slice — Claude subagent + codex; converged = no P1; cap 8
+   then a phase-integration /drive-review over the assembled phase
 4. verify — qa-only / browse (optional), after all phases converge
-5. /ship ONCE → Gate B → push
+5. /drive-ship ONCE → Gate B → push
 ```
 
-The stage commands (`/plan`, `/implement`, `/review`, `/ship`) are single-sourced
+The stage commands (`/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-ship`) are single-sourced
 runners that `/drive` invokes in order; you can also step them manually within an
 existing run (a new task is a new run-id).
 
@@ -74,6 +74,14 @@ than silently auto-deciding a Taste/Challenge.
 - **Gate B** — approve the diff before push (ship).
 - Plus dynamic surfacing of **Taste** (at gates) and **User-Challenge**
   (immediately).
+
+**Session goal (Stage 0).** Because a run typically starts in a fresh session,
+Stage 0 also presents Claude Code's native **`/goal`** for you to paste — a
+session-scoped completion condition that keeps the session driving turn-to-turn
+instead of stopping mid-pipeline. `/goal` can only be set by you (no programmatic
+setter), so `/drive` derives the condition and shows the line, then proceeds
+whether or not you set it. It complements the gates: `/goal` continues the
+autonomous stages; Gate A / Gate B / STOPs still pause for you.
 
 No other pauses. Not for ambiguous design choices, not for severity calls — the
 6 principles decide and the decision is logged.

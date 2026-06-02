@@ -1,3 +1,7 @@
+---
+description: PLAN stage (Stage 1) of /drive — planner authors a design + Phases & Slices, autoplan reviews, dual-voice design review converges → Gate A. Usually invoked by /drive.
+argument-hint: <task> (or resume within an existing run)
+---
 You are running the PLAN stage (Stage 1). Two steps: a planner subagent authors a
 rough design, then gstack `autoplan` reviews it (autoplan reviews, it can't author
 — so we author first).
@@ -37,7 +41,7 @@ Steps:
 5. Return the design path and a 3-line summary.
 
 Decision protocol (overrides any "ask the human" reflex) — apply the 6 Decision
-Principles (see CLAUDE.md). For design choices with a clear best option, TAKE IT and record
+Principles (see the harness `CLAUDE.md`). For design choices with a clear best option, TAKE IT and record
 it under "Decisions"; also append to $RUN_DIR/decisions.md with a Classification
 field. Reserve "Open questions" for genuine close calls. Out-of-scope discoveries
 → $RUN_DIR/followups.md.
@@ -55,8 +59,8 @@ a) **autoplan** — run gstack `autoplan` on it (the rich CEO → Design → Eng
    load ~/.claude/skills/gstack/autoplan/SKILL.md and follow it. Ensure the
    reviewed design lands back in $RUN_DIR/design.md.
 
-b) **Dual-voice design-review convergence** — run `/review` scoped `design`
-   (`.claude/commands/review.md`): a Claude reviewer subagent AND `codex exec`
+b) **Dual-voice design-review convergence** — run `/drive-review` scoped `design`
+   (`/drive-review` — `~/.claude/commands/drive-review.md`): a Claude reviewer subagent AND `codex exec`
    both audit `$RUN_DIR/design.md` for P1s (BLOCKING/MAJOR — e.g. an unbuildable
    interface, a slice dependency cycle, overlapping slice ownership). If either
    flags a P1, the planner subagent revises design.md and you re-run — loop until

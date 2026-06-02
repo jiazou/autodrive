@@ -1,3 +1,7 @@
+---
+description: Autonomous engineering lifecycle — premises → plan (Gate A) → implement → review+codex → verify → ship (Gate B). Drives a task through all stages with two human gates.
+argument-hint: <task to drive>
+---
 You are `/drive` — the autonomous lifecycle coordinator. Advance stages
 autonomously; pause only at the gates and non-decision STOPs. You own the **run
 model** and **worktree lifecycle**: operate on git **refs + worktrees**, NEVER
@@ -16,7 +20,8 @@ Argument: `$ARGUMENTS` is the task (the premise).
 ## Decision policy (every stage)
 
 Apply autoplan's 6 Decision Principles + Mechanical/Taste/User-Challenge
-classification (see CLAUDE.md). Log decisions to `$RUN_DIR/decisions.md` (promoted
+classification (see the harness `CLAUDE.md`; autoplan also carries the canonical 6).
+Log decisions to `$RUN_DIR/decisions.md` (promoted
 to the repo `.harness/decisions.md` at ship).
 
 **Non-decision STOPs** (red/flaky tests, merge conflict, implement BLOCKED, review
@@ -37,7 +42,7 @@ verdict / merge / gate.
   continue each slice from its `step`.
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
-  initialize and write `$RUN_DIR/state.json`:
+  initialize and write `$RUN_DIR/state.json` in this shape:
 
 ```json
 { "runId": "<id>", "task": "<task>", "stage": "premises",
@@ -48,17 +53,47 @@ verdict / merge / gate.
   "designPath": "$RUN_DIR/design.md" }
 ```
 
+**Build it JSON-safely — never string-substitute `<task>` into the template.** The
+task is arbitrary user text (it can contain `"`, `\`, or newlines) and naive
+interpolation corrupts the file. Construct it with a JSON tool, e.g.
+`jq -n --arg task "$TASK" --arg id "$RUNID" … '{runId:$id, task:$task, …}'`, and the
+same for every later write. Apply the same rule anywhere run text is embedded in
+JSON (event-log lines, etc.).
+
 Update `state.json` after every transition. Increment `budget.calls` on each
 subagent/codex dispatch; if `ceilingCalls`/`ceilingMin` is set and exceeded → STOP
 with a spend summary (budget circuit-breaker).
 
 ## Pipeline
 
-### Stage 0 — Premises
-If the task is ambiguous about WHAT problem to solve, pause and ask. → `stage = plan`
+### Stage 0 — Premises & session goal
+1. **Premises:** if the task is ambiguous about WHAT problem to solve, pause and ask.
+2. **Set the session goal** (do this once, at the start of the run — the session is
+   fresh and the user is present). `/drive` is autonomous across many turns, and
+   Claude Code's native **`/goal`** keeps a session driving turn-to-turn instead of
+   stopping mid-pipeline (after each turn a fast model checks the condition; if unmet,
+   it continues). It **cannot be set programmatically** — only the user can type it —
+   so derive a tailored completion condition from the (now-resolved) task and present
+   the exact line for them to paste, then **continue regardless** (never block the
+   pipeline waiting for them to set it). Bind `<task>` = the resolved premise (`$ARGUMENTS`).
+   Present:
+
+   > Set the session goal so this run drives autonomously through the stages and only
+   > rests when it needs you — paste this:
+   >
+   > ```
+   > /goal The /drive run for "<task>" has opened its PR (Gate B passed, stage=done), OR is paused awaiting my input at Gate A, Gate B, a non-decision STOP, or an AskUserQuestion. Treat the goal as NOT met while autonomous plan/implement/review/ship work remains and nothing is awaiting my decision.
+   > ```
+
+   This complements the gates rather than overriding them: `/goal` continues the
+   autonomous stages, while Gate A / Gate B / STOPs still pause for you (an
+   AskUserQuestion blocks the turn regardless of any goal). The user may skip it;
+   if so, `/drive` still advances — it just won't auto-continue across turns.
+
+   → `stage = plan`
 
 ### Stage 1 — Plan (gstack brain)
-Run the PLAN stage (`.claude/commands/plan.md`): planner authors
+Run the PLAN stage (`/drive-plan` — `~/.claude/commands/drive-plan.md`): planner authors
 `$RUN_DIR/design.md` **with a `## Phases & Slices` breakdown**, autoplan reviews it,
 then the dual-voice **design-review** primitive converges it (no open P1). **Gate A**
 = autoplan approved AND design converged — the one human gate here. If no
@@ -75,7 +110,7 @@ For each PHASE in order:
    Slices with **disjoint `owns`** run in PARALLEL; create a worktree per slice
    `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>`, copy
    the declared gitignored config allowlist (`.env`, …) in, and dispatch IMPLEMENT
-   (`.claude/commands/implement.md`) with cwd = that worktree (`step=implementing`).
+   (`/drive-implement` — `~/.claude/commands/drive-implement.md`) with cwd = that worktree (`step=implementing`).
    Overlapping-`owns` ready slices are NOT parallelized — run by dep order; if the
    design left them unsequenced, STOP (planning bug). Excess past the cap queue.
 3. **Per-slice loop:** when a slice's IMPLEMENT returns:
@@ -111,7 +146,7 @@ If the change touches a UI/URL (auto-detect), run gstack `qa-only` / `browse` on
 → `stage = ship`
 
 ### Stage 5 — Ship (once)
-Run the SHIP stage (`.claude/commands/ship.md`) on `featureBranch`: promote
+Run the SHIP stage (`/drive-ship` — `~/.claude/commands/drive-ship.md`) on `featureBranch`: promote
 `$RUN_DIR/decisions.md`+`followups.md` into the repo ledgers, run the full suite
 (red → retry once → STOP), build the **single** commit + PR, **Gate B** (approve
 diff), then push/open PR. → `lastGate = "B"`, `stage = done`

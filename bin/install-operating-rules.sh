@@ -2,8 +2,9 @@
 # Turnkey: point this machine's global ~/CLAUDE.md at this repo's canonical
 # OPERATING.md, so every Claude session on this machine uses the same rules.
 # The path is computed from where THIS repo lives — no manual editing needed.
-# (The /drive pipeline is NOT imported globally; it stays opt-in, active only
-#  when you work inside this repo.)
+# Also registers the /drive pipeline commands globally (symlinked into
+# ~/.claude/commands/) so /drive — and its stage runners — are discoverable from
+# any directory, not only inside this repo.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -49,6 +50,28 @@ if [ -d "$SKILLS_SRC" ]; then
   done
 fi
 
+# Register the /drive pipeline commands globally (symlink into ~/.claude/commands/)
+# so /drive and its stage runners (/plan /implement /review /ship) are discoverable
+# from any directory. Claude Code finds project commands only by walking UP from the
+# launch dir to the repo root — never down into a subdirectory — so without this the
+# commands are invisible unless you launch claude inside this repo.
+CMDS_SRC="$REPO_DIR/.claude/commands"
+CMDS_DST="$HOME/.claude/commands"
+if [ -d "$CMDS_SRC" ]; then
+  mkdir -p "$CMDS_DST"
+  BKC="$HOME/.claude/command-backups"   # OUTSIDE commands/, so a backup is never re-registered
+  for c in "$CMDS_SRC"/*.md; do
+    [ -e "$c" ] || continue
+    name="$(basename "$c")"; target="$CMDS_DST/$name"
+    if [ -e "$target" ] && [ ! -L "$target" ]; then
+      mkdir -p "$BKC"; mv "$target" "$BKC/$name.$(date +%Y%m%d-%H%M%S)"
+      echo "Backed up existing command: $name -> $BKC"
+    fi
+    ln -sfn "$c" "$target"
+    echo "Linked command: /${name%.md} -> repo"
+  done
+fi
+
 echo
-echo "Operating rules + bundled skills are active machine-wide."
+echo "Operating rules + bundled skills + /drive commands are active machine-wide."
 echo "To run the /drive pipeline you also need gstack + codex — see README 'Setup'."
