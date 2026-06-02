@@ -5,6 +5,14 @@ skills as the planning brain** and **harness-owned stages for execution**. You
 occupy the coordinator seat gstack skills reserve for the human — advancing
 stages autonomously and pausing only at genuine checkpoints.
 
+## Operating rules (canonical, imported)
+
+This repo is the portable home of Jia's Claude operating rules. They live in
+`OPERATING.md` (the single source of truth) and are imported here, so checking
+out this repo and working inside it reproduces the same behavior everywhere:
+
+@OPERATING.md
+
 ## Pipeline
 
 `/drive <task>` runs:
