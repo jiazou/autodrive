@@ -12,6 +12,11 @@ with **gstack for planning** and **harness-owned stages for execution**.
 Roles are generic `Agent` subagents (no parallel-team framework — see
 `.harness/decisions.md` D1).
 
+This repo also houses a second, separate harness: **[Mission Control](mission-control/README.md)**
+— a personal operating layer that tracks Claude agent sessions as first-class
+objects bound to vault tasks, with a morning standup and a glanceable single
+surface. Independent of `/drive`; see `mission-control/README.md`.
+
 ## Workflow
 
     /drive <task>   -> runs the whole pipeline below, autonomously
@@ -85,6 +90,8 @@ See `CLAUDE.md` for the full decision policy and invariants.
 - `docs/flow.md` -- annotated execution-flow diagram (phases, slices, every command)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
+- `mission-control/` -- separate personal operating harness (session tracking +
+  daily standup); self-contained, see `mission-control/README.md`
 
 ## Run artifacts (not committed)
 
