@@ -18,11 +18,17 @@ out this repo and working inside it reproduces the same behavior everywhere:
 `/drive <task>` runs:
 
 ```
-PLAN (gstack brain)                     EXECUTE (harness-owned)
-0. Premises (human; never auto-decided) 2. /implement  subagent, STATUS contract
-1. /plan: planner authors rough design  3. /review     reviewer + codex CLI direct
-   → autoplan reviews it → Gate A        4. verify      qa-only / browse (optional)
-                                         5. /ship       thin stage → Gate B → push
+PLAN (gstack brain)
+0. Premises (human; never auto-decided)
+1. /plan: planner authors design + a ## Phases & Slices breakdown
+   → autoplan reviews → dual-voice design review converges (no P1) → Gate A
+
+EXECUTE (harness-owned) — for each PHASE in order:
+2. /implement per slice — independent slices run in PARALLEL (file-ownership scoped)
+3. /review per slice — Claude subagent + codex; converged = no P1; cap 8
+   then a phase-integration /review over the assembled phase
+4. verify — qa-only / browse (optional), after all phases converge
+5. /ship ONCE → Gate B → push
 ```
 
 The stage commands (`/plan`, `/implement`, `/review`, `/ship`) are single-sourced
@@ -40,9 +46,10 @@ gstack skills split into two classes:
   **owns** implement / review / ship directly (calling the codex CLI, git, and
   the test runner).
 
-The implementer/reviewer/planner roles are generic `Agent` subagents — a
-sequential single-coordinator pipeline, not a parallel-team framework (rationale:
-`.harness/decisions.md` D1).
+The implementer/reviewer/planner roles are generic `Agent` subagents:
+**sequential phases**, with **independent slices fanned out in parallel** via file
+ownership — no parallel-team framework needed (rationale: `.harness/decisions.md`
+D1).
 
 ## Decision policy (the coordinator's brain)
 
@@ -79,8 +86,13 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
 - Pass file **paths** between subagents, not file contents.
 - Never include the implementer's notes/rationale in the reviewer's prompt — the
   reviewer judges the code against the spec on its own merits.
-- Cap the implement→review loop at **8** rounds. Beyond that, surface the
-  disagreement with a summary of what each side asserts.
+- **Every review — the design review and every code review — runs both a Claude
+  reviewer subagent AND codex.** A review is **converged** only when neither voice
+  has an open **P1** (BLOCKING or MAJOR); P2/P3 are logged, not blocking.
+- Each slice/phase implement→review loop caps at **8** rounds (own `reviewCount`).
+  Beyond that, surface the disagreement with what each side asserts.
+- **File ownership is the parallelism contract:** independent slices own disjoint
+  files and run in parallel; a slice never writes outside its owned files.
 - Run codex from the **main** context (background + log file), never inside a
   subagent that waits on it.
 

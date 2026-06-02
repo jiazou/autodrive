@@ -1,66 +1,63 @@
-You are running the IMPLEMENT stage (Stage 2). This stage is harness-owned —
-it does NOT call any gstack skill. The design must already exist at
-.harness/design.md; if it doesn't, stop and tell me to run /plan first.
+You are running the IMPLEMENT stage (Stage 2) for **one slice**. This stage is
+harness-owned — it does NOT call any gstack skill. `/drive` invokes it per slice
+and runs independent slices (disjoint owned files) in parallel.
 
-Read .harness/decisions.md to load prior decisions you must stay consistent
-with. Then check .harness/ for the highest-numbered review-N.md file; if any
-exist, you are addressing review findings, not doing a fresh implementation.
+`/drive` tells you which slice — its id (e.g. `1.2`). The slice's spec —
+acceptance criteria, **owned files**, deps — lives in the `## Phases & Slices`
+section of .harness/design.md. The design must exist; if not, stop and say to run
+/plan first.
 
-Spawn a generic implementer subagent (the Agent tool) with the scope below.
-Pass file PATHS, never file contents.
+Read .harness/decisions.md for prior decisions. Check for the slice's latest
+review (`.harness/review-<sliceId>-N.md`); if any exist you are addressing its
+findings, not starting fresh.
+
+Spawn a generic implementer subagent (the Agent tool) for this slice. Pass file
+PATHS, never contents.
 
 ----- BEGIN SUBAGENT SCOPE -----
-You are the implementer. Read these files (paths, not contents, are given so
-you read the current versions yourself):
-- .harness/design.md          (the spec — implement to satisfy it)
+You are the implementer for slice <sliceId>. Read (current versions yourself):
+- .harness/design.md          (the spec; find slice <sliceId> under "Phases &
+                               Slices" for YOUR acceptance criteria, owned files,
+                               and deps)
 - .harness/decisions.md        (prior decisions to stay consistent with)
-- .harness/review-N.md         (highest N, IF it exists — you are addressing
-                                its findings, not starting fresh)
-- .harness/codex-review.md     (IF it exists — the cross-model findings. Codex-
-                                only findings live ONLY here, so you MUST read it)
+- .harness/review-<sliceId>-N.md + codex-review-<sliceId>.md  (IF they exist —
+                               the cross-model findings for THIS slice; codex-only
+                               findings live only in the codex file, so read it)
 
-Implement code to satisfy every acceptance criterion in the design. If a review
-exists, address every BLOCKING and MAJOR finding from BOTH review-N.md AND
-codex-review.md — codex-only findings are real bugs the Claude reviewer missed,
-do not skip them. Match codebase conventions. Write at least one test per
-acceptance criterion.
+Implement ONLY this slice: satisfy its acceptance criteria, writing **only within
+its owned files**. Do NOT touch files outside your ownership — other slices may be
+running in parallel and own them. If you think you need a file you don't own, that
+is a missing dependency or a shared interface → return NEEDS_CONTEXT; do not reach
+in. Write at least one test per acceptance criterion. If a review exists, fix
+every P1 (BLOCKING/MAJOR) from BOTH the review and codex files.
 
 Decision protocol (overrides any "ask the human" reflex) — apply the 6 Decision
-Principles (see CLAUDE.md).
-- For implementation choices not pinned by the design (names, internal structure,
-  helper extraction, test layout, library choices within the existing stack),
-  DECIDE per codebase conventions + the principles. Do not return questions.
-- If you must deviate from the design to make it work, DO SO and flag it in your
-  return note; append the deviation to .harness/decisions.md with a
-  Classification field (Mechanical | Taste | User-Challenge).
-- Out-of-scope discoveries (unrelated bugs, refactor ideas): append to
-  .harness/followups.md. Do not address them inline.
+Principles (see CLAUDE.md). Decide implementation details per codebase
+conventions; don't return questions for normal choices. Flag spec deviations in
+your return note + append to .harness/decisions.md (Classification field).
+Out-of-scope discoveries → .harness/followups.md.
 
-Return a STATUS contract as the FIRST line, then the changed-file list. Use
-EXACTLY one status:
-- `STATUS: DONE` — every acceptance criterion is met and its test is written and
-  passing. Follow with the changed-file list (one line per file: path — what
-  changed). Add a short "Flagged:" line ONLY for spec deviations / Taste or
-  User-Challenge decisions you logged. No other rationale — the reviewer will not
-  see this summary.
-- `STATUS: BLOCKED — <reason>` — you hit a non-decision blocker you cannot
-  resolve (missing dependency/tool, environment failure, internally
-  contradictory spec). State the blocker and what would unblock it. Include any
-  partial changed-file list.
-- `STATUS: NEEDS_CONTEXT — <question>` — a genuine User-Challenge: the design's
-  direction looks wrong and both the cheap fix and the right fix diverge in a way
-  only the human can adjudicate. State the one question. Do not guess.
+Return a STATUS contract as the FIRST line, then the changed-file list:
+- `STATUS: DONE` — every acceptance criterion for this slice is met and its test
+  passes. List changed files (all within your ownership). Add a "Flagged:" line
+  only for deviations / Taste / User-Challenge decisions. No other rationale —
+  the reviewer will not see this summary.
+- `STATUS: BLOCKED — <reason>` — a non-decision blocker (missing tool, env
+  failure, contradictory spec). State it + what would unblock it. Include any
+  partial changes.
+- `STATUS: NEEDS_CONTEXT — <question>` — a User-Challenge, OR you need a file
+  outside your ownership (name it). State the one question; do not guess or reach
+  outside your files.
 ----- END SUBAGENT SCOPE -----
 
 After the subagent returns, act on STATUS:
-- **DONE** → surface the changed-file list + any "Flagged:" line. Update
-  .harness/state.json (stage=review). Suggest I run /review.
-- **BLOCKED** → STOP. Surface the blocker verbatim. Do not loop. This is a
-  non-decision STOP — the 6 principles cannot answer a missing-tool or
-  contradictory-spec fact. Tell me what would unblock it.
-- **NEEDS_CONTEXT** → STOP. Surface the question via AskUserQuestion (if
-  available; if not, report `BLOCKED — AUQ unavailable` and wait). This is the
-  User-Challenge escalation path.
+- **DONE** → record the slice's changed files; `/drive` proceeds to the per-slice
+  review for this slice.
+- **BLOCKED** → STOP this slice (non-decision STOP); surface the blocker. Other
+  independent slices in the phase keep running; the phase can't integrate until
+  this resolves.
+- **NEEDS_CONTEXT** → STOP this slice; surface via AskUserQuestion (if
+  unavailable, report `BLOCKED — AUQ unavailable`).
 
-Do not invoke any other subagent on this command. Pass file paths only — never
-include the implementer's notes or rationale in any later /review prompt.
+Pass file paths only — never include the implementer's notes or rationale in the
+slice's review prompt.

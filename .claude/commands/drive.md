@@ -46,9 +46,13 @@ review evidence, or counts. (`decisions.md` and `followups.md` are append-only
 cross-task ledgers — never cleared.) Then initialize and write:
 
 ```json
-{ "task": "<task>", "stage": "premises", "reviewCount": 0,
+{ "task": "<task>", "stage": "premises", "phase": 1,
+  "slices": {}, "phaseReview": {},
   "codexVerdict": null, "lastGate": null, "designPath": ".harness/design.md" }
 ```
+
+(`slices` maps `<id>` → `{status, reviewCount}`; `phaseReview` maps `<P>` →
+`pending|converged`. Both are populated once the plan's breakdown is parsed.)
 
 On a RESUME (same task), keep existing artifacts. Update `state.json` after every
 stage transition.
@@ -60,38 +64,52 @@ The task is the premise. If it is ambiguous about WHAT problem to solve, pause
 and ask (never auto-decided). Otherwise continue. → `stage = plan`
 
 ### Stage 1 — Plan (gstack brain)
-Execute the PLAN stage as defined in `.claude/commands/plan.md` (a planner
-subagent authors a rough design, then gstack `autoplan` reviews it).
-**Gate A is autoplan's own terminal approval gate** — consume its APPROVED
-signal; do NOT add a second gate. If no approved design is produced, STOP.
-→ `lastGate = "A"`, `stage = implement`
+Execute the PLAN stage (`.claude/commands/plan.md`): a planner authors a rough
+design **with a `## Phases & Slices` breakdown**, gstack `autoplan` reviews it,
+then the dual-voice review primitive converges the design (Claude subagent +
+codex, no open P1). **Gate A** = autoplan approved AND design converged — the one
+human gate here; consume its APPROVED signal, don't add a second. If no
+approved/converged design, STOP. → `lastGate = "A"`, `stage = execute`
 
-### Stage 2 — Implement
-Execute the IMPLEMENT stage (`.claude/commands/implement.md`).
-- `STATUS: DONE` → continue. → `stage = review`
-- `STATUS: BLOCKED` / `NEEDS_CONTEXT` → STOP per that stage's rules.
+Parse the `## Phases & Slices` breakdown into `state.slices`
+(`{<id>: {status:"pending", reviewCount:0}}`) and the ordered phase list.
 
-### Stage 3 — Review
-Execute the REVIEW stage (`.claude/commands/review.md`). It writes
-`review-N.md` + `codex-review.md`, increments the authoritative
-`state.reviewCount`, and returns a verdict. Read `state.reviewCount` for the cap
-(do not count files):
-- **FINDINGS** (BLOCKING/MAJOR from either the reviewer or codex):
-  - if `reviewCount < 8` → `stage = implement`, loop to Stage 2 to address them.
-  - if `reviewCount >= 8` → STOP (non-convergence); summarize what each side
-    asserts.
-- **CLEAN** → continue. → `stage = verify`
+### Stage 2–4 — Execute (per phase, per slice)
+Walk the phases **in order** (each builds on the prior). Within each phase:
 
-### Stage 4 — Verify (optional)
-Auto-detect whether the change touches a UI/URL (web app, server, or URL in the
-diff/task). If so, run gstack `qa-only` (report-only) or `browse` for evidence
-and write the summary to `.harness/verify.md`. Report-only — never mutates, so it
-cannot fight the loop. Honor opt-out if the task says "no qa". → `stage = ship`
+1. **Dispatch slices.** Take the phase's slices whose `deps` are all CONVERGED.
+   Among those, slices with **disjoint `owns` files** run **in parallel** — spawn
+   one IMPLEMENT (`.claude/commands/implement.md`) per slice, passing its id.
+   Slices with unmet deps wait. (If two ready slices declare overlapping `owns`,
+   do NOT parallelize — run by dep order; if the design left them unsequenced,
+   that's a planning bug → STOP and surface.)
 
-### Stage 5 — Ship
-Execute the SHIP stage (`.claude/commands/ship.md`): it checks preconditions,
-runs tests (red → STOP), builds the commit + PR text, then **Gate B** (approve
-the diff before anything is pushed). On approval it commits/pushes/opens the PR.
+2. **Per-slice loop.** After a slice's IMPLEMENT returns:
+   - `DONE` → run REVIEW scoped `slice <id>` (`.claude/commands/review.md`).
+     - **CONVERGED** → mark the slice CONVERGED.
+     - **FINDINGS** → if that slice's `reviewCount < 8`, re-run IMPLEMENT for the
+       slice (it fixes the P1s from both voices) then REVIEW again; if `>= 8` →
+       STOP (slice not converging), summarize.
+   - `BLOCKED` / `NEEDS_CONTEXT` → STOP that slice and surface; other parallel
+     slices keep going; the phase can't integrate until it resolves.
+
+3. **Phase-integration review.** Once every slice in the phase is CONVERGED, run
+   REVIEW scoped `phase <P>` over the assembled phase diff.
+   - **CONVERGED** → `phaseReview[<P>] = converged`; advance to the next phase.
+   - **FINDINGS** → route each P1 back to the responsible slice (set it FINDINGS,
+     loop its IMPLEMENT→REVIEW, same cap-8), then re-integrate.
+
+When **all phases** are `converged` → `stage = verify`.
+
+### Stage 4b — Verify (optional)
+Auto-detect whether the change touches a UI/URL. If so, run gstack `qa-only`
+(report-only) or `browse`; write the summary to `.harness/verify.md`.
+Report-only — never mutates. Honor opt-out ("no qa"). → `stage = ship`
+
+### Stage 5 — Ship (once, for the whole feature)
+Execute the SHIP stage (`.claude/commands/ship.md`): preconditions, run tests
+(red → STOP), build the **single** commit + PR for all phases, then **Gate B**
+(approve the diff before any push). On approval, commit/push/open the PR.
 → `lastGate = "B"`, `stage = done`
 
 ## Completion

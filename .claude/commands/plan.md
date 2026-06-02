@@ -23,6 +23,14 @@ Steps:
    - Data flow
    - Edge cases and failure modes (at least 5, with intended behavior)
    - Acceptance criteria (numbered, testable)
+   - **Phases & Slices** — break the work into ordered phases (each builds on the
+     last); within each phase, slices that are independent units. For each slice
+     give `acceptance:` (which criteria it satisfies), `owns:` (the files/dirs it
+     will write — slices intended to run in parallel MUST own DISJOINT files),
+     and `deps:` (other slice ids it needs first). Format:
+         ### Phase 1: <name>
+         - Slice 1.1 <name> — acceptance: <criteria>; owns: <files>; deps: none
+         - Slice 1.2 <name> — acceptance: ...; owns: <disjoint files>; deps: 1.1
    - Decisions (choices made autonomously)
    - Out of scope
    - Open questions (zero to two — genuine close calls only)
@@ -37,25 +45,36 @@ field. Reserve "Open questions" for genuine close calls. Out-of-scope discoverie
 Task: $ARGUMENTS
 ----- END SUBAGENT SCOPE -----
 
-## Step 2 — Review the rough design (gstack autoplan)
+## Step 2 — Review the rough design (autoplan, then dual-voice convergence)
 
-Once .harness/design.md exists, run gstack `autoplan` on it. autoplan runs the
-CEO → Design → Eng → DX reviews at full depth, auto-deciding intermediate
-questions with the 6 principles, and ends at its OWN final approval gate.
+Once .harness/design.md exists:
 
-- Invoke it as the gstack skill (so its runtime semantics apply): run `/autoplan`
-  pointed at .harness/design.md, or load
-  ~/.claude/skills/gstack/autoplan/SKILL.md and follow it on that file.
-- **Gate A is autoplan's terminal approval gate.** Do NOT add a second gate of
-  your own. Surface what autoplan surfaces (taste decisions, User-Challenges).
-- autoplan writes the reviewed plan back; ensure the final reviewed design lands
-  in .harness/design.md (copy it there if autoplan wrote elsewhere).
+a) **autoplan** — run gstack `autoplan` on it (the rich CEO → Design → Eng → DX
+   review, auto-deciding via the 6 principles). Invoke it as the gstack skill so
+   its runtime semantics apply: run `/autoplan` pointed at .harness/design.md, or
+   load ~/.claude/skills/gstack/autoplan/SKILL.md and follow it. Ensure the
+   reviewed design lands back in .harness/design.md.
+
+b) **Dual-voice design-review convergence** — run the review primitive (see
+   review.md / the design.md "Review primitive" section) on .harness/design.md:
+   a Claude reviewer subagent AND `codex exec` both audit the design for P1s
+   (BLOCKING/MAJOR — e.g. an unbuildable interface, a slice dependency cycle,
+   overlapping slice ownership). If either flags a P1, the planner subagent
+   revises design.md and you re-run the primitive — loop until **converged**
+   (neither voice has an open P1), capped at 8 rounds.
+
+## Gate A (the single human checkpoint for direction)
+
+Once autoplan has approved AND the design review has converged, present **Gate A**
+to me: the direction plus any Taste / User-Challenge items autoplan or the
+reviewers surfaced. The dual-voice convergence is automated — Gate A is still the
+only human gate here; wait for my approval.
 
 ## After this stage
 
-- If autoplan's gate returns APPROVED → update .harness/state.json
-  (stage=implement, lastGate="A") and suggest /implement.
-- If autoplan produced no approved design (cancelled/rejected) → STOP and report
-  what is missing.
+- Approved → update .harness/state.json (`stage=implement`, `lastGate="A"`) and
+  begin the execute half (per-phase, per-slice — see drive.md).
+- No approved/converged design (cancelled, or can't converge in 8 rounds) → STOP
+  and report what's missing.
 
 Do not begin implementation on this command.

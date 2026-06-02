@@ -151,3 +151,13 @@ task and stage to maintain consistency.
 **Reasoning:** Simple, matches observed reality with buffer; still flags a true runaway at 9+. Updated all references; de-magic-numbered the incidental review.md mention to prevent future drift.
 **Reversibility:** easy
 **Classification:** Taste (tuning)
+
+### 2026-06-02 -- D13: Phase/slice execution + uniform dual-voice review primitive
+**Stage:** implement (PR-review extension)
+**Task:** /drive phase-awareness
+**Question:** How should /drive handle designs broken into phases/slices, and the requirement that every review use Claude + codex and converge on no-P1?
+**Options considered:** captured via two AskUserQuestion answers — extend PR #1 now; parallel independent slices + per-slice review; single ship at end; no phase-boundary checkpoints; P1 = BLOCKING + MAJOR
+**Chosen:** (1) Plan emits a `## Phases & Slices` breakdown. (2) Execute = outer phase loop (sequential) + inner slice loop, with independent slices (disjoint file ownership) run in PARALLEL. (3) Review primitive = a Claude reviewer subagent + codex, **converged when neither flags a P1 (BLOCKING/MAJOR)**, applied to the design review AND every code review (per-slice + phase-integration). (4) Single ship after all phases converge; per-loop reviewCount; slice-boundary resume.
+**Reasoning:** Matches how real implementation decomposes; makes dual-voice / no-P1 a first-class invariant. Slices are the natural home for the parallel-execution idea deferred in D6 — done with plain subagents, no wshobson.
+**Reversibility:** medium
+**Classification:** User-Challenge (ratified via two AUQ answers 2026-06-02)

@@ -8,10 +8,10 @@ before anything leaves the machine. This is the second and final human gate
 1. Gate A passed: `.harness/state.json` has `lastGate == "A"` (the plan was
    approved). Do NOT infer this from a `review-*.md` file merely existing.
 2. Implementation changes are on disk (the working tree / branch has the diff).
-3. Review verdict is CLEAN: `state.codexVerdict == "CLEAN"` — this is the
-   authoritative combined (reviewer + codex) verdict written by the review stage.
-   Gate on it alone; do NOT re-parse `review-N.md`. (`review-N.md` and
-   `codex-review.md` are the human-readable detail behind the verdict.)
+3. All phases converged: every entry in `state.phaseReview` is `converged` (each
+   phase passed its dual-voice integration review — neither voice has an open P1),
+   and no slice is left non-CONVERGED in `state.slices`. Gate on this state; do
+   NOT re-parse the per-scope review files (they're the human-readable detail).
 4. Ship tooling present: a git remote, `gh` (or `glab`) on PATH, `jq`, a
    clean-enough tree, a known base branch, and a runnable test runner.
 
