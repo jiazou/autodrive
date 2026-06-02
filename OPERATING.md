@@ -60,7 +60,7 @@ When a skill produces a bad result or could work better, update the skill file w
 I run structured pipelines on some projects, not all — don't force ceremony on a project that hasn't opted in. A project opts in when its own `CLAUDE.md`, `.claude/commands/`, or a `.harness/` directory defines a pipeline; when one is present, follow it, otherwise work directly. Match the rigor to the stakes: quick fixes and mechanical edits don't need a pipeline.
 
 Two pipelines are available:
-- **gstack review pipeline** — `/plan-ceo-review` → `/plan-eng-review` → implement → `/review` (+ `/browse` for UI) → `/ship`. For product/feature work where scope and architecture deserve sign-off. Full steps: `~/.claude/workflows/gstack-pipeline.md`.
+- **gstack review pipeline** — `/plan-ceo-review` → `/plan-eng-review` → implement → `/review` (+ `/browse` for UI) → `/ship`. For product/feature work where scope and architecture deserve sign-off. Full steps: this repo's `workflows/gstack-pipeline.md`.
 - **claude-harness autonomous pipeline** — `/drive` (premises → plan/autoplan [Gate A] → implement → review+codex → verify → ship [Gate B]), with the 6 Decision Principles as the autonomous decision policy. Defined by this repo's own `CLAUDE.md` and `.claude/commands/`.
 
 ## Code Style & Rules

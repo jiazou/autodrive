@@ -29,6 +29,26 @@ Two human gates: **Gate A** (approve direction, = autoplan's terminal gate) and
 **Gate B** (approve diff before push). Plus dynamic Taste/User-Challenge
 surfacing. Everything else is auto-decided and logged.
 
+## Portable config — reproduce this Claude on a new machine
+
+This repo is the canonical home of the operating rules (`OPERATING.md`). To make a
+fresh machine behave the same:
+
+1. Clone the repo:
+
+       git clone https://github.com/jiazou/claude-harness ~/workspace/claude-harness
+
+2. Point your global `~/CLAUDE.md` at the rules — one command, path auto-detected:
+
+       ~/workspace/claude-harness/bin/install-operating-rules.sh
+
+   It backs up any existing `~/CLAUDE.md`, then writes an `@import` of this repo's
+   `OPERATING.md`. Operating rules now apply machine-wide; the `/drive` pipeline
+   stays opt-in (active only inside this repo). Manual alternative: put
+   `@<clone-path>/OPERATING.md` in `~/CLAUDE.md` yourself.
+
+3. Install gstack + codex so `/drive` can run — see Setup below.
+
 ## Setup
 
 1. Install gstack:
@@ -53,9 +73,12 @@ See `CLAUDE.md` for the full decision policy and invariants.
 
 ## Files
 
-- `CLAUDE.md` -- coordinator pipeline, decision policy, invariants
+- `OPERATING.md` -- canonical, portable operating rules (imported by CLAUDE.md + global)
+- `bin/install-operating-rules.sh` -- point a machine's global ~/CLAUDE.md at OPERATING.md
+- `CLAUDE.md` -- imports OPERATING.md, plus the coordinator pipeline + decision policy
 - `.claude/commands/drive.md` -- the autonomous lifecycle orchestrator
 - `.claude/commands/{plan,implement,review,ship}.md` -- single-sourced stage runners
+- `workflows/gstack-pipeline.md` -- the opt-in gstack review pipeline (alternative to /drive)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
 
