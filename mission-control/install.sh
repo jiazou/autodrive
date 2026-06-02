@@ -35,9 +35,12 @@ sed "s#__HOME__#$HOME#g" "$MC/launchd/com.jiazou.missioncontrol.morning.plist" >
 launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 
-# 5. SwiftBar menu bar
+# 5. SwiftBar menu bar (point at the plugin dir + make sure it's actually running)
 chmod +x "$DATA/swiftbar-plugins/"*.sh
 defaults write com.ameba.SwiftBar PluginDirectory "$DATA/swiftbar-plugins" 2>/dev/null || true
+if [ -d "/Applications/SwiftBar.app" ]; then
+  open -a SwiftBar 2>/dev/null || true   # idempotent: launches if down, no-op if up
+fi
 
 # 6. passive-capture hooks (idempotent merge into settings.json)
 python3 "$DATA/bin/install_hooks.py" "$DATA"
