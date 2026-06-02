@@ -42,7 +42,7 @@ verdict / merge / gate.
   continue each slice from its `step`.
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
-  initialize and write `$RUN_DIR/state.json`:
+  initialize and write `$RUN_DIR/state.json` in this shape:
 
 ```json
 { "runId": "<id>", "task": "<task>", "stage": "premises",
@@ -52,6 +52,13 @@ verdict / merge / gate.
   "slices": {}, "phaseReview": {}, "lastGate": null,
   "designPath": "$RUN_DIR/design.md" }
 ```
+
+**Build it JSON-safely — never string-substitute `<task>` into the template.** The
+task is arbitrary user text (it can contain `"`, `\`, or newlines) and naive
+interpolation corrupts the file. Construct it with a JSON tool, e.g.
+`jq -n --arg task "$TASK" --arg id "$RUNID" … '{runId:$id, task:$task, …}'`, and the
+same for every later write. Apply the same rule anywhere run text is embedded in
+JSON (event-log lines, etc.).
 
 Update `state.json` after every transition. Increment `budget.calls` on each
 subagent/codex dispatch; if `ceilingCalls`/`ceilingMin` is set and exceeded → STOP
