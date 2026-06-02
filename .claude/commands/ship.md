@@ -1,24 +1,52 @@
-You are completing the engineering task. This is the second and final
-human checkpoint.
+You are running the SHIP stage (Stage 5) — a harness-owned thin stage. It does
+NOT call gstack `/ship` (which auto-pushes); we keep an explicit human gate
+before anything leaves the machine. This is the second and final human gate
+(Gate B).
 
-Verify all of these:
-1. .harness/design.md exists and was approved (look for my approval in the
-   session, or the existence of any .harness/review-*.md as evidence
-   implementation already proceeded)
-2. Implementation changes are on disk
-3. At least one .harness/review-N.md exists with verdict CLEAN
-4. .harness/codex-review.md exists with verdict AGREES_CLEAN
-5. Tests pass (run them now if not already run since the last change)
+## Preconditions (check first; non-decision STOPs)
 
-If any check fails, STOP and tell me which one and what to do.
+1. Gate A passed: `.harness/state.json` has `lastGate == "A"` (the plan was
+   approved). Do NOT infer this from a `review-*.md` file merely existing.
+2. Implementation changes are on disk (the working tree / branch has the diff).
+3. Review verdict is CLEAN: `state.codexVerdict == "CLEAN"` — this is the
+   authoritative combined (reviewer + codex) verdict written by the review stage.
+   Gate on it alone; do NOT re-parse `review-N.md`. (`review-N.md` and
+   `codex-review.md` are the human-readable detail behind the verdict.)
+4. Ship tooling present: a git remote, `gh` (or `glab`) on PATH, `jq`, a
+   clean-enough tree, a known base branch, and a runnable test runner.
 
-If all pass:
-- Read .harness/decisions.md and surface a one-line summary of every
-  decision made autonomously during this task
-- Read .harness/followups.md and surface anything added during this task
-- Propose a commit message and PR description based on the design and the
-  changes
-- Do NOT actually open the PR or push -- that's my call
-- Wait for my approval to proceed
+If any precondition fails, STOP and say which one and what to do. These are
+facts, not decisions — do not auto-decide past them.
 
-After my approval, run the actual git commit and PR creation.
+## Run tests
+
+Run the test suite now (per the project's runner). **If tests are red → STOP.**
+Broken tests are a human-fix blocker, not a decision the 6 principles can answer.
+Report the failures. Do not proceed.
+
+## Build the PR (no push yet)
+
+If tests pass:
+- Read `.harness/decisions.md` → surface a one-line summary of every decision
+  whose **Task:** matches this run, with its Classification. (decisions.md is an
+  append-only cross-task ledger — filter by the Task field; never clear it.)
+- Read `.harness/followups.md` → surface entries added for this task.
+- Propose a commit message and PR description derived from `design.md` + the diff.
+- If not already on a feature branch, create one (never commit straight to the
+  default branch).
+
+## Gate B — approval before push
+
+Surface the diff summary + the proposed commit/PR text and WAIT for explicit
+approval. Do NOT push or open the PR until approved.
+
+End commit messages with:
+Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+
+End PR bodies with:
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+## After approval
+
+Commit, push the branch, and open the PR (`gh pr create` / `glab`). Update
+`.harness/state.json` (`lastGate="B"`, `stage="done"`) and report the PR link.

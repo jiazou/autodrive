@@ -1,49 +1,66 @@
 # Claude Harness
 
-Autonomous engineering pipeline for Claude Code. Combines:
+Autonomous engineering pipeline for Claude Code. `/drive` carries a task through
+the full lifecycle, using **gstack skills as the planning brain** and
+**harness-owned stages for execution**, occupying the coordinator seat that
+gstack skills normally reserve for the human.
 
-- wshobson `agent-teams` plugin (team-lead, team-implementer, team-reviewer subagents)
-- gstack `/codex` for cross-model second-opinion review
-- Custom slash commands: `/plan`, `/implement`, `/review`, `/codex`, `/ship`
-- A "decide and document" decision policy that overrides the default "ask the human" reflex
+- gstack `autoplan` + `plan-*-review` — autonomous planning/review brain
+- gstack `codex` — cross-model second opinion (run via the codex CLI directly)
+- Custom slash commands: `/drive`, `/plan`, `/implement`, `/review`, `/ship`
+- autoplan's 6 Decision Principles + Mechanical/Taste/User-Challenge
+  classification as the decision policy — overrides the default "ask the human"
+  reflex, pausing only at genuine checkpoints
+
+Not used: wshobson `agent-teams` (it solves parallelism with file ownership, not
+sequential stage-autonomy). Generic `Agent` subagents fill the roles.
 
 ## Workflow
 
-    /plan <task>   -> team-lead writes .harness/design.md  [PAUSE for approval]
-    /implement     -> team-implementer writes code
-    /review        -> team-reviewer writes .harness/review-N.md (loop up to 2x with /implement)
-    /codex         -> cross-model review                   [PAUSE for approval]
-    /ship          -> final verification + PR prep
+    /drive <task>   -> runs the whole pipeline below, autonomously
+
+    PLAN (gstack brain)                     EXECUTE (harness-owned)
+    0. Premises (human)                     2. /implement  subagent + STATUS contract
+    1. /plan: author rough design           3. /review     reviewer + codex CLI (loop ≤2)
+       -> autoplan reviews -> [Gate A]      4. verify      qa-only / browse (optional)
+                                            5. /ship       thin stage -> [Gate B] -> push
+
+Two human gates: **Gate A** (approve direction, = autoplan's terminal gate) and
+**Gate B** (approve diff before push). Plus dynamic Taste/User-Challenge
+surfacing. Everything else is auto-decided and logged.
 
 ## Setup
 
-1. Install wshobson `agent-teams`:
-
-       gh repo clone wshobson/agents /tmp/wshobson
-       mkdir -p .claude/agents
-       cp /tmp/wshobson/plugins/agent-teams/agents/team-*.md .claude/agents/
-
-2. Install gstack (for `/codex`):
+1. Install gstack:
 
        git clone --single-branch --depth 1 \
          https://github.com/garrytan/gstack.git ~/.claude/skills/gstack \
          && cd ~/.claude/skills/gstack && ./setup
 
-3. Start a session in this directory:
+   (Provides `autoplan`, `plan-*-review`, `qa-only`, `browse`. The codex CLI is
+   used directly by the review stage; install it separately if you want the
+   cross-model pass — it degrades gracefully if absent.)
+
+2. Start a session in this directory:
 
        claude
 
-See `CLAUDE.md` for the full workflow and decision policy.
+3. Run the pipeline:
+
+       /drive <your task>
+
+See `CLAUDE.md` for the full decision policy and invariants.
 
 ## Files
 
-- `CLAUDE.md` -- coordinator workflow, decision policy, invariants
+- `CLAUDE.md` -- coordinator pipeline, decision policy, invariants
+- `.claude/commands/drive.md` -- the autonomous lifecycle orchestrator
+- `.claude/commands/{plan,implement,review,ship}.md` -- single-sourced stage runners
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
-- `.claude/commands/{plan,implement,review,codex,ship}.md` -- slash command wrappers
 
 ## Generated artifacts (gitignored)
 
-`.harness/design.md`, `.harness/implementation/`, `.harness/review-*.md`,
-`.harness/codex-review.md`, `.harness/state.json` are produced per task and
-not committed.
+`.harness/design.md`, `.harness/task.md`, `.harness/review-*.md`,
+`.harness/codex-review.md`, `.harness/codex-raw.log`, `.harness/verify.md`,
+`.harness/state.json` are produced per task and not committed.

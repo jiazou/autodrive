@@ -1,92 +1,96 @@
-# Project: Autonomous Engineering Pipeline
+# Project: Autonomous Engineering Pipeline (`/drive`)
 
-You are the coordinator of an engineering pipeline driven by slash commands
-that wrap the wshobson agent-teams subagents (team-lead, team-implementer,
-team-reviewer, team-debugger) and gstack's /codex cross-model review.
+You coordinate an engineering pipeline driven by `/drive`, which uses **gstack
+skills as the planning brain** and **harness-owned stages for execution**. You
+occupy the coordinator seat gstack skills reserve for the human — advancing
+stages autonomously and pausing only at genuine checkpoints.
 
-## Workflow
+## Pipeline
 
-Four-stage pipeline, each stage driven by a slash command:
+`/drive <task>` runs:
 
-1. /plan <task>        -> invokes team-lead to write the design
-2. /implement          -> invokes team-implementer
-3. /review             -> invokes team-reviewer
-4. /codex              -> cross-model second opinion via gstack
-5. /ship               -> final verification and PR prep
+```
+PLAN (gstack brain)                     EXECUTE (harness-owned)
+0. Premises (human; never auto-decided) 2. /implement  subagent, STATUS contract
+1. /plan: planner authors rough design  3. /review     reviewer + codex CLI direct
+   → autoplan reviews it → Gate A        4. verify      qa-only / browse (optional)
+                                         5. /ship       thin stage → Gate B → push
+```
 
-## Pause-for-human checkpoints (the ONLY ones)
+The stage commands (`/plan`, `/implement`, `/review`, `/ship`) are single-sourced
+runners that `/drive` invokes in order; you can also step them manually within a
+`/drive`-initialized task (starting a NEW task manually means clearing `.harness/`
+first).
 
-Surface to me at exactly two moments. Everywhere else, decide and document.
+## Why this shape
 
-- After /plan, before /implement: I read the design and approve direction.
-- After /codex returns CLEAN, before /ship: I read the diff and approve.
+gstack skills split into two classes:
+- **Advisory** (`plan-*-review`, `autoplan`, `codex`) — gstack's sweet spot;
+  `/drive` drives them autonomously.
+- **Operational / terminal** (gstack `/review`, `/ship`, `/qa`) — fix-first /
+  auto-push / test-fix. They resist passive autonomous wrapping, so the harness
+  **owns** implement / review / ship directly (calling the codex CLI, git, and
+  the test runner).
 
-No other pauses. Not for ambiguous design choices, not for severity calls,
-not for "should I use X or Y" -- see Decision policy below.
+We do **not** use wshobson `agent-teams` — it solves parallelism with file
+ownership, not sequential stage-autonomy. Generic `Agent` subagents fill the
+implementer/reviewer/planner roles.
 
-## Decision policy
+## Decision policy (the coordinator's brain)
 
-When any subagent or command would surface a question for me, follow this
-policy instead.
+Auto-answer intermediate questions with autoplan's **6 Decision Principles**:
+1) completeness, 2) boil-lakes (in blast radius AND < 1 day CC effort),
+3) pragmatic, 4) DRY, 5) explicit-over-clever, 6) bias-to-action.
 
-1. **Default: decide and document.** If you have a recommended answer, take
-   it. Append an entry to .harness/decisions.md with the question, options,
-   choice, and reasoning. Do not pause.
+Classify every decision:
+- **Mechanical** → decide silently; log to `.harness/decisions.md`.
+- **Taste** → decide with a recommendation; log; surface at the next gate.
+- **User-Challenge** → never auto-decide; surface immediately with full context
+  (what you'd do, why, what you might be missing, the cost if wrong).
 
-2. **Escalate only when ALL of these hold:**
-   - The decision is irreversible or expensive to undo (data loss, public
-     API change, security-sensitive defaults, dependency you can't remove,
-     anything that touches production data).
-   - You have no clear recommendation, OR your top two options are roughly
-     equally good AND the choice meaningfully affects downstream work.
-   - The decision is in scope for the current task.
+**Non-decision STOPs** (red tests, merge conflicts, implement BLOCKED, review
+non-convergence) pause regardless — they are facts, not judgments the principles
+can answer.
 
-3. **Out-of-scope discoveries** (bugs unrelated to the task, refactor ideas,
-   suspicious code, dependency upgrades): append to .harness/followups.md.
-   Do not pause for these. Do not address them inline.
+If `AskUserQuestion` is unavailable, report `BLOCKED — AUQ unavailable` rather
+than silently auto-deciding a Taste/Challenge.
 
-4. **When in doubt, lean toward deciding.** I would rather review a
-   documented decision afterward than be interrupted. The cost of you
-   deciding wrong is low (I'll tell you and we revise). The cost of constant
-   interruptions is high.
+## Human checkpoints (the only ones)
 
-5. **Contradictions with prior decisions** in .harness/decisions.md ARE a
-   legitimate escalation. Surface those.
+- **Premises** (Stage 0) — what problem to solve.
+- **Gate A** — autoplan's terminal approval gate (after plan).
+- **Gate B** — approve the diff before push (ship).
+- Plus dynamic surfacing of **Taste** (at gates) and **User-Challenge**
+  (immediately).
 
-## Default opinions (use these unless the task says otherwise)
-
-- Storage: use the existing primary store; do not introduce new dependencies
-- Error handling: fail loud in dev, graceful degradation in prod, log either way
-- API style: match the codebase's existing patterns
-- Testing: unit tests at the function boundary, integration tests at the
-  public API; one test per acceptance criterion minimum
-- Naming: match adjacent code in the same file or module
-- Severity calls: BLOCKING = production incident risk, MAJOR = spec
-  violation or clear bug, MINOR = code quality, NIT = style
-- Performance: correctness first, optimize only if the design specifies it
+No other pauses. Not for ambiguous design choices, not for severity calls — the
+6 principles decide and the decision is logged.
 
 ## Invariants
 
-- Pass file paths between subagents, not file contents.
-- Never include the implementer's notes, rationale, or summary in the
-  reviewer's prompt. The reviewer judges the code against the spec on its
-  own merits.
-- Cap the /implement -> /review loop at 2 iterations. On the third, surface
-  the disagreement with a summary of what each side asserts.
+- Pass file **paths** between subagents, not file contents.
+- Never include the implementer's notes/rationale in the reviewer's prompt — the
+  reviewer judges the code against the spec on its own merits.
+- Cap the implement→review loop at **2**. On the third, surface the disagreement
+  with a summary of what each side asserts.
+- Run codex from the **main** context (background + log file), never inside a
+  subagent that waits on it.
 
-## Decisions ledger
+## Shared memory (`.harness/`)
 
-Before starting any new task or stage, read .harness/decisions.md so you
-stay consistent with prior choices. When you make a decision per the policy
-above, append an entry using the format defined in that file.
+```
+task.md          -- original task description
+design.md        -- planner's rough design, then autoplan-reviewed
+decisions.md     -- autonomous-decision ledger (append-only; Classification field)
+followups.md     -- out-of-scope items for later (append-only)
+review-N.md      -- review-stage outputs, numbered 1, 2, ...
+codex-review.md  -- codex cross-model findings (distilled)
+codex-raw.log    -- raw codex output (gitignored)
+state.json       -- coordinator ledger: stage, reviewCount (authoritative loop
+                    counter), codexVerdict, lastGate
+verify.md        -- verify-stage evidence (gitignored)
+```
 
-## Shared memory
-
-All artifacts live in .harness/:
-  task.md            -- original task description
-  design.md          -- team-lead's output
-  implementation/    -- team-implementer's changes (when not in main src)
-  review-N.md        -- team-reviewer's outputs, numbered 1, 2, ...
-  decisions.md       -- autonomous decisions log (append-only)
-  followups.md       -- out-of-scope items for later (append-only)
-  state.json         -- coordinator's ledger: stage, iteration count
+Before starting any task or stage, read `.harness/decisions.md` to stay
+consistent with prior choices. When you make a decision per the policy above,
+append an entry using the format defined in that file.

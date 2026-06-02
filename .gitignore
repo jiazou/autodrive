@@ -2,6 +2,8 @@
 .harness/implementation/
 .harness/review-*.md
 .harness/codex-review.md
+.harness/codex-raw.log
+.harness/verify.md
 .harness/state.json
 .harness/harness-review.md
 .harness/task.md
