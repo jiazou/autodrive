@@ -1,20 +1,16 @@
 # Claude Harness
 
-Autonomous engineering pipeline for Claude Code. `/drive` carries a task through
-the full lifecycle, using **gstack skills as the planning brain** and
-**harness-owned stages for execution**, occupying the coordinator seat that
-gstack skills normally reserve for the human.
+Autonomous engineering pipeline for Claude Code. `/drive` runs the task lifecycle
+with **gstack for planning** and **harness-owned stages for execution**.
 
 - gstack `autoplan` + `plan-*-review` — autonomous planning/review brain
-- gstack `codex` — cross-model second opinion (run via the codex CLI directly)
-- Custom slash commands: `/drive`, `/plan`, `/implement`, `/review`, `/ship`
-- autoplan's 6 Decision Principles + Mechanical/Taste/User-Challenge
-  classification as the decision policy — overrides the default "ask the human"
-  reflex, pausing only at genuine checkpoints
+- `codex` — cross-model second opinion (run via the codex CLI directly)
+- Slash commands: `/drive`, `/plan`, `/implement`, `/review`, `/ship`
+- Decision policy: autoplan's 6 principles + Mechanical/Taste/User-Challenge
+  classification (auto-decides; pauses only at the gates)
 
-Roles (planner / implementer / reviewer) are generic `Agent` subagents — a
-sequential single-coordinator pipeline, not a parallel-team framework. (Why not a
-parallel-team framework: see `.harness/decisions.md` D1.)
+Roles are generic `Agent` subagents (no parallel-team framework — see
+`.harness/decisions.md` D1).
 
 ## Workflow
 
@@ -31,11 +27,9 @@ parallel-team framework: see `.harness/decisions.md` D1.)
     4. verify (optional)      (qa-only / browse)
     5. /ship ONCE             -> [Gate B] -> push
 
-Every review (design + code) runs a Claude reviewer subagent AND codex; a review
-**converges** when neither flags a P1 (BLOCKING/MAJOR). Two human gates: **Gate A**
-(direction) and **Gate B** (diff before push) — everything else is auto-decided
-and logged. **See [`docs/flow.md`](docs/flow.md) for the full annotated diagram**
-(phases, slices, every command invocation).
+Two human gates (A: direction, B: diff before push); every review is dual-voice
+(Claude + codex), converging when neither flags a P1. Full annotated diagram +
+decision policy: **[`docs/flow.md`](docs/flow.md)** and `CLAUDE.md`.
 
 ## Portable config — reproduce this Claude on a new machine
 
@@ -91,8 +85,8 @@ See `CLAUDE.md` for the full decision policy and invariants.
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
 
-## Generated artifacts (gitignored)
+## Run artifacts (not committed)
 
-`.harness/design.md`, `.harness/task.md`, `.harness/review-*.md`,
-`.harness/codex-review.md`, `.harness/codex-raw.log`, `.harness/verify.md`,
-`.harness/state.json` are produced per task and not committed.
+Per-run state — design, `state.json`, review files, worktrees — lives in an
+external run dir `~/.claude/harness-runs/<run-id>/`. The committed `.harness/`
+holds only the cross-task ledgers (`decisions.md`, `followups.md`).

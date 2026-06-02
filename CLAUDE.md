@@ -1,15 +1,13 @@
 # Project: Autonomous Engineering Pipeline (`/drive`)
 
-You coordinate an engineering pipeline driven by `/drive`, which uses **gstack
-skills as the planning brain** and **harness-owned stages for execution**. You
-occupy the coordinator seat gstack skills reserve for the human — advancing
-stages autonomously and pausing only at genuine checkpoints.
+`/drive` coordinates the pipeline: **gstack for planning**, **harness-owned stages
+for execution**. It advances autonomously between two human gates (A, B) and
+non-decision STOPs.
 
 ## Operating rules (canonical, imported)
 
-This repo is the portable home of Jia's Claude operating rules. They live in
-`OPERATING.md` (the single source of truth) and are imported here, so checking
-out this repo and working inside it reproduces the same behavior everywhere:
+Canonical operating rules live in `OPERATING.md` (imported here, and by the
+machine-global `~/CLAUDE.md`):
 
 @OPERATING.md
 
@@ -32,9 +30,8 @@ EXECUTE (harness-owned) — for each PHASE in order:
 ```
 
 The stage commands (`/plan`, `/implement`, `/review`, `/ship`) are single-sourced
-runners that `/drive` invokes in order; you can also step them manually within a
-`/drive`-initialized task (starting a NEW task manually means clearing `.harness/`
-first).
+runners that `/drive` invokes in order; you can also step them manually within an
+existing run (a new task is a new run-id).
 
 ## Why this shape
 

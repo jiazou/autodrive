@@ -1,6 +1,6 @@
 You are running the REVIEW stage (Stage 3) — the harness's **dual-voice review
-primitive**. NOT gstack `/review` (fix-first, mutates). It runs a passive Claude
-reviewer AND a direct codex pass over the SAME scope, then combines them. `/drive`
+primitive** (a passive Claude reviewer + a direct codex pass over the same scope,
+combined). NOT gstack `/review` (fix-first, mutates). `/drive`
 (or `/plan`) invokes it with a **scope** and passes `$RUN_DIR` + the scope's git
 refs:
 

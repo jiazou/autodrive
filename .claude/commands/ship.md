@@ -1,7 +1,6 @@
-You are running the SHIP stage (Stage 5) — a harness-owned thin stage, ONCE for
-the whole feature. NOT gstack `/ship` (auto-pushes). It keeps an explicit human
-gate (Gate B) before anything leaves the machine. It operates on `featureBranch`
-via a dedicated **ship worktree** — never the user's main tree.
+You are running the SHIP stage (Stage 5) — harness-owned, ONCE for the feature, on
+`featureBranch` in a dedicated **ship worktree** (`$RUN_DIR/wt/ship`), never the
+main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR.
 
 ## Preconditions (non-decision STOPs)
 

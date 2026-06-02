@@ -1,6 +1,6 @@
-You are running the PLAN stage (Stage 1). Two steps: a planner subagent AUTHORS
-a rough design, then gstack `autoplan` REVIEWS it. (autoplan is a reviewer, not
-an author — it cannot produce a design from a raw task, so we author one first.)
+You are running the PLAN stage (Stage 1). Two steps: a planner subagent authors a
+rough design, then gstack `autoplan` reviews it (autoplan reviews, it can't author
+— so we author first).
 
 First, read $RUN_DIR/decisions.md to load prior decisions you must stay
 consistent with.
