@@ -83,7 +83,6 @@ See `CLAUDE.md` for the full decision policy and invariants.
 - `.claude/commands/drive.md` -- the autonomous lifecycle orchestrator
 - `.claude/commands/{plan,implement,review,ship}.md` -- single-sourced stage runners
 - `docs/flow.md` -- annotated execution-flow diagram (phases, slices, every command)
-- `workflows/gstack-pipeline.md` -- the opt-in gstack review pipeline (alternative to /drive)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
 
