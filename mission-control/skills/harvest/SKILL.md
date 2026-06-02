@@ -1,0 +1,71 @@
+---
+name: harvest
+description: >-
+  Mission Control's morning briefing. Summarizes the status of every live Claude session
+  (what's running, what's waiting on you, what each is bound to) plus today's
+  outstanding vault tasks. Read-only by default. Run on demand, or scheduled
+  before wake-up (~7am). Use when asked to "harvest", "session status",
+  "what are my agents doing", "morning briefing", or "what's running".
+---
+
+# harvest — Orchard morning briefing
+
+`harvest` answers one question: **"What is the state of everything right now, and what needs me?"**
+It is the read-side of Mission Control, the personal operating harness. It never mutates state
+unless explicitly run with `--prep` (see below).
+
+## What it does
+
+1. **Session status** — joins Claude Code's live session ledger (`~/.claude/sessions/*.json`,
+   ground truth for what's running) with Orchard's binding overlay
+   (`~/mission-control/bindings.jsonl`, which session ↔ task/project/color/iTerm tab). Surfaces
+   sessions **waiting on you** first — that's the only state that demands action.
+2. **Vault tasks** — what's overdue / due today across the projects (read from the Obsidian
+   vault frontmatter; the existing Bases dashboards are the canonical view).
+
+## How to run
+
+**Default (read-only) — always start here:**
+
+```bash
+python3 ~/mission-control/bin/harvest.py
+```
+
+Then read the vault's due/overdue tasks (do NOT modify anything):
+
+```bash
+ls "$HOME/Documents/Jia's Personal Vault/01 Projects"/*/Tasks/*.md 2>/dev/null
+```
+
+Present the session digest first (it's the novel part), then a one-line vault summary
+(`N overdue · M due today`), then — only if asked — propose the day's parallel plan.
+
+## Binding sessions (enrichment)
+
+When `harvest` shows an **unbound** session, bind it so future briefings carry the context:
+
+```bash
+mc bind <SHORT_ID> --project "<Project>" [--task <slug>] [--tab "<tab name>"]
+```
+
+- `<SHORT_ID>` is the 8-char id from the harvest output (full UUID also accepted).
+- **Color and name are auto-resolved** from the session transcript (`/color`, `/rename`) —
+  the binding only carries what can't be inferred: which task/project the session is on.
+- Unbind with `mc bind --unbind <SHORT_ID>`. The ledger is append-only; latest event wins.
+
+## Scheduled / `--prep` mode (opt-in, writes a draft)
+
+For the 7am pre-wake run, the intended behavior is **prep, not finalize**: draft tomorrow's
+daily note + a proposed parallel plan into the vault with `needs_review: true`, so Jia wakes
+to a draft rather than a blank page — never an auto-accepted change. This mode is NOT built
+yet; the spike is read-only. When implementing it, everything it writes MUST be
+`needs_review: true` and land in `Daily/`, never mutating existing task files.
+
+## Design notes
+
+- **Why join live files instead of a daemon:** Claude Code already writes per-session state
+  to `~/.claude/sessions/`; Orchard only adds the binding it can't know (task/color/tab).
+  No registration step, nothing to keep alive.
+- **Liveness** = the session's pid still responds to `kill -0`. Dead sessions drop off
+  automatically; no cleanup needed.
+- Full design + roadmap: `~/mission-control/README.md`.

@@ -1,0 +1,7 @@
+# Runtime data lives in ~/mission-control (outside this repo) and must never be
+# committed — it contains real task/project names and session activity.
+__pycache__/
+*.pyc
+bindings.jsonl
+status.jsonl
+*.log
