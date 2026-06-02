@@ -54,6 +54,49 @@ It deploys `bin/` + `swiftbar-plugins/` into `~/mission-control/`, copies the th
 `~/.claude/skills/`, links `mc`/`today` onto your `PATH`, installs the 6:45am launchd job, points
 SwiftBar at the plugin, and merges the passive-capture hooks into `~/.claude/settings.json`.
 
+## How to run it (the operating model)
+
+**You don't run Mission Control. It runs itself, and you query it when you want to.**
+There is no daemon, no background process to start, and no terminal you need to keep open.
+Every `mc` command runs once and exits. Install once, then forget the plumbing.
+
+Three things run on their own after install, with nothing open:
+
+| Always-on (automatic) | What it does | You do |
+|---|---|---|
+| **SwiftBar menu bar** | Shows `☀N` + today's tasks + live sessions; refreshes every 5 min; auto-launches at login. | Glance at it. This is your always-visible surface — no terminal required. |
+| **6:45am launchd job** | Writes today's plan (`standup --draft`) + session digest (`harvest --log`) into the daily note before you wake. | Wake up, open the daily note, read the plan. |
+| **Passive hooks** | Every Claude session reports its status; a session flips to ⏸ "waiting on you" the moment it pings you. | Nothing. It just keeps the menu bar honest. |
+
+The 6:45am job runs whether or not a terminal or Claude session is open; it reads the
+session files and the vault directly. If your Mac is asleep at 6:45, it runs when the Mac
+next wakes. (If the Mac is fully powered off, it's skipped — you just run `mc standup --draft`
+by hand that morning.)
+
+**When you want to act, open any terminal and type a command — it prints and exits:**
+
+```bash
+mc today        # what's on my plate + which agents are running (also: just `today`)
+mc standup      # plan the day; add --draft to write it into the daily note
+mc harvest      # live session status; add --log to record it
+mc weekly       # the review sweep
+mc bind <id> --project "<P>"   # tag a session to a task you're working
+```
+
+You never leave one of these running. Run it, read it, close the terminal (or keep the
+tab for the next one — your choice). The menu bar keeps showing current state regardless.
+
+### What a normal day looks like
+
+1. **Wake up** → the daily note already has Today's Focus + a parallel plan (the 6:45am job wrote it). Read it.
+2. **During the day** → glance at the menu bar (`☀3` = 3 due). When it shows `⏸`, a Claude session is waiting on you — go unblock it.
+3. **Starting work in a new Claude session** → optionally `mc bind <id> --project "X"` so the harvest/menu bar shows what that session is for.
+4. **Anytime you want the full picture** → `mc today` or `mc standup` in a terminal.
+5. **Once a week** → `mc weekly` (or the `weekly` skill) to clear the review queue.
+
+If you do nothing at all, the menu bar and the morning note still keep working. The `mc`
+commands are there for when you want more than a glance.
+
 ## Commands
 
 | Command | What it does |
