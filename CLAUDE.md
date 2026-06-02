@@ -93,24 +93,38 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
   Beyond that, surface the disagreement with what each side asserts.
 - **File ownership is the parallelism contract:** independent slices own disjoint
   files and run in parallel; a slice never writes outside its owned files.
-- Run codex from the **main** context (background + log file), never inside a
+- Run codex from the **main** context (background + per-scope log), never inside a
   subagent that waits on it.
+- The coordinator operates on git **refs + worktrees** only — it **never mutates
+  the user's main working tree**. A run starts from a clean tree on a fresh
+  `featureBranch` (from `baseRef`).
+- Each parallel slice runs in its **own coordinator-created worktree** on a
+  `slice/<runId>/<id>` branch cut from the frozen `phaseBaseSha = rev-parse
+  featureBranch`. The phase integration branch is **rebuilt idempotently** from
+  `phaseBaseSha` each assembly — that rebuild *is* the conflict/crash rollback
+  (never `git merge --abort`).
+- All per-run artifacts live in the external **`$RUN_DIR`** (absolute,
+  worktree-reachable); the committed repo ledgers are promoted at ship.
 
-## Shared memory (`.harness/`)
+## Run state & shared memory
+
+Per-run state lives in **`$RUN_DIR` = `~/.claude/harness-runs/<run-id>/`** (external,
+so every worktree reaches it by absolute path; not committed, not portable):
 
 ```
-task.md          -- original task description
-design.md        -- planner's rough design, then autoplan-reviewed
-decisions.md     -- autonomous-decision ledger (append-only; Classification field)
-followups.md     -- out-of-scope items for later (append-only)
-review-N.md      -- review-stage outputs, numbered 1, 2, ...
-codex-review.md  -- codex cross-model findings (distilled)
-codex-raw.log    -- raw codex output (gitignored)
-state.json       -- coordinator ledger: stage, phase, designReview, per-slice
-                    status + reviewCount, phaseReview, lastGate
-verify.md        -- verify-stage evidence (gitignored)
+task.md / design.md          -- premise; planner design (+ ## Phases & Slices)
+state.json                   -- run model: runId, baseRef, featureBranch, phase,
+                                phaseBaseSha, concurrencyCap, budget, per-slice
+                                {step,reviewCount,branch,worktree,baseSha}, phaseReview
+event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
+review-<scope>-N.md          -- per-scope (design/slice/phase) review outputs
+codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw
+decisions.md / followups.md  -- run-local ledgers (promoted to the repo at ship)
+verify.md                    -- verify-stage evidence
+wt/                          -- per-slice + integration + ship worktrees
 ```
 
-Before starting any task or stage, read `.harness/decisions.md` to stay
-consistent with prior choices. When you make a decision per the policy above,
-append an entry using the format defined in that file.
+The **committed** cross-task ledgers stay in the repo: `.harness/decisions.md`,
+`.harness/followups.md`. Read `.harness/decisions.md` at the start of a task to
+stay consistent; the coordinator promotes a run's `$RUN_DIR` ledgers into them at
+ship.

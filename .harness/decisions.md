@@ -161,3 +161,13 @@ task and stage to maintain consistency.
 **Reasoning:** Matches how real implementation decomposes; makes dual-voice / no-P1 a first-class invariant. Slices are the natural home for the parallel-execution idea deferred in D6 — done with plain subagents, no wshobson.
 **Reversibility:** medium
 **Classification:** User-Challenge (ratified via two AUQ answers 2026-06-02)
+
+### 2026-06-02 -- D14: Run model + worktree parallelism (external $RUN_DIR, coordinator-driven worktrees)
+**Stage:** implement (PR-review extension)
+**Task:** /drive parallel execution
+**Question:** How to make parallel-slice execution coherent + context-clearable, per the user's "parallel + same PR" choice?
+**Options considered:** captured + hardened by 3 rounds of dual-voice DESIGN review (R1: 4 structural P1s; R2: 1 integration-rollback P1; R3: CONVERGED on both voices) before any command-file build.
+**Chosen:** (1) Run model — `run-id` + external `$RUN_DIR` (solves artifact-location from worktrees) + `event-log.jsonl` + durable `state.json` with per-slice `step` substate. (2) Coordinator-driven worktrees on **refs only, never the user's main tree**: `featureBranch` from a clean base; `phaseBaseSha = rev-parse featureBranch`; one worktree per parallel slice; **assemble-after-converge by rebuilding `phaseInt` idempotently from `phaseBaseSha`** (that rebuild is the conflict/crash rollback); `featureBranch` advances per phase; reconcile + GC on resume; concurrency cap 4; two test altitudes; call-count/wall-clock budget breaker; flaky-retry; plan-amendment for ownership-widening; context-clear points C1–C4. (3) Slices write run-local ledgers in `$RUN_DIR`; coordinator promotes to the repo `.harness/` ledgers at ship.
+**Reasoning:** parallel slices forced the run model + worktrees; the design was found BLOCKING-incomplete twice and converged before building, exactly the harness's own design→review→implement discipline.
+**Reversibility:** medium
+**Classification:** User-Challenge (parallel + same-PR ratified; design dual-reviewed to convergence)

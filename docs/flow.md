@@ -78,4 +78,21 @@ commands themselves.
 - **`reviewCount` is per-loop** — each slice and each phase-integration carries its
   own counter, so a stuck slice trips the cap-8 on its own without dragging others.
 - **Non-decision STOPs** (a slice `BLOCKED`/`NEEDS_CONTEXT`, red tests, a slice that
-  can't converge in 8 rounds) pause regardless of the decision policy.
+  can't converge in 8 rounds, budget ceiling) pause regardless of the decision policy.
+
+## Under the hood — run model + worktrees
+
+The diagram above is the *logical* flow. Mechanically:
+
+- Each run has a `run-id` and an external `$RUN_DIR` (`~/.claude/harness-runs/<id>/`)
+  holding all run state (design, state.json, event-log, review files) + the
+  worktrees — reachable by absolute path from any worktree.
+- The coordinator works on **refs + worktrees only**, never your main tree. A run
+  starts on a fresh `featureBranch` from a clean base.
+- Each **parallel slice runs in its own `git worktree`** on `slice/<id>` cut from
+  the frozen `phaseBaseSha`. After all slices converge, the phase **integration
+  branch is rebuilt idempotently** from `phaseBaseSha` (merge the slice branches);
+  a conflict → STOP (the rebuild *is* the rollback). `featureBranch` then advances
+  to the integrated phase; worktrees are GC'd.
+- Resume is durable: `/clear` + re-`/drive` reconciles worktrees from `state.json`
+  and continues each slice from its `step`. Full mechanics: `.harness/design.md`.
