@@ -80,8 +80,11 @@ For each PHASE in order:
    design left them unsequenced, STOP (planning bug). Excess past the cap queue.
 3. **Per-slice loop:** when a slice's IMPLEMENT returns:
    - `DONE` → `step=awaiting_review`; run REVIEW scoped `slice <id>` (slice-local
-     tests). CONVERGED → `step=converged`. FINDINGS → `step=needs_fix`; if its
-     `reviewCount < 8` re-run IMPLEMENT then REVIEW; if `>=8` → STOP.
+     tests). CONVERGED → `step=converged`, then **`git worktree remove` its worktree
+     (keep the slice branch for assembly)** — frees a concurrency slot + disk, so
+     worktree count stays ≤ cap regardless of slices-per-phase. FINDINGS →
+     `step=needs_fix`; if its `reviewCount < 8` re-run IMPLEMENT then REVIEW
+     (re-create the worktree first if it was removed); if `>=8` → STOP.
    - `BLOCKED`/`NEEDS_CONTEXT` → `step=blocked`, STOP that slice + surface; other
      in-flight slices continue; the phase can't integrate until it resolves. If the
      blocker needs files outside ownership → **plan-amendment** (amend the design's
@@ -93,10 +96,12 @@ For each PHASE in order:
    rollback; never `git merge --abort` to undo prior merges). Run the **FULL build +
    integration tests** + REVIEW scoped `phase <P>` in this worktree.
    - CONVERGED → advance `featureBranch` to `phaseInt/<P>` (`git merge --ff-only`,
-     else `reset --hard`); `git worktree remove` the slice + integration worktrees,
-     delete slice branches; `phaseReview[<P>].status = converged`; next phase.
-   - FINDINGS → route each P1 to the responsible slice (`step=needs_fix`, loop its
-     cap-8), then **re-assemble from scratch**.
+     else `reset --hard`); `git worktree remove` the integration worktree (slice
+     worktrees were already removed on convergence), delete slice branches;
+     `phaseReview[<P>].status = converged`; next phase.
+   - FINDINGS → route each P1 to the responsible slice (`step=needs_fix`,
+     re-dispatch — re-creating its worktree — loop its cap-8), then
+     **re-assemble from scratch**.
 
 When all phases are `converged` → `stage = verify`.
 
