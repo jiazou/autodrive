@@ -50,10 +50,19 @@ RUN_DIR="$(drive_run_dir "$runId" 2>/dev/null)" || exit 0
 # against the CURRENT git repo, so it must run from the /drive session's cwd — the repo
 # whose phaseInt/<runId>/<P> + slice/<runId>/<id> refs we audit. The RUN_DIR arg only
 # locates the review artifacts.
-out="$( cd "$cwd" && "$CONF" "$RUN_DIR" --mode audit 2>/dev/null )"
+#
+# The cd-failure path MUST be distinct from the conformance-verdict path: a
+# missing/mistyped cwd is NOT an audit violation. If `cd "$cwd"` fails we exit 0
+# (inert) — never false-block (AC9). Only a conformance verdict of rc==1 (the
+# conformance command actually having run) may block; rc==2 (fail-open) and any
+# exec failure → exit 0. We therefore run the cd in its own step and bail inert on
+# failure, so `rc` below reflects ONLY the conformance command's exit status.
+cd "$cwd" 2>/dev/null || exit 0   # missing/mistyped cwd → inert, not a violation
+out="$( "$CONF" "$RUN_DIR" --mode audit 2>/dev/null )"
 rc=$?
 
-# exit 0 clean, or exit 2 audit fail-open (D4) → no block.
+# Only a real conformance violation (rc==1) blocks. exit 0 clean, exit 2 audit
+# fail-open (D4), and any exec failure (126/127/…) → no block.
 [ "$rc" -eq 1 ] || exit 0
 
 # rc==1: real violations. Build the human/Claude-facing remediation reason.

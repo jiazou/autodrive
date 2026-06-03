@@ -197,6 +197,41 @@ _gitc "$norun_repo" checkout -q -b "drive/no-such-run-dir-xyz"
 run_guard "$norun_repo"
 assert_noblock "AC9 no block: drive HEAD but RUN_DIR absent (not managed)"
 
+# --- cd-failure must be INERT, not a block (the MAJOR finding). -----------------------
+# A missing/mistyped worktree path is NOT an audit violation and must never false-block
+# (AC9). The catch: drive_runid_from_head already does `git -C "$cwd"`, so for a real
+# path, anything that makes the guard's later `cd "$cwd"` fail also makes that earlier
+# git resolution fail -> the guard exits inert at the runId step in BOTH the buggy and
+# fixed code, and a bare nonexistent-path input can't isolate the cd branch.
+#
+# To drive execution PAST runId/RUN_DIR resolution and onto the `cd "$cwd"` audit step,
+# we shim `git` on PATH so HEAD resolves to a drive branch regardless of cwd, create the
+# matching RUN_DIR, then point .cwd at a path `cd` cannot enter (a regular file). Pre-fix,
+# the inline `out="$( cd "$cwd" && "$CONF" ... )"` yields cd's rc==1, which the guard
+# mistook for an audit violation and emitted {"decision":"block"} (false-block). Post-fix,
+# the distinct `cd "$cwd" || exit 0` makes it inert. This case FAILS pre-fix, PASSES post.
+SHIM="$WORK/shim"; mkdir -p "$SHIM"
+{
+  echo '#!/usr/bin/env bash'
+  # Resolve current branch independent of cwd; otherwise defer to real git so the
+  # rest of the harness (if it ever shells git) still works.
+  echo 'if [ "$1" = "-C" ]; then shift 2; fi'
+  echo 'if [ "$1" = "rev-parse" ] && [ "$2" = "--abbrev-ref" ] && [ "$3" = "HEAD" ]; then'
+  echo '  echo "drive/cdfailrun"; exit 0'
+  echo 'fi'
+  echo 'exec /usr/bin/env git "$@"'
+} > "$SHIM/git"
+chmod +x "$SHIM/git"
+mkdir -p "$RUNS_ROOT/cdfailrun"   # RUN_DIR exists so drive_run_dir resolves
+# Conformance stub that would BLOCK (rc 1) if it ever ran from a good cwd — proving any
+# block in this case comes from cd failure, not a real audit verdict.
+CDFAIL_CONF_MARK="$WORK/conf-ran.mark"; rm -f "$CDFAIL_CONF_MARK"
+notadir="$WORK/cdfail-notadir"; printf 'x' > "$notadir"   # a file: `cd` into it fails
+
+json="$(jq -nc --arg cwd "$notadir" --argjson a false '{cwd:$cwd, stop_hook_active:$a}')"
+OUT="$(printf '%s' "$json" | PATH="$SHIM:$PATH" HOME="$FAKE_HOME" "$GUARD" 2>/dev/null)"; RC=$?
+assert_noblock "AC9 no block: cd \"\$cwd\" fails after runId resolves (cd-failure is inert, not an audit violation)"
+
 echo
 echo "===================================="
 echo "PASS=$PASS  FAIL=$FAIL"
