@@ -308,6 +308,240 @@ test_ship_multiline_body() {
 }
 
 # ---------------------------------------------------------------------------------
+# Inserted-flag bypass (global flags/options between binary and subcommand)
+# ---------------------------------------------------------------------------------
+
+# `gh --repo o/r pr create` (global --repo before subcommand) on an unreviewed ship → DENY.
+test_ship_gh_repo_flag() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "gh --repo o/r pr create --title x" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review ship'; then
+    pass "ship denies gh --repo o/r pr create (global flag before subcommand)"
+  else
+    fail "ship should deny gh --repo … pr create; got: $out"
+  fi
+}
+
+# `glab -R x mr create` (global -R <x> before subcommand) on unreviewed ship → DENY.
+test_ship_glab_R_flag() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "glab -R x mr create --fill" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "ship denies glab -R x mr create (global -R before subcommand)"
+  else
+    fail "ship should deny glab -R x mr create; got: $out"
+  fi
+}
+
+# `git -C /path push` (global -C <path> before push) on a drive HEAD → DENY.
+test_ship_git_C_push() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git -C $repo push" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "ship denies git -C /path push (global -C before subcommand)"
+  else
+    fail "ship should deny git -C /path push; got: $out"
+  fi
+}
+
+# `git -c k=v push` (global -c <kv> before push) on a drive HEAD → DENY.
+test_ship_git_c_kv_push() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git -c k=v push" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "ship denies git -c k=v push (global -c before subcommand)"
+  else
+    fail "ship should deny git -c k=v push; got: $out"
+  fi
+}
+
+# `git -C /path merge slice/R/4a` (global -C before merge) unreviewed → DENY.
+test_slicemerge_git_C() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; repo="${info%% *}"
+  run_gate "git -C $repo merge slice/$runid/4a" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review slice 4a'; then
+    pass "slice-merge denies git -C /path merge slice/R/4a (global -C before subcommand)"
+  else
+    fail "slice-merge should deny git -C … merge; got: $out"
+  fi
+}
+
+# Env VAR=val prefix before the binary must still resolve the subcommand → DENY.
+test_ship_env_prefix() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "GIT_TRACE=1 git -c k=v push" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "ship denies VAR=val git -c k=v push (env prefix + global flag)"
+  else
+    fail "ship should deny env-prefixed git push; got: $out"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Phase-advance with a generically-extracted phaseInt ref
+# ---------------------------------------------------------------------------------
+
+# The phaseInt ref in the command may carry a non-3-segment form; the gate must take
+# its LAST segment as P, derive runId from drive/<runId>, and gate phase-merge:<P>.
+# Build phaseInt/<runId>/2 and advance via `git branch -f drive/<runId> phaseInt/<runId>/2`.
+mk_phase_repo_P() {
+  local runid="$1" P="$2" reviewed="$3" rd repo tip
+  rd="$(mk_rundir "$runid")"
+  repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$runid"
+  _gitc "$repo" checkout -q -b "phaseInt/$runid/$P"
+  tip="$(_commit "$repo" code.sh "echo phase$P" "phase $P")"
+  _gitc "$repo" checkout -q "drive/$runid"
+  if [ "$reviewed" = reviewed ]; then
+    _write_review "$rd" "phase$P" 1 "$tip"
+    _write_codex "$rd" "phase$P"
+  fi
+  printf '%s %s\n' "$repo" "$rd"
+}
+
+test_phasemerge_generic_ref() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_phase_repo_P "$runid" 2 unreviewed)"; repo="${info%% *}"
+  # -C global flag inserted too, to prove subcommand detection + generic P together.
+  run_gate "git -C $repo branch -f drive/$runid phaseInt/$runid/2" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase 2'; then
+    pass "phase-merge denies generically-extracted phaseInt ref (P=2, via -C)"
+  else
+    fail "phase-merge should deny generic phaseInt ref; got: $out"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# rc normalization (D4): broken checker + cd-fail
+# ---------------------------------------------------------------------------------
+
+# Run the gate against a SHIM bin dir whose drive-conformance.sh is missing/non-exec,
+# so run_conformance returns the "abnormal" rc. plan/ship must DENY (fail-CLOSED);
+# slice/phase must stay SILENT (fail-OPEN).
+# We shim by copying the gate+lib into a temp bin with a NON-executable conformance.
+run_gate_brokenconf() {
+  local cmd="$1" cwd="$2" shimbin json
+  shimbin="$TMPROOT/shimbin-$(new_runid)"; mkdir -p "$shimbin"
+  cp "$BIN/drive-merge-gate.sh" "$shimbin/"
+  cp "$BIN/drive-hook-lib.sh" "$shimbin/"
+  # Non-executable conformance (chmod 000) → -x test fails → abnormal rc.
+  printf '#!/bin/sh\nexit 0\n' > "$shimbin/drive-conformance.sh"
+  chmod 000 "$shimbin/drive-conformance.sh"
+  json="$(jq -n --arg c "$cmd" --arg w "$cwd" '{tool_input:{command:$c},cwd:$w}')"
+  printf '%s' "$json" | bash "$shimbin/drive-merge-gate.sh" > "$TMPROOT/.gateout" 2>/dev/null
+  GATE_RC=$?
+  GATE_OUT="$(cat "$TMPROOT/.gateout")"
+}
+
+test_rcnorm_brokenconf_plan_deny() {
+  local runid rd repo out
+  runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
+  repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"; _write_codex "$rd" design
+  run_gate_brokenconf "git worktree add ../wt/4a -b slice/$runid/4a" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "rc-norm: broken conformance → plan-gate DENY (fail-closed)"
+  else
+    fail "rc-norm: broken conformance should DENY plan-gate; got: $out"
+  fi
+}
+
+test_rcnorm_brokenconf_ship_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo_reviewed "$runid")"; repo="${info%% *}"
+  run_gate_brokenconf "gh pr create" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "rc-norm: broken conformance → ship DENY (fail-closed)"
+  else
+    fail "rc-norm: broken conformance should DENY ship; got: $out"
+  fi
+}
+
+test_rcnorm_brokenconf_slice_silent() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" reviewed)"; repo="${info%% *}"
+  run_gate_brokenconf "git merge --no-ff slice/$runid/4a" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "rc-norm: broken conformance → slice-merge SILENT (fail-open)"
+  else
+    fail "rc-norm: broken conformance should be SILENT for slice-merge; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+test_rcnorm_brokenconf_phase_silent() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_phase_repo "$runid" reviewed)"; repo="${info%% *}"
+  run_gate_brokenconf "git branch -f drive/$runid phaseInt/$runid/1" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "rc-norm: broken conformance → phase-merge SILENT (fail-open)"
+  else
+    fail "rc-norm: broken conformance should be SILENT for phase-merge; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# cd to a nonexistent cwd: a bare `cd` failure must NOT read as a conformance verdict.
+# plan/ship → DENY (fail-closed); slice/phase → SILENT (fail-open).
+# RUN_DIR must exist (so we reach the conformance step); the CWD is what's missing.
+test_cdfail_plan_deny() {
+  local runid rd out badcwd
+  runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
+  _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"; _write_codex "$rd" design
+  badcwd="$TMPROOT/does-not-exist-$runid"
+  # runId resolves from the slice ref in the command (no cwd HEAD needed for plan-gate).
+  run_gate "git worktree add ../wt/4a -b slice/$runid/4a" "$badcwd"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "cd-fail: nonexistent cwd → plan-gate DENY (fail-closed)"
+  else
+    fail "cd-fail should DENY plan-gate; got: $out"
+  fi
+}
+
+test_cdfail_ship_deny() {
+  local runid rd out badcwd
+  runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
+  badcwd="$TMPROOT/does-not-exist-ship-$runid"
+  # ship runId from the command ref (drive/<runId>) so HEAD-in-missing-cwd isn't needed.
+  run_gate "git push origin drive/$runid" "$badcwd"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "cd-fail: nonexistent cwd → ship DENY (fail-closed)"
+  else
+    fail "cd-fail should DENY ship; got: $out"
+  fi
+}
+
+test_cdfail_slice_silent() {
+  local runid rd out badcwd
+  runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
+  badcwd="$TMPROOT/does-not-exist-slice-$runid"
+  run_gate "git merge slice/$runid/4a" "$badcwd"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "cd-fail: nonexistent cwd → slice-merge SILENT (fail-open, no false deny)"
+  else
+    fail "cd-fail should be SILENT for slice-merge; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+test_cdfail_phase_silent() {
+  local runid rd out badcwd
+  runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
+  badcwd="$TMPROOT/does-not-exist-phase-$runid"
+  run_gate "git branch -f drive/$runid phaseInt/$runid/1" "$badcwd"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "cd-fail: nonexistent cwd → phase-merge SILENT (fail-open, no false deny)"
+  else
+    fail "cd-fail should be SILENT for phase-merge; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 # Negative / inert cases
 # ---------------------------------------------------------------------------------
 
@@ -373,6 +607,25 @@ main() {
   test_ship_glab_mr_create
   test_ship_reviewed_silent
   test_ship_multiline_body
+  # inserted-flag bypass
+  test_ship_gh_repo_flag
+  test_ship_glab_R_flag
+  test_ship_git_C_push
+  test_ship_git_c_kv_push
+  test_slicemerge_git_C
+  test_ship_env_prefix
+  # generic phaseInt ref extraction
+  test_phasemerge_generic_ref
+  # rc normalization (D4): broken checker
+  test_rcnorm_brokenconf_plan_deny
+  test_rcnorm_brokenconf_ship_deny
+  test_rcnorm_brokenconf_slice_silent
+  test_rcnorm_brokenconf_phase_silent
+  # rc normalization (D4): cd-fail
+  test_cdfail_plan_deny
+  test_cdfail_ship_deny
+  test_cdfail_slice_silent
+  test_cdfail_phase_silent
   test_nonmatching_inert
   test_unmanaged_run_inert
   test_ship_nondrive_branch_inert
