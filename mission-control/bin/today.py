@@ -79,9 +79,12 @@ def render_swiftbar(d):
         title = standup.title_of(d, slug).replace("|", "/")
         L.append(f"{title} | href={_obsidian_href(slug)}")
         # submenu: mark done in place (calls done.py via this interpreter — SwiftBar's
-        # PATH is minimal), then refresh; plus a direct open.
-        L.append(f"--✓ Mark done | shell={sys.executable} param1={DONE_PY} param2={slug} "
-                 f"terminal=false refresh=true")
+        # PATH is minimal), then refresh; plus a direct open. The slug is percent-encoded
+        # so a space / '|' can't split the param line or inject extra SwiftBar attributes
+        # (done.py unquotes it). SwiftBar's shell= execs the binary directly — no shell —
+        # so this is argument-safety, not RCE.
+        L.append(f"--✓ Mark done | shell={sys.executable} param1={DONE_PY} "
+                 f"param2={urllib.parse.quote(slug)} terminal=false refresh=true")
         L.append(f"--↗ Open in Obsidian | href={_obsidian_href(slug)}")
     L.append("---")
     L.append("Sessions | size=11 color=gray")
