@@ -384,6 +384,71 @@ test_ship_env_prefix() {
 }
 
 # ---------------------------------------------------------------------------------
+# -C / --git-dir / --work-tree honored as the TARGET REPO (round-2 finding 1)
+# ---------------------------------------------------------------------------------
+
+# `git -C <unreviewed_drive_repo> push` invoked with cwd OUTSIDE that repo → DENY.
+# The repo's HEAD is drive/<runId> and unreviewed; cwd is a non-git dir. Before the
+# fix the gate resolved runId-from-HEAD against cwd (not a drive repo) → bypass.
+test_ship_git_C_outside_cwd_deny() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/outside-$runid"; mkdir -p "$outside"   # NOT a git repo
+  run_gate "git -C $repo push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review ship'; then
+    pass "ship denies git -C <drive_repo> push when cwd is OUTSIDE the repo (finding 1)"
+  else
+    fail "ship should deny git -C <drive_repo> push from outside cwd; got: $out"
+  fi
+}
+
+# `git -C <other_nonDrive_repo> push` from a drive-branch cwd → inert/silent.
+# git operates on the OTHER repo (HEAD = main, not a managed run) → no runId → inert.
+# Before the fix the gate evaluated cwd's drive HEAD and could DENY the wrong repo.
+test_ship_git_C_other_repo_inert() {
+  local runid info drive_repo out other
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; drive_repo="${info%% *}"
+  other="$TMPROOT/other-$runid-repo"; _init_repo "$other"
+  _commit "$other" README base base >/dev/null   # other stays on main (non-drive)
+  run_gate "git -C $other push" "$drive_repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "ship inert for git -C <other_nonDrive_repo> push from a drive cwd (finding 1)"
+  else
+    fail "ship should be inert for git -C <other_repo> push; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Tightened matching kills false positives (round-2 finding 2)
+# ---------------------------------------------------------------------------------
+
+# `echo git push` in a drive run → inert. The binary is `echo` (START word), not a
+# later bare `git` token; subcommand_of git must NOT rescan past `echo`.
+test_echo_git_push_inert() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "echo git push" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "echo git push is inert (binary is echo, no rescan to git) (finding 2a)"
+  else
+    fail "echo git push should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `gh pr view --json createdAt` in a drive run → inert. Action is `view` (not
+# `create`); ship must match the `pr create` PAIR, not the `*create*` substring.
+test_gh_pr_view_createdAt_inert() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "gh pr view --json createdAt" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "gh pr view --json createdAt is inert (action view, not create) (finding 2b)"
+  else
+    fail "gh pr view --json createdAt should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 # Phase-advance with a generically-extracted phaseInt ref
 # ---------------------------------------------------------------------------------
 
@@ -614,6 +679,12 @@ main() {
   test_ship_git_c_kv_push
   test_slicemerge_git_C
   test_ship_env_prefix
+  # -C/--git-dir/--work-tree target repo (finding 1)
+  test_ship_git_C_outside_cwd_deny
+  test_ship_git_C_other_repo_inert
+  # tightened matching false-positive guards (finding 2)
+  test_echo_git_push_inert
+  test_gh_pr_view_createdAt_inert
   # generic phaseInt ref extraction
   test_phasemerge_generic_ref
   # rc normalization (D4): broken checker

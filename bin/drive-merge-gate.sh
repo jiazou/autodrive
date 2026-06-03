@@ -77,29 +77,115 @@ detect_subcommand() {
 }
 
 # subcommand_of <binary> : tokenize $CMD (word-split is intentional here — we only
-# read the leading binary+flags region), locate the FIRST occurrence of <binary> as
-# a bare word (skipping any leading env VAR=val prefixes), then return the real
-# subcommand via detect_subcommand. Echoes empty if the binary isn't invoked.
+# read the leading binary+flags region), identify the binary at the START of the
+# command (after skipping ONLY leading env `VAR=val` prefixes), then return the real
+# subcommand via detect_subcommand. Echoes empty if the START binary isn't <binary>.
+#
+# CRITICAL: we do NOT rescan for a later bare <binary> token. The binary is whatever
+# word starts the command after env assignments — so `echo git push` has binary
+# `echo` (not `git`) → subcommand_of git returns empty → inert. Only a `NAME=value`
+# word (POSIX env-assignment shape: NAME is [A-Za-z_][A-Za-z0-9_]* and contains `=`)
+# is skipped as a prefix; the first non-assignment word IS the binary.
 # NOTE: this inspects the *literal* command; runtime-variable refs in later args are
 # handled elsewhere. bash 3.2-safe.
 subcommand_of() {
-  local bin="$1" w found=false
+  local bin="$1" w
   set -f                                   # noglob: a literal `*` in $CMD must not expand.
   # shellcheck disable=SC2086  # intentional word-split of the command string.
   set -- $CMD
   set +f
-  local -a after=()
+  # Skip leading env VAR=val prefixes ONLY (POSIX assignment shape).
   while [ "$#" -gt 0 ]; do
-    w="$1"; shift
-    if [ "$found" = false ]; then
-      case "$w" in
-        "$bin") found=true; after=("$w" "$@"); break ;;
-        *) continue ;;                    # env VAR=val prefix or other leading token
-      esac
-    fi
+    w="$1"
+    case "$w" in
+      [A-Za-z_]*=*) shift; continue ;;     # env assignment prefix → skip
+      *) break ;;                          # first non-assignment word = the binary
+    esac
   done
-  [ "$found" = true ] || { printf ''; return 0; }
-  detect_subcommand "${after[@]}"
+  # The START binary must be exactly <binary>; no rescan for a later token.
+  [ "$#" -gt 0 ] || { printf ''; return 0; }
+  [ "$1" = "$bin" ] || { printf ''; return 0; }
+  detect_subcommand "$@"
+}
+
+# action_after <binary> <subcommand> : echo the next NON-flag word AFTER the resolved
+# subcommand for a binary invocation (the "action"), e.g. for `gh pr create` →
+# subcommand `pr`, action `create`; for `gh pr view --json createdAt` → action `view`.
+# Used so gh/glab ship detection matches the subcommand+action pair EXACTLY
+# (`pr create` / `mr create`), not a `*create*` substring anywhere in the command.
+# Returns empty if the binary's START match fails or there is no action word.
+# bash 3.2-safe (positional args; same env-prefix / global-option skipping rules as
+# subcommand_of + detect_subcommand).
+action_after() {
+  local bin="$1" w
+  set -f
+  # shellcheck disable=SC2086
+  set -- $CMD
+  set +f
+  # Skip leading env VAR=val prefixes; require START binary == <bin> (no rescan).
+  while [ "$#" -gt 0 ]; do
+    case "$1" in [A-Za-z_]*=*) shift; continue ;; *) break ;; esac
+  done
+  [ "$#" -gt 0 ] && [ "$1" = "$bin" ] || { printf ''; return 0; }
+  shift                                     # drop the binary
+  # Skip global options exactly as detect_subcommand does, to reach the subcommand.
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -C|-c|-R|--repo|--git-dir|--work-tree) shift; [ "$#" -gt 0 ] && shift; continue ;;
+      --*=*|--*) shift; continue ;;
+      -?*) shift; continue ;;
+      -|"") printf ''; return 0 ;;
+      *) break ;;                           # this is the subcommand
+    esac
+  done
+  [ "$#" -gt 0 ] || { printf ''; return 0; }
+  shift                                     # drop the subcommand; find the action word
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --*=*|--*) shift; continue ;;
+      -?*) shift; continue ;;
+      -|"") printf ''; return 0 ;;
+      *) printf '%s' "$1"; return 0 ;;      # first non-flag word after subcommand = action
+    esac
+  done
+  return 0
+}
+
+# git_target_repo : if the git invocation carries a repo-locating global option
+# (`-C <path>`, `--git-dir=<path>`/`--git-dir <path>`, `--work-tree=<path>`/
+# `--work-tree <path>`), echo that path; else echo empty. The LAST such option wins
+# (git's own semantics: a later -C/-git-dir overrides an earlier one). When present,
+# the caller uses this path as the repo for runId-from-HEAD AND as the conformance cd
+# target, instead of $CWD — so `git -C <repo> push` from outside resolves correctly.
+# Only meaningful when the START binary is `git`. bash 3.2-safe.
+git_target_repo() {
+  local w path=""
+  set -f
+  # shellcheck disable=SC2086
+  set -- $CMD
+  set +f
+  while [ "$#" -gt 0 ]; do
+    case "$1" in [A-Za-z_]*=*) shift; continue ;; *) break ;; esac
+  done
+  [ "$#" -gt 0 ] && [ "$1" = git ] || { printf ''; return 0; }
+  shift
+  # Scan the global-option region (stop at the first non-flag word = the subcommand).
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -C|--git-dir|--work-tree)
+        # separate-argument form: value is the next word.
+        if [ "$#" -gt 1 ]; then path="$2"; shift 2; else shift; fi
+        continue ;;
+      --git-dir=*) path="${1#--git-dir=}"; shift; continue ;;
+      --work-tree=*) path="${1#--work-tree=}"; shift; continue ;;
+      # other global options that consume the next word:
+      -c|-R|--repo) shift; [ "$#" -gt 0 ] && shift; continue ;;
+      --*=*|--*) shift; continue ;;
+      -?*) shift; continue ;;
+      *) break ;;                           # subcommand reached → stop scanning options
+    esac
+  done
+  printf '%s' "$path"
 }
 
 # --- match the command to a gate mode ---------------------------------------------
@@ -135,9 +221,12 @@ phaseint_token="$(printf '%s' "$CMD" | grep -oE '(^|[^A-Za-z0-9._-])phaseInt/[A-
 
 # --- ship detection ---
 # `gh pr create` / `glab mr create` / any `git push` (incl bare, -u origin HEAD).
-# Subcommand-based so global flags before the subcommand don't bypass.
-case "$gh_sub" in pr) case "$CMD" in *create*) is_ship=true ;; esac ;; esac
-case "$glab_sub" in mr) case "$CMD" in *create*) is_ship=true ;; esac ;; esac
+# Subcommand-based so global flags before the subcommand don't bypass. The gh/glab
+# match is the subcommand+action PAIR exactly: subcommand `pr`/`mr` AND the next
+# non-flag word (action) == `create`. This kills `*create*` substring false positives
+# like `gh pr view --json createdAt` (action `view` → NOT ship → inert).
+if [ "$gh_sub" = pr ] && [ "$(action_after gh pr)" = create ]; then is_ship=true; fi
+if [ "$glab_sub" = mr ] && [ "$(action_after glab mr)" = create ]; then is_ship=true; fi
 [ "$git_sub" = push ] && is_ship=true
 
 # --- plan-gate detection: `git worktree add ... -b slice/<runId>/<id>` ---
@@ -177,13 +266,30 @@ if [ "$is_plan_gate" = false ] && [ "$is_slice_merge" = false ] \
   exit 0
 fi
 
+# --- resolve the TARGET REPO ------------------------------------------------------
+# A `git -C <path>` / `--git-dir=<path>` / `--work-tree=<path>` option names a repo
+# OTHER than $CWD; git operates on THAT repo, so the gate must too. When such an
+# option is present, REPO = that path; otherwise REPO = $CWD. REPO is the directory
+# used for runId-from-HEAD AND as the conformance cd target. Effect:
+#   git -C <drive_repo> push      (from outside)  → resolves the drive repo → deny if unreviewed
+#   git -C ../other     push      (from a drive cwd) → evaluates the OTHER repo → inert
+#                                                       if it's not a managed drive run (correct)
+REPO="$CWD"
+git_repo_opt="$(git_target_repo)"
+if [ -n "$git_repo_opt" ]; then
+  case "$git_repo_opt" in
+    /*) REPO="$git_repo_opt" ;;            # absolute path: use as-is
+    *)  REPO="$CWD/$git_repo_opt" ;;       # relative path: resolve against $CWD (git's own base)
+  esac
+fi
+
 # --- resolve runId + RUN_DIR ------------------------------------------------------
 # From the command ref first; for ship commands that carry no slice/drive/phaseInt
-# token (bare `git push`, `gh pr create`), fall back to the cwd HEAD.
+# token (bare `git push`, `gh pr create`), fall back to the TARGET REPO's HEAD.
 runId=""
 if runId="$(drive_runid_from_command "$CMD")"; then
   :
-elif [ "$is_ship" = true ] && runId="$(drive_runid_from_head "$CWD")"; then
+elif [ "$is_ship" = true ] && runId="$(drive_runid_from_head "$REPO")"; then
   :
 else
   runId=""
@@ -196,26 +302,27 @@ if ! RUN_DIR="$(drive_run_dir "$runId")"; then
 fi
 
 # --- run conformance for the matched mode -----------------------------------------
-# run_conformance <mode-arg> : runs the checker from $CWD and returns a NORMALIZED rc
+# run_conformance <mode-arg> : runs the checker from $REPO and returns a NORMALIZED rc
 # (D4). We must distinguish three things the raw exit code conflates:
 #   - a real conformance verdict (0 clean / 1 violation / 2 git-IO error),
 #   - a broken checker (missing/non-exec → 126/127),
-#   - a `cd "$CWD"` failure (e.g. cwd was deleted), which must NOT masquerade as a
-#     conformance verdict (a bare `cd` failure yields rc 1 ≡ "violation", which would
+#   - a `cd "$REPO"` failure (e.g. repo dir was deleted), which must NOT masquerade as
+#     a conformance verdict (a bare `cd` failure yields rc 1 ≡ "violation", which would
 #     wrongly DENY the mid-build gates).
 # Normalized rc contract:
 #   0 = clean | 1 = violation | 9 = abnormal (checker broken, cd-fail, or any other rc)
 # Callers map 9 per-mode: run-boundary gates (plan/ship) treat 9 as fail-CLOSED (deny);
 # mid-build gates (slice/phase) treat 9 as fail-OPEN (silent). 2 is folded into 9
 # (D4 treats exit-2 and the other abnormal rcs identically per gate class).
-# Run from $CWD so conformance's bare-`git` ref lookups resolve against the target repo.
+# Run from $REPO (the git -C / --git-dir / --work-tree target, else $CWD) so
+# conformance's bare-`git` ref lookups resolve against the repo git actually operates on.
 run_conformance() {
   # Verify the checker is present + executable up front; otherwise it's "abnormal".
   [ -x "$CONFORMANCE" ] || return 9
   # Probe the cd separately so a cd failure can't be read as a conformance verdict.
-  ( cd "$CWD" ) 2>/dev/null || return 9
+  ( cd "$REPO" ) 2>/dev/null || return 9
   local rc
-  ( cd "$CWD" && "$CONFORMANCE" "$RUN_DIR" --mode "$1" ) >/dev/null 2>&1
+  ( cd "$REPO" && "$CONFORMANCE" "$RUN_DIR" --mode "$1" ) >/dev/null 2>&1
   rc=$?
   case "$rc" in
     0) return 0 ;;
