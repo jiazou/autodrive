@@ -52,8 +52,9 @@ Before surfacing the PR for approval, run `bin/drive-conformance.sh $RUN_DIR --m
 ship` and proceed only if it reports clean — it verifies all shipped **code** was
 covered by a converged, SHA-bound review (∃ a counting phase review with `reviewed-sha
 R` s.t. `R` is an ancestor of `featureBranch`'s tip and `R..tip` is ≤1 commit touching
-only the two allowlisted ledger files). On a violation, run `/drive-review ship` (review
-the shipped diff) until it converges, then retry. The PreToolUse hook enforces this
+only the two allowlisted ledger files). On a violation, run `/drive-review phase <P>` for
+the final phase so its reviewed-sha covers the shipped tip (ship-mode reads `review-phase*`
+artifacts; it has no `ship` scope), then retry. The PreToolUse hook enforces this
 same gate (fail-CLOSED) on the push/PR; running it in-prose first makes enforcement
 degrade gracefully where the hooks aren't installed.
 

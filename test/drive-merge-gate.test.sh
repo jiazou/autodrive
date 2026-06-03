@@ -230,7 +230,7 @@ test_ship_gh_pr_create() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   run_gate "gh pr create --title x --body y" "$repo"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review ship'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
     pass "ship denies unreviewed gh pr create"
   else
     fail "ship should deny gh pr create; got: $out"
@@ -316,7 +316,7 @@ test_ship_gh_repo_flag() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   run_gate "gh --repo o/r pr create --title x" "$repo"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review ship'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
     pass "ship denies gh --repo o/r pr create (global flag before subcommand)"
   else
     fail "ship should deny gh --repo … pr create; got: $out"
@@ -395,7 +395,7 @@ test_ship_git_C_outside_cwd_deny() {
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   outside="$TMPROOT/outside-$runid"; mkdir -p "$outside"   # NOT a git repo
   run_gate "git -C $repo push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review ship'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
     pass "ship denies git -C <drive_repo> push when cwd is OUTSIDE the repo (finding 1)"
   else
     fail "ship should deny git -C <drive_repo> push from outside cwd; got: $out"
@@ -659,6 +659,82 @@ test_never_allow() {
 }
 
 # ---------------------------------------------------------------------------------
+# Finding #1: ship runId comes from HEAD, NOT a ref-shaped token in the PR body.
+# ---------------------------------------------------------------------------------
+
+# `gh pr create --body 'see slice/<OTHER>/4a'` from a drive cwd whose OWN run is
+# UNREVIEWED, where <OTHER> is a SEPARATE clean run. Pre-fix the gate re-keyed runId
+# from the body token (slice/<OTHER>/4a) → validated the clean OTHER run → wrongly
+# ALLOWED. Post-fix the ship runId is from HEAD (the unreviewed run) → DENY.
+test_ship_body_token_keys_head_not_body() {
+  local runid info repo out
+  local otherrun otherinfo
+  # The clean OTHER run: a reviewed ship repo (its phase review covers its tip).
+  otherrun="$(new_runid)"; otherinfo="$(mk_ship_repo_reviewed "$otherrun")"
+  # The drive cwd's OWN run: UNREVIEWED ship.
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  # Body references the OTHER (clean) run's slice token. Post-fix the gate keys runId
+  # from HEAD → names the OWN unreviewed run ($runid) and the /drive-review phase
+  # remediation. Pre-fix it re-keyed to the OTHER run ($otherrun) from the body token
+  # (and emitted the /drive-review ship text), so both checks below fail pre-fix.
+  run_gate "gh pr create --title x --body 'see slice/$otherrun/4a'" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" \
+     && printf '%s' "$out" | grep -q '/drive-review phase' \
+     && printf '%s' "$out" | grep -q "run $runid " \
+     && ! printf '%s' "$out" | grep -q "run $otherrun "; then
+    pass "ship keys runId from HEAD not body token (names OWN run $runid, never OTHER run from body)"
+  else
+    fail "ship should DENY the OWN run via HEAD (not body's slice/$otherrun/4a); got: $out"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Finding #2: ship deny remediation names `/drive-review phase`, not `/drive-review ship`.
+# ---------------------------------------------------------------------------------
+test_ship_deny_names_phase_not_ship() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "gh pr create --title x --body y" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" \
+     && printf '%s' "$out" | grep -q '/drive-review phase' \
+     && ! printf '%s' "$out" | grep -q '/drive-review ship'; then
+    pass "ship deny remediation names /drive-review phase (NOT the nonexistent /drive-review ship)"
+  else
+    fail "ship deny should name /drive-review phase and not /drive-review ship; got: $out"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Finding #3: `git push origin main` from a drive cwd is NOT gated as ship; bare
+# `git push` on the drive branch IS gated.
+# ---------------------------------------------------------------------------------
+
+# `git push origin main` from a drive-branch cwd (own run UNREVIEWED) → inert/silent.
+# The explicit pushed source ref is `main` (non-drive), so this is not a ship.
+test_push_origin_main_not_ship() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git push origin main" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "git push origin main from a drive cwd is NOT gated as ship (inert)"
+  else
+    fail "git push origin main should be inert (non-drive source ref); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# Bare `git push` on the same UNREVIEWED drive branch IS gated → DENY (HEAD == drive).
+test_push_bare_on_drive_is_ship() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git push" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "bare git push on the drive branch IS gated as ship (deny unreviewed)"
+  else
+    fail "bare git push on drive branch should be gated as ship; got: $out"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
   test_plangate_deny
@@ -701,6 +777,13 @@ main() {
   test_unmanaged_run_inert
   test_ship_nondrive_branch_inert
   test_never_allow
+  # finding #1: ship runId from HEAD, not body token
+  test_ship_body_token_keys_head_not_body
+  # finding #2: ship deny remediation names /drive-review phase
+  test_ship_deny_names_phase_not_ship
+  # finding #3: explicit non-drive push target not gated; bare drive push gated
+  test_push_origin_main_not_ship
+  test_push_bare_on_drive_is_ship
 
   echo
   echo "----------------------------------------"

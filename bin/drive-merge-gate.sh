@@ -188,6 +188,101 @@ git_target_repo() {
   printf '%s' "$path"
 }
 
+# git_push_source_ref : for a `git push ...` invocation, echo the SOURCE side of the
+# pushed refspec — i.e. WHAT is being pushed (the local ref), not where to. This is
+# what decides whether a push is a SHIP of the drive branch (finding #3): only a push
+# whose effective source is the drive branch is gated as ship; `git push origin main`
+# (explicit non-drive target) is NOT. We deliberately read ONLY the structural ref
+# arguments, never the body/options — so a ref-shaped token in an unrelated flag value
+# cannot re-key the source.
+#
+# Echoes:
+#   ""        — bare `git push` (no positional refspec) → source is the current HEAD.
+#   "HEAD"    — `git push origin HEAD` / `-u origin HEAD` / `HEAD:refs/heads/...`.
+#   "<ref>"   — explicit source ref (the LEFT side of a `src:dst` refspec, or a bare
+#               positional refspec like `main` / `drive/<runId>`).
+# Callers treat ""/"HEAD" as "resolve the drive-branch question from HEAD"; any other
+# value is the literal explicit source ref. Only meaningful when git_sub == push.
+# bash 3.2-safe.
+git_push_source_ref() {
+  set -f
+  # shellcheck disable=SC2086
+  set -- $CMD
+  set +f
+  # Skip env VAR=val prefixes; require START binary == git.
+  while [ "$#" -gt 0 ]; do
+    case "$1" in [A-Za-z_]*=*) shift; continue ;; *) break ;; esac
+  done
+  [ "$#" -gt 0 ] && [ "$1" = git ] || { printf ''; return 0; }
+  shift
+  # Skip the git global-option region to reach the subcommand.
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -C|-c|-R|--repo|--git-dir|--work-tree) shift; [ "$#" -gt 0 ] && shift; continue ;;
+      --*=*|--*) shift; continue ;;
+      -?*) shift; continue ;;
+      *) break ;;
+    esac
+  done
+  # Must be `push`.
+  [ "$#" -gt 0 ] && [ "$1" = push ] || { printf ''; return 0; }
+  shift
+  # Walk the push arguments: skip flags (consuming the value of known value-taking
+  # options), collect positional words. First positional = remote; second = refspec.
+  local positional=0 first="" second=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      # push options that consume a separate value word:
+      -o|--push-option|--repo|--receive-pack|--exec) shift; [ "$#" -gt 0 ] && shift; continue ;;
+      --*=*|--*) shift; continue ;;
+      -?*) shift; continue ;;     # short flags (incl. -u, clustered) take no separate value here
+      -|"") shift; continue ;;
+      *)
+        positional=$((positional+1))
+        if [ "$positional" -eq 1 ]; then first="$1"; elif [ "$positional" -eq 2 ]; then second="$1"; fi
+        shift ;;
+    esac
+  done
+  # No positional args → bare push (source is HEAD): echo empty.
+  [ "$positional" -ge 1 ] || { printf ''; return 0; }
+  # One positional could be either a remote (e.g. `git push origin`) or a refspec
+  # (e.g. `git push HEAD`). With a 2nd positional, the 2nd is the refspec. With only
+  # one, treat it as the refspec ONLY if it looks like a ref (no remote-only form is
+  # gated as ship anyway since the remote alone pushes the current branch == HEAD).
+  local refspec=""
+  if [ "$positional" -ge 2 ]; then
+    refspec="$second"
+  else
+    # Single positional = remote name → source is the current HEAD (echo empty).
+    printf ''; return 0
+  fi
+  # Take the SOURCE side (left of a `src:dst` colon). A leading `+` (force) is stripped.
+  refspec="${refspec#+}"
+  case "$refspec" in
+    *:*) printf '%s' "${refspec%%:*}" ;;
+    *)   printf '%s' "$refspec" ;;
+  esac
+}
+
+# is_drive_branch_ref <ref> : rc0 iff <ref> names the drive feature branch
+# drive/<runId> (optionally as refs/heads/drive/<runId>) with EXACTLY 2 ref segments
+# after `drive/`. Used to decide whether an explicit push source ref is the drive
+# branch. bash 3.2-safe.
+is_drive_branch_ref() {
+  local ref="${1-}"
+  ref="${ref#refs/heads/}"
+  case "$ref" in
+    drive/*)
+      local rest="${ref#drive/}"
+      case "$rest" in
+        */*) return 1 ;;     # extra segment(s) → not the bare feature branch
+        "") return 1 ;;
+        *) return 0 ;;
+      esac ;;
+    *) return 1 ;;
+  esac
+}
+
 # --- match the command to a gate mode ---------------------------------------------
 # We classify by structural git/ship intent. A command that matches no class →
 # exit 0 silent (inert; not a managed-run transition).
@@ -197,6 +292,11 @@ is_slice_merge=false
 is_phase_merge=false
 is_ship=false
 phase_P=""
+# For an explicit `git push <remote> drive/<runId>` the source ref IS a real positional
+# argument (NOT body text), so the runId is authoritative from it. Captured here and
+# preferred over HEAD in the resolve step. Empty for gh/glab + bare/HEAD-source pushes,
+# which key from HEAD (finding #1: never from command/body tokens).
+ship_runid=""
 
 # Collect slice ids (multi-slice merge support) into a plain string (bash 3.2-safe).
 slice_ids=""
@@ -219,15 +319,58 @@ slice_tokens="$(printf '%s' "$CMD" | grep -oE '(^|[^A-Za-z0-9._-])slice/[A-Za-z0
 # segment is taken as P and passed to conformance, which keys phase-merge by P.
 phaseint_token="$(printf '%s' "$CMD" | grep -oE '(^|[^A-Za-z0-9._-])phaseInt/[A-Za-z0-9._/-]+' 2>/dev/null | head -n1 || true)"
 
+# --- resolve the TARGET REPO (needed by ship/push classification below) -----------
+# A `git -C <path>` / `--git-dir=<path>` / `--work-tree=<path>` option names a repo
+# OTHER than $CWD; git operates on THAT repo, so the gate must too. When such an
+# option is present, REPO = that path; otherwise REPO = $CWD. REPO is the directory
+# used for runId-from-HEAD AND as the conformance cd target. Effect:
+#   git -C <drive_repo> push      (from outside)  → resolves the drive repo → deny if unreviewed
+#   git -C ../other     push      (from a drive cwd) → evaluates the OTHER repo → inert
+#                                                       if it's not a managed drive run (correct)
+REPO="$CWD"
+git_repo_opt="$(git_target_repo)"
+if [ -n "$git_repo_opt" ]; then
+  case "$git_repo_opt" in
+    /*) REPO="$git_repo_opt" ;;            # absolute path: use as-is
+    *)  REPO="$CWD/$git_repo_opt" ;;       # relative path: resolve against $CWD (git's own base)
+  esac
+fi
+
 # --- ship detection ---
-# `gh pr create` / `glab mr create` / any `git push` (incl bare, -u origin HEAD).
+# `gh pr create` / `glab mr create` / a `git push` that ships the DRIVE branch.
 # Subcommand-based so global flags before the subcommand don't bypass. The gh/glab
 # match is the subcommand+action PAIR exactly: subcommand `pr`/`mr` AND the next
 # non-flag word (action) == `create`. This kills `*create*` substring false positives
 # like `gh pr view --json createdAt` (action `view` → NOT ship → inert).
 if [ "$gh_sub" = pr ] && [ "$(action_after gh pr)" = create ]; then is_ship=true; fi
 if [ "$glab_sub" = mr ] && [ "$(action_after glab mr)" = create ]; then is_ship=true; fi
-[ "$git_sub" = push ] && is_ship=true
+# A `git push` is ship ONLY when its effective SOURCE is the drive branch (finding #3):
+#   - bare `git push` / `-u origin HEAD` / `origin HEAD` (source == HEAD) while REPO's
+#     HEAD is drive/<runId>, OR
+#   - an explicit refspec whose SOURCE side is drive/<runId>.
+# A push that explicitly targets a non-drive ref (`git push origin main`) from a drive
+# cwd is NOT gated. The drive-branch determination is from HEAD / the explicit source
+# ref ONLY — never from body/option tokens — so a ref-shaped token in a flag value
+# can't make a non-drive push look like a ship.
+if [ "$git_sub" = push ]; then
+  push_src="$(git_push_source_ref)"
+  case "$push_src" in
+    ""|HEAD)
+      # Source is the current branch: ship iff REPO's HEAD is the drive feature branch.
+      if drive_runid_from_head "$REPO" >/dev/null 2>&1; then is_ship=true; fi
+      ;;
+    *)
+      # Explicit source ref: ship iff it names drive/<runId> (else e.g. `main` → inert).
+      # The source ref is a REAL positional arg, so its runId is authoritative (it is NOT
+      # body text); capture it for the resolve step.
+      if is_drive_branch_ref "$push_src"; then
+        is_ship=true
+        psrc="${push_src#refs/heads/}"
+        ship_runid="${psrc#drive/}"
+      fi
+      ;;
+  esac
+fi
 
 # --- plan-gate detection: `git worktree add ... -b slice/<runId>/<id>` ---
 if [ "$git_sub" = worktree ] && [ -n "$slice_tokens" ]; then
@@ -266,30 +409,23 @@ if [ "$is_plan_gate" = false ] && [ "$is_slice_merge" = false ] \
   exit 0
 fi
 
-# --- resolve the TARGET REPO ------------------------------------------------------
-# A `git -C <path>` / `--git-dir=<path>` / `--work-tree=<path>` option names a repo
-# OTHER than $CWD; git operates on THAT repo, so the gate must too. When such an
-# option is present, REPO = that path; otherwise REPO = $CWD. REPO is the directory
-# used for runId-from-HEAD AND as the conformance cd target. Effect:
-#   git -C <drive_repo> push      (from outside)  → resolves the drive repo → deny if unreviewed
-#   git -C ../other     push      (from a drive cwd) → evaluates the OTHER repo → inert
-#                                                       if it's not a managed drive run (correct)
-REPO="$CWD"
-git_repo_opt="$(git_target_repo)"
-if [ -n "$git_repo_opt" ]; then
-  case "$git_repo_opt" in
-    /*) REPO="$git_repo_opt" ;;            # absolute path: use as-is
-    *)  REPO="$CWD/$git_repo_opt" ;;       # relative path: resolve against $CWD (git's own base)
-  esac
-fi
-
 # --- resolve runId + RUN_DIR ------------------------------------------------------
-# From the command ref first; for ship commands that carry no slice/drive/phaseInt
-# token (bare `git push`, `gh pr create`), fall back to the TARGET REPO's HEAD.
+# SHIP commands (gh pr create / glab mr create / git push of the drive branch) key the
+# runId from the TARGET REPO's HEAD ONLY (finding #1) — NEVER from command/body tokens.
+# A SHIP command's only structural ref is whatever HEAD points at; a ref-shaped token in
+# the PR title/body (e.g. `--body "...slice/otherrun/4a..."`) is NOT a real positional
+# ref and must not re-key conformance to a DIFFERENT run. drive-ship runs from the ship
+# worktree checked out on drive/<runId>, so HEAD is authoritative. For merge/branch/
+# worktree commands the ref IS a real positional argument → parse it from the command.
 runId=""
-if runId="$(drive_runid_from_command "$CMD")"; then
-  :
-elif [ "$is_ship" = true ] && runId="$(drive_runid_from_head "$REPO")"; then
+if [ "$is_ship" = true ]; then
+  # Prefer an authoritative explicit push-source drive ref; else HEAD. NEVER the body.
+  if [ -n "$ship_runid" ]; then
+    runId="$ship_runid"
+  else
+    runId="$(drive_runid_from_head "$REPO")" || runId=""
+  fi
+elif runId="$(drive_runid_from_command "$CMD")"; then
   :
 else
   runId=""
@@ -373,7 +509,7 @@ if [ "$is_ship" = true ]; then
   run_conformance "ship"; rc=$?
   # Run-boundary gate, fail-CLOSED: rc 1 OR 9 → DENY; only rc 0 allows (silent).
   if [ "$rc" -ne 0 ]; then
-    emit_deny "The code being shipped for run $runId is not fully covered by a converged review. Run \`/drive-review ship\` (review the shipped diff) until it converges, then retry the push/PR."
+    emit_deny "The code being shipped for run $runId is not fully covered by a converged review. Run \`/drive-review phase <P>\` for the final phase so its reviewed-sha covers the shipped tip (ship-mode passes when a converged phase review's reviewed-sha is an ancestor of the tip and only the ledger commit sits past it), then retry the push/PR."
   fi
   exit 0
 fi
