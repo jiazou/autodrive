@@ -149,3 +149,11 @@ where the hooks were never installed.
   worktrees) and the ship gate (HEAD / whole-tree) backstops any merge-gate miss, so
   this is hardening against adversarial/pathological input, not an omission-threat gap.
   See `followups.md`. Fix: model composed git path options properly.
+- **`git push` classification is best-effort over arbitrary push syntax.** The ship
+  gate errs *toward* gating — it gates a push if any refspec source is the drive branch,
+  an aggregate flag (`--all`/`--mirror`) is present, or HEAD is the drive branch — so the
+  common forms (and `git push origin main drive/<id>`) are caught. But exotic forms (e.g.
+  `--mirror` from a non-drive HEAD, or server-side refspec expansion) can still slip the
+  PreToolUse matcher. The **authoritative** ship guarantee is therefore the in-prose
+  `--mode ship` conformance check in `drive-ship.md` plus the single canonical push form
+  `/drive` actually emits — the matcher is the fast path, not the sole guard.

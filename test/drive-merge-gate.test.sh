@@ -734,6 +734,32 @@ test_push_bare_on_drive_is_ship() {
   fi
 }
 
+# Multi-refspec push INCLUDING the drive branch anywhere (not just the 2nd word) must
+# be gated — `git push origin main drive/<id>` still ships drive/<id>. Guards the
+# regression where only the 2nd positional refspec was inspected (err-toward-gating).
+test_push_multiref_includes_drive_is_ship() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git push origin main drive/$runid" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "multi-refspec push including drive/<id> IS gated (scans ALL refspecs)"
+  else
+    fail "git push origin main drive/<id> should be gated as ship; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# Aggregate push (`--all`) pushes the drive branch implicitly → gated when HEAD is drive.
+test_push_all_aggregate_is_ship() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git push --all" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "aggregate git push --all on the drive branch IS gated as ship"
+  else
+    fail "git push --all on drive branch should be gated as ship; got rc=$GATE_RC out='$out'"
+  fi
+}
+
 # ---------------------------------------------------------------------------------
 main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
@@ -784,6 +810,9 @@ main() {
   # finding #3: explicit non-drive push target not gated; bare drive push gated
   test_push_origin_main_not_ship
   test_push_bare_on_drive_is_ship
+  # multi-refspec / aggregate push must still gate the drive branch (err toward gating)
+  test_push_multiref_includes_drive_is_ship
+  test_push_all_aggregate_is_ship
 
   echo
   echo "----------------------------------------"
