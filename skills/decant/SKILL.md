@@ -45,16 +45,25 @@ If 0 new entries: skip to step 5 (the "no lessons saved" case). Otherwise contin
 
 For each new entry, label as ONE of:
 
-- **Universal** — applies across every codebase and language. Examples: design
-  doc updates before implementation; cite evidence as OLD/NEW; present choices
-  with English + technical. Candidates for the canonical operating rules in
+- **Universal** — a **software-engineering working principle** that applies
+  across every codebase and language. Examples: design doc updates before
+  implementation; cite evidence as OLD/NEW; present choices with English +
+  technical. Candidates for the canonical operating rules in
   **`claude-harness/OPERATING.md`** (which the global `~/CLAUDE.md` imports).
+  **Guard against over-classification:** "broadly applicable *within one
+  domain*" is NOT universal. A heuristic that holds across all of, say, hardware
+  troubleshooting is still domain-specific — OPERATING.md is for how Claude does
+  *software-engineering work*, not for any-broadly-useful tip. If a lesson isn't
+  about writing/reviewing/shipping code, it's almost certainly domain-specific.
 - **Workflow-specific** — tied to a specific review pattern, tooling, or
   collaboration setup. Stays in project memory. Example: "every architectural
   decision gets parallel Claude+Codex review" assumes that workflow exists.
-- **Domain-specific** — tied to this codebase's domain. Stays in project
-  memory. Example: "classifier must respect its input analysis" assumes a
-  rule-based classifier pipeline.
+- **Domain-specific** — tied to a particular domain (this codebase's domain, or
+  any narrow subject area like hardware/peripheral debugging), even when broadly
+  applicable *within* that domain. Stays in project memory. Examples: "classifier
+  must respect its input analysis" assumes a rule-based classifier pipeline;
+  "isolate the physical connection path before firmware" is a hardware-debugging
+  heuristic, not a coding rule.
 
 Lead with the English meaning of each rule, NOT its filename.
 
