@@ -19,6 +19,27 @@ The scope is the **assembled phase diff** `git diff <phaseBaseSha>..phaseInt/<ru
 the files it touches — the "relevant codebase" for this phase. Derive it
 authoritatively from git, never an ephemeral implementer list.
 
+## Preconditions (non-decision STOPs)
+
+This is a sub-stage of `/drive`, not a standalone tool — it hardens an assembled phase
+*in flight*, so it needs that run's context. On invocation, bind and verify, in order;
+**STOP with the stated message** (do not guess, fabricate a run, or harden an arbitrary
+tree) if any fails:
+- `<P>` = the phase number from `$ARGUMENTS` (the `phase <P>` argument). Missing/unparseable
+  → STOP: "no phase given — usage: `/drive-harden phase <P>` within an active `/drive` run."
+- `$RUN_DIR` is provided (by `/drive`) or inferable from a single in-progress run under
+  `~/.claude/harness-runs/`. None, or only runs with `state.stage == "done"`/`"ship"` →
+  STOP: "no active /drive run to harden — `/drive-harden` runs inside an in-flight run, after a phase review converges. Start one with `/drive <task>`."
+- That run's `state.json` shows phase `<P>` `phaseReview[<P>].status == "converged"` (or
+  `"hardening"` on resume). Not converged / not yet assembled → STOP: "phase <P> hasn't
+  passed its integration review yet — harden runs only after `/drive-review phase <P>` converges."
+- The `phaseInt/<runId>/<P>` worktree exists (`git worktree list`) and `$RUN_DIR/design.md` is
+  present. Missing → STOP naming what's absent (the run is mid-rebuild or corrupt; let
+  `/drive` reconcile on resume).
+
+When `/drive` invokes this stage it passes all of the above directly, so these checks
+pass by construction; they exist for a bare/manual invocation.
+
 ## The three hardening lenses
 
 1. **Reduce AI slop** (per OPERATING.md "No AI Slop"): speculative fallbacks,
@@ -38,28 +59,28 @@ authoritatively from git, never an ephemeral implementer list.
 
 ## Loop counter & cap
 
-`hardenRound` counts **fix rounds only** — invocations that actually changed code.
-The cap is **HARDEN_CAP = 3** fix rounds. A round that audits clean and applies
-nothing (the confirming audit) is **free** — it does NOT increment `hardenRound` and
-does NOT trip the cap (otherwise N fix rounds would need N+1 invocations to confirm
-clean and the cap would false-STOP a phase that actually converged). So harden allows
-up to 3 code-changing rounds plus the final clean audit that declares HARDENED.
+`N` = this invocation's index = (count of existing `$RUN_DIR/harden-<P>-*.md`) + 1;
+each invocation writes exactly one `harden-<P>-N.md`.
 
-Reconcile the counter from artifacts, not state alone (a crash can commit a fix or
-write `harden-<P>-N.md` before the state write lands): on entry,
-`hardenRound = max(state.phaseReview[<P>].hardenRound or 0, count of fix-round
-`$RUN_DIR/harden-<P>-*.md` whose round applied edits)`. If `hardenRound >= HARDEN_CAP`
-AND this entry's audit still has open P1 → STOP, summarize what is open per lens, and
-surface (do NOT advance the phase silently — a phase left half-hardened is worse than
-a flagged STOP). Rationale: the harden P1 fix-set is small (real bugs are few); a
-tight cap fails fast instead of grinding.
+`hardenRound` counts **fix rounds only** — invocations that actually changed code. The
+cap is **HARDEN_CAP = 3** fix rounds. A round that audits clean and applies nothing
+(the confirming audit) is **free** — it does NOT increment `hardenRound`, so N fix
+rounds don't need an N+1th to confirm clean. Harden therefore allows up to 3
+code-changing rounds plus the final clean audit that declares HARDENED. If
+`hardenRound >= HARDEN_CAP` AND this invocation's audit still has open P1 → STOP and
+summarize what is open per lens (a flagged half-hardened phase beats a silent advance).
 
-**The harden loop has its OWN counter — it is independent of the phase conformance
-`reviewCount` (cap-8).** The regression re-review in Step 4 is bounded by
-`hardenRound` (≤3), and **must not increment or be checked against the conformance
-cap-8** — otherwise a phase whose integration already took 6–8 conformance rounds
-would false-STOP the moment harden re-reviews it. Treat harden's regression passes as
-a distinct counter from the original phase-integration review.
+This counter is **independent of the conformance `phaseReview[<P>].round` (cap-8)**:
+the Step-4 regression guard runs `/drive-review phase <P> harden-regress`, which by
+contract does not touch `round` — so a phase whose integration already used 6–8
+conformance rounds is not false-STOPped when harden re-reviews it.
+
+Reconcile `hardenRound` from artifacts, not state alone (a crash can write
+`harden-<P>-N.md` or land a `phaseInt/<runId>/<P>` commit before the state write): on entry,
+`hardenRound = max(state.phaseReview[<P>].hardenRound or 0, count of `harden-<P>-*.md`
+with `AppliedEdits: yes`)`. The `AppliedEdits` line in each audit file (see Step 1
+schema) is the machine-readable marker of a fix round; clean confirming audits carry
+`AppliedEdits: no` and don't count.
 
 ## Scope-creep HARD GATE (not a guideline)
 
@@ -111,6 +132,7 @@ Out-of-phase / out-of-diff real bugs → `$RUN_DIR/followups.md`.
 Write `$RUN_DIR/harden-<P>-N.md`:
   # Harden phase <P> N
   ## Verdict: HARDENED | FINDINGS
+  ## AppliedEdits: pending          (Step 4 finalizes this to yes|no — the resume marker)
   ## Findings → ### [SEVERITY][LENS] Short title / **Where** file:line / Issue / Fix / Veto? 
 HARDENED = no open P1 AND nothing cheap-P2 left to apply. Return: path, verdict, one-line count.
 ----- END SUBAGENT SCOPE -----
@@ -178,37 +200,31 @@ Run the FULL build + integration tests until green. Commit to `phaseInt/<runId>/
 (`git add -A && git commit`) before returning.
 
 Return STATUS as the FIRST line, then the changed-file list:
-- `STATUS: DONE` — fix set applied, tests green, committed. List changed files (all
-  within the phase diff). "Flagged:" line for deviations / Taste / vetoed items.
+- `STATUS: DONE` — fix set applied, tests green, committed. List changed files (within
+  the allowed scope above). "Flagged:" line for deviations / Taste / vetoed items / any
+  scope-widening root-cause edit (also logged to `$RUN_DIR/decisions.md`).
 - `STATUS: BLOCKED — <reason>` — non-decision blocker (env/tool/test failure you
   can't resolve). State it + what would unblock.
-- `STATUS: NEEDS_CONTEXT — <question>` — a User-Challenge, or a fix needs files
-  outside the phase diff that can't be deferred. State the one question.
+- `STATUS: NEEDS_CONTEXT — <question>` — a User-Challenge, or a needed fix is out of
+  the allowed scope (another phase's files / can't be deferred). State the one question.
 ----- END SUBAGENT SCOPE -----
 
 ## Step 4 — Regression guard & converge
 
-This stage runs **one round per invocation** (like `/drive-review`); `/drive` owns
-the loop and re-invokes on `FINDINGS`. Termination follows the fix-round cap above:
+One round per invocation; `/drive` owns the loop. Decide the return per the cap rules
+in **Loop counter & cap**, then finalize the round's `AppliedEdits` marker:
 
-- **Step-1 audit clean** (no open P1, nothing cheap-P2 left) AND no fix was applied
-  this invocation → this is the confirming audit → return `HARDENED`. (This round is
-  free — it does not increment `hardenRound`.)
-- **Step-1 audit clean but `hardenRound >= HARDEN_CAP`** while a prior round's fix is
-  unconfirmable, or audit still has open P1 with `hardenRound >= HARDEN_CAP` →
-  `STOP` (not converging; summarize what is open per lens).
-- **Otherwise (a fix was applied this invocation):** `hardenRound += 1`. Because code
-  changed, re-run `/drive-review phase <P>` as the **regression guard** on the
-  now-hardened `phaseInt/<runId>/<P>`. This is NOT redundant with the full test run: tests
-  don't encode spec conformance, and a de-slop edit can pass every test yet drop an
-  acceptance criterion. The re-review gets PATHS + refs only (reviewer boundary), and
-  is counted under `hardenRound` — **not** the conformance cap-8 (see Loop counter &
-  cap). A P1 regression it finds is folded into the next round's fix set. Return
-  `FINDINGS` (the next invocation will re-audit; a clean re-audit then returns
-  HARDENED — that confirming round is the free one that needs no extra fix budget).
+- **No fix applied this invocation** (Step-2 fix set was empty — the free confirming
+  audit) → set `harden-<P>-N.md` `AppliedEdits: no` → return `HARDENED`.
+- **A fix was applied** → `hardenRound += 1`; set `AppliedEdits: yes`. Re-run
+  `/drive-review phase <P> harden-regress` as the regression guard (catches a
+  conformance break the tests can't — e.g. a de-slop edit that dropped a criterion).
+  Any P1 it finds is folded into the next round's fix set. Return `FINDINGS` (the next
+  invocation re-audits; a subsequent clean audit returns HARDENED).
+- **`hardenRound >= HARDEN_CAP` and this audit still has open P1** → return `STOP`.
 
-Record to `$RUN_DIR/state.json` each invocation: `phaseReview[<P>].hardenRound`; on
-`HARDENED`, `phaseReview[<P>].hardened = true`.
+Record `phaseReview[<P>].hardenRound` to `$RUN_DIR/state.json` each invocation.
+`/drive` sets `phaseReview[<P>].status = hardened` on the `HARDENED` return.
 
 ## Return contract to /drive
 

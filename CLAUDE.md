@@ -102,13 +102,14 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
 - **Each phase ends with a HARDEN pass** (after its review converges, before
   `featureBranch` advances): a mutating find→fix→verify over the assembled phase for
   AI-slop removal, missing tests, and logic bugs — *beyond* acceptance criteria. It
-  has its **own cap of 3 fix rounds** (the confirming clean audit is free; counter is
-  independent of the conformance cap-8 — its regression re-reviews count under
-  `hardenRound`, never the phase `reviewCount`), bounds edits to the phase's own
-  surface + test-support (scope-creep gate, with flagged root-cause exceptions),
-  vetoes de-slop edits that would drop a criterion's coverage, and re-runs the
-  conformance review as its regression guard. The phase advances (a pure ref move) only
-  when `hardened`.
+  bounds edits to the phase's own surface + test-support (scope-creep gate, with
+  flagged root-cause exceptions) and vetoes de-slop edits that would drop a criterion's
+  coverage. The phase reaches the terminal `hardened` status — and `featureBranch`
+  advances by a pure ref move — only when harden returns HARDENED.
+- **Harden has its own cap of 3 fix rounds**, independent of the conformance cap-8: the
+  confirming clean audit is free, and its regression guard runs `/drive-review phase
+  <P> harden-regress` (which does NOT touch the phase `round`), so a phase whose
+  integration already used 6–8 rounds is never false-STOPped during hardening.
 - **File ownership is the parallelism contract:** independent slices own disjoint
   files and run in parallel; a slice never writes outside its owned files.
 - Run codex from the **main** context (background + per-scope log), never inside a
@@ -134,7 +135,8 @@ task.md / design.md          -- premise; planner design (+ ## Phases & Slices)
 state.json                   -- run model: runId, baseRef, featureBranch, phase,
                                 phaseBaseSha, concurrencyCap, budget, per-slice
                                 {step,reviewCount,branch,worktree,baseSha},
-                                phaseReview{status,round,hardenRound,hardened}
+                                phaseReview{status,round,hardenRound} where status
+                                = integrating→converged→hardening→hardened (terminal)
 event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
 review-<scope>-N.md          -- per-scope (design/slice/phase) review outputs
 codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw
