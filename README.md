@@ -38,6 +38,18 @@ Two human gates (A: direction, B: diff before push); every review is dual-voice
 (Claude + codex), converging when neither flags a P1. Full annotated diagram +
 decision policy: **[`docs/flow.md`](docs/flow.md)** and `CLAUDE.md`.
 
+### Review enforcement (a run cannot skip review by omission)
+
+A `/drive` run **cannot skip plan/design review or code review by omission**: a
+git-truth conformance checker plus a PreToolUse gate chain (`plan → slice → phase →
+ship`) blocks each transition until its scope has a SHA-bound CONVERGED review, with a
+Stop hook as backstop. It is omission-proof, not forgery-proof. Install once per
+machine:
+
+    bin/install-drive-hooks.sh
+
+Full reference (mechanism, gate chain, limitations): **[`docs/drive-enforcement.md`](docs/drive-enforcement.md)**.
+
 ## Portable config — reproduce this Claude on a new machine
 
 This repo is the canonical home of the operating rules (`OPERATING.md`). To make a
@@ -89,6 +101,9 @@ See `CLAUDE.md` for the full decision policy and invariants.
 
 - `OPERATING.md` -- canonical, portable operating rules (imported by CLAUDE.md + global)
 - `bin/install-operating-rules.sh` -- link global ~/CLAUDE.md at OPERATING.md + bundled skills
+- `bin/install-drive-hooks.sh` -- wire the /drive review-enforcement hooks into ~/.claude/settings.json
+- `bin/{drive-conformance,drive-hook-lib,drive-merge-gate,drive-stop-guard}.sh` -- review-enforcement checker, ref→run lib, PreToolUse gate, Stop backstop
+- `docs/drive-enforcement.md` -- review-enforcement reference (git-truth mechanism, gate chain, limitations)
 - `skills/decant/` -- bundled `/decant` skill (symlinked into ~/.claude/skills by the installer)
 - `CLAUDE.md` -- imports OPERATING.md, plus the coordinator pipeline + decision policy
 - `.claude/commands/drive.md` -- the autonomous lifecycle orchestrator
