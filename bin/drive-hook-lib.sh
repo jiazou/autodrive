@@ -18,33 +18,55 @@
 # phaseInt/<runId>/<P> token in the command string. Return 1 if none found.
 drive_runid_from_command() {
   local cmd="${1-}"
-  local tok
-  # Scan whitespace-separated tokens; pick the first that names a drive ref.
-  # A token may have leading refspec decoration (e.g. +refs/…) but the gate
-  # commands name bare branch refs, so match the ref form directly.
-  for tok in $cmd; do
+  # Extract candidate ref tokens WITHOUT word-splitting/globbing the raw command:
+  # grep -oE over the literal string. The charset [A-Za-z0-9._/-] naturally stops
+  # at quotes, spaces, and the `:` refspec separator, so:
+  #   git merge "slice/R/4a"          -> slice/R/4a   (quotes excluded)
+  #   git push origin drive/R:drive/R -> drive/R      (stops at ':')
+  #   HEAD:refs/heads/slice/R/4a      -> slice/R/4a   (token starts at slice/)
+  # A literal `*` in the command never reaches the shell as a glob (no $cmd split),
+  # and `*` is not in the charset so it cannot pollute a token.
+  local tok runid
+  while IFS= read -r tok; do
+    [ -n "$tok" ] || continue
     case "$tok" in
       drive/*)
-        # drive/<runId> — runId is everything after "drive/", first segment.
+        # Require EXACTLY drive/<runId> (2 segments). Reject drive/R/extra.
         local rest="${tok#drive/}"
-        rest="${rest%%/*}"
-        [ -n "$rest" ] && { printf '%s\n' "$rest"; return 0; }
+        case "$rest" in
+          */*) continue ;;            # extra segment(s) -> not a bare drive ref
+          "") continue ;;
+        esac
+        printf '%s\n' "$rest"; return 0
         ;;
-      slice/*/*)
-        # slice/<runId>/<id> — runId is the segment between slice/ and /<id>.
-        local rest="${tok#slice/}"     # <runId>/<id>[/...]
-        local runid="${rest%/*}"       # strip the final /<id>
-        runid="${runid%%/*}"           # runId is a single segment
-        [ -n "$runid" ] && { printf '%s\n' "$runid"; return 0; }
+      slice/*)
+        # Require EXACTLY slice/<runId>/<id> (3 segments). Reject 2 or 4+.
+        local rest="${tok#slice/}"    # want <runId>/<id> with no further slash
+        case "$rest" in
+          */*/*) continue ;;          # 4+ segments -> reject
+          */*)
+            runid="${rest%%/*}"
+            [ -n "$runid" ] && { printf '%s\n' "$runid"; return 0; }
+            ;;
+          *) continue ;;              # only 2 segments (slice/<runId>) -> reject
+        esac
         ;;
-      phaseInt/*/*)
-        # phaseInt/<runId>/<P> — runId is the segment after phaseInt/.
+      phaseInt/*)
+        # Require EXACTLY phaseInt/<runId>/<P> (3 segments). Reject 2 or 4+.
         local rest="${tok#phaseInt/}"
-        local runid="${rest%%/*}"
-        [ -n "$runid" ] && { printf '%s\n' "$runid"; return 0; }
+        case "$rest" in
+          */*/*) continue ;;          # 4+ segments -> reject
+          */*)
+            runid="${rest%%/*}"
+            [ -n "$runid" ] && { printf '%s\n' "$runid"; return 0; }
+            ;;
+          *) continue ;;              # only 2 segments -> reject
+        esac
         ;;
     esac
-  done
+  done <<EOF
+$(printf '%s' "$cmd" | grep -oE '(drive|slice|phaseInt)/[A-Za-z0-9._/-]+')
+EOF
   return 1
 }
 
@@ -57,9 +79,13 @@ drive_runid_from_head() {
   branch="$(git -C "$cwd" rev-parse --abbrev-ref HEAD 2>/dev/null)" || return 1
   case "$branch" in
     drive/*)
+      # Require EXACTLY drive/<runId> (2 segments). Reject drive/R/extra.
       local runid="${branch#drive/}"
-      runid="${runid%%/*}"
-      [ -n "$runid" ] && { printf '%s\n' "$runid"; return 0; }
+      case "$runid" in
+        */*) return 1 ;;            # extra segment(s) -> not the feature branch
+        "") return 1 ;;
+      esac
+      printf '%s\n' "$runid"; return 0
       ;;
   esac
   return 1

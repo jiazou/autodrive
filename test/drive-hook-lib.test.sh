@@ -67,6 +67,41 @@ assert_rc1 "from_command empty string" "$out" "$rc"
 out="$(drive_runid_from_command "git checkout slice/onlyrun")"; rc=$?
 assert_rc1 "from_command slice/ without id" "$out" "$rc"
 
+# --- drive_runid_from_command: quoting / refspec / glob safety (BLOCKING fix) ---
+# double-quoted ref: must NOT bypass (no word-split => quotes excluded from token)
+out="$(drive_runid_from_command 'git merge "slice/R/4a"')"; rc=$?
+assert_eq "from_command double-quoted slice ref" "R" "$out" "$rc"
+
+# single-quoted ref
+out="$(drive_runid_from_command "git merge 'slice/R/4a'")"; rc=$?
+assert_eq "from_command single-quoted slice ref" "R" "$out" "$rc"
+
+# refspec src:dst — stops at ':' so resolves the src side (drive/R), not 'R:drive'
+out="$(drive_runid_from_command "git push origin drive/R:drive/R")"; rc=$?
+assert_eq "from_command refspec drive/R:drive/R" "R" "$out" "$rc"
+
+# refspec HEAD:refs/heads/slice/R/4a — token starts at slice/, resolves R
+out="$(drive_runid_from_command "git push origin HEAD:refs/heads/slice/R/4a")"; rc=$?
+assert_eq "from_command refspec HEAD:refs/heads/slice" "R" "$out" "$rc"
+
+# a literal '*' in the command must not glob and must still resolve the ref
+out="$(drive_runid_from_command "git log --grep=* drive/R")"; rc=$?
+assert_eq "from_command with literal star" "R" "$out" "$rc"
+
+# --- drive_runid_from_command: exact-segment rejection (MINOR fix) ---
+out="$(drive_runid_from_command "git checkout drive/R/extra")"; rc=$?
+assert_rc1 "from_command drive/R/extra rejected" "$out" "$rc"
+
+out="$(drive_runid_from_command "git merge slice/R/4a/extra")"; rc=$?
+assert_rc1 "from_command slice/R/4a/extra rejected" "$out" "$rc"
+
+out="$(drive_runid_from_command "git merge phaseInt/R/1/extra")"; rc=$?
+assert_rc1 "from_command phaseInt/R/1/extra rejected" "$out" "$rc"
+
+# bare phaseInt/<runId> with no <P> should NOT match
+out="$(drive_runid_from_command "git checkout phaseInt/onlyrun")"; rc=$?
+assert_rc1 "from_command phaseInt/ without P" "$out" "$rc"
+
 # --- drive_runid_from_head: positive (throwaway repo) ---
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
@@ -87,6 +122,11 @@ assert_eq "from_head drive/<runId> checkout" "$RID" "$out" "$rc"
 git -C "$TMP" checkout -q -b feature/other >/dev/null 2>&1
 out="$(drive_runid_from_head "$TMP")"; rc=$?
 assert_rc1 "from_head non-drive branch" "$out" "$rc"
+
+# drive/<runId>/extra is NOT the feature branch (exact 2-segment required)
+git -C "$TMP" checkout -q -b "drive/$RID/extra" >/dev/null 2>&1
+out="$(drive_runid_from_head "$TMP")"; rc=$?
+assert_rc1 "from_head drive/<runId>/extra rejected" "$out" "$rc"
 
 # not a git repo
 NOGIT="$(mktemp -d)"
