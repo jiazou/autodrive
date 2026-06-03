@@ -61,21 +61,26 @@ run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc "AC2 slice-merge m
 read -r repo rd < <(mk_slice_no_codex)
 run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc "AC2 slice-merge no codex" 1 "$RC"
 
-echo "=== AC3: CODEX_UNAVAILABLE anchored first-line satisfies; buried word not falsely degraded ==="
+echo "=== AC3: codex marker behavioral — anchored token vs buried substring vs empty ==="
+# Anchored first-line CODEX_UNAVAILABLE = degraded-but-satisfied -> clean.
 read -r repo rd < <(mk_plan codex_unavailable)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 anchored CODEX_UNAVAILABLE satisfies codex" 0 "$RC"
+# A real review whose body merely buries the substring = non-empty real review -> clean.
 read -r repo rd < <(mk_plan codex_buried)
-run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 buried word still a present codex file (clean)" 0 "$RC"
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 buried substring still a real present codex file (clean)" 0 "$RC"
+# EMPTY codex file (bare touch) does NOT satisfy -> plan-gate blocks (exit 1).
+read -r repo rd < <(mk_plan codex_empty)
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 empty codex file does NOT satisfy (blocked)" 1 "$RC"
 
 echo "=== AC4: ship ledger-tolerance + tight allowlist + ≤1-commit ==="
 read -r repo rd < <(mk_ship clean)
-run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4 ship ledger-only clean" 0 "$RC"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.i ship ledger-only clean" 0 "$RC"
 read -r repo rd < <(mk_ship code_past_r)
-run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4a ship code past R blocked" 1 "$RC"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.ii ship code past R blocked" 1 "$RC"
 read -r repo rd < <(mk_ship other_harness_past_r)
-run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4b(tight) ship other .harness file blocked" 1 "$RC"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.iii(tight) ship other .harness file blocked" 1 "$RC"
 read -r repo rd < <(mk_ship two_ledger_commits)
-run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4c(≤1) ship two ledger commits blocked" 1 "$RC"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.iv(≤1) ship two ledger commits blocked" 1 "$RC"
 
 echo "=== AC4b: multi-phase existential R (no highest-N false-block) ==="
 read -r repo rd < <(mk_ship_multiphase)
@@ -104,6 +109,17 @@ run_conf "$repo" "$rd" --mode audit;                assert_rc "AC5 audit flags m
 # audit negative: same shape but slice IS reviewed -> exit 0
 read -r repo rd < <(mk_audit reviewed)
 run_conf "$repo" "$rd" --mode audit;                assert_rc "AC5 audit clean when merged slice reviewed" 0 "$RC"
+
+echo "=== AC5b: induced git/IO error (corrupt object) -> exit 2, never a clean/violation verdict ==="
+# ship: R resolves + is ancestor + R..tip=1 commit, but the tip's TREE is corrupt so the
+# `git diff --name-only R..tip` allowlist check ERRORS. That git/IO error MUST surface as
+# exit 2 (fail-closed) -- proc-substitution would have swallowed it into a false-clean.
+read -r repo rd < <(mk_ship_git_error)
+run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC5b ship git-error (corrupt tree -> diff fails) exit 2" 2 "$RC"
+# audit: live phaseInt ref enumerates but its tip object is corrupt -> exit 2,
+# NOT exit 0 clean (which would swallow a broken repo into 'nothing to audit').
+read -r repo rd < <(mk_audit_git_error)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "AC5b audit git-error (corrupt live tip) exit 2" 2 "$RC"
 
 echo "=== AC10: concurrency — run-keyed phaseInt isolation ==="
 read -r repo rd1 rd2 < <(mk_two_concurrent)

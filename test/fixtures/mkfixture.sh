@@ -80,6 +80,13 @@ _write_codex_word_buried() {
   { echo "codex review for $scope"; echo "note: CODEX_UNAVAILABLE was not the case"; } > "$rd/codex-review-$scope.md"
 }
 
+# Write an EMPTY codex file (bare `touch`). Must NOT satisfy the codex side. $1=rd $2=scope
+_write_codex_empty() {
+  local rd="$1" scope="$2"
+  mkdir -p "$rd"
+  : > "$rd/codex-review-$scope.md"
+}
+
 # ---------------------------------------------------------------------------------
 # Fixture builders. Each echoes "REPO_DIR RUN_DIR" on one line (space-separated).
 # runId is the basename of RUN_DIR; featureBranch is drive/<runId>.
@@ -138,7 +145,7 @@ mk_slice_no_codex() {
 }
 
 # plan-gate fixtures. RUN_DIR holds review-design-N.md + codex-review-design.md.
-# variant: clean | findings | nodesign | nocodex | codex_unavailable | codex_buried
+# variant: clean | findings | nodesign | nocodex | codex_unavailable | codex_buried | codex_empty
 mk_plan() {
   local variant="$1" name="${2:-plan-$1}"
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -161,11 +168,15 @@ mk_plan() {
       _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
       _write_codex_unavailable "$rd" design ;;
     codex_buried)
-      # for AC3 negative: a normal-review codex whose body buries the word — still
-      # counts as present (file exists). The point: it is not falsely treated as a
-      # degraded marker. plan-gate is clean here.
+      # for AC3: a normal-review codex whose body buries the word — still counts as a
+      # present, non-empty review file (it is not falsely treated as a degraded marker,
+      # but it satisfies on the strength of being a real review). plan-gate clean here.
       _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
       _write_codex_word_buried "$rd" design ;;
+    codex_empty)
+      # for AC3 negative: an EMPTY codex file (bare `touch`) does NOT satisfy.
+      _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
+      _write_codex_empty "$rd" design ;;
   esac
   echo "$repo $rd"
 }
@@ -271,6 +282,71 @@ mk_audit() {
     reviewed)   _write_review "$rd" "4a" 1 "$stip" ;;
     unreviewed) : ;;   # no review-4a-*.md -> audit must flag it
   esac
+  echo "$repo $rd"
+}
+
+# Delete the loose git object for sha $2 in repo $1 (hermetic object-store corruption).
+_corrupt_object() {
+  local repo="$1" sha="$2"
+  local obj="$repo/.git/objects/${sha:0:2}/${sha:2}"
+  if [ -f "$obj" ]; then
+    chmod -R u+w "$repo/.git/objects/${sha:0:2}"
+    rm -f "$obj"
+  else
+    # Object is packed — truncate any pack so reads of its objects fail.
+    local p
+    for p in "$repo"/.git/objects/pack/*.pack; do
+      [ -f "$p" ] || continue
+      chmod u+w "$p"; : > "$p"
+    done
+  fi
+}
+
+# SHIP git-error fixture: a counting phase review binds to a real, resolvable, ancestor
+# R; the featureBranch tip commit object is INTACT (so `rev featureBranch` and
+# `rev-list R..tip` succeed) but the tip's TREE object is DELETED, so `git diff
+# --name-only R..tip` (the allowlist check) ERRORS. That git/IO error MUST surface as
+# exit 2 (fail-closed) — process-substitution would have swallowed it into a false
+# clean. This is exactly the BLOCKING finding. Echoes "REPO RUN_DIR".
+# (Distinct from a non-resolving artifact sha, which is a verdict → skip, not exit 2.)
+mk_ship_git_error() {
+  local name="${1:-ship-git-error}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$name"
+  local R; R="$(_commit "$repo" "feature.sh" "echo phase1" "phase 1 code")"
+  # one ledger-only commit past R (so R..tip = 1 commit, R is ancestor)
+  mkdir -p "$repo/.harness"
+  printf 'd\n' > "$repo/.harness/decisions.md"
+  printf 'f\n' > "$repo/.harness/followups.md"
+  _gitc "$repo" add -A; _gitc "$repo" commit -q -m "ledger"
+  _write_review "$rd" phase1 1 "$R"
+  _write_codex "$rd" phase1
+  # Corrupt the tip's TREE (not the commit) → diff errors, commit/rev-list still work.
+  local tip tree
+  tip="$(_gitc "$repo" rev-parse HEAD)"
+  tree="$(_gitc "$repo" rev-parse "$tip^{tree}")"
+  _corrupt_object "$repo" "$tree"
+  echo "$repo $rd"
+}
+
+# AUDIT git-error fixture: a live phaseInt/<runId>/1 ref exists and enumerates via
+# for-each-ref, but its tip commit object is DELETED so resolving the enumerated ref
+# errors mid-check (a ref that for-each-ref found but can't be peeled = real repo
+# corruption, distinct from an absent ref). audit must surface exit 2 (NOT exit 0
+# clean, which would swallow a broken repo). Echoes "REPO RUN_DIR".
+mk_audit_git_error() {
+  local name="${1:-audit-git-error}" P=1
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "phaseInt/$name/$P"
+  local tip; tip="$(_commit "$repo" "phase.sh" "echo phase" "phase $P integration")"
+  mkdir -p "$rd"
+  _write_codex "$rd" "phase$P"
+  # Corrupt the live phaseInt tip so for-each-ref lists it but rev-parse errors.
+  _corrupt_object "$repo" "$tip"
   echo "$repo $rd"
 }
 
