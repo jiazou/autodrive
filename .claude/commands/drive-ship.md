@@ -44,7 +44,8 @@ report the failures (a human-fix blocker, not a decision).
 ## Gate B — approval before push
 
 Surface the diff summary + proposed PR text and WAIT for explicit approval. Do NOT
-push or open the PR until approved.
+push or open the PR until approved. **Set `state.waiting = "gateB"` before you
+present it** so the Stop hook lets the turn end here.
 
 End commit messages with:
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
