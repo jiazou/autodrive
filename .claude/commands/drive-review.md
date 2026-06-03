@@ -51,8 +51,23 @@ Out-of-scope real bugs → `$RUN_DIR/followups.md`.
 Write `$RUN_DIR/review-<scope>-N.md`:
   # Review <scope> N
   ## Verdict: CONVERGED | FINDINGS
+  reviewed-sha: <40-hex>
   ## Findings → ### [SEVERITY] Short title / **Where** file:line / Issue / Why / Fix
 CONVERGED = no P1. Return: the path, verdict, one-line count.
+
+**`reviewed-sha:` (SHA-bound proof — the enforcement gate reads this).** Emit a line
+`reviewed-sha: <40-hex>` = the **exact git tip this review diffed**, so a review only
+counts for code whose tip equals it (a stale CONVERGED file can't cover newly-added
+commits). Bind it by scope:
+- **slice `<id>`:** `<40-hex>` = `git rev-parse slice/<runId>/<id>` (the slice tip the
+  diff `<phaseBaseSha>..slice/<runId>/<id>` ended at).
+- **phase `<P>`:** `<40-hex>` = `git rev-parse phaseInt/<runId>/<P>` (the assembled
+  integration tip). The **harden-regress** re-review (run by HARDEN after it commits
+  to `phaseInt/<runId>/<P>`) MUST re-emit `reviewed-sha:` at the **post-fix**
+  `git rev-parse phaseInt/<runId>/<P>` tip — otherwise the phase-merge gate sees a
+  stale pre-harden sha and blocks the advance.
+- **design:** OMIT `reviewed-sha:` — design review audits `design.md`, not a git tip;
+  the plan-gate only requires `## Verdict: CONVERGED` + the codex file (no sha).
 ----- END SUBAGENT SCOPE -----
 
 ## Step 2 — Cross-model codex pass (direct CLI, per-scope log)
@@ -73,7 +88,10 @@ run_in_background; wait for completion; then a bounded post-process subagent: "R
 `$RUN_DIR/codex-review-<scope>.md` (same severity tags, <150 words)."
 
 Degradation (do NOT hard-fail): codex missing OR hangs/times out → write
-`codex-review-<scope>.md` = "codex unavailable — Claude-only review" + warning; continue.
+`codex-review-<scope>.md` with the **anchored first-line token `CODEX_UNAVAILABLE`**
+(exactly that bare token as the file's FIRST line — conformance's codex check matches
+it anchored, so a buried mention elsewhere is NOT recognized), optionally followed by
+a warning note on later lines; continue.
 
 ## Step 3 — Combine & converge
 

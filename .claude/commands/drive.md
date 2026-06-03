@@ -40,11 +40,11 @@ verdict / merge / gate.
   / `phaseReview[].integrationWorktree`; `git worktree remove` + `branch -D`
   orphans; a phase left `integrating` is rebuilt from scratch — see Execute), and
   continue each slice from its `step`. A phase left `hardening` is **NOT** rebuilt —
-  its harden commits live on `phaseInt/<P>`; resume HARDEN on that branch (rebuilding
+  its harden commits live on `phaseInt/<runId>/<P>`; resume HARDEN on that branch (rebuilding
   would discard the harden work). **Reconcile `hardenRound` from artifacts + branch,
-  not state alone** (a crash can land a `harden-<P>-N.md` or a `phaseInt/<P>` commit
+  not state alone** (a crash can land a `harden-<P>-N.md` or a `phaseInt/<runId>/<P>` commit
   before the state write): `hardenRound = max(state value, count of fix-round
-  harden-<P>-*.md)`; the next round re-audits from the actual `phaseInt/<P>` tree, so
+  harden-<P>-*.md)`; the next round re-audits from the actual `phaseInt/<runId>/<P>` tree, so
   a partially-applied round is simply re-audited and completed.
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
@@ -109,6 +109,24 @@ Parse the breakdown into `state.slices` (`{<id>: {step:"queued", reviewCount:0}}
 with each slice's `owns`/`deps`) and the ordered phase list.
 
 ### Stage 2–4.5 — Execute (per phase; refs + worktrees only)
+
+**Plan-gate (defense-in-depth, once per run).** Before dispatching the FIRST IMPLEMENT
+of the run (i.e. before the first `git worktree add … -b slice/<runId>/<id>`), run
+`bin/drive-conformance.sh $RUN_DIR --mode plan-gate` and proceed only if it reports
+clean — it requires the dual-voice **design** review to have CONVERGED (a
+`review-design-N.md` with `## Verdict: CONVERGED` + a `codex-review-design.md`). On a
+violation, run `/drive-review design` until it converges, then retry. The PreToolUse
+hook enforces this same gate on the first `git worktree add -b slice/…`; running it
+in-prose first makes enforcement degrade gracefully where the hooks aren't installed.
+
+**Literal refs in gated commands.** Every command the gate inspects (the `git worktree
+add -b slice/<runId>/<id>`, each per-slice `git merge slice/<runId>/<id>`, the
+`git branch -f drive/<runId> phaseInt/<runId>/<P>` advance, and the ship push/PR) MUST
+spell the refs out as **literal strings** with `<runId>`/`<P>` already substituted — NO
+shell variables in the ref (e.g. `slice/$runId/$id`). The PreToolUse gate parses the
+unexpanded command string, so a variable ref is invisible to it and silently bypasses
+the gate.
+
 For each PHASE in order (steps 1–4 build & review the phase; step 5 HARDENS it before
 it advances):
 
@@ -132,36 +150,43 @@ it advances):
      blocker needs files outside ownership → **plan-amendment** (amend the design's
      Phases & Slices, re-converge the design review, resume).
 4. **Assemble (idempotent)** once ALL slices in the phase are `converged`:
-   delete any existing `phaseInt/<P>` branch/worktree, then
-   `git worktree add $RUN_DIR/wt/phase<P> -b phaseInt/<P> <phaseBaseSha>`; merge
-   each converged slice branch IN. **Conflict → STOP** (the rebuild-from-base is the
-   rollback; never `git merge --abort` to undo prior merges). Run the **FULL build +
-   integration tests** + REVIEW scoped `phase <P>` in this worktree.
+   first run `bin/drive-conformance.sh $RUN_DIR --mode audit` and proceed only if it
+   reports clean (defense-in-depth — flags any slice merged into the live phase that
+   lacks a counting review, so enforcement degrades gracefully where the PreToolUse
+   hooks aren't installed; on a violation, run the named `/drive-review slice <id>`
+   then retry). Then delete any existing `phaseInt/<runId>/<P>` branch/worktree, then
+   `git worktree add $RUN_DIR/wt/phase<P> -b phaseInt/<runId>/<P> <phaseBaseSha>`;
+   merge each converged slice branch IN with **one `git merge` per slice** (never a
+   single multi-slice merge — the gate requires every merged slice to count, and a
+   per-slice merge keeps each transition individually gated). **Conflict → STOP** (the
+   rebuild-from-base is the rollback; never `git merge --abort` to undo prior merges).
+   Run the **FULL build + integration tests** + REVIEW scoped `phase <P>` in this
+   worktree.
    - CONVERGED → `phaseReview[<P>].status = converged`, then **HARDEN** (step 5).
    - FINDINGS → route each P1 to the responsible slice (`step=needs_fix`,
      re-dispatch — re-creating its worktree — loop its cap-8), then
      **re-assemble from scratch**.
 5. **Harden (per phase, after the phase review converges)** — run the HARDEN stage
    (`/drive-harden phase <P>` — `~/.claude/commands/drive-harden.md`) IN the
-   `phaseInt/<P>` worktree (`phaseReview[<P>].status = hardening`). It is a mutating
+   `phaseInt/<runId>/<P>` worktree (`phaseReview[<P>].status = hardening`). It is a mutating
    find→fix→verify pass over the assembled phase to **reduce AI slop, add missing
    tests, and fix logic bugs** — beyond acceptance criteria — committing to
-   `phaseInt/<P>`. Its own cap-3 loop (separate from the conformance cap-8); de-slop
+   `phaseInt/<runId>/<P>`. Its own cap-3 loop (separate from the conformance cap-8); de-slop
    edits that would drop a criterion's coverage are vetoed; after any code change it
    re-runs `/drive-review phase <P>` as the regression guard.
    - `HARDENED` → `phaseReview[<P>].hardened = true`; advance `featureBranch` to
-     `phaseInt/<P>` with a **pure ref move** — `phaseInt/<P>` is always a fast-forward
+     `phaseInt/<runId>/<P>` with a **pure ref move** — `phaseInt/<runId>/<P>` is always a fast-forward
      descendant of `featureBranch` (it was branched from `phaseBaseSha = rev-parse
      featureBranch`, then only added commits), so move the ref directly:
-     `git branch -f <featureBranch> phaseInt/<P>` (refs-only — `featureBranch` need not
+     `git branch -f <featureBranch> phaseInt/<runId>/<P>` (refs-only — `featureBranch` need not
      be checked out anywhere; never `merge`/`reset --hard`, which require/disturb a
-     working tree). Guard: if `phaseInt/<P>` is NOT a descendant of `featureBranch`
-     (`git merge-base --is-ancestor <featureBranch> phaseInt/<P>` fails) → STOP (a
+     working tree). Guard: if `phaseInt/<runId>/<P>` is NOT a descendant of `featureBranch`
+     (`git merge-base --is-ancestor <featureBranch> phaseInt/<runId>/<P>` fails) → STOP (a
      concurrent ref move broke the invariant; do not force). Then `git worktree remove`
      the integration worktree (slice worktrees were already removed on convergence),
      delete slice branches; next phase.
    - `STOP` (3 fix rounds exceeded / BLOCKED / NEEDS_CONTEXT) → STOP; the phase does
-     **not** advance — its half-hardened state is preserved on `phaseInt/<P>` for resume.
+     **not** advance — its half-hardened state is preserved on `phaseInt/<runId>/<P>` for resume.
 
 When all phases are `hardened` → `stage = verify`.
 
