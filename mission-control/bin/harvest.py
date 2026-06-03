@@ -112,9 +112,10 @@ def session_meta(sid):
 
 
 def iterm_tab_names():
-    """Map controlling-tty -> live iTerm tab name via one osascript call. The tab
-    name is what the user sees and reads as the session's goal. Empty dict if iTerm
-    isn't running or automation permission is denied (the caller falls back to
+    """Map controlling-tty -> live iTerm tab name via one osascript call. Prefers the
+    user's manual short tab name (the tab *title override*, e.g. "Harness") over the
+    long auto-generated title — that short name is what Jia reads as the session goal.
+    Empty dict if iTerm isn't running or automation is denied (caller falls back to
     ai-title). One call per harvest, not per session."""
     script = (
         'tell application "iTerm2"\n'
@@ -122,7 +123,11 @@ def iterm_tab_names():
         '  repeat with w in windows\n'
         '    repeat with t in tabs of w\n'
         '      repeat with s in sessions of t\n'
-        '        set out to out & (tty of s) & "\t" & (name of s) & linefeed\n'
+        '        set ov to ""\n'
+        '        try\n'
+        '          set ov to (variable s named "tab.titleOverride")\n'
+        '        end try\n'
+        '        set out to out & (tty of s) & "\t" & ov & "\t" & (name of s) & linefeed\n'
         '      end repeat\n'
         '    end repeat\n'
         '  end repeat\n'
@@ -135,9 +140,11 @@ def iterm_tab_names():
         return {}
     out = {}
     for ln in r.stdout.splitlines():
-        if "\t" in ln:
-            tty, _, name = ln.partition("\t")
-            out[tty.strip()] = name.strip()
+        parts = ln.split("\t")
+        if len(parts) < 3:
+            continue
+        tty, override, name = parts[0], parts[1], parts[2]
+        out[tty.strip()] = override.strip() or name.strip()   # short manual name wins
     return out
 
 

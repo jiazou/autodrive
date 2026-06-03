@@ -38,10 +38,14 @@ def classify_ready(tasks):
     return ready, blocked
 
 
-def focus_slugs(d):
-    """Today's focus = overdue + due-today, capped at 5. Shared by the daily-note
-    draft and the `today` glance views so the rule lives in one place."""
-    return (d["buckets"]["overdue"] + d["buckets"]["due_today"])[:5]
+def focus_slugs(d, cap=10):
+    """Today's focus = overdue + due-today, capped at `cap` (default 10). Shared by
+    the daily-note draft and the `today` glance views so the rule lives in one place.
+    Due-today tasks are never truncated — overdue is trimmed first if the set overflows."""
+    overdue = d["buckets"]["overdue"]
+    due_today = d["buckets"]["due_today"]
+    keep_overdue = overdue[:max(0, cap - len(due_today))]
+    return keep_overdue + due_today
 
 
 def title_of(d, slug):
@@ -129,7 +133,8 @@ def _replace_or_append_section(text, heading, body):
 
 
 def _focus_md(d):
-    """Today's Focus = overdue + due-today, priority-sorted, capped at 5 — rendered
+    """Today's Focus = overdue + due-today, priority-sorted, capped via focus_slugs
+    (default 10, due-today never truncated) — rendered
     SELF-CONTAINED: title, priority, due, project, and the task's Definition-of-Done
     steps inline, so the daily note is the one place; no clicking into task files."""
     detail = d["tasks_detail"]
