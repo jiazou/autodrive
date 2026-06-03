@@ -16,10 +16,23 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import standup
 
 VAULT_NAME = "Jia's Personal Vault"
+_BIN = os.path.dirname(os.path.abspath(__file__))
+DONE_PY = os.path.join(_BIN, "done.py")
+
+# A colored emoji dot carries the session's Claude /color while the name stays in
+# default-readable text (SwiftBar's color= would tint the whole line). Keyed by the
+# /color name. No cyan circle emoji exists, so cyan→🔵 (approx).
+_CLAUDE_DOT = {
+    "red": "🔴", "orange": "🟠", "yellow": "🟡", "green": "🟢",
+    "blue": "🔵", "cyan": "🔵", "violet": "🟣", "purple": "🟣", "magenta": "🟣",
+}
 
 
 def _obsidian_href(slug):
-    q = urllib.parse.urlencode({"vault": VAULT_NAME, "file": slug})
+    # Obsidian's URI handler does NOT decode "+" as a space, so urlencode's default
+    # quote_plus breaks the vault name. Force %20 via quote_via=quote.
+    q = urllib.parse.urlencode({"vault": VAULT_NAME, "file": slug},
+                               quote_via=urllib.parse.quote)
     return "obsidian://open?" + q
 
 
@@ -65,15 +78,28 @@ def render_swiftbar(d):
     for slug in picks:
         title = standup.title_of(d, slug).replace("|", "/")
         L.append(f"{title} | href={_obsidian_href(slug)}")
+        # submenu: mark done in place (calls done.py via this interpreter — SwiftBar's
+        # PATH is minimal), then refresh; plus a direct open. The slug is percent-encoded
+        # so a space / '|' can't split the param line or inject extra SwiftBar attributes
+        # (done.py unquotes it). SwiftBar's shell= execs the binary directly — no shell —
+        # so this is argument-safety, not RCE.
+        L.append(f"--✓ Mark done | shell={sys.executable} param1={DONE_PY} "
+                 f"param2={urllib.parse.quote(slug)} terminal=false refresh=true")
+        L.append(f"--↗ Open in Obsidian | href={_obsidian_href(slug)}")
     L.append("---")
     L.append("Sessions | size=11 color=gray")
     for s in d["sessions"]:
         glyph = {"waiting": "⏸", "busy": "▶", "idle": "●", "shell": "○"}.get(s["status"], "·")
-        col = s["color"] or "white"
         # lead with the goal (iTerm tab name); fall back to id when untitled
         label = (s.get("goal") or s.get("name") or s["id"]).replace("|", "/")
+        dot = _CLAUDE_DOT.get(s["color"], "")
+        dot = f"{dot} " if dot else ""
         proj = f"  → {s['project']}" if s["project"] else ""
-        L.append(f"{glyph} {label}{proj} | color={col}")
+        # emoji dot carries the color; size=12 trims it; #000000 = pure black.
+        # refresh=true makes the line ACTIONABLE → macOS renders it enabled (full
+        # opacity); without an action it's a disabled item drawn dimmed, which washed
+        # every color out (orange→yellow, black→grey). Click just refreshes the menu.
+        L.append(f"{glyph} {dot}{label}{proj} | size=12 color=#000000 refresh=true")
     L.append("---")
     L.append("Refresh | refresh=true")
     L.append("Open today's note | href=" + _obsidian_href(d["generated_at"].split(" ")[0]))

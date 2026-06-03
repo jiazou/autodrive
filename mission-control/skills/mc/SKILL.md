@@ -3,9 +3,9 @@ name: mc
 description: >-
   Mission Control command router — the Claude-native front door to the personal
   operating harness. Invoke as `/mc <subcommand>` (harvest, today, standup, weekly,
-  tasks, bind). Runs the requested command and presents the result. Use when the
+  tasks, done, bind). Runs the requested command and presents the result. Use when the
   user types "/mc ...", "mc harvest", "mc today", "mc standup", "mc weekly",
-  "mc bind", "run mission control", or asks for their session/task status.
+  "mc done", "mc bind", "run mission control", or asks for their session/task status.
 ---
 
 # mc — Mission Control (run from inside Claude)
@@ -26,6 +26,7 @@ Run the matching command below, then present the output to the user. The Python 
 | `standup` | `python3 ~/mission-control/bin/standup.py` | Plan the day; add `--draft` to write it into the daily note. |
 | `weekly` | `python3 ~/mission-control/bin/weekly.py` | Weekly review agenda. |
 | `tasks` | `python3 ~/mission-control/bin/vault_tasks.py` | Vault task buckets. |
+| `done` | `python3 ~/mission-control/bin/done.py <slug>` | Mark a task done (sets `status: done`, clears `needs_review`, logs it). `--status <s>` for any status. |
 | `bind` | `bash ~/mission-control/bin/mc-bind.sh <args>` | Bind a session ↔ task, e.g. `bind 7bdec158 --project "Surrogacy"`. |
 
 Pass through any flags the user gave (`--draft`, `--log`, `--json`, etc.) verbatim.
