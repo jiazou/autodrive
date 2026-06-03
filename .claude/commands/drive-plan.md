@@ -73,6 +73,20 @@ to me: the direction plus any Taste / User-Challenge items autoplan or the
 reviewers surfaced. The dual-voice convergence is automated — Gate A is still the
 only human gate here; wait for my approval.
 
+Reaching this gate satisfied (and so auto-cleared) the leg-1 `/goal`, so also hand
+me the **leg-2** goal to paste *alongside* my approval — it keeps the execute half
+(implement → review → harden → verify → ship) driving autonomously to Gate B. Bind
+`<task>` = the run's task:
+
+> Paste this with your approval to drive the execute half up to Gate B:
+>
+> ```
+> /goal The /drive run for "<task>" has opened its PR (Gate B passed, stage=done), OR is paused awaiting my input at Gate B, a non-decision STOP, or an AskUserQuestion. NOT met while autonomous implement / review / harden / verify / ship work remains.
+> ```
+
+(If the user skips it, the execute half still runs — it just won't auto-continue
+across turns. After Gate B the push is immediate, so no further goal is needed.)
+
 ## After this stage
 
 - Approved → update $RUN_DIR/state.json (`stage=execute`, `lastGate="A"`), parse

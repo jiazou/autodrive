@@ -79,12 +79,15 @@ than silently auto-deciding a Taste/Challenge.
   (immediately).
 
 **Session goal (Stage 0).** Because a run typically starts in a fresh session,
-Stage 0 also presents Claude Code's native **`/goal`** for you to paste — a
-session-scoped completion condition that keeps the session driving turn-to-turn
-instead of stopping mid-pipeline. `/goal` can only be set by you (no programmatic
-setter), so `/drive` derives the condition and shows the line, then proceeds
-whether or not you set it. It complements the gates: `/goal` continues the
-autonomous stages; Gate A / Gate B / STOPs still pause for you.
+Stage 0 presents Claude Code's native **`/goal`** for you to paste — a session-scoped
+completion condition that keeps the session driving turn-to-turn instead of stopping
+mid-pipeline. `/goal` can only be set by you (no programmatic setter) and **auto-clears
+the instant its condition is met**, so a single whole-run goal would clear itself at
+Gate A (the gate is a satisfying "awaiting your input" state). `/drive` therefore uses
+**one goal per autonomous leg**, re-armed at each gate: Stage 0 gives you the leg-1 goal
+(→ Gate A), and Gate A / Gate B hand you the next leg's line on approval. It still
+complements the gates: `/goal` continues the autonomous stages; Gate A / Gate B / STOPs
+still pause for you.
 
 No other pauses. Not for ambiguous design choices, not for severity calls — the
 6 principles decide and the decision is logged.
