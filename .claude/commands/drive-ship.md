@@ -10,8 +10,10 @@ main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR
 
 1. **Gate A passed:** `$RUN_DIR/state.json` has `lastGate == "A"`. Do NOT infer it
    from a review file existing.
-2. **All phases converged:** every `state.phaseReview[*].status == "converged"` and
-   no slice left non-`converged` in `state.slices`. Gate on state, not review files.
+2. **All phases hardened:** every `state.phaseReview[*].status == "hardened"` (the
+   terminal per-phase state — a phase reaches it only after its review converged AND
+   its harden pass completed) and no slice left non-`converged` in `state.slices`.
+   Gate on state, not review files.
 3. **`featureBranch` exists** with each phase's integration merged in.
 4. **Tooling:** git remote, `gh` (or `glab`), `jq`, a runnable test runner.
 

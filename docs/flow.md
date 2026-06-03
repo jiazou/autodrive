@@ -73,10 +73,10 @@ commands themselves.
 | `/autoplan` | 1 | inside `/drive-plan` (gstack) |
 | `/drive-implement` | 12 | 4 slices × 3 rounds |
 | `/drive-review` | 17 | 12 per-slice + 2 phase-integration + 1 design + 2 harden regression re-reviews |
-| `/drive-harden` | 2 | 1 per phase (each its own cap-3 find→fix→verify loop) |
+| `/drive-harden` | 4 | per phase: 1 fix round (→ FINDINGS) + 1 free confirming audit (→ HARDENED); 2 phases. Up to 3 fix rounds/phase |
 | `/qa-only` | 1 | verify (optional) |
 | `/drive-ship` | 1 | Stage 5 |
-| **Total** | **36** | + `codex exec` inside every `/drive-review` AND every `/drive-harden` audit (CLI, not a command) |
+| **Total** | **38** | minimum for this idealized run; harden adds 1 `/drive-harden` + 1 `harden-regress` `/drive-review` per extra fix round. + `codex exec` inside every `/drive-review` AND every `/drive-harden` audit (CLI, not a command) |
 
 ## Notes
 

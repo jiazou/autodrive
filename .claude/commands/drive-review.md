@@ -1,6 +1,6 @@
 ---
 description: REVIEW stage (Stage 3) of /drive — dual-voice review (Claude reviewer subagent + codex) over a design/slice/phase scope; converged when neither voice has an open P1. Usually invoked by /drive.
-argument-hint: design | slice <id> | phase <P>
+argument-hint: design | slice <id> | phase <P> [harden-regress]
 ---
 You are running the REVIEW stage (Stage 3) — the harness's **dual-voice review
 primitive** (a passive Claude reviewer + a direct codex pass over the same scope,
@@ -16,6 +16,10 @@ refs:
 - `phase <P>` — review the assembled integration diff
   `git diff <phaseBaseSha>..phaseInt/<P>` for integration issues (interfaces,
   cross-slice contracts).
+- `phase <P> harden-regress` — same review as `phase <P>`, but invoked by
+  `/drive-harden` as its regression guard. Identical scope/diff/mechanics; the ONLY
+  difference is the counter (below) — its bounding is owned by the harden loop, not the
+  conformance cap.
 
 Let `<scope>` be `design`, `<id>` (e.g. `1.2`), or `phase<P>`.
 
@@ -23,6 +27,11 @@ Let `<scope>` be `design`, `<id>` (e.g. `1.2`), or `phase<P>`.
 `design`, `state.slices[<id>].reviewCount` for a slice, the `phaseReview[<P>]`
 round for a phase (fall back to counting `$RUN_DIR/review-<scope>-*.md` + 1 if
 state is absent). If N > 8, STOP — not converging; summarize each side.
+**Exception — `harden-regress`:** do NOT read, increment, or cap against the
+conformance `phaseReview[<P>].round`. The harden loop already bounds the number of
+these passes (its 3-fix-round cap), so there is no N>8 STOP here; just run the review
+and report CONVERGED/FINDINGS. (This is what lets harden re-review a phase whose
+integration already used 6–8 conformance rounds without false-STOPping.)
 
 ## Step 1 — Claude reviewer (passive, separation-preserving)
 
