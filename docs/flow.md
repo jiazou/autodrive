@@ -2,7 +2,7 @@
 
 How a `/drive` run moves through its sub-steps, with the slash command that runs
 at each one annotated. Example shape: **2 phases × 2 slices per phase**, each slice
-taking **3 implement→review rounds** to converge.
+taking **3 implement→review rounds** to converge, then a **1-round harden** per phase.
 
 `[C+X]` = the **dual-voice review** = a Claude reviewer subagent **+** `codex exec`.
 The Claude subagent and `codex exec` are mechanics *inside* `/drive-review`, not slash
@@ -30,6 +30,8 @@ commands themselves.
 │  │   R3  /drive-implement 1.1 → /drive-review 1.1[C+X] ✓CONV  R3  /drive-implement 1.2 → /drive-review 1.2[C+X] ✓CONV
 │  │                         └──────────────┬───────────────┘                   │
 │  │   PHASE-1 INTEGRATION ──────────────────────────────  runs  /drive-review · phase 1[C+X] → ✓
+│  │   PHASE-1 HARDEN ↺(cap 3) ──────────────────────────  runs  /drive-harden · phase 1
+│  │        find→fix→verify: ① de-slop ② add tests ③ fix bugs; re-review[C+X] → ✓HARDENED
 │  └────────────────────────────────────────────────────────────────────────────┘
 │                          │  (phases are SEQUENTIAL)
 │  ┌── PHASE 2 ────────────────────────────────────────────────────────────────┐
@@ -38,6 +40,7 @@ commands themselves.
 │  │   R2  /drive-implement 2.1 → /drive-review 2.1[C+X] ↺P1   R2  /drive-implement 2.2 → /drive-review 2.2[C+X] ↺P1
 │  │   R3  /drive-implement 2.1 → /drive-review 2.1[C+X] ✓CONV  R3  /drive-implement 2.2 → /drive-review 2.2[C+X] ✓CONV
 │  │   PHASE-2 INTEGRATION ──────────────────────────────  runs  /drive-review · phase 2[C+X] → ✓
+│  │   PHASE-2 HARDEN ↺(cap 3) ──────────────────────────  runs  /drive-harden · phase 2 → ✓HARDENED
 │  └────────────────────────────────────────────────────────────────────────────┘
 │
 ├─ STAGE 4b  VERIFY (optional) ───────────────────  runs  /qa-only   or  /browse   (gstack)
@@ -55,8 +58,11 @@ commands themselves.
 - `[C+X]` — dual-voice review: Claude reviewer subagent + `codex exec`
 - `↺P1` — a P1 (BLOCKING/MAJOR) was found → loop back to `/drive-implement` (cap 8 rounds)
 - `✓CONV` — **converged**: neither voice has an open P1
+- `✓HARDENED` — phase harden clean (no open P1, nothing cheap left) + conformance re-review still converged
 - `◆` — a human gate. The only two pauses in the whole run.
 - slices in a phase run **in parallel** (disjoint file ownership); phases are **sequential**
+- **HARDEN** runs once per phase after its review converges — a *mutating* find→fix→verify
+  (de-slop / add tests / fix bugs), own **cap 3**, scoped to the phase diff; advance only when ✓HARDENED
 
 ## Slash-command invocations for this run (2 phases × 2 slices × 3 rounds)
 
@@ -66,10 +72,11 @@ commands themselves.
 | `/drive-plan` | 1 | Stage 1 |
 | `/autoplan` | 1 | inside `/drive-plan` (gstack) |
 | `/drive-implement` | 12 | 4 slices × 3 rounds |
-| `/drive-review` | 15 | 12 per-slice + 2 phase-integration + 1 design |
+| `/drive-review` | 17 | 12 per-slice + 2 phase-integration + 1 design + 2 harden regression re-reviews |
+| `/drive-harden` | 2 | 1 per phase (each its own cap-3 find→fix→verify loop) |
 | `/qa-only` | 1 | verify (optional) |
 | `/drive-ship` | 1 | Stage 5 |
-| **Total** | **32** | + ~15 `codex exec` calls inside the `/drive-review`s (CLI, not a command) |
+| **Total** | **36** | + `codex exec` inside every `/drive-review` AND every `/drive-harden` audit (CLI, not a command) |
 
 ## Notes
 
@@ -77,6 +84,11 @@ commands themselves.
   auto-decided via the 6 Decision Principles and logged to `.harness/decisions.md`.
 - **`reviewCount` is per-loop** — each slice and each phase-integration carries its
   own counter, so a stuck slice trips the cap-8 on its own without dragging others.
+- **HARDEN has its own `hardenRound` cap-3**, separate from the conformance cap-8, so
+  a few legitimate harden rounds can't exhaust the review budget. De-slop edits that
+  would drop an acceptance criterion's coverage are **vetoed** (logged to followups),
+  which is what stops de-slop ↔ conformance oscillation. A phase left mid-harden
+  resumes from its committed harden commits on `phaseInt/<P>` (not rebuilt).
 - **Non-decision STOPs** (a slice `BLOCKED`/`NEEDS_CONTEXT`, red tests, a slice that
   can't converge in 8 rounds, budget ceiling) pause regardless of the decision policy.
 
@@ -86,6 +98,7 @@ The diagram is the *logical* flow. Mechanically: each run has a `run-id` + exter
 `$RUN_DIR` (all state + worktrees); the coordinator works on **refs + worktrees
 only**, never your main tree. Each parallel slice runs in its own `git worktree` on
 `slice/<id>` from the frozen `phaseBaseSha`; after slices converge the phase branch
-is **rebuilt idempotently from `phaseBaseSha`** (rebuild = the rollback),
-`featureBranch` advances, worktrees GC. Resume reconciles worktrees from
+is **rebuilt idempotently from `phaseBaseSha`** (rebuild = the rollback), then the
+phase is **hardened** in that integration worktree (de-slop / add tests / fix bugs,
+committed onto `phaseInt/<P>`); only then does `featureBranch` advance and worktrees GC. Resume reconciles worktrees from
 `state.json`. Full mechanics: `.harness/design.md` + `CLAUDE.md` invariants.

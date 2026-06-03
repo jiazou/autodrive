@@ -51,7 +51,8 @@ if [ -d "$SKILLS_SRC" ]; then
 fi
 
 # Register the /drive pipeline commands globally (symlink into ~/.claude/commands/)
-# so /drive and its stage runners (/plan /implement /review /ship) are discoverable
+# so /drive and its stage runners (/drive-plan /drive-implement /drive-review
+# /drive-harden /drive-ship) are discoverable
 # from any directory. Claude Code finds project commands only by walking UP from the
 # launch dir to the repo root — never down into a subdirectory — so without this the
 # commands are invisible unless you launch claude inside this repo.
