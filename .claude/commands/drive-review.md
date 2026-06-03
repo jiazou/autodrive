@@ -14,7 +14,7 @@ refs:
 - `slice <id>` — review the slice's diff `git diff <phaseBaseSha>..slice/<runId>/<id>`
   against that slice's acceptance criteria (owned files only).
 - `phase <P>` — review the assembled integration diff
-  `git diff <phaseBaseSha>..phaseInt/<P>` for integration issues (interfaces,
+  `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration issues (interfaces,
   cross-slice contracts).
 
 Let `<scope>` be `design`, `<id>` (e.g. `1.2`), or `phase<P>`.
@@ -36,7 +36,7 @@ Audit the <scope>:
   slices own disjoint files). No code diff.
 - a slice: audit `git diff <phaseBaseSha>..slice/<runId>/<id>` against THAT slice's
   acceptance criteria, restricted to its owned files.
-- a phase: audit `git diff <phaseBaseSha>..phaseInt/<P>` for integration correctness.
+- a phase: audit `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration correctness.
 Spec + prior decisions: `$RUN_DIR/design.md`, `$RUN_DIR/decisions.md`. Derive the
 diff authoritatively from git (the refs above) — never an ephemeral implementer list.
 
@@ -79,7 +79,7 @@ Use a **per-scope** log so parallel slice reviews don't collide:
 codex exec "Review <scope>. For 'design': audit $RUN_DIR/design.md (buildable
 interfaces, testable criteria, sound Phases & Slices). For a slice: git diff
 <phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owned files. For
-a phase: git diff <phaseBaseSha>..phaseInt/<P>, integration. Flag BLOCKING/MAJOR/
+a phase: git diff <phaseBaseSha>..phaseInt/<runId>/<P>, integration. Flag BLOCKING/MAJOR/
 MINOR with file:line. Prioritized." > $RUN_DIR/codex-raw-<scope>.log 2>&1
 ```
 
