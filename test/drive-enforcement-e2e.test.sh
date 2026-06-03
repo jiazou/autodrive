@@ -95,6 +95,19 @@ run_installed_gate() {
   GATE_OUT="$(cat "$TMPROOT/.gateout")"
 }
 
+# --- Run the conformance checker DIRECTLY (not via the gate), from a repo cwd, so we
+# can prove the underlying verdict the gate composes from. The gate's rc=0+silent ALLOW
+# is identical for "checker genuinely clean" and "fail-open over an abnormal exit", and
+# its DENY is identical for "real violation (exit 1)" and "fail-closed error (exit 2)".
+# Asserting on this checker's RAW exit + JSON disambiguates those.
+# $1=RUN_DIR $2=mode-arg $3=cwd(repo). Sets CONF_OUT (stdout) and CONF_RC (raw exit).
+run_conformance_direct() {
+  local rd="$1" mode="$2" cwd="$3"
+  CONF_OUT="$( cd "$cwd" && "$BIN/drive-conformance.sh" "$rd" --mode "$mode" 2>/dev/null )"
+  CONF_RC=$?
+}
+conf_is_clean() { printf '%s' "$1" | grep -q '"clean":true'; }
+
 # Drive the REAL installed Stop guard. $1=hook-path $2=cwd. Sets STOP_OUT/STOP_RC.
 run_installed_stop() {
   local hook="$1" cwd="$2" json
@@ -170,6 +183,15 @@ stage_plan_gate() {
 
   local cmd="git worktree add ../wt/4a -b slice/$runid/4a HEAD"
 
+  # Prove the deny below is the INTENDED-VIOLATION deny (exit 1), not a fail-closed
+  # error deny (exit 2): the checker itself must return a genuine violation here.
+  run_conformance_direct "$rd" "plan-gate" "$repo"
+  if [ "$CONF_RC" -eq 1 ]; then
+    pass "plan-gate: conformance returns exit 1 (genuine violation) with NO design review"
+  else
+    fail "plan-gate: expected conformance exit 1; got rc=$CONF_RC out='$CONF_OUT'"
+  fi
+
   # No design review yet → DENY, naming /drive-review design.
   run_installed_gate "$INSTALLED_GATE" "$cmd" "$repo"
   if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-review design'; then
@@ -219,6 +241,16 @@ stage_slice_merge() {
   else
     fail "slice-merge: expected silent allow; got rc=$GATE_RC out='$GATE_OUT'"
   fi
+
+  # Distinguish "gate allowed because checker passed" from "gate fell open" on this same
+  # state: the underlying conformance must be GENUINELY clean (exit 0 AND "clean":true),
+  # not abnormal. (A fail-open ALLOW would also be rc=0+silent at the gate.)
+  run_conformance_direct "$rd" "slice-merge:4a" "$repo"
+  if [ "$CONF_RC" -eq 0 ] && conf_is_clean "$CONF_OUT"; then
+    pass "slice-merge: conformance GENUINELY clean (exit 0 + \"clean\":true) for the allowed state"
+  else
+    fail "slice-merge: expected genuine clean; got rc=$CONF_RC out='$CONF_OUT'"
+  fi
 }
 
 # =================================================================================
@@ -251,6 +283,15 @@ stage_phase_merge() {
   else
     fail "phase-merge: expected silent allow; got rc=$GATE_RC out='$GATE_OUT'"
   fi
+
+  # Same fail-open-vs-genuine-clean disambiguation as slice-merge: the checker must be
+  # genuinely clean (exit 0 + "clean":true) for the allowed phase-advance state.
+  run_conformance_direct "$rd" "phase-merge:1" "$repo"
+  if [ "$CONF_RC" -eq 0 ] && conf_is_clean "$CONF_OUT"; then
+    pass "phase-merge: conformance GENUINELY clean (exit 0 + \"clean\":true) for the allowed state"
+  else
+    fail "phase-merge: expected genuine clean; got rc=$CONF_RC out='$CONF_OUT'"
+  fi
 }
 
 # =================================================================================
@@ -272,6 +313,16 @@ stage_ship() {
   _write_review "$rd" phase1 1 "$rsha"
   _write_codex "$rd" phase1
 
+  # Prove the deny below is the INTENDED-VIOLATION deny (exit 1: tip uncovered), not a
+  # fail-closed error deny (exit 2). Ship resolves runId from HEAD, so run the checker
+  # in `--mode ship` from the repo (featureBranch resolves; diff R..tip ⊄ allowlist).
+  run_conformance_direct "$rd" "ship" "$repo"
+  if [ "$CONF_RC" -eq 1 ]; then
+    pass "ship: conformance returns exit 1 (genuine violation) when tip is uncovered"
+  else
+    fail "ship: expected conformance exit 1; got rc=$CONF_RC out='$CONF_OUT'"
+  fi
+
   run_installed_gate "$INSTALLED_GATE" "gh pr create --title x --body y" "$repo"
   if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-review ship'; then
     pass "ship: DENY gh pr create when tip is NOT covered by a converged review"
@@ -291,45 +342,105 @@ stage_ship() {
   else
     fail "ship: expected silent allow after ledger-only commit; got rc=$GATE_RC out='$GATE_OUT'"
   fi
+
+  # ≤1-commit rejection path: add a SECOND .harness/ ledger-only commit past R. Both
+  # commits touch ONLY allowlisted files (so the allowlist (b) is satisfied), but now
+  # R..tip is 2 commits, which violates the existential-R (c) `R..tip ≤ 1 commit` rule.
+  # The ONLY counting R is rsha (the phase1 review); there is no R one commit behind tip
+  # whose diff ⊆ allowlist, so ship must DENY. This isolates rule (c) from (b).
+  _gitc "$repo" reset --hard "$rsha" >/dev/null 2>&1
+  _commit "$repo" .harness/decisions.md "ship ledger 1" "ship: promote run ledger (1/2)" >/dev/null
+  tip="$(_commit "$repo" .harness/followups.md "ship followups" "ship: promote run ledger (2/2)")"
+
+  # Direct checker: genuine violation (exit 1), proving the deny is the ≤1-commit reject.
+  run_conformance_direct "$rd" "ship" "$repo"
+  if [ "$CONF_RC" -eq 1 ]; then
+    pass "ship: conformance exit 1 when R..tip is 2 ledger-only commits (>1-commit reject)"
+  else
+    fail "ship: expected conformance exit 1 (>1 commit); got rc=$CONF_RC out='$CONF_OUT'"
+  fi
+
+  run_installed_gate "$INSTALLED_GATE" "gh pr create --title x --body y" "$repo"
+  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-review ship'; then
+    pass "ship: DENY when 2 ledger-only commits sit past R (R..tip >1 commit, even all allowlisted)"
+  else
+    fail "ship: expected DENY for >1-commit ledger window; got rc=$GATE_RC out='$GATE_OUT'"
+  fi
 }
 
 # =================================================================================
-# STAGE 5: asymmetric fail-mode — a git error makes ship fail-CLOSED (DENY) while
-# slice-merge stays fail-OPEN (silent). We induce the error by pointing the command at
-# an ABSENT ref so conformance hits exit 2 (cannot resolve ref).
+# STAGE 5: asymmetric fail-mode — a genuine conformance exit-2 (git/IO error) makes the
+# ship gate fail-CLOSED (DENY) while the slice-merge gate stays fail-OPEN (silent).
+#
+# CRITICAL (weakness 2): the run's runId must resolve CORRECTLY (real RUN_DIR + drive
+# HEAD) so each gate actually RUNS conformance and reaches the exit-2 path — otherwise a
+# gate can pass for the wrong reason (ship falling back to HEAD and denying a real
+# violation; slice going inert/silent because RUN_DIR is absent, not because it failed
+# open over an error). So we build ONE real, resolving drive run, then induce a genuine
+# exit-2 in conformance and drive BOTH gates against that same condition, FIRST asserting
+# the checker itself returns exit 2 directly.
+#
+#   ship exit-2:  R resolves + is an ancestor + R..tip ≤ 1 commit, so the existential-R
+#                 loop reaches `git diff R..tip`; we corrupt tip's TREE object so the diff
+#                 errors (git_or_die → exit 2). HEAD + R commit objects stay intact, so
+#                 runId-from-HEAD and the candidate-R resolution still succeed.
+#   slice exit-2: a slice ref slice/<runId>/9z that does NOT resolve to a commit (the
+#                 runId still resolves from the command token, RUN_DIR exists) → conformance
+#                 slice-merge:9z exits 2 at the `rev` step ("cannot resolve ref").
 # =================================================================================
 stage_fail_modes() {
-  local runid rd repo
+  local runid rd repo rsha tip tree treeobj
   runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
   repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
   _commit "$repo" README base base >/dev/null
   _gitc "$repo" checkout -q -b "drive/$runid"
-  _commit "$repo" feature.sh "echo hi" "drive work" >/dev/null
-  # NOTE: deliberately do NOT create slice/$runid/9z or phaseInt — those refs are absent,
-  # so conformance for slice-merge:9z exits 2 (cannot resolve ref).
+  rsha="$(_commit "$repo" feature.sh "echo hi" "phase 1 code")"
+  # Exactly ONE ledger-only commit past R so rsha..tip is 1 commit ⊆ allowlist → the
+  # existential-R loop passes (a)(b)(c) and reaches the `git diff R..tip` git_or_die.
+  tip="$(_commit "$repo" .harness/decisions.md "ledger" "ship: promote run ledger")"
+  _write_review "$rd" phase1 1 "$rsha"
+  _write_codex "$rd" phase1
 
-  # ship fail-CLOSED: induce a git error in ship's existential-R path. We write a phase
-  # review whose reviewed-sha is a NON-resolving artifact sha (skipped as a verdict), so
-  # there is no counting R → ship denies. To get a genuine exit-2 we instead point ship at
-  # a featureBranch that cannot resolve: run ship via a ref-bearing push to an absent drive
-  # ref so runId resolves but featureBranch tip is unresolvable → conformance exit 2 → DENY.
-  local absent_runid="e2e-test-$$-absent"
-  local absent_rd; absent_rd="$(mk_rundir "$absent_runid")"
-  # featureBranch drive/$absent_runid does NOT exist in $repo → rev() fails → exit 2.
-  run_installed_gate "$INSTALLED_GATE" "git push origin drive/$absent_runid" "$repo"
-  if is_deny "$GATE_OUT"; then
-    pass "fail-mode: ship fail-CLOSED (DENY) on git error (unresolvable featureBranch → exit 2)"
+  # Corrupt tip's TREE object: `git diff R..tip` cannot read it → git_or_die → exit 2.
+  # Commit objects (HEAD, R) are untouched, so runId-from-HEAD + R resolution still work.
+  tree="$(_gitc "$repo" rev-parse "$tip^{tree}")"
+  treeobj="$repo/.git/objects/${tree:0:2}/${tree:2}"
+  rm -f "$treeobj"
+
+  # FIRST: prove the checker itself returns a genuine exit 2 (git/IO error), not exit 1
+  # (a real coverage violation). runId resolves via drive HEAD; featureBranch resolves.
+  run_conformance_direct "$rd" "ship" "$repo"
+  if [ "$CONF_RC" -eq 2 ]; then
+    pass "fail-mode: conformance --mode ship returns exit 2 (genuine git/IO error, corrupted tree)"
   else
-    fail "fail-mode: ship should DENY on git error; got rc=$GATE_RC out='$GATE_OUT'"
+    fail "fail-mode: expected conformance ship exit 2; got rc=$CONF_RC out='$CONF_OUT'"
   fi
 
-  # slice-merge fail-OPEN: the slice ref slice/$absent_runid/9z does not exist → conformance
-  # exits 2 → the mid-build gate stays silent (exit 0, no output).
-  run_installed_gate "$INSTALLED_GATE" "git merge slice/$absent_runid/9z" "$repo"
-  if is_empty "$GATE_OUT" && [ "$GATE_RC" -eq 0 ]; then
-    pass "fail-mode: slice-merge fail-OPEN (SILENT) on git error (unresolvable slice ref → exit 2)"
+  # ship fail-CLOSED: same exit-2 condition driven through the ship gate (bare gh pr
+  # create → runId from drive HEAD) → DENY.
+  run_installed_gate "$INSTALLED_GATE" "gh pr create --title x --body y" "$repo"
+  if is_deny "$GATE_OUT"; then
+    pass "fail-mode: ship fail-CLOSED (DENY) on conformance exit 2 (runId resolves via drive HEAD)"
   else
-    fail "fail-mode: slice-merge should be SILENT on git error; got rc=$GATE_RC out='$GATE_OUT'"
+    fail "fail-mode: ship should DENY on exit 2; got rc=$GATE_RC out='$GATE_OUT'"
+  fi
+
+  # slice-merge exit-2 on the SAME resolving run: slice/$runid/9z does not resolve to a
+  # commit (runId still resolves from the token; RUN_DIR exists), so conformance hits the
+  # genuine "cannot resolve ref" exit 2 — NOT an inert/not-a-managed-run early exit.
+  run_conformance_direct "$rd" "slice-merge:9z" "$repo"
+  if [ "$CONF_RC" -eq 2 ]; then
+    pass "fail-mode: conformance --mode slice-merge:9z returns exit 2 (cannot resolve ref, runId valid)"
+  else
+    fail "fail-mode: expected conformance slice-merge exit 2; got rc=$CONF_RC out='$CONF_OUT'"
+  fi
+
+  # slice-merge fail-OPEN: same exit-2 condition through the slice-merge gate → SILENT.
+  run_installed_gate "$INSTALLED_GATE" "git merge slice/$runid/9z" "$repo"
+  if is_empty "$GATE_OUT" && [ "$GATE_RC" -eq 0 ]; then
+    pass "fail-mode: slice-merge fail-OPEN (SILENT) on conformance exit 2 (runId resolves, RUN_DIR present)"
+  else
+    fail "fail-mode: slice-merge should be SILENT on exit 2; got rc=$GATE_RC out='$GATE_OUT'"
   fi
 }
 
