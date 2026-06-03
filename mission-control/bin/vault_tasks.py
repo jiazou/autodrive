@@ -11,18 +11,53 @@ Read-only. The vault is the source of truth; this never writes.
 import os
 import re
 import glob
+import urllib.parse
 from datetime import date, datetime
 
 HOME = os.path.expanduser("~")
-# Vault location is configurable so this works on any machine. Set MC_VAULT to
-# your Obsidian vault's absolute path; defaults to ~/Documents/Vault. MC_VAULT_NAME
-# overrides the vault name used in obsidian:// links (defaults to the dir name).
-VAULT = os.environ.get("MC_VAULT") or os.path.join(HOME, "Documents", "Vault")
-VAULT_NAME = os.environ.get("MC_VAULT_NAME") or os.path.basename(VAULT.rstrip("/"))
+
+
+def _config_value(key):
+    """Read KEY=VALUE from ~/mission-control/config (written by install.sh).
+    This is how the 6:45am launchd job and the SwiftBar plugin — which run with a
+    bare environment and do NOT inherit your shell profile — learn MC_VAULT /
+    MC_VAULT_NAME. An explicit environment variable always takes precedence."""
+    cfg = os.path.join(HOME, "mission-control", "config")
+    try:
+        with open(cfg, encoding="utf-8") as fh:
+            for line in fh:
+                k, sep, val = line.partition("=")
+                if sep and k.strip() == key:
+                    return val.strip() or None
+    except OSError:
+        return None
+    return None
+
+
+# Vault location, resolved in priority order so it works in EVERY launch context:
+#   1. MC_VAULT env var          (interactive shells)
+#   2. ~/mission-control/config  (launchd / SwiftBar — no shell env; see install.sh)
+#   3. ~/Documents/Vault         (default)
+VAULT = (os.environ.get("MC_VAULT") or _config_value("MC_VAULT")
+         or os.path.join(HOME, "Documents", "Vault"))
+VAULT_NAME = (os.environ.get("MC_VAULT_NAME") or _config_value("MC_VAULT_NAME")
+              or os.path.basename(VAULT.rstrip("/")))
 TASKS_GLOB = os.path.join(VAULT, "01 Projects", "*", "Tasks", "*.md")
 
+
+def obsidian_href(slug):
+    """Build an obsidian:// deep link to a note. Obsidian's URI handler does NOT
+    decode '+' as a space, so force %20 via quote_via=quote (urlencode's default
+    quote_plus would break the vault name). Shared by today.py and standup.py."""
+    q = urllib.parse.urlencode({"vault": VAULT_NAME, "file": slug},
+                               quote_via=urllib.parse.quote)
+    return "obsidian://open?" + q
+
+
 OPEN_STATUSES = {"todo", "doing", "waiting"}
-FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---", re.DOTALL)
+# Tolerate an optional UTF-8 BOM and CRLF line endings so notes saved by editors
+# other than Obsidian still parse (otherwise the task is silently invisible).
+FRONTMATTER_RE = re.compile(r"^\ufeff?---\r?\n(.*?)\r?\n---", re.DOTALL)
 
 
 def _parse_scalar(v):
@@ -132,7 +167,10 @@ def bucket(tasks):
             due_today.append(t)
         elif d and (d - today).days <= 7:
             due_week.append(t)
-        elif not d and not t["scheduled"]:
+        else:
+            # Everything else open (due >7d out, or scheduled-with-no-due, or
+            # truly unscheduled) lands in backlog so no open task silently
+            # vanishes from the weekly sweep. open_count == sum of all buckets.
             backlog.append(t)
     prio = lambda t: (t["priority"], t["due"] or "9999")
     return {

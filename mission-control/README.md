@@ -48,12 +48,19 @@ Only the **binding** (which task a session is working) is a human decision.
 ## Setup — point it at your vault
 
 Mission Control reads tasks from an Obsidian PARA vault. Tell it where yours lives with two
-optional environment variables (set them in your shell profile so launchd/SwiftBar inherit them):
+optional environment variables:
 
 | Variable | Purpose | Default |
 | --- | --- | --- |
 | `MC_VAULT` | Absolute path to your Obsidian vault | `~/Documents/Vault` |
 | `MC_VAULT_NAME` | Vault name used in `obsidian://` deep links | basename of `MC_VAULT` |
+
+Set them in your shell, then run `install.sh` — it **captures their values into
+`~/mission-control/config`**. This matters because the 6:45am launchd job and the SwiftBar
+plugin run with a *bare environment* and do **not** read your `~/.zshrc`; the config file is
+how they learn your vault. An exported env var still wins at runtime, so interactive `mc`
+commands honor it immediately; **re-run `install.sh` after changing `MC_VAULT`** so the
+scheduled job and menu bar pick up the new value.
 
 It expects the PARA layout it reads: `01 Projects/<Project>/Tasks/*.md` (one task per file,
 frontmatter `status:`), `Daily/<date>.md` for the cockpit note, and optionally
@@ -163,8 +170,9 @@ reading the recent transcript tail through headless `claude`. The 6:45am job and
 
 ## Reversibility
 
-Additive and reversible: the install is all symlinks + one launchd job + a hooks merge.
-The only vault writes are new `Daily/<date>.md` cockpit notes — disposable by design; no
-existing task or doc is ever modified.
+Additive and reversible: the install copies `bin/` + `swiftbar-plugins/` into
+`~/mission-control/`, symlinks `mc`/`today` onto your `PATH`, adds one launchd job, and
+merges a few hooks into `settings.json`. The only vault writes are new `Daily/<date>.md`
+cockpit notes — disposable by design; no existing task or doc is ever modified.
 
 See `RELATED-WORK.md` for the prior-art scan this design draws from.

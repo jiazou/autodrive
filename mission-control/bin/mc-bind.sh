@@ -34,18 +34,30 @@ if [[ -z "$session_arg" ]]; then
   sid="${CLAUDE_CODE_SESSION_ID:-}"
   [[ -z "$sid" ]] && { echo "No SESSION_ID given and \$CLAUDE_CODE_SESSION_ID is unset." >&2; exit 1; }
 elif [[ ${#session_arg} -le 12 ]]; then
-  # short form -> resolve to full UUID via the live session files
+  # short form -> resolve to full UUID via the live session files. Refuse to
+  # guess if the prefix matches more than one live session (mirrors done.py).
   sid=$(python3 - "$session_arg" "$SESSIONS_DIR" <<'PY'
 import json,sys,glob,os
 short,dirp=sys.argv[1],sys.argv[2]
+matches=[]
 for f in glob.glob(os.path.join(dirp,"*.json")):
     try: d=json.load(open(f))
     except Exception: continue
     s=d.get("sessionId","")
-    if s.startswith(short): print(s); break
+    if s.startswith(short): matches.append(s)
+matches=sorted(set(matches))
+if len(matches)==1:
+    print(matches[0])
+elif not matches:
+    sys.stderr.write(f"No live session matches '{short}'.\n")
+else:
+    sys.stderr.write(f"'{short}' is ambiguous — {len(matches)} sessions match:\n")
+    for s in matches: sys.stderr.write(f"  {s}\n")
+    sys.stderr.write("refusing to bind; use more characters of the id.\n")
 PY
 )
-  [[ -z "$sid" ]] && { echo "No live session matches '$session_arg'." >&2; exit 1; }
+  # Python printed the specific reason (none vs ambiguous) to stderr already.
+  [[ -z "$sid" ]] && exit 1
 else
   sid="$session_arg"
 fi

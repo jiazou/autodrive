@@ -16,8 +16,6 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import standup
 import vault_tasks
 
-# Vault name for obsidian:// links — configurable via MC_VAULT_NAME (see vault_tasks.py).
-VAULT_NAME = vault_tasks.VAULT_NAME
 _BIN = os.path.dirname(os.path.abspath(__file__))
 DONE_PY = os.path.join(_BIN, "done.py")
 
@@ -30,12 +28,8 @@ _CLAUDE_DOT = {
 }
 
 
-def _obsidian_href(slug):
-    # Obsidian's URI handler does NOT decode "+" as a space, so urlencode's default
-    # quote_plus breaks the vault name. Force %20 via quote_via=quote.
-    q = urllib.parse.urlencode({"vault": VAULT_NAME, "file": slug},
-                               quote_via=urllib.parse.quote)
-    return "obsidian://open?" + q
+# Shared with standup.py — builds a vault-qualified, %20-encoded obsidian:// link.
+_obsidian_href = vault_tasks.obsidian_href
 
 
 def _title_count(d):

@@ -21,6 +21,8 @@ import subprocess
 from datetime import datetime
 
 HOME = os.path.expanduser("~")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import vault_tasks  # single source of the configurable vault path (MC_VAULT)
 SESSIONS_DIR = os.path.join(HOME, ".claude", "sessions")
 PROJECTS_DIR = os.path.join(HOME, ".claude", "projects")
 BINDINGS = os.path.join(HOME, "mission-control", "bindings.jsonl")
@@ -44,9 +46,9 @@ def load_status_overlay():
             latest[sid] = e.get("status")  # later lines win
     return latest
 
-# Configurable vault path (see vault_tasks.py). Set MC_VAULT to your vault's
-# absolute path; defaults to ~/Documents/Vault.
-VAULT = os.environ.get("MC_VAULT") or os.path.join(HOME, "Documents", "Vault")
+# Configurable vault path — resolved once in vault_tasks (MC_VAULT env, then
+# ~/mission-control/config, then default) so the launchd job agrees with the CLI.
+VAULT = vault_tasks.VAULT
 VAULT_DAILY = os.path.join(VAULT, "Daily")
 DAILY_TEMPLATE = os.path.join(VAULT, "03 Resources", "Templates", "daily-note-template.md")
 
@@ -77,11 +79,6 @@ def log_to_vault(digest, now):
     with open(path, "a") as fh:
         fh.write(section)
     return path, created
-
-
-def transcript_path(sid):
-    hits = glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl"))
-    return hits[0] if hits else None
 
 
 def session_meta(sid):
