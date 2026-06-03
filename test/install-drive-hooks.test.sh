@@ -135,6 +135,26 @@ check "malformed settings left untouched" "$bad_after" "$bad_before"
 no_bak=$(ls "$BAD".bak.* 2>/dev/null | wc -l | tr -d ' ')
 check "no backup written for malformed file" "$no_bak" "0"
 
+# --- Path beginning with '-' is treated as a filename, not an option ------
+# A caller-supplied path starting with '-' must not be parsed as an option by
+# jq/cp/mv. Run from inside $WORK so the relative path passed to the installer
+# literally begins with '-' (an absolute path under mktemp never would).
+DASH_NAME="-dash-settings.json"
+DASH="$WORK/$DASH_NAME"
+# Seed an existing valid file so cp (backup), jq (read/write), and mv (move into
+# place) are all exercised against a path that begins with '-'.
+printf '{ "model": "opus" }\n' > "$DASH"
+( cd "$WORK" && bash "$INSTALLER" "$DASH_NAME" >/dev/null 2>&1 )
+check "installer handles path beginning with '-' (exit 0)" "$?" "0"
+jq -e . -- "$DASH" >/dev/null 2>&1
+check "dash-prefixed settings is valid JSON" "$?" "0"
+dash_merge=$(jq --arg p "$MERGE_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' -- "$DASH")
+check "dash-prefixed file has merge gate" "$dash_merge" "1"
+dash_stop=$(jq --arg p "$STOP_GUARD" '[.hooks.Stop[].hooks[]? | select((.command//"")==$p)] | length' -- "$DASH")
+check "dash-prefixed file has stop guard" "$dash_stop" "1"
+dash_bak=$(ls "$DASH".bak.* 2>/dev/null | wc -l | tr -d ' ')
+check "backup written for dash-prefixed file" "$dash_bak" "1"
+
 # --- Summary --------------------------------------------------------------
 echo "----------------------------------------"
 echo "PASS: $PASS  FAIL: $FAIL"

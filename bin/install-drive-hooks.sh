@@ -21,20 +21,21 @@ command -v jq >/dev/null 2>&1 || { echo "error: jq is required but not found in 
 
 # Create a valid minimal settings file if absent.
 if [ ! -e "$SETTINGS" ]; then
-  mkdir -p "$(dirname "$SETTINGS")"
+  mkdir -p -- "$(dirname -- "$SETTINGS")"
   printf '{}\n' > "$SETTINGS"
   echo "Created new settings file: $SETTINGS"
 fi
 
 # Fail loudly on malformed JSON — do not clobber a file we cannot parse.
-if ! jq -e . "$SETTINGS" >/dev/null 2>&1; then
+# `--` ends option parsing so a path beginning with `-` is treated as a filename.
+if ! jq -e . -- "$SETTINGS" >/dev/null 2>&1; then
   echo "error: $SETTINGS is not valid JSON; refusing to modify it" >&2
   exit 1
 fi
 
 # Timestamped backup before any mutation (mirrors install-operating-rules.sh).
 BACKUP="$SETTINGS.bak.$(date +%Y%m%d-%H%M%S)"
-cp "$SETTINGS" "$BACKUP"
+cp -- "$SETTINGS" "$BACKUP"
 echo "Backed up existing settings -> $BACKUP"
 
 # Inject both hooks idempotently. Detection is keyed on the script path: an entry
@@ -62,15 +63,15 @@ jq \
   | (if has_cmd(.hooks.Stop; $stop) then .
      else .hooks.Stop += [ { "hooks": [ { "type": "command", "command": $stop } ] } ]
      end)
-  ' "$SETTINGS" > "$TMP"
+  ' -- "$SETTINGS" > "$TMP"
 
 # Sanity: result must be valid JSON before we move it into place.
-if ! jq -e . "$TMP" >/dev/null 2>&1; then
-  rm -f "$TMP"
+if ! jq -e . -- "$TMP" >/dev/null 2>&1; then
+  rm -f -- "$TMP"
   echo "error: produced invalid JSON; left $SETTINGS untouched" >&2
   exit 1
 fi
-mv "$TMP" "$SETTINGS"
+mv -- "$TMP" "$SETTINGS"
 
 echo "Wired drive hooks into $SETTINGS:"
 echo "  PreToolUse(Bash) -> $MERGE_GATE"
