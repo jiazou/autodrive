@@ -14,7 +14,7 @@ refs:
 - `slice <id>` — review the slice's diff `git diff <phaseBaseSha>..slice/<runId>/<id>`
   against that slice's acceptance criteria (owned files only).
 - `phase <P>` — review the assembled integration diff
-  `git diff <phaseBaseSha>..phaseInt/<P>` for integration issues (interfaces,
+  `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration issues (interfaces,
   cross-slice contracts).
 
 Let `<scope>` be `design`, `<id>` (e.g. `1.2`), or `phase<P>`.
@@ -36,7 +36,7 @@ Audit the <scope>:
   slices own disjoint files). No code diff.
 - a slice: audit `git diff <phaseBaseSha>..slice/<runId>/<id>` against THAT slice's
   acceptance criteria, restricted to its owned files.
-- a phase: audit `git diff <phaseBaseSha>..phaseInt/<P>` for integration correctness.
+- a phase: audit `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration correctness.
 Spec + prior decisions: `$RUN_DIR/design.md`, `$RUN_DIR/decisions.md`. Derive the
 diff authoritatively from git (the refs above) — never an ephemeral implementer list.
 
@@ -51,8 +51,23 @@ Out-of-scope real bugs → `$RUN_DIR/followups.md`.
 Write `$RUN_DIR/review-<scope>-N.md`:
   # Review <scope> N
   ## Verdict: CONVERGED | FINDINGS
+  reviewed-sha: <40-hex>
   ## Findings → ### [SEVERITY] Short title / **Where** file:line / Issue / Why / Fix
 CONVERGED = no P1. Return: the path, verdict, one-line count.
+
+**`reviewed-sha:` (SHA-bound proof — the enforcement gate reads this).** Emit a line
+`reviewed-sha: <40-hex>` = the **exact git tip this review diffed**, so a review only
+counts for code whose tip equals it (a stale CONVERGED file can't cover newly-added
+commits). Bind it by scope:
+- **slice `<id>`:** `<40-hex>` = `git rev-parse slice/<runId>/<id>` (the slice tip the
+  diff `<phaseBaseSha>..slice/<runId>/<id>` ended at).
+- **phase `<P>`:** `<40-hex>` = `git rev-parse phaseInt/<runId>/<P>` (the assembled
+  integration tip). The **harden-regress** re-review (run by HARDEN after it commits
+  to `phaseInt/<runId>/<P>`) MUST re-emit `reviewed-sha:` at the **post-fix**
+  `git rev-parse phaseInt/<runId>/<P>` tip — otherwise the phase-merge gate sees a
+  stale pre-harden sha and blocks the advance.
+- **design:** OMIT `reviewed-sha:` — design review audits `design.md`, not a git tip;
+  the plan-gate only requires `## Verdict: CONVERGED` + the codex file (no sha).
 ----- END SUBAGENT SCOPE -----
 
 ## Step 2 — Cross-model codex pass (direct CLI, per-scope log)
@@ -64,7 +79,7 @@ Use a **per-scope** log so parallel slice reviews don't collide:
 codex exec "Review <scope>. For 'design': audit $RUN_DIR/design.md (buildable
 interfaces, testable criteria, sound Phases & Slices). For a slice: git diff
 <phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owned files. For
-a phase: git diff <phaseBaseSha>..phaseInt/<P>, integration. Flag BLOCKING/MAJOR/
+a phase: git diff <phaseBaseSha>..phaseInt/<runId>/<P>, integration. Flag BLOCKING/MAJOR/
 MINOR with file:line. Prioritized." > $RUN_DIR/codex-raw-<scope>.log 2>&1
 ```
 
@@ -73,7 +88,10 @@ run_in_background; wait for completion; then a bounded post-process subagent: "R
 `$RUN_DIR/codex-review-<scope>.md` (same severity tags, <150 words)."
 
 Degradation (do NOT hard-fail): codex missing OR hangs/times out → write
-`codex-review-<scope>.md` = "codex unavailable — Claude-only review" + warning; continue.
+`codex-review-<scope>.md` with the **anchored first-line token `CODEX_UNAVAILABLE`**
+(exactly that bare token as the file's FIRST line — conformance's codex check matches
+it anchored, so a buried mention elsewhere is NOT recognized), optionally followed by
+a warning note on later lines; continue.
 
 ## Step 3 — Combine & converge
 
