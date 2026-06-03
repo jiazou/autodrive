@@ -18,6 +18,27 @@ The scope is the **assembled phase diff** `git diff <phaseBaseSha>..phaseInt/<P>
 the files it touches — the "relevant codebase" for this phase. Derive it
 authoritatively from git, never an ephemeral implementer list.
 
+## Preconditions (non-decision STOPs)
+
+This is a sub-stage of `/drive`, not a standalone tool — it hardens an assembled phase
+*in flight*, so it needs that run's context. On invocation, bind and verify, in order;
+**STOP with the stated message** (do not guess, fabricate a run, or harden an arbitrary
+tree) if any fails:
+- `<P>` = the phase number from `$ARGUMENTS` (the `phase <P>` argument). Missing/unparseable
+  → STOP: "no phase given — usage: `/drive-harden phase <P>` within an active `/drive` run."
+- `$RUN_DIR` is provided (by `/drive`) or inferable from a single in-progress run under
+  `~/.claude/harness-runs/`. None, or only runs with `state.stage == "done"`/`"ship"` →
+  STOP: "no active /drive run to harden — `/drive-harden` runs inside an in-flight run, after a phase review converges. Start one with `/drive <task>`."
+- That run's `state.json` shows phase `<P>` `phaseReview[<P>].status == "converged"` (or
+  `"hardening"` on resume). Not converged / not yet assembled → STOP: "phase <P> hasn't
+  passed its integration review yet — harden runs only after `/drive-review phase <P>` converges."
+- The `phaseInt/<P>` worktree exists (`git worktree list`) and `$RUN_DIR/design.md` is
+  present. Missing → STOP naming what's absent (the run is mid-rebuild or corrupt; let
+  `/drive` reconcile on resume).
+
+When `/drive` invokes this stage it passes all of the above directly, so these checks
+pass by construction; they exist for a bare/manual invocation.
+
 ## The three hardening lenses
 
 1. **Reduce AI slop** (per OPERATING.md "No AI Slop"): speculative fallbacks,
