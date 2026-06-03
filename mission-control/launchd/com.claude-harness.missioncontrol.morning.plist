@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.jiazou.missioncontrol.morning</string>
+    <string>com.claude-harness.missioncontrol.morning</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>

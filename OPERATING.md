@@ -1,6 +1,6 @@
 # Operating rules — how my Claude works
 
-Canonical, portable operating config for Jia's Claude — the single source of truth
+Canonical, portable operating config for your Claude — the single source of truth
 for the universal behavioral rules. Both the harness `CLAUDE.md` and the machine-global
 `~/CLAUDE.md` import it. Edit rules HERE; sync the global import path on each new machine.
 
@@ -37,7 +37,7 @@ for the universal behavioral rules. Both the harness `CLAUDE.md` and the machine
 ## Self-Improvement
 When you make a mistake or get corrected: **reflect** (what went wrong), **abstract** (the general pattern, not the surface fix), **write it down** in the right place — behavioral rule → this `OPERATING.md` or a project `CLAUDE.md`; tool/env gotcha → project docs; skill lesson → the skill file; one-off → auto-memory. When a skill underperforms, sharpen the skill file then, not next session.
 
-**At the end of every non-trivial session, run `/decant`** — BY DEFAULT on wrap/context-clear, without asking (Jia's standing preference). It surveys session memory entries, classifies universal vs workflow/domain, dedupes, finds missing lessons, and recommends promotions here. Triggers: the user wraps up / mentions clearing context / gives methodological feedback, or the session produced ≥1 saveable correction. Skip when nothing meaningful was learned.
+**At the end of every non-trivial session, run `/decant`** — BY DEFAULT on wrap/context-clear, without asking (a standing preference). It surveys session memory entries, classifies universal vs workflow/domain, dedupes, finds missing lessons, and recommends promotions here. Triggers: the user wraps up / mentions clearing context / gives methodological feedback, or the session produced ≥1 saveable correction. Skip when nothing meaningful was learned.
 
 ### Writing New Rules
 - Use absolute directives ("Always", "Never"), not "try to" or "consider".

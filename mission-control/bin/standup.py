@@ -147,7 +147,7 @@ def _focus_md(d):
         due = f" · due {t['due']}" if t.get("due") else ""
         proj = f" · _{t['project']}_" if t.get("project") else ""
         lines.append(f"- [ ] **{t.get('priority','').upper()}** {t.get('title', slug)}{due}{proj}  "
-                     f"·  [open ↗](obsidian://open?file={slug})")
+                     f"·  [open ↗]({vault_tasks.obsidian_href(slug)})")
         for step in t.get("dod", []):
             box = "x" if step["done"] else " "
             lines.append(f"    - [{box}] {step['text']}")

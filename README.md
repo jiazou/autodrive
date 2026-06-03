@@ -13,9 +13,11 @@ Roles are generic `Agent` subagents (no parallel-team framework — see
 `.harness/decisions.md` D1).
 
 This repo also houses a second, separate harness: **[Mission Control](mission-control/README.md)**
-— a personal operating layer that tracks Claude agent sessions as first-class
+— an *optional* personal operating layer that tracks Claude agent sessions as first-class
 objects bound to vault tasks, with a morning standup and a glanceable single
-surface. Independent of `/drive`; see `mission-control/README.md`.
+surface. It is **macOS-specific** (launchd + SwiftBar) and assumes an **Obsidian PARA vault**
+(configurable via `MC_VAULT`). Fully independent of `/drive` — skip it if you don't use Obsidian.
+See `mission-control/README.md`.
 
 ## Workflow
 
@@ -38,52 +40,107 @@ Two human gates (A: direction, B: diff before push); every review is dual-voice
 (Claude + codex), converging when neither flags a P1. Full annotated diagram +
 decision policy: **[`docs/flow.md`](docs/flow.md)** and `CLAUDE.md`.
 
-## Portable config — reproduce this Claude on a new machine
+## Requirements
 
-This repo is the canonical home of the operating rules (`OPERATING.md`). To make a
-fresh machine behave the same:
+This repo has **two independent parts** with different requirements. The core
+`/drive` pipeline is the main product; Mission Control is an optional add-on.
 
-1. Clone the repo:
+### Platform support at a glance
 
-       git clone https://github.com/jiazou/claude-harness ~/workspace/claude-harness
+| Platform | Core `/drive` pipeline | Mission Control |
+| --- | --- | --- |
+| **macOS** | ✅ Fully supported | ✅ Fully supported |
+| **Linux** | ✅ Fully supported | ⚠️ CLI only (`mc harvest/today/tasks` work; no menu bar or scheduled job) |
+| **Windows** | ⚠️ Via [WSL](https://learn.microsoft.com/windows/wsl/) only | ❌ Not supported |
 
-2. Point your global `~/CLAUDE.md` at the rules — one command, path auto-detected:
+The scripts are `bash` + `python3`; there is no native Windows support — use WSL.
 
-       ~/workspace/claude-harness/bin/install-operating-rules.sh
+### Core `/drive` pipeline
 
-   It backs up any existing `~/CLAUDE.md`, writes an `@import` of this repo's
-   `OPERATING.md`, symlinks bundled skills (e.g. `/decant`) into `~/.claude/skills/`
-   so `OPERATING.md`'s references resolve, and symlinks the pipeline commands
-   (`/drive` `/drive-plan` `/drive-implement` `/drive-review` `/drive-harden` `/drive-ship`) into `~/.claude/commands/` so
-   they're discoverable from any directory. Operating rules and the `/drive`
-   pipeline both apply machine-wide; the pipeline stays *opt-in per task* (it only
-   acts when you invoke `/drive`, and STOPs unless run from a clean git repo).
-   Manual alternative: put `@<clone-path>/OPERATING.md` in `~/CLAUDE.md`.
+| Dependency | Required? | Purpose | Install |
+| --- | --- | --- | --- |
+| [Claude Code](https://docs.claude.com/en/docs/claude-code) | **Required** | Runs the slash commands | Per Anthropic docs |
+| `git` + `bash` (3.2+) | **Required** | Clone + the installer script | Preinstalled on macOS/Linux |
+| [gstack](https://github.com/garrytan/gstack) | **Required to run `/drive`** | Provides the planning/review brain: `autoplan`, `plan-*-review`, `qa-only`, `browse` | Step 3 below |
+| [codex CLI](https://github.com/openai/codex) | *Optional* | Cross-model second opinion in the review stage. **Degrades gracefully if absent** — the pipeline still completes | Per OpenAI docs |
 
-3. Install gstack + codex so `/drive` can run — see Setup below.
+No third-party libraries are bundled or required for the core pipeline beyond the above.
 
-## Setup
+### Mission Control (optional — skip entirely if you don't use Obsidian)
 
-1. Install gstack:
+| Dependency | Required? | Purpose |
+| --- | --- | --- |
+| **macOS** | **Required** | Uses `launchd` (scheduled job), SwiftBar (menu bar), `osascript` (iTerm tab names) |
+| `python3` (3.8+) | **Required** | All `mc` commands. **Standard library only** — no `pip install` needed |
+| An **Obsidian PARA vault** | **Required** | Source of tasks; point at it with `MC_VAULT` (see `mission-control/README.md`) |
+| [SwiftBar](https://github.com/swiftbar/SwiftBar) | *Optional* | The always-visible menu-bar surface |
 
-       git clone --single-branch --depth 1 \
-         https://github.com/garrytan/gstack.git ~/.claude/skills/gstack \
-         && cd ~/.claude/skills/gstack && ./setup
+See **[`mission-control/README.md`](mission-control/README.md)** for its full setup.
 
-   (Provides `autoplan`, `plan-*-review`, `qa-only`, `browse`. The codex CLI is
-   used directly by the review stage; install it separately if you want the
-   cross-model pass — it degrades gracefully if absent.)
+## Installation
 
-2. Start a session in whatever repo you want to drive (the commands are global,
-   so any directory works):
+### Core pipeline (everyone)
 
-       claude
+**1. Clone the repo** (anywhere; the path is remembered by the installer):
 
-3. Run the pipeline:
+```bash
+git clone https://github.com/jiazou/claude-harness ~/workspace/claude-harness
+```
 
-       /drive <your task>
+**2. Register the rules + commands machine-wide** — one command, path auto-detected:
 
-See `CLAUDE.md` for the full decision policy and invariants.
+```bash
+~/workspace/claude-harness/bin/install-operating-rules.sh
+```
+
+This is **idempotent and safe**. It:
+- backs up any existing `~/CLAUDE.md`, then writes a new one that `@import`s this repo's `OPERATING.md`;
+- symlinks bundled skills (e.g. `/decant`) into `~/.claude/skills/` so `OPERATING.md`'s references resolve;
+- symlinks the pipeline commands (`/drive`, `/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`) into `~/.claude/commands/` so they work from **any** directory.
+
+> ⚠️ It uses **symlinks back into the clone**, so don't move or delete the clone after installing. If you move it, just re-run the script. (Manual alternative: add `@<clone-path>/OPERATING.md` to `~/CLAUDE.md` yourself.)
+
+**3. Install gstack** (required to run `/drive`):
+
+```bash
+git clone --single-branch --depth 1 \
+  https://github.com/garrytan/gstack.git ~/.claude/skills/gstack \
+  && cd ~/.claude/skills/gstack && ./setup
+```
+
+Optionally install the [codex CLI](https://github.com/openai/codex) for the
+cross-model review pass — the pipeline runs fine without it.
+
+**4. Verify** the commands registered:
+
+```bash
+ls ~/.claude/commands/drive.md && echo "OK: /drive is installed"
+```
+
+**5. Use it** — start Claude Code in *any* repo you want to drive and run the pipeline:
+
+```bash
+cd ~/some/project
+claude
+# then, inside the session:
+/drive <your task>
+```
+
+`/drive` is **opt-in per task**: it only acts when you invoke it, and it stops
+unless run from a clean git repo. See `CLAUDE.md` for the full decision policy.
+
+### Mission Control (optional, macOS + Obsidian)
+
+Only if you want the session-tracking / daily-standup layer:
+
+```bash
+export MC_VAULT="$HOME/Documents/YourVault"   # add to your shell profile
+~/workspace/claude-harness/mission-control/install.sh
+mc today                                        # verify
+```
+
+Full details, the expected vault layout, and `MC_VAULT_NAME` are in
+**[`mission-control/README.md`](mission-control/README.md)**.
 
 ## Files
 
@@ -96,11 +153,18 @@ See `CLAUDE.md` for the full decision policy and invariants.
 - `docs/flow.md` -- annotated execution-flow diagram (phases, slices, every command)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
-- `mission-control/` -- separate personal operating harness (session tracking +
-  daily standup); self-contained, see `mission-control/README.md`
+- `mission-control/` -- separate, optional personal operating harness (session tracking +
+  daily standup); macOS + Obsidian-specific, see `mission-control/README.md`
+- `LICENSE` -- MIT
 
 ## Run artifacts (not committed)
 
 Per-run state — design, `state.json`, review files, worktrees — lives in an
 external run dir `~/.claude/harness-runs/<run-id>/`. The committed `.harness/`
 holds only the cross-task ledgers (`decisions.md`, `followups.md`).
+
+## License
+
+MIT — see [LICENSE](LICENSE). Builds on third-party tools installed separately:
+[gstack](https://github.com/garrytan/gstack) (MIT) and the
+[codex CLI](https://github.com/openai/codex).

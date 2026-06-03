@@ -31,7 +31,9 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vault_tasks
 
-FM_RE = re.compile(r"^(---\n)(.*?)(\n---\n?)", re.DOTALL)
+# Tolerates an optional UTF-8 BOM and CRLF (re interprets /\r/\n in the
+# pattern) so a note saved by a non-Obsidian editor isn't refused as "no frontmatter".
+FM_RE = re.compile(r"^(\ufeff?---\r?\n)(.*?)(\r?\n---\r?\n?)", re.DOTALL)
 # Bounded '## Log' section: heading line + body up to the next '## ' heading or EOF.
 LOG_SECTION_RE = re.compile(r"(^##\s+Log\s*\n)(.*?)(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
 
@@ -148,6 +150,9 @@ def main():
         del args[i:i + 2]
     if not args:
         print("usage: mc done <slug> [--status <status>]", file=sys.stderr)
+        return 1
+    if not status or "\n" in status or "\r" in status:
+        print("done: --status must be a single line with no newlines", file=sys.stderr)
         return 1
     # The SwiftBar menu passes the slug percent-encoded (so spaces / '|' can't break
     # the param line); unquote is a no-op for normal date-prefixed slugs.

@@ -30,7 +30,7 @@ everything else intact.
 After running `--draft`, read `--json` and improve the plan with judgment the script can't:
 
 1. **Split the ready work into two lanes:**
-   - **🔴 You, personally / sequential** — calls, decisions, anything needing Jia (e.g. p0
+   - **🔴 You, personally / sequential** — calls, decisions, anything that needs you (e.g. p0
      phone calls, family/finance choices). These define the day's critical path.
    - **🟢 Fan out to agents (parallel)** — self-contained work that a Claude session can drive
      (code tasks, research, drafting). Match these to the **idle sessions** (spare capacity)
@@ -40,8 +40,8 @@ After running `--draft`, read `--json` and improve the plan with judgment the sc
    surface it at the top.
 4. **WIP limit** — your bottleneck is your own review bandwidth, not agent count. Don't fan out
    more parallel agent work than you can review; cap concurrent "waiting on you" sessions.
-5. Rewrite the `## Parallel Plan` section with the two-lane plan, then present it to Jia for
-   sign-off. Treat the written plan as `needs_review` (it's auto-drafted until Jia confirms).
+5. Rewrite the `## Parallel Plan` section with the two-lane plan, then present it to the user for
+   sign-off. Treat the written plan as `needs_review` (it's auto-drafted until the user confirms).
 
 ## Notes
 

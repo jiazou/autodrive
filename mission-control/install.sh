@@ -16,6 +16,23 @@ cp -R "$MC/bin" "$DATA/bin"
 cp -R "$MC/swiftbar-plugins" "$DATA/swiftbar-plugins"
 rm -rf "$DATA/bin/__pycache__"
 
+# 1b. persist the vault config so the launchd job + SwiftBar plugin — which run
+# with a BARE environment and do NOT read your shell profile — resolve the same
+# vault as your interactive shell. Captures whatever MC_VAULT/MC_VAULT_NAME are
+# set in THIS shell now; re-run after you change them. (An env var still wins at
+# runtime; this file is the fallback vault_tasks.py reads.)
+CFG="$DATA/config"
+if [ -n "${MC_VAULT:-}" ] || [ -n "${MC_VAULT_NAME:-}" ]; then
+  : > "$CFG"
+  [ -n "${MC_VAULT:-}" ]      && printf 'MC_VAULT=%s\n'      "$MC_VAULT"      >> "$CFG"
+  [ -n "${MC_VAULT_NAME:-}" ] && printf 'MC_VAULT_NAME=%s\n' "$MC_VAULT_NAME" >> "$CFG"
+  echo "  wrote vault config → $CFG"
+elif [ -f "$CFG" ]; then
+  echo "  kept existing vault config → $CFG"
+else
+  echo "  no MC_VAULT set; using default ~/Documents/Vault (set MC_VAULT and re-run to change)"
+fi
+
 # 2. skills (real copies — every dir under skills/, so new skills deploy automatically)
 mkdir -p "$HOME/.claude/skills"
 for d in "$MC"/skills/*/; do
@@ -31,8 +48,8 @@ ln -sfn "$DATA/bin/today.py" "$HOME/.local/bin/today"
 
 # 4. 6:45am launchd job (render template → ~/Library/LaunchAgents, reload)
 LA="$HOME/Library/LaunchAgents"; mkdir -p "$LA"
-PLIST="$LA/com.jiazou.missioncontrol.morning.plist"
-sed "s#__HOME__#$HOME#g" "$MC/launchd/com.jiazou.missioncontrol.morning.plist" > "$PLIST"
+PLIST="$LA/com.claude-harness.missioncontrol.morning.plist"
+sed "s#__HOME__#$HOME#g" "$MC/launchd/com.claude-harness.missioncontrol.morning.plist" > "$PLIST"
 launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 

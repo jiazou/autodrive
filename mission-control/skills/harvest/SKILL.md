@@ -37,7 +37,7 @@ mc harvest          # or: python3 ~/mission-control/bin/harvest.py
 Then read the vault's due/overdue tasks (do NOT modify anything):
 
 ```bash
-ls "$HOME/Documents/Jia's Personal Vault/01 Projects"/*/Tasks/*.md 2>/dev/null
+ls "${MC_VAULT:-$HOME/Documents/Vault}/01 Projects"/*/Tasks/*.md 2>/dev/null
 ```
 
 Present the session digest first (it's the novel part), then a one-line vault summary
@@ -67,7 +67,7 @@ mc bind <SHORT_ID> --project "<Project>" [--task <slug>] [--tab "<tab name>"]
 ## Scheduled / `--prep` mode (opt-in, writes a draft)
 
 For the 7am pre-wake run, the intended behavior is **prep, not finalize**: draft tomorrow's
-daily note + a proposed parallel plan into the vault with `needs_review: true`, so Jia wakes
+daily note + a proposed parallel plan into the vault with `needs_review: true`, so you wake
 to a draft rather than a blank page — never an auto-accepted change. This mode is NOT built
 yet; the spike is read-only. When implementing it, everything it writes MUST be
 `needs_review: true` and land in `Daily/`, never mutating existing task files.

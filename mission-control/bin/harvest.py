@@ -21,6 +21,8 @@ import subprocess
 from datetime import datetime
 
 HOME = os.path.expanduser("~")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import vault_tasks  # single source of the configurable vault path (MC_VAULT)
 SESSIONS_DIR = os.path.join(HOME, ".claude", "sessions")
 PROJECTS_DIR = os.path.join(HOME, ".claude", "projects")
 BINDINGS = os.path.join(HOME, "mission-control", "bindings.jsonl")
@@ -44,7 +46,9 @@ def load_status_overlay():
             latest[sid] = e.get("status")  # later lines win
     return latest
 
-VAULT = os.path.join(HOME, "Documents", "Jia's Personal Vault")
+# Configurable vault path — resolved once in vault_tasks (MC_VAULT env, then
+# ~/mission-control/config, then default) so the launchd job agrees with the CLI.
+VAULT = vault_tasks.VAULT
 VAULT_DAILY = os.path.join(VAULT, "Daily")
 DAILY_TEMPLATE = os.path.join(VAULT, "03 Resources", "Templates", "daily-note-template.md")
 
@@ -75,11 +79,6 @@ def log_to_vault(digest, now):
     with open(path, "a") as fh:
         fh.write(section)
     return path, created
-
-
-def transcript_path(sid):
-    hits = glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl"))
-    return hits[0] if hits else None
 
 
 def session_meta(sid):
@@ -114,7 +113,7 @@ def session_meta(sid):
 def iterm_tab_names():
     """Map controlling-tty -> live iTerm tab name via one osascript call. Prefers the
     user's manual short tab name (the tab *title override*, e.g. "Harness") over the
-    long auto-generated title — that short name is what Jia reads as the session goal.
+    long auto-generated title — that short name is what you read as the session goal.
     Empty dict if iTerm isn't running or automation is denied (caller falls back to
     ai-title). One call per harvest, not per session."""
     script = (

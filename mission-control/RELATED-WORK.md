@@ -49,7 +49,7 @@ session is Waiting) — never tracked independently. (A "done" task with a stuck
 |---|---|---|
 | **ballred/obsidian-claude-pkm** | `/daily` `/weekly` `/monthly` slash commands, **PostToolUse auto-commit hook**, session-init briefing — *"zero deps, bash + markdown"* | **Steal:** the command trio + auto-commit + session-init; perfectly fits the no-plugins rule |
 | **Dave Drach — "Personal OS with Obsidian + Claude"** | Strategic cascade: 3-Year → Yearly → Project → Monthly → Weekly → Daily, wikilinked; each project carries its own CLAUDE.md | **Steal:** the cascade as the linking spine so every task traces up to a goal |
-| **AImaker — PARA + Claude Code + Obsidian** | Tasks inside project folders; Claude edits markdown directly | Already how Jia's vault works — **confirms the design** |
+| **AImaker — PARA + Claude Code + Obsidian** | Tasks inside project folders; Claude edits markdown directly | Already how this vault layout works — **confirms the design** |
 | Obsidian plugins (Periodic Notes, Tasks, Dataview) | Plugin-based periodic notes/queries | **Skip:** markdown-native commands do the same, respects no-plugin rule |
 
 ---
