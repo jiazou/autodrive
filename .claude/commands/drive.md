@@ -40,9 +40,12 @@ verdict / merge / gate.
   / `phaseReview[].integrationWorktree`; `git worktree remove` + `branch -D`
   orphans; a phase left `integrating` is rebuilt from scratch — see Execute), and
   continue each slice from its `step`. A phase left `hardening` is **NOT** rebuilt —
-  its harden commits live on `phaseInt/<P>`; resume HARDEN from
-  `phaseReview[<P>].hardenRound` on that branch (rebuilding would discard the harden
-  work).
+  its harden commits live on `phaseInt/<P>`; resume HARDEN on that branch (rebuilding
+  would discard the harden work). **Reconcile `hardenRound` from artifacts + branch,
+  not state alone** (a crash can land a `harden-<P>-N.md` or a `phaseInt/<P>` commit
+  before the state write): `hardenRound = max(state value, count of fix-round
+  harden-<P>-*.md)`; the next round re-audits from the actual `phaseInt/<P>` tree, so
+  a partially-applied round is simply re-audited and completed.
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
   initialize and write `$RUN_DIR/state.json` in this shape:
@@ -147,11 +150,18 @@ it advances):
    edits that would drop a criterion's coverage are vetoed; after any code change it
    re-runs `/drive-review phase <P>` as the regression guard.
    - `HARDENED` → `phaseReview[<P>].hardened = true`; advance `featureBranch` to
-     `phaseInt/<P>` (`git merge --ff-only`, else `reset --hard`); `git worktree
-     remove` the integration worktree (slice worktrees were already removed on
-     convergence), delete slice branches; next phase.
-   - `STOP` (cap-3 exceeded / BLOCKED / NEEDS_CONTEXT) → STOP; the phase does **not**
-     advance — its half-hardened state is preserved on `phaseInt/<P>` for resume.
+     `phaseInt/<P>` with a **pure ref move** — `phaseInt/<P>` is always a fast-forward
+     descendant of `featureBranch` (it was branched from `phaseBaseSha = rev-parse
+     featureBranch`, then only added commits), so move the ref directly:
+     `git branch -f <featureBranch> phaseInt/<P>` (refs-only — `featureBranch` need not
+     be checked out anywhere; never `merge`/`reset --hard`, which require/disturb a
+     working tree). Guard: if `phaseInt/<P>` is NOT a descendant of `featureBranch`
+     (`git merge-base --is-ancestor <featureBranch> phaseInt/<P>` fails) → STOP (a
+     concurrent ref move broke the invariant; do not force). Then `git worktree remove`
+     the integration worktree (slice worktrees were already removed on convergence),
+     delete slice branches; next phase.
+   - `STOP` (3 fix rounds exceeded / BLOCKED / NEEDS_CONTEXT) → STOP; the phase does
+     **not** advance — its half-hardened state is preserved on `phaseInt/<P>` for resume.
 
 When all phases are `hardened` → `stage = verify`.
 

@@ -102,10 +102,13 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
 - **Each phase ends with a HARDEN pass** (after its review converges, before
   `featureBranch` advances): a mutating find→fix→verify over the assembled phase for
   AI-slop removal, missing tests, and logic bugs — *beyond* acceptance criteria. It
-  has its **own cap-3** loop (separate from the conformance cap-8), bounds every edit
-  to the phase diff's files (scope-creep gate), vetoes de-slop edits that would drop a
-  criterion's coverage, and re-runs the conformance review as its regression guard.
-  A phase advances only when `hardened`.
+  has its **own cap of 3 fix rounds** (the confirming clean audit is free; counter is
+  independent of the conformance cap-8 — its regression re-reviews count under
+  `hardenRound`, never the phase `reviewCount`), bounds edits to the phase's own
+  surface + test-support (scope-creep gate, with flagged root-cause exceptions),
+  vetoes de-slop edits that would drop a criterion's coverage, and re-runs the
+  conformance review as its regression guard. The phase advances (a pure ref move) only
+  when `hardened`.
 - **File ownership is the parallelism contract:** independent slices own disjoint
   files and run in parallel; a slice never writes outside its owned files.
 - Run codex from the **main** context (background + per-scope log), never inside a

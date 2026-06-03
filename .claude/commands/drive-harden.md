@@ -37,26 +37,44 @@ authoritatively from git, never an ephemeral implementer list.
 
 ## Loop counter & cap
 
-`N = state.phaseReview[<P>].hardenRound + 1` (fall back to counting
-`$RUN_DIR/harden-<P>-*.md` + 1 if state is absent). The harden loop has its **own**
-cap — **HARDEN_CAP = 3** — separate from the conformance review's cap-8. Quality
-hardening should converge fast; if N > 3 → STOP, summarize what is still open per
-lens, and surface (do NOT advance the phase silently — a phase left half-hardened is
-worse than a flagged STOP). Rationale: the harden P1 fix-set is small (real bugs are
-few); a tight cap fails fast instead of grinding.
+`hardenRound` counts **fix rounds only** — invocations that actually changed code.
+The cap is **HARDEN_CAP = 3** fix rounds. A round that audits clean and applies
+nothing (the confirming audit) is **free** — it does NOT increment `hardenRound` and
+does NOT trip the cap (otherwise N fix rounds would need N+1 invocations to confirm
+clean and the cap would false-STOP a phase that actually converged). So harden allows
+up to 3 code-changing rounds plus the final clean audit that declares HARDENED.
+
+Reconcile the counter from artifacts, not state alone (a crash can commit a fix or
+write `harden-<P>-N.md` before the state write lands): on entry,
+`hardenRound = max(state.phaseReview[<P>].hardenRound or 0, count of fix-round
+`$RUN_DIR/harden-<P>-*.md` whose round applied edits)`. If `hardenRound >= HARDEN_CAP`
+AND this entry's audit still has open P1 → STOP, summarize what is open per lens, and
+surface (do NOT advance the phase silently — a phase left half-hardened is worse than
+a flagged STOP). Rationale: the harden P1 fix-set is small (real bugs are few); a
+tight cap fails fast instead of grinding.
+
+**The harden loop has its OWN counter — it is independent of the phase conformance
+`reviewCount` (cap-8).** The regression re-review in Step 4 is bounded by
+`hardenRound` (≤3), and **must not increment or be checked against the conformance
+cap-8** — otherwise a phase whose integration already took 6–8 conformance rounds
+would false-STOP the moment harden re-reviews it. Treat harden's regression passes as
+a distinct counter from the original phase-integration review.
 
 ## Scope-creep HARD GATE (not a guideline)
 
 Bind every edit to the 6 Decision Principles' blast-radius + boil-lakes test as a
-**gate**, not advice:
-- **Only touch the phase's own surface:** the files in `git diff
-  <phaseBaseSha>..phaseInt/<P>`, PLUS new **test files** that cover those files (lens
-  2 legitimately adds new tests). Never edit a file this phase didn't build — that's
-  another phase's or out of scope.
-- **No refactor without a flagged P1.** Don't rewrite working code for taste.
-- A bug whose fix needs editing files OUTSIDE the phase diff → `$RUN_DIR/followups.md`,
-  do NOT reach forward into another phase.
-This gate is the guard against "fix logic bugs" mutating into "rewrite the codebase."
+**gate**, not advice. The gate's purpose is to stop "fix logic bugs" from mutating
+into "rewrite the codebase" — NOT to block correctness work the phase genuinely needs.
+Allowed to edit:
+- The files in `git diff <phaseBaseSha>..phaseInt/<P>` (the phase's own surface).
+- New **test files** + existing **test-support** (fixtures, harnesses, snapshots)
+  needed to cover those files — lens 2 legitimately adds and wires up tests.
+- A file **just outside** the diff ONLY when it is the true root cause of a **flagged
+  P1** in the phase and deferring would knowingly ship a broken phase. This widens
+  scope, so **log it to `$RUN_DIR/decisions.md`** (Classification) and surface at
+  Gate B. Never reach forward into another *unbuilt* phase's planned files.
+Forbidden: any **refactor / taste edit without a flagged P1**, and editing unrelated
+working code. A non-P1 improvement outside the diff → `$RUN_DIR/followups.md`, skip it.
 
 ## Step 1 — Audit (dual-voice, 3-lens)
 
@@ -117,16 +135,20 @@ Degradation (do NOT hard-fail): codex missing OR hangs/times out → write
 ## Step 2 — Triage
 
 Combine voices: both-flagged = high confidence; **codex-only = scrutinize hardest**
-(bugs Claude missed); reviewer-only = claude-only. Build the fix set:
-- All open **P1** (lens 3 bugs + lens 2 criterion/bug tests) → fix.
-- **P2** slop / non-criterion tests → fix only if cheap AND in the phase blast radius
+(bugs Claude missed); reviewer-only = claude-only. Build the fix set from:
+- All open **P1** from this round's audit (lens 3 bugs + lens 2 criterion/bug tests).
+- **Any P1 conformance regression** the prior round's Step-4 re-review left open
+  (recorded in `$RUN_DIR/review-phase<P>-*.md` / state) — fold it in so a harden edit
+  that dropped a criterion gets repaired, not lost.
+- **P2** slop / non-criterion tests — only if cheap AND in the phase blast radius
   (6 principles); else → `$RUN_DIR/followups.md`.
 - **P3** and **VETOED** de-slop → `$RUN_DIR/followups.md`, never apply.
 
-If the fix set is empty AND no regression is outstanding from a prior round →
-**HARDENED** (skip to the return contract). Classify each kept item Mechanical /
-Taste / User-Challenge (6 principles); Taste → log to `$RUN_DIR/decisions.md`, surface
-at Gate B; User-Challenge → STOP and surface.
+If the fix set is empty (no open P1 from the audit, no outstanding regression, nothing
+cheap-P2 left) → **HARDENED** (this is the free confirming round — return per Step 4,
+do not increment `hardenRound`). Otherwise classify each kept item Mechanical / Taste /
+User-Challenge (6 principles); Taste → log to `$RUN_DIR/decisions.md`, surface at
+Gate B; User-Challenge → STOP and surface.
 
 ## Step 3 — Fix (implementer subagent, cwd = phaseInt worktree)
 
@@ -142,10 +164,11 @@ absolute `$RUN_DIR` (never edit code via absolute paths to the main repo). Read:
 - $RUN_DIR/harden-<P>-N.md + codex-harden-<P>.md (the fix set; codex-only items live
   only in the codex file, so read it)
 
-Apply ONLY the fix set, honoring the scope-creep HARD GATE: touch only files already in
-`git diff <phaseBaseSha>..phaseInt/<P>` PLUS new test files covering them; no refactor
-without a flagged P1; a fix that needs editing a file outside the phase diff → append it
-to `$RUN_DIR/followups.md` and skip it.
+Apply ONLY the fix set, honoring the scope-creep HARD GATE (see above): the phase-diff
+files; new test files + existing test-support (fixtures/harnesses/snapshots) for them;
+and a file just outside the diff ONLY as the root cause of a flagged P1 (then append a
+scope-widening note to `$RUN_DIR/decisions.md`). No refactor / taste edit without a
+flagged P1 — a non-P1 improvement outside the diff → `$RUN_DIR/followups.md`, skip it.
 - Lens 3 bugs: fix them; add a test that FAILS against the pre-fix code, then passes.
 - Lens 2 gaps: add the named tests, driving real production wiring (not stubbed state).
 - Lens 1 slop: remove it ONLY if it does not drop any acceptance criterion's coverage
@@ -165,23 +188,26 @@ Return STATUS as the FIRST line, then the changed-file list:
 ## Step 4 — Regression guard & converge
 
 This stage runs **one round per invocation** (like `/drive-review`); `/drive` owns
-the loop and re-invokes on `FINDINGS`. On entry, if `N > HARDEN_CAP` → return `STOP`
-(not converging; summarize what is open per lens).
+the loop and re-invokes on `FINDINGS`. Termination follows the fix-round cap above:
 
-If Step 3 **changed code**, re-run `/drive-review phase <P>` (the conformance
-dual-voice review) on the now-hardened `phaseInt/<P>`. This is NOT redundant with the
-full test run: tests don't encode spec conformance, and a de-slop edit can pass every
-test yet drop an acceptance criterion. The re-review gets PATHS + refs only (reviewer
-boundary). Because the harden loop caps at 3, this adds ≤3 to the phase's conformance
-counter — comfortably under its own cap-8.
-- Conformance **FINDINGS** (a P1 regression introduced by harden) OR the Step-1 audit
-  had open P1 → this round did work but isn't clean → return `FINDINGS` (`/drive`
-  re-invokes; the next round folds these into the fix set).
-- Conformance **CONVERGED** AND the Step-1 audit returned HARDENED (no open P1, no
-  cheap-P2 left) → return `HARDENED`.
+- **Step-1 audit clean** (no open P1, nothing cheap-P2 left) AND no fix was applied
+  this invocation → this is the confirming audit → return `HARDENED`. (This round is
+  free — it does not increment `hardenRound`.)
+- **Step-1 audit clean but `hardenRound >= HARDEN_CAP`** while a prior round's fix is
+  unconfirmable, or audit still has open P1 with `hardenRound >= HARDEN_CAP` →
+  `STOP` (not converging; summarize what is open per lens).
+- **Otherwise (a fix was applied this invocation):** `hardenRound += 1`. Because code
+  changed, re-run `/drive-review phase <P>` as the **regression guard** on the
+  now-hardened `phaseInt/<P>`. This is NOT redundant with the full test run: tests
+  don't encode spec conformance, and a de-slop edit can pass every test yet drop an
+  acceptance criterion. The re-review gets PATHS + refs only (reviewer boundary), and
+  is counted under `hardenRound` — **not** the conformance cap-8 (see Loop counter &
+  cap). A P1 regression it finds is folded into the next round's fix set. Return
+  `FINDINGS` (the next invocation will re-audit; a clean re-audit then returns
+  HARDENED — that confirming round is the free one that needs no extra fix budget).
 
-Record to `$RUN_DIR/state.json` each invocation: `phaseReview[<P>].hardenRound = N`;
-on `HARDENED`, `phaseReview[<P>].hardened = true`.
+Record to `$RUN_DIR/state.json` each invocation: `phaseReview[<P>].hardenRound`; on
+`HARDENED`, `phaseReview[<P>].hardened = true`.
 
 ## Return contract to /drive
 
@@ -189,7 +215,7 @@ on `HARDENED`, `phaseReview[<P>].hardened = true`.
   `featureBranch` to `phaseInt/<P>`, removes the worktree, deletes slice branches,
   proceeds to the next phase.
 - `FINDINGS` — still looping (a fix round ran; not yet clean). `/drive` re-invokes
-  HARDEN for this phase (the loop owns its cap-3).
+  HARDEN for this phase (the loop owns its cap of 3 fix rounds).
 - `STOP — <reason>` — cap exceeded, BLOCKED, or NEEDS_CONTEXT. Surface; the phase does
   NOT advance until resolved.
 
