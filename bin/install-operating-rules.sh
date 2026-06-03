@@ -73,6 +73,45 @@ if [ -d "$CMDS_SRC" ]; then
   done
 fi
 
+# Register the /drive autonomous-continuation Stop hook in ~/.claude/settings.json.
+# It only ever acts during an active /drive run owned by the firing session, fails
+# open on every error, and self-disarms at stage=done — safe for all other sessions.
+# Idempotent + atomic; never aborts the install if settings.json is unparseable.
+HOOK_PY="$REPO_DIR/bin/drive-stop-hook.py"
+if [ -f "$HOOK_PY" ]; then
+  python3 - "$HOOK_PY" <<'PY' || true
+import json, os, sys
+hook_py = sys.argv[1]
+cmd = f'python3 "{hook_py}"'
+path = os.path.expanduser("~/.claude/settings.json")
+settings = {}
+if os.path.exists(path):
+    try:
+        with open(path, encoding="utf-8") as fh:
+            settings = json.load(fh)
+    except (ValueError, OSError) as e:
+        print(f"  drive Stop hook: could not parse {path} ({e}); add it manually.")
+        sys.exit(0)
+arr = settings.setdefault("hooks", {}).setdefault("Stop", [])
+if any("drive-stop-hook.py" in json.dumps(e) for e in arr):
+    print("  drive Stop hook already registered — no change")
+    sys.exit(0)
+arr.append({"hooks": [{"type": "command", "command": cmd}]})
+tmp = path + ".tmp"
+os.makedirs(os.path.dirname(path), exist_ok=True)
+with open(tmp, "w", encoding="utf-8") as fh:
+    json.dump(settings, fh, indent=2)
+    fh.write("\n")
+    fh.flush(); os.fsync(fh.fileno())
+os.replace(tmp, path)
+print("  registered /drive Stop hook in settings.json")
+PY
+fi
+
 echo
 echo "Operating rules + bundled skills + /drive commands are active machine-wide."
+echo "The /drive autonomous-continuation Stop hook is registered (no-op outside an"
+echo "active /drive run). Disable per-run: set autoContinue:false in the run's"
+echo "state.json. Remove globally: delete the drive-stop-hook.py entry from"
+echo "~/.claude/settings.json hooks.Stop."
 echo "To run the /drive pipeline you also need gstack + codex — see README 'Setup'."

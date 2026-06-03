@@ -48,7 +48,9 @@ verdict / merge / gate.
   so a partially-applied round is simply re-audited and completed.
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
-  initialize and write `$RUN_DIR/state.json` in this shape:
+  initialize and write `$RUN_DIR/state.json` in this shape (set `sessionId` from the
+  `$CLAUDE_CODE_SESSION_ID` env var so the Stop hook can attribute this run to this
+  session; leave it `null` if unset):
 
 ```json
 { "runId": "<id>", "task": "<task>", "stage": "premises",
@@ -56,6 +58,7 @@ verdict / merge / gate.
   "phase": 1, "phaseBaseSha": null, "concurrencyCap": 4, "designReview": 0,
   "budget": { "ceilingCalls": null, "ceilingMin": null, "calls": 0, "startedAt": "<iso>" },
   "slices": {}, "phaseReview": {}, "lastGate": null,
+  "sessionId": null, "autoContinue": true, "waiting": null,
   "designPath": "$RUN_DIR/design.md" }
 ```
 
@@ -69,6 +72,18 @@ JSON (event-log lines, etc.).
 Update `state.json` after every transition. Increment `budget.calls` on each
 subagent/codex dispatch; if `ceilingCalls`/`ceilingMin` is set and exceeded → STOP
 with a spend summary (budget circuit-breaker).
+
+**Autonomous-continuation contract (`waiting`).** The `drive-stop-hook` (installed by
+`bin/install-operating-rules.sh`, no-op if absent) keeps a run driving across turns
+*without* a `/goal` by reading `state.json`: it blocks the turn from ending while this
+session's run has `stage != "done"` and `waiting` is empty, and allows it the moment
+`waiting` is set or `stage = done`. So you MUST set `state.waiting` to a short reason
+**before pausing for the human at any point** — Gate A, Gate B, every non-decision
+STOP, or any AskUserQuestion — and clear it (`waiting = null`) the instant you resume
+autonomous work. Forgetting to set it just means the hook nudges you to continue (it
+biases toward letting you stop and fails open); it never forces you past a STOP. This
+is independent of `/goal` — use either or both. Set `autoContinue:false` to disable
+the hook for this run.
 
 ## Pipeline
 

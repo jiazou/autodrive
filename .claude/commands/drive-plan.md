@@ -71,7 +71,8 @@ b) **Dual-voice design-review convergence** — run `/drive-review` scoped `desi
 Once autoplan has approved AND the design review has converged, present **Gate A**
 to me: the direction plus any Taste / User-Challenge items autoplan or the
 reviewers surfaced. The dual-voice convergence is automated — Gate A is still the
-only human gate here; wait for my approval.
+only human gate here; wait for my approval. **Set `state.waiting = "gateA"` before
+you present it** (so the Stop hook lets the turn end here); clear it on approval.
 
 Reaching this gate satisfied (and so auto-cleared) the leg-1 `/goal`, so also hand
 me the **leg-2** goal to paste *alongside* my approval — it keeps the execute half
@@ -89,9 +90,9 @@ across turns. After Gate B the push is immediate, so no further goal is needed.)
 
 ## After this stage
 
-- Approved → update $RUN_DIR/state.json (`stage=execute`, `lastGate="A"`), parse
-  the `## Phases & Slices` breakdown into `state.slices`/phase list, and begin the
-  execute half (per-phase, per-slice — see drive.md).
+- Approved → update $RUN_DIR/state.json (`stage=execute`, `lastGate="A"`,
+  `waiting=null`), parse the `## Phases & Slices` breakdown into `state.slices`/phase
+  list, and begin the execute half (per-phase, per-slice — see drive.md).
 - No approved/converged design (cancelled, or can't converge in 8 rounds) → STOP
   and report what's missing.
 
