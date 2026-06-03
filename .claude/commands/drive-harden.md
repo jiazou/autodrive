@@ -7,14 +7,15 @@ gstack skill. Unlike `/drive-review` (a PASSIVE conformance audit scoped to
 acceptance criteria), HARDEN is a **mutating find→fix→verify loop** that hunts
 quality defects **beyond** the spec. `/drive` invokes it once per phase, AFTER the
 phase-integration review CONVERGED and BEFORE `featureBranch` advances, operating on
-the assembled `phaseInt/<P>` worktree (so its commits land on that branch — the same
+the assembled `phaseInt/<runId>/<P>` worktree (so its commits land on that branch — the same
 branch `featureBranch` will fast-forward to).
 
-`/drive` passes: `phase <P>`, the absolute **`phaseInt/<P>` worktree path** (the
-implementer subagent's cwd), `phaseBaseSha`, and `$RUN_DIR` (absolute). The phase's
-spec lives in `$RUN_DIR/design.md` under `## Phases & Slices`.
+`/drive` passes: `phase <P>`, `<runId>` (the run identifier), the absolute
+**`phaseInt/<runId>/<P>` worktree path** (the implementer subagent's cwd),
+`phaseBaseSha`, and `$RUN_DIR` (absolute). The phase's spec lives in
+`$RUN_DIR/design.md` under `## Phases & Slices`.
 
-The scope is the **assembled phase diff** `git diff <phaseBaseSha>..phaseInt/<P>` and
+The scope is the **assembled phase diff** `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` and
 the files it touches — the "relevant codebase" for this phase. Derive it
 authoritatively from git, never an ephemeral implementer list.
 
@@ -32,7 +33,7 @@ tree) if any fails:
 - That run's `state.json` shows phase `<P>` `phaseReview[<P>].status == "converged"` (or
   `"hardening"` on resume). Not converged / not yet assembled → STOP: "phase <P> hasn't
   passed its integration review yet — harden runs only after `/drive-review phase <P>` converges."
-- The `phaseInt/<P>` worktree exists (`git worktree list`) and `$RUN_DIR/design.md` is
+- The `phaseInt/<runId>/<P>` worktree exists (`git worktree list`) and `$RUN_DIR/design.md` is
   present. Missing → STOP naming what's absent (the run is mid-rebuild or corrupt; let
   `/drive` reconcile on resume).
 
@@ -75,7 +76,7 @@ contract does not touch `round` — so a phase whose integration already used 6�
 conformance rounds is not false-STOPped when harden re-reviews it.
 
 Reconcile `hardenRound` from artifacts, not state alone (a crash can write
-`harden-<P>-N.md` or land a `phaseInt/<P>` commit before the state write): on entry,
+`harden-<P>-N.md` or land a `phaseInt/<runId>/<P>` commit before the state write): on entry,
 `hardenRound = max(state.phaseReview[<P>].hardenRound or 0, count of `harden-<P>-*.md`
 with `AppliedEdits: yes`)`. The `AppliedEdits` line in each audit file (see Step 1
 schema) is the machine-readable marker of a fix round; clean confirming audits carry
@@ -87,7 +88,7 @@ Bind every edit to the 6 Decision Principles' blast-radius + boil-lakes test as 
 **gate**, not advice. The gate's purpose is to stop "fix logic bugs" from mutating
 into "rewrite the codebase" — NOT to block correctness work the phase genuinely needs.
 Allowed to edit:
-- The files in `git diff <phaseBaseSha>..phaseInt/<P>` (the phase's own surface).
+- The files in `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` (the phase's own surface).
 - New **test files** + existing **test-support** (fixtures, harnesses, snapshots)
   needed to cover those files — lens 2 legitimately adds and wires up tests.
 - A file **just outside** the diff ONLY when it is the true root cause of a **flagged
@@ -108,7 +109,7 @@ the reviewer's independent judgment, exactly as conformance review does).
 Spawn a generic reviewer subagent:
 
 ----- BEGIN SUBAGENT SCOPE -----
-Audit `git diff <phaseBaseSha>..phaseInt/<P>` and the files it touches, against the
+Audit `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` and the files it touches, against the
 THREE hardening lenses (NOT just acceptance-criterion conformance):
 1. AI slop — speculative fallbacks, needless try/catch, defensive "just in case"
    code, dead code, over-abstraction, redundant comments, copy-paste, inconsistent
@@ -140,7 +141,7 @@ Codex pass (run DIRECTLY from main, background, per-scope log — NEVER inside a
 subagent that waits on it):
 
 ```
-codex exec "Harden phase <P>: review git diff <phaseBaseSha>..phaseInt/<P> for (1) AI
+codex exec "Harden phase <P>: review git diff <phaseBaseSha>..phaseInt/<runId>/<P> for (1) AI
 slop to remove, (2) missing tests to add (acceptance criteria, branches, edge/error
 paths), (3) logic bugs. Flag P1 (real bug / missing test on a criterion) vs P2 (slop
 / non-criterion test gap) with file:line. Note any de-slop edit that would drop an
@@ -174,12 +175,12 @@ Gate B; User-Challenge → STOP and surface.
 
 ## Step 3 — Fix (implementer subagent, cwd = phaseInt worktree)
 
-Spawn a generic implementer subagent with **cwd = the `phaseInt/<P>` worktree**. Pass
+Spawn a generic implementer subagent with **cwd = the `phaseInt/<runId>/<P>` worktree**. Pass
 file PATHS + the harden + codex finding paths, never contents.
 
 ----- BEGIN SUBAGENT SCOPE -----
 You are hardening phase <P>. Your cwd is its assembled integration worktree on branch
-`phaseInt/<P>`. Code paths are relative to this worktree; artifact paths are the
+`phaseInt/<runId>/<P>`. Code paths are relative to this worktree; artifact paths are the
 absolute `$RUN_DIR` (never edit code via absolute paths to the main repo). Read:
 - $RUN_DIR/design.md (acceptance criteria for the phase's slices)
 - $RUN_DIR/decisions.md (stay consistent)
@@ -195,7 +196,7 @@ flagged P1 — a non-P1 improvement outside the diff → `$RUN_DIR/followups.md`
 - Lens 2 gaps: add the named tests, driving real production wiring (not stubbed state).
 - Lens 1 slop: remove it ONLY if it does not drop any acceptance criterion's coverage
   (if it would, append to followups and skip — VETOED).
-Run the FULL build + integration tests until green. Commit to `phaseInt/<P>`
+Run the FULL build + integration tests until green. Commit to `phaseInt/<runId>/<P>`
 (`git add -A && git commit`) before returning.
 
 Return STATUS as the FIRST line, then the changed-file list:
@@ -228,7 +229,7 @@ Record `phaseReview[<P>].hardenRound` to `$RUN_DIR/state.json` each invocation.
 ## Return contract to /drive
 
 - `HARDENED` — audit clean + conformance still converged. `/drive` advances
-  `featureBranch` to `phaseInt/<P>`, removes the worktree, deletes slice branches,
+  `featureBranch` to `phaseInt/<runId>/<P>`, removes the worktree, deletes slice branches,
   proceeds to the next phase.
 - `FINDINGS` — still looping (a fix round ran; not yet clean). `/drive` re-invokes
   HARDEN for this phase (the loop owns its cap of 3 fix rounds).
@@ -237,6 +238,6 @@ Record `phaseReview[<P>].hardenRound` to `$RUN_DIR/state.json` each invocation.
 
 Budget: increment `state.budget.calls` per harden subagent/codex dispatch; if a
 ceiling is set and exceeded → STOP with a spend summary (the half-hardened phase is
-left on `phaseInt/<P>` for inspection — see /drive resume).
+left on `phaseInt/<runId>/<P>` for inspection — see /drive resume).
 
 Never include the harden-implementer's notes/rationale in any audit or review prompt.

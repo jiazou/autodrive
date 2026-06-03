@@ -66,6 +66,9 @@ Two ways to work:
 - **Autonomous** — `/drive` (premises → plan/autoplan [Gate A] → implement → review+codex → verify → ship [Gate B]), with the 6 Decision Principles as the policy. Defined by this repo's `CLAUDE.md` + `.claude/commands/`.
 - **Manual / high-touch** — drive each step yourself with gstack's interactive review skills (`/plan-ceo-review`, `/plan-eng-review`, `/review`, `/browse`, `/ship`) when a task warrants close sign-off.
 
+### Review-enforcement invariant (a `/drive` run cannot skip review by omission)
+**Invariant:** a `/drive` run cannot skip plan/design review OR code review by omission — a forgetful/hallucinating coordinator that never runs `/drive-review` is blocked before it can act on the un-reviewed result. (This closes a real failure: run `phase3-slice4` marked 6 slices `converged` and shipped a PR with **zero** review artifacts.) **How:** conformance is computed from **git truth** — SHA-bound `review-*` artifacts checked against the actual refs being merged/shipped, never from coordinator-writable state — enforced by a PreToolUse gate chain `plan → slice → phase → ship` (each transition is denied until its scope's CONVERGED review exists; a deny feeds Claude the exact `/drive-review` command to run, then it retries), with a Stop hook as a best-effort backstop. **Threat model:** this is **omission-proof, not forgery-proof** — it stops a coordinator that *forgets* review, not one that *deliberately forges* a SHA-bound artifact (that needs an out-of-band reviewer — **component D**, a follow-up). **Install:** run `bin/install-drive-hooks.sh` once per machine to wire the two hooks into `~/.claude/settings.json`. Full reference: [`docs/drive-enforcement.md`](docs/drive-enforcement.md).
+
 ## Code Style & Rules
 <important>
 - **No AI Slop:** Do not add speculative fallbacks, unnecessary `try/catch` blocks, or "just in case" defensive code unless explicitly required by the engineering plan.
