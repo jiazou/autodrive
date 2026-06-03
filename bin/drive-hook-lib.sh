@@ -26,9 +26,21 @@ drive_runid_from_command() {
   #   HEAD:refs/heads/slice/R/4a      -> slice/R/4a   (token starts at slice/)
   # A literal `*` in the command never reaches the shell as a glob (no $cmd split),
   # and `*` is not in the charset so it cannot pollute a token.
+  # LEFT segment boundary: the keyword (drive|slice|phaseInt) must be at the
+  # start of the string OR preceded by a char that is NOT [A-Za-z0-9._-]. This
+  # rejects larger unmanaged names (nondrive/R, noslice/R/4a, foo-phaseInt/R/1)
+  # while keeping '/' a valid boundary so refspec/path forms still resolve
+  # (HEAD:refs/heads/slice/R/4a, refs/heads/drive/R). grep captures the single
+  # leading boundary char (when not start-of-string); strip it before parsing.
   local tok runid
   while IFS= read -r tok; do
     [ -n "$tok" ] || continue
+    # Strip one leading boundary char (anything that isn't part of a keyword/ref
+    # token). start-of-string matches leave tok already keyword-leading.
+    case "$tok" in
+      drive/*|slice/*|phaseInt/*) ;;     # already keyword-leading
+      *) tok="${tok#?}" ;;               # drop the captured boundary char
+    esac
     case "$tok" in
       drive/*)
         # Require EXACTLY drive/<runId> (2 segments). Reject drive/R/extra.
@@ -65,7 +77,7 @@ drive_runid_from_command() {
         ;;
     esac
   done <<EOF
-$(printf '%s' "$cmd" | grep -oE '(drive|slice|phaseInt)/[A-Za-z0-9._/-]+')
+$(printf '%s' "$cmd" | grep -oE '(^|[^A-Za-z0-9._-])(drive|slice|phaseInt)/[A-Za-z0-9._/-]+')
 EOF
   return 1
 }

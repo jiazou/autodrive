@@ -102,6 +102,25 @@ assert_rc1 "from_command phaseInt/R/1/extra rejected" "$out" "$rc"
 out="$(drive_runid_from_command "git checkout phaseInt/onlyrun")"; rc=$?
 assert_rc1 "from_command phaseInt/ without P" "$out" "$rc"
 
+# --- drive_runid_from_command: LEFT segment boundary (MAJOR fix) ---
+# keyword must be at a left segment boundary (start-of-string OR a char that is
+# NOT [A-Za-z0-9._-]). Larger unmanaged names must NOT match.
+out="$(drive_runid_from_command "git checkout nondrive/R")"; rc=$?
+assert_rc1 "from_command nondrive/R rejected" "$out" "$rc"
+
+out="$(drive_runid_from_command "git checkout noslice/R/4a")"; rc=$?
+assert_rc1 "from_command noslice/R/4a rejected" "$out" "$rc"
+
+out="$(drive_runid_from_command "git checkout foo-phaseInt/R/1")"; rc=$?
+assert_rc1 "from_command foo-phaseInt/R/1 rejected" "$out" "$rc"
+
+# '/' IS a valid boundary: path-prefixed managed refs still resolve.
+out="$(drive_runid_from_command "git checkout refs/heads/drive/R")"; rc=$?
+assert_eq "from_command refs/heads/drive/R resolves" "R" "$out" "$rc"
+
+out="$(drive_runid_from_command "git push origin HEAD:refs/heads/slice/R/4a")"; rc=$?
+assert_eq "from_command path-prefixed slice resolves" "R" "$out" "$rc"
+
 # --- drive_runid_from_head: positive (throwaway repo) ---
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
