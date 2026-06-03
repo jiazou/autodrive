@@ -12,4 +12,4 @@
 .harness/enhancements-proposal.md
 # per-run state now lives in ~/.claude/harness-runs/<run-id>/ (external, never committed)
 # local session/retro scratch — never publish (can contain machine-local handles)
-.context/
+.context/__pycache__/
