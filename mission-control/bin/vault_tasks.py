@@ -14,7 +14,11 @@ import glob
 from datetime import date, datetime
 
 HOME = os.path.expanduser("~")
-VAULT = os.path.join(HOME, "Documents", "Jia's Personal Vault")
+# Vault location is configurable so this works on any machine. Set MC_VAULT to
+# your Obsidian vault's absolute path; defaults to ~/Documents/Vault. MC_VAULT_NAME
+# overrides the vault name used in obsidian:// links (defaults to the dir name).
+VAULT = os.environ.get("MC_VAULT") or os.path.join(HOME, "Documents", "Vault")
+VAULT_NAME = os.environ.get("MC_VAULT_NAME") or os.path.basename(VAULT.rstrip("/"))
 TASKS_GLOB = os.path.join(VAULT, "01 Projects", "*", "Tasks", "*.md")
 
 OPEN_STATUSES = {"todo", "doing", "waiting"}

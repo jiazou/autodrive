@@ -44,7 +44,9 @@ def load_status_overlay():
             latest[sid] = e.get("status")  # later lines win
     return latest
 
-VAULT = os.path.join(HOME, "Documents", "Jia's Personal Vault")
+# Configurable vault path (see vault_tasks.py). Set MC_VAULT to your vault's
+# absolute path; defaults to ~/Documents/Vault.
+VAULT = os.environ.get("MC_VAULT") or os.path.join(HOME, "Documents", "Vault")
 VAULT_DAILY = os.path.join(VAULT, "Daily")
 DAILY_TEMPLATE = os.path.join(VAULT, "03 Resources", "Templates", "daily-note-template.md")
 
@@ -114,7 +116,7 @@ def session_meta(sid):
 def iterm_tab_names():
     """Map controlling-tty -> live iTerm tab name via one osascript call. Prefers the
     user's manual short tab name (the tab *title override*, e.g. "Harness") over the
-    long auto-generated title — that short name is what Jia reads as the session goal.
+    long auto-generated title — that short name is what you read as the session goal.
     Empty dict if iTerm isn't running or automation is denied (caller falls back to
     ai-title). One call per harvest, not per session."""
     script = (

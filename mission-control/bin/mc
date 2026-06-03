@@ -14,7 +14,7 @@ case "$cmd" in
   bind)           exec bash "$MC/mc-bind.sh" "$@" ;;
   help|-h|--help)
     cat <<'EOF'
-mc — Mission Control (Jia's personal operating harness)
+mc — Mission Control (a personal operating harness)
 
   mc harvest [--log]     live Claude session digest (+ log to today's daily note)
   mc standup [--draft]   plan the day for max parallelism (+ write the daily note)

@@ -14,8 +14,10 @@ import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import standup
+import vault_tasks
 
-VAULT_NAME = "Jia's Personal Vault"
+# Vault name for obsidian:// links — configurable via MC_VAULT_NAME (see vault_tasks.py).
+VAULT_NAME = vault_tasks.VAULT_NAME
 _BIN = os.path.dirname(os.path.abspath(__file__))
 DONE_PY = os.path.join(_BIN, "done.py")
 

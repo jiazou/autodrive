@@ -13,9 +13,11 @@ Roles are generic `Agent` subagents (no parallel-team framework — see
 `.harness/decisions.md` D1).
 
 This repo also houses a second, separate harness: **[Mission Control](mission-control/README.md)**
-— a personal operating layer that tracks Claude agent sessions as first-class
+— an *optional* personal operating layer that tracks Claude agent sessions as first-class
 objects bound to vault tasks, with a morning standup and a glanceable single
-surface. Independent of `/drive`; see `mission-control/README.md`.
+surface. It is **macOS-specific** (launchd + SwiftBar) and assumes an **Obsidian PARA vault**
+(configurable via `MC_VAULT`). Fully independent of `/drive` — skip it if you don't use Obsidian.
+See `mission-control/README.md`.
 
 ## Workflow
 
@@ -96,11 +98,18 @@ See `CLAUDE.md` for the full decision policy and invariants.
 - `docs/flow.md` -- annotated execution-flow diagram (phases, slices, every command)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
-- `mission-control/` -- separate personal operating harness (session tracking +
-  daily standup); self-contained, see `mission-control/README.md`
+- `mission-control/` -- separate, optional personal operating harness (session tracking +
+  daily standup); macOS + Obsidian-specific, see `mission-control/README.md`
+- `LICENSE` -- MIT
 
 ## Run artifacts (not committed)
 
 Per-run state — design, `state.json`, review files, worktrees — lives in an
 external run dir `~/.claude/harness-runs/<run-id>/`. The committed `.harness/`
 holds only the cross-task ledgers (`decisions.md`, `followups.md`).
+
+## License
+
+MIT — see [LICENSE](LICENSE). Builds on third-party tools installed separately:
+[gstack](https://github.com/garrytan/gstack) (MIT) and the
+[codex CLI](https://github.com/openai/codex).
