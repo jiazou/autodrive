@@ -155,6 +155,23 @@ check "dash-prefixed file has stop guard" "$dash_stop" "1"
 dash_bak=$(ls "$DASH".bak.* 2>/dev/null | wc -l | tr -d ' ')
 check "backup written for dash-prefixed file" "$dash_bak" "1"
 
+# --- macOS/BSD utility guard: installer's `mkdir -p --` / `cp --` / `mv --` ----
+# Codex's holistic review claimed these GNU-style `--` separators fail on macOS/BSD
+# ("illegal option -- -"). They do NOT here — but the existing tests never exercised
+# `mkdir -p --` (it only runs when the settings PARENT dir is absent). This guards it
+# explicitly: install into a NONEXISTENT nested directory so the installer's
+# `mkdir -p -- "$(dirname -- "$SETTINGS")"` runs on whatever real mkdir/cp/mv this
+# platform ships. If `--` were rejected, the installer would exit nonzero and never
+# create the file — so this fails loudly on a genuinely broken host.
+NESTED="$WORK/no/such/dir/yet/settings.json"
+bash "$INSTALLER" "$NESTED" >/dev/null 2>&1
+check "installer creates absent parent dir via 'mkdir -p --' (exit 0)" "$?" "0"
+check "nested parent dir was created" "$( [ -d "$WORK/no/such/dir/yet" ] && echo yes || echo no )" "yes"
+jq -e . -- "$NESTED" >/dev/null 2>&1
+check "nested settings is valid JSON (cp/mv/jq '--' all ran)" "$?" "0"
+nested_gate=$(jq --arg p "$MERGE_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' -- "$NESTED")
+check "nested settings has merge gate" "$nested_gate" "1"
+
 # --- Summary --------------------------------------------------------------
 echo "----------------------------------------"
 echo "PASS: $PASS  FAIL: $FAIL"
