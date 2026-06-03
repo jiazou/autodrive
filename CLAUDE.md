@@ -25,11 +25,14 @@ EXECUTE (harness-owned) — for each PHASE in order:
 2. /drive-implement per slice — independent slices run in PARALLEL (file-ownership scoped)
 3. /drive-review per slice — Claude subagent + codex; converged = no P1; cap 8
    then a phase-integration /drive-review over the assembled phase
-4. verify — qa-only / browse (optional), after all phases converge
-5. /drive-ship ONCE → Gate B → push
+4. /drive-harden phase — after the phase review converges: a mutating find→fix→verify
+   pass over the assembled phase to reduce AI slop, add missing tests, fix logic bugs
+   (own cap 3; re-runs the conformance review as a regression guard); then advance
+5. verify — qa-only / browse (optional), after all phases harden
+6. /drive-ship ONCE → Gate B → push
 ```
 
-The stage commands (`/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-ship`) are single-sourced
+The stage commands (`/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`) are single-sourced
 runners that `/drive` invokes in order; you can also step them manually within an
 existing run (a new task is a new run-id).
 
@@ -96,6 +99,17 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
   has an open **P1** (BLOCKING or MAJOR); P2/P3 are logged, not blocking.
 - Each slice/phase implement→review loop caps at **8** rounds (own `reviewCount`).
   Beyond that, surface the disagreement with what each side asserts.
+- **Each phase ends with a HARDEN pass** (after its review converges, before
+  `featureBranch` advances): a mutating find→fix→verify over the assembled phase for
+  AI-slop removal, missing tests, and logic bugs — *beyond* acceptance criteria. It
+  bounds edits to the phase's own surface + test-support (scope-creep gate, with
+  flagged root-cause exceptions) and vetoes de-slop edits that would drop a criterion's
+  coverage. The phase reaches the terminal `hardened` status — and `featureBranch`
+  advances by a pure ref move — only when harden returns HARDENED.
+- **Harden has its own cap of 3 fix rounds**, independent of the conformance cap-8: the
+  confirming clean audit is free, and its regression guard runs `/drive-review phase
+  <P> harden-regress` (which does NOT touch the phase `round`), so a phase whose
+  integration already used 6–8 rounds is never false-STOPped during hardening.
 - **File ownership is the parallelism contract:** independent slices own disjoint
   files and run in parallel; a slice never writes outside its owned files.
 - Run codex from the **main** context (background + per-scope log), never inside a
@@ -120,10 +134,14 @@ so every worktree reaches it by absolute path; not committed, not portable):
 task.md / design.md          -- premise; planner design (+ ## Phases & Slices)
 state.json                   -- run model: runId, baseRef, featureBranch, phase,
                                 phaseBaseSha, concurrencyCap, budget, per-slice
-                                {step,reviewCount,branch,worktree,baseSha}, phaseReview
+                                {step,reviewCount,branch,worktree,baseSha},
+                                phaseReview{status,round,hardenRound} where status
+                                = integrating→converged→hardening→hardened (terminal)
 event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
 review-<scope>-N.md          -- per-scope (design/slice/phase) review outputs
 codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw
+harden-<P>-N.md              -- per-phase harden audit (3-lens) outputs
+codex-harden-<P>.md          -- codex harden findings; codex-harden-<P>.log raw
 decisions.md / followups.md  -- run-local ledgers (promoted to the repo at ship)
 verify.md                    -- verify-stage evidence
 wt/                          -- per-slice + integration + ship worktrees

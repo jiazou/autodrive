@@ -1,5 +1,5 @@
 ---
-description: Autonomous engineering lifecycle — premises → plan (Gate A) → implement → review+codex → verify → ship (Gate B). Drives a task through all stages with two human gates.
+description: Autonomous engineering lifecycle — premises → plan (Gate A) → implement → review+codex → harden → verify → ship (Gate B). Drives a task through all stages with two human gates.
 argument-hint: <task to drive>
 ---
 You are `/drive` — the autonomous lifecycle coordinator. Advance stages
@@ -39,7 +39,13 @@ verdict / merge / gate.
   load it, **reconcile worktrees** (`git worktree list` vs `state.slices[].worktree`
   / `phaseReview[].integrationWorktree`; `git worktree remove` + `branch -D`
   orphans; a phase left `integrating` is rebuilt from scratch — see Execute), and
-  continue each slice from its `step`.
+  continue each slice from its `step`. A phase left `hardening` is **NOT** rebuilt —
+  its harden commits live on `phaseInt/<P>`; resume HARDEN on that branch (rebuilding
+  would discard the harden work). **Reconcile `hardenRound` from artifacts, not state
+  alone** (a crash can land a `harden-<P>-N.md` or a `phaseInt/<P>` commit before the
+  state write): `hardenRound = max(state value, count of `harden-<P>-*.md` with
+  `AppliedEdits: yes`)`; the next round re-audits from the actual `phaseInt/<P>` tree,
+  so a partially-applied round is simply re-audited and completed.
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
   initialize and write `$RUN_DIR/state.json` in this shape:
@@ -102,8 +108,9 @@ approved/converged design → STOP. → `lastGate = "A"`, `stage = execute`
 Parse the breakdown into `state.slices` (`{<id>: {step:"queued", reviewCount:0}}`
 with each slice's `owns`/`deps`) and the ordered phase list.
 
-### Stage 2–4 — Execute (per phase; refs + worktrees only)
-For each PHASE in order:
+### Stage 2–4.5 — Execute (per phase; refs + worktrees only)
+For each PHASE in order (steps 1–4 build & review the phase; step 5 HARDENS it before
+it advances):
 
 1. **Freeze base:** `phaseBaseSha = git rev-parse <featureBranch>`.
 2. **Dispatch slices** whose `deps` are CONVERGED, ≤ `concurrencyCap` in flight.
@@ -130,15 +137,40 @@ For each PHASE in order:
    each converged slice branch IN. **Conflict → STOP** (the rebuild-from-base is the
    rollback; never `git merge --abort` to undo prior merges). Run the **FULL build +
    integration tests** + REVIEW scoped `phase <P>` in this worktree.
-   - CONVERGED → advance `featureBranch` to `phaseInt/<P>` (`git merge --ff-only`,
-     else `reset --hard`); `git worktree remove` the integration worktree (slice
-     worktrees were already removed on convergence), delete slice branches;
-     `phaseReview[<P>].status = converged`; next phase.
+   - CONVERGED → `phaseReview[<P>].status = converged`, then **HARDEN** (step 5).
    - FINDINGS → route each P1 to the responsible slice (`step=needs_fix`,
      re-dispatch — re-creating its worktree — loop its cap-8), then
      **re-assemble from scratch**.
+5. **Harden (per phase, after the phase review converges)** — run the HARDEN stage
+   (`/drive-harden phase <P>` — `~/.claude/commands/drive-harden.md`) IN the
+   `phaseInt/<P>` worktree (`phaseReview[<P>].status = hardening`). It is a mutating
+   find→fix→verify pass over the assembled phase to **reduce AI slop, add missing
+   tests, and fix logic bugs** — beyond acceptance criteria — committing to
+   `phaseInt/<P>`. Its own 3-fix-round cap (independent of the conformance cap-8);
+   de-slop edits that would drop a criterion's coverage are vetoed; after any code
+   change it re-runs `/drive-review phase <P> harden-regress` as the regression guard.
+   Act on its return:
+   - `FINDINGS` → a fix round ran but the phase isn't clean yet. Keep
+     `phaseReview[<P>].status = hardening` and **re-invoke `/drive-harden phase <P>`**
+     on the same `phaseInt/<P>` worktree (the loop owns its 3-fix-round cap). Repeat
+     until `HARDENED` or `STOP`.
+   - `HARDENED` → `phaseReview[<P>].status = hardened`; advance `featureBranch` to
+     `phaseInt/<P>` with a **pure ref move**: `phaseInt/<P>` is always a fast-forward
+     descendant of `featureBranch` (branched from `phaseBaseSha = rev-parse
+     featureBranch`, then only added commits), so `git branch -f <featureBranch>
+     phaseInt/<P>` (refs-only; never `merge`/`reset --hard`, which require/disturb a
+     working tree). Two guards before the ref move, else STOP: (a) `featureBranch` must
+     be a **coordinator ref checked out in NO worktree** (`git worktree list` — git
+     refuses `branch -f` on a checked-out branch); (b) `phaseInt/<P>` must descend from
+     `featureBranch` (`git merge-base --is-ancestor <featureBranch> phaseInt/<P>`
+     succeeds — exit 0; a non-zero exit means NOT a descendant → STOP, a concurrent ref
+     move broke the invariant). Then `git worktree remove` the integration worktree
+     (slice worktrees were already removed on convergence), delete slice branches; next phase.
+   - `STOP` (3 fix rounds exceeded / BLOCKED / NEEDS_CONTEXT) → STOP; the phase stays
+     `hardening` and does **not** advance — its half-hardened state is preserved on
+     `phaseInt/<P>` for resume.
 
-When all phases are `converged` → `stage = verify`.
+When all phases reach `status = hardened` → `stage = verify`.
 
 ### Stage 4b — Verify (optional)
 If the change touches a UI/URL (auto-detect), run gstack `qa-only` / `browse` on the
