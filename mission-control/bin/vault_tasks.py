@@ -45,6 +45,19 @@ VAULT_NAME = (os.environ.get("MC_VAULT_NAME") or _config_value("MC_VAULT_NAME")
 TASKS_GLOB = os.path.join(VAULT, "01 Projects", "*", "Tasks", "*.md")
 
 
+def atomic_write(path, data):
+    """Write `data` to `path` atomically: temp file in the same dir, fsync, os.replace.
+    A crash mid-write can never leave a half-written note — the readers either see the
+    old file or the new one. Shared by every writer (done/standup/harvest)."""
+    d = os.path.dirname(path) or "."
+    tmp = os.path.join(d, f".{os.path.basename(path)}.tmp")
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(data)
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, path)
+
+
 def obsidian_href(slug):
     """Build an obsidian:// deep link to a note. Obsidian's URI handler does NOT
     decode '+' as a space, so force %20 via quote_via=quote (urlencode's default
@@ -121,7 +134,8 @@ def load_tasks():
     tasks = []
     for path in glob.glob(TASKS_GLOB):
         try:
-            text = open(path).read()
+            with open(path) as fh:
+                text = fh.read()
         except Exception:
             continue
         fm = _parse_frontmatter(text)

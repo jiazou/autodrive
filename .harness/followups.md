@@ -47,3 +47,7 @@ F6 (P3 harden phase1, deferred) Drifted `module.py:NN` source-line citations in 
    citing the function name instead of the line number when those files are next touched. Not fixed
    here: harden scope was the goal-precedence + de-slop fixes; editing 4 unrelated files for cosmetic
    comments would exceed the cheap-blast-radius bound.
+
+## Quality-pass deferrals (chore/quality-pass) — enforcement scripts, separate PR
+- drive-merge-gate.sh: `--git-dir`/`--work-tree` relative-path resolution feeds `cd "$REPO"` then worktree-relative `git diff` in conformance; for a `--git-dir` (bare git dir) this can mis-target. Drive emits `git -C`/plain push so low-likelihood, but harden: pass --git-dir/--work-tree through to the conformance git invocation instead of cd-ing. (P2, needs its own dual-voice PR.)
+- drive-merge-gate.sh: the env-prefix + git-global-option skip loop is copy-pasted 4x (detect_subcommand/action_after/git_target_repo/push_ship_runid) and already slightly out of sync; factor one `_skip_to_subcommand` helper. (P2 refactor; no flagged P1, so deferred per scope-creep gate.)

@@ -220,3 +220,49 @@ def test_clean_goal_passthrough_falsy(mc_env):
     """Empty/None returns as-is (the early guard)."""
     assert mc_env.harvest.clean_goal("") == ""
     assert mc_env.harvest.clean_goal(None) is None
+
+
+# --------------------------------------------------------------------------- #
+# pid_tty — `ps -o tty=` parsing, incl. the "no controlling tty" branch
+# --------------------------------------------------------------------------- #
+class _FakeProc:
+    """Stand-in for CompletedProcess: pid_tty reads only `.stdout`."""
+    def __init__(self, stdout):
+        self.stdout = stdout
+
+
+def _stub_ps(monkeypatch, mc_env, stdout):
+    """Make harvest.subprocess.run (the `ps` call in pid_tty) return `stdout`. Also
+    asserts the real `ps` is not invoked — we feed canned tty output."""
+    monkeypatch.setattr(mc_env.harvest.subprocess, "run",
+                        lambda *a, **k: _FakeProc(stdout))
+
+
+def test_pid_tty_normal_tty(mc_env, monkeypatch):
+    """A real tty like 'ttys003' (with surrounding whitespace from ps) -> '/dev/ttys003'."""
+    _stub_ps(monkeypatch, mc_env, "ttys003\n")
+    assert mc_env.harvest.pid_tty(1234) == "/dev/ttys003"
+
+
+def test_pid_tty_double_question_is_none(mc_env, monkeypatch):
+    """A process with NO controlling tty: ps prints '??' -> pid_tty returns None
+    (the `t and t != "??"` guard), NOT the literal '/dev/??'. This is the branch
+    that previously had no coverage."""
+    _stub_ps(monkeypatch, mc_env, "??\n")
+    assert mc_env.harvest.pid_tty(1234) is None
+
+
+def test_pid_tty_empty_output_is_none(mc_env, monkeypatch):
+    """ps prints nothing (dead/unknown pid) -> stripped t is '' (falsy) -> None,
+    never '/dev/'."""
+    _stub_ps(monkeypatch, mc_env, "\n")
+    assert mc_env.harvest.pid_tty(1234) is None
+
+
+def test_pid_tty_subprocess_failure_is_none(mc_env, monkeypatch):
+    """If `ps` itself raises (timeout / not found) -> the except returns None,
+    not a crash."""
+    def _boom(*a, **k):
+        raise OSError("ps unavailable")
+    monkeypatch.setattr(mc_env.harvest.subprocess, "run", _boom)
+    assert mc_env.harvest.pid_tty(1234) is None

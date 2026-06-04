@@ -135,11 +135,13 @@ so every worktree reaches it by absolute path; not committed, not portable):
 
 ```
 task.md / design.md          -- premise; planner design (+ ## Phases & Slices)
-state.json                   -- run model: runId, baseRef, featureBranch, phase,
-                                phaseBaseSha, concurrencyCap, budget, per-slice
+state.json                   -- run model: runId, baseRef, featureBranch, stage, phase,
+                                phaseBaseSha, concurrencyCap, designReview, budget, per-slice
                                 {step,reviewCount,branch,worktree,baseSha},
                                 phaseReview{status,round,hardenRound} where status
-                                = integrating→converged→hardening→hardened (terminal)
+                                = converged→hardening→hardened (terminal);
+                                plus lastGate, designPath, and the Stop-hook keys the hooks
+                                read: sessionId, autoContinue, waiting
 event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
 review-<scope>-N.md          -- per-scope (design/slice/phase) review outputs
 codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw

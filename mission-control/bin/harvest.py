@@ -36,14 +36,15 @@ def load_status_overlay():
     latest = {}
     if not os.path.exists(STATUS_LEDGER):
         return latest
-    for line in open(STATUS_LEDGER):
-        try:
-            e = json.loads(line)
-        except Exception:
-            continue
-        sid = e.get("session_id")
-        if sid:
-            latest[sid] = e.get("status")  # later lines win
+    with open(STATUS_LEDGER) as fh:
+        for line in fh:
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            sid = e.get("session_id")
+            if sid:
+                latest[sid] = e.get("status")  # later lines win
     return latest
 
 # Configurable vault path — resolved once in vault_tasks (MC_VAULT env, then
@@ -62,11 +63,12 @@ def ensure_daily_note(date_str):
     if not os.path.exists(path):
         os.makedirs(VAULT_DAILY, exist_ok=True)
         if os.path.exists(DAILY_TEMPLATE):
-            body = open(DAILY_TEMPLATE).read().replace("{{date}}", date_str)
+            with open(DAILY_TEMPLATE) as fh:
+                body = fh.read().replace("{{date}}", date_str)
         else:
             body = (f"---\ndate: {date_str}\ntype: daily-note\narea: operations\n"
                     f"tags: [daily]\nstatus: active\n---\n\n# {date_str} — Daily\n")
-        open(path, "w").write(body)
+        vault_tasks.atomic_write(path, body)
         created = True
     return path, created
 
@@ -88,23 +90,24 @@ def session_meta(sid):
     color = name = ai_title = None
     for f in glob.glob(os.path.join(PROJECTS_DIR, "*", sid + ".jsonl")):
         try:
-            for line in open(f):
-                if ("agent-color" not in line and "agent-name" not in line
-                        and "ai-title" not in line):
-                    continue
-                try:
-                    e = json.loads(line)
-                except Exception:
-                    continue
-                if e.get("sessionId") != sid:
-                    continue
-                t = e.get("type")
-                if t == "agent-color":
-                    color = e.get("agentColor")
-                elif t == "agent-name":
-                    name = e.get("agentName")
-                elif t == "ai-title":
-                    ai_title = e.get("aiTitle")
+            with open(f) as fh:
+                for line in fh:
+                    if ("agent-color" not in line and "agent-name" not in line
+                            and "ai-title" not in line):
+                        continue
+                    try:
+                        e = json.loads(line)
+                    except Exception:
+                        continue
+                    if e.get("sessionId") != sid:
+                        continue
+                    t = e.get("type")
+                    if t == "agent-color":
+                        color = e.get("agentColor")
+                    elif t == "agent-name":
+                        name = e.get("agentName")
+                    elif t == "ai-title":
+                        ai_title = e.get("aiTitle")
         except Exception:
             continue
     return color, name, ai_title
@@ -182,7 +185,8 @@ def load_live_sessions():
     tabs = iterm_tab_names()   # one osascript call, shared across sessions
     for f in glob.glob(os.path.join(SESSIONS_DIR, "*.json")):
         try:
-            d = json.load(open(f))
+            with open(f) as fh:
+                d = json.load(fh)
         except Exception:
             continue
         pid = d.get("pid")
@@ -215,18 +219,19 @@ def load_bindings():
     latest = {}
     if not os.path.exists(BINDINGS):
         return latest
-    for line in open(BINDINGS):
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            e = json.loads(line)
-        except Exception:
-            continue
-        sid = e.get("session_id")
-        if not sid:
-            continue
-        latest[sid] = e  # later lines win (append-only -> chronological)
+    with open(BINDINGS) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            sid = e.get("session_id")
+            if not sid:
+                continue
+            latest[sid] = e  # later lines win (append-only -> chronological)
     # drop sessions whose last event was an explicit unbind
     return {s: e for s, e in latest.items() if e.get("event") != "unbind"}
 

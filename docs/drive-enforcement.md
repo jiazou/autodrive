@@ -90,6 +90,14 @@ absent, every gate is inert (`exit 0` silent — not a managed drive run).
 
 ## The Stop backstop
 
+> `/drive` installs **two distinct Stop hooks** that coexist in `~/.claude/settings.json`.
+> This section covers the **review-omission backstop** (`bin/drive-stop-guard.sh`, installed
+> by `bin/install-drive-hooks.sh`). The other is the **autonomous-continuation** hook
+> (`bin/drive-stop-hook.py`, installed by `bin/install-operating-rules.sh`), which blocks a
+> stop while a run still has autonomous work so the pipeline keeps driving across turns —
+> a different concern from review enforcement. Both fail open and are no-ops outside an
+> active `/drive` run.
+
 `bin/drive-stop-guard.sh` is a **Stop** hook (best-effort, not the guarantee). It
 resolves `runId` from `git HEAD` in the cwd and runs conformance `--mode audit`, which
 flags **only** slices merged into the **current live `phaseInt/<runId>/<P>`** that

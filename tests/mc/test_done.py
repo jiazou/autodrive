@@ -157,13 +157,30 @@ def test_mark_ambiguous_returns_2_and_writes_nothing(mc_env, vault):
 
 def test_mark_frontmatterless_file_returns_2_not_3(mc_env, vault):
     """A note with NO frontmatter is filtered by _resolve (no type:task) -> it is a
-    no-match -> exit 2 (edge case #2). The exit-3 'no frontmatter' branch in done.py
-    is unreachable via this path (followup F1); we assert the real exit 2."""
+    no-match -> exit 2 (edge case #2). It never reaches mark's fence re-check."""
     vault.add_raw(
         "01 Projects/P/Tasks/no-fm.md",
         "# No Frontmatter Here\n\nJust a body, no --- fence.\n",
     )
     assert mc_env.done.mark("no-fm") == 2
+
+
+def test_mark_returns_3_when_frontmatter_vanishes_between_resolve_and_write(mc_env, vault):
+    """TOCTOU guard: _resolve validates the fence on one read; mark re-reads. If the
+    frontmatter is stripped in that window, mark must return 3 (refuse) — NOT crash on
+    m.group(). Simulate the race by pointing _resolve at a now-frontmatter-less file."""
+    raw = vault.add_raw(
+        "01 Projects/P/Tasks/raced.md",
+        "# Raced\n\nframtter got stripped underfoot — no --- fence now.\n",
+    )
+    done = mc_env.done
+    hit = {"path": str(raw), "title": "Raced", "status": "todo", "needs_review": False}
+    orig_resolve = done._resolve
+    done._resolve = lambda slug: [hit]
+    try:
+        assert done.mark("raced") == 3  # guarded, no AttributeError
+    finally:
+        done._resolve = orig_resolve
 
 
 def test_mark_strips_md_suffix(mc_env, vault):

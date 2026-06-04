@@ -760,6 +760,49 @@ test_push_all_aggregate_is_ship() {
   fi
 }
 
+# Aggregate push (`--mirror`) is in the same `--all|--mirror` aggregate branch as
+# `--all` (drive-merge-gate.sh:231) → pushes the drive branch implicitly → gated when
+# HEAD is the drive feature branch. Mirrors test_push_all_aggregate_is_ship.
+test_push_mirror_aggregate_is_ship() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git push --mirror" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "aggregate git push --mirror on the drive branch IS gated as ship"
+  else
+    fail "git push --mirror on drive branch should be gated as ship; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `git push --mirror` is gated like `--all`, NOT blanket-denied: a REVIEWED ship tip
+# → silent allow. Proves the deny is conformance-conditioned, not flag-conditioned.
+test_push_mirror_reviewed_silent() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo_reviewed "$runid")"; repo="${info%% *}"
+  run_gate "git push --mirror" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
+    pass "git push --mirror on a REVIEWED drive tip is silent (gated, not blanket-denied)"
+  else
+    fail "git push --mirror should be silent when reviewed; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `--mirror` aggregate from a NON-drive HEAD → inert (runId from HEAD fails to
+# resolve), exactly like a bare push from a non-drive branch. Confirms the aggregate
+# gating is HEAD-conditioned, same as `--all`.
+test_push_mirror_nondrive_head_inert() {
+  local runid repo out
+  runid="$(new_runid)"
+  repo="$TMPROOT/$runid-mirror-nondrive"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null   # stays on main (non-drive HEAD)
+  run_gate "git push --mirror" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "git push --mirror from a non-drive HEAD is inert (HEAD-conditioned)"
+  else
+    fail "git push --mirror from non-drive HEAD should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
 # ---------------------------------------------------------------------------------
 main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
@@ -813,6 +856,9 @@ main() {
   # multi-refspec / aggregate push must still gate the drive branch (err toward gating)
   test_push_multiref_includes_drive_is_ship
   test_push_all_aggregate_is_ship
+  test_push_mirror_aggregate_is_ship
+  test_push_mirror_reviewed_silent
+  test_push_mirror_nondrive_head_inert
 
   echo
   echo "----------------------------------------"
