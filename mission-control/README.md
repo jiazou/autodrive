@@ -134,7 +134,7 @@ commands are there for when you want more than a glance.
 | `mc harvest [--summarize] [--log]` | Per-session digest, each headed by its **goal** (the iTerm tab name, auto). `--summarize` adds an LLM **Progress** + **Next** per session (one `claude` call each, run in parallel). `--log` appends to today's daily note. |
 | `mc standup [--draft\|--json]` | Plan the day for parallelism; `--draft` writes a self-contained `Today's Focus` + `Parallel Plan` into the daily note, while `--json` prints machine-readable output and takes precedence over `--draft` (suppresses the draft write). |
 | `mc today [--swiftbar]` | Today's tasks in one glance — terminal or SwiftBar menu-bar format. |
-| `mc weekly` | Weekly review agenda (clear Needs Review, sweep By Project, reset the week). |
+| `mc weekly [--json]` | Weekly review agenda (clear Needs Review, sweep By Project, reset the week). `--json` prints machine-readable output. |
 | `mc tasks` | Vault task buckets (overdue / due / waiting). |
 | `mc bind <id> --project "<P>" [--task <slug>] [--tab <name>]` | Bind a session ↔ task. |
 
@@ -159,7 +159,9 @@ reading the recent transcript tail through headless `claude`. The 6:45am job and
 - **Capture:** manual `mc bind` now; passive notification-hooks layer on later.
 - **Vault log:** harvests append to `Daily/<date>.md` (the operations cockpit) — no separate folder.
 - **Scheduling:** `harvest` read-only now; the 6:45am run is `mc standup --draft` + `mc harvest
-  --log --summarize`. The `mc standup --draft` that *drafts* the day lands everything as `needs_review`.
+  --log --summarize`. The `mc standup --draft` *drafts* the day by writing the `Today's Focus` +
+  `Parallel Plan` sections into the daily note (non-destructive to other sections); it does not
+  touch task frontmatter or set any `needs_review` status.
 
 ## Future polish (not core)
 

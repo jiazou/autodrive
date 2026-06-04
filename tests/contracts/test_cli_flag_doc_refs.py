@@ -1088,17 +1088,33 @@ def test_known_real_flags_are_handled_by_their_entrypoint():
 # scan uses (per-segment `mc <sub>` anchoring, real-parse-site flag detection, pipe-group
 # masking), so help drift is caught WITHOUT reintroducing brittle prose matching.
 # --------------------------------------------------------------------------- #
+# The router's help `case` arm: `help|-h|--help)` (alias order/spacing tolerant). The help
+# heredoc is the FIRST heredoc opener AT OR AFTER this arm — anchoring to the arm (rather than
+# the first heredoc anywhere in the file) keeps extraction correct if another heredoc is ever
+# added to a different branch.
+_MC_HELP_ARM = re.compile(r"^\s*(?:[a-z-]+\|)*(?:-h|--help|help)(?:\|[a-z-]+)*\)\s*$", re.M)
+
+
 def _mc_help_heredoc():
     """Extract the BODY lines of the `mc` router's help `cat <<'EOF' ... EOF` heredoc.
 
-    Walks the router source, finds the heredoc opener on the `help)` arm, and returns the
-    lines between it and its terminator. This is the inverse of `_sh_strip` (which BLANKS
-    heredoc bodies); here the body is exactly what we want to scan."""
+    Walks the router source to the `help|-h|--help)` case arm, then takes the FIRST heredoc
+    opener at or after that arm and returns the lines between it and its terminator. Anchoring
+    to the help arm (not just the first heredoc in the file) keeps this correct if a heredoc is
+    later added to another branch. This is the inverse of `_sh_strip` (which BLANKS heredoc
+    bodies); here the body is exactly what we want to scan."""
     text = _read(MC_BIN / "mc")
     lines = text.splitlines()
+    # Find the help case arm line.
+    arm_idx = None
+    for i, line in enumerate(lines):
+        if _MC_HELP_ARM.match(line):
+            arm_idx = i
+            break
+    assert arm_idx is not None, "no `help|-h|--help)` case arm found in the `mc` router"
     body = []
     term = None
-    for line in lines:
+    for line in lines[arm_idx + 1 :]:
         if term is None:
             m = _SH_HEREDOC_START.search(line)
             if m:
@@ -1107,7 +1123,7 @@ def _mc_help_heredoc():
         if line.strip() == term:
             break
         body.append(line)
-    assert term is not None, "no heredoc found in the `mc` router (help text changed?)"
+    assert term is not None, "no heredoc found on the `mc` help arm (help text changed?)"
     assert body, "the `mc` help heredoc body is empty"
     return body
 
@@ -1140,6 +1156,45 @@ def test_mc_help_heredoc_documents_real_subcommands():
     unresolved = sorted(s for s in subs if s not in dispatch)
     assert not unresolved, (
         f"mc help documents subcommand(s) the router can't dispatch: {unresolved}"
+    )
+
+
+def _router_canonical_subcommands(dispatch):
+    """The set of CANONICAL (non-alias) router subcommands the help heredoc must advertise.
+
+    The router maps several aliases to the same entrypoint (`plan`→standup.py,
+    `review`→weekly.py); the help text documents only ONE name per entrypoint, so the
+    presence lock checks canonical names, not every alias. Canonical = the FIRST name listed
+    in each `name1|name2)` branch (the router writes the primary form first: `standup|plan`,
+    `weekly|review`). Parsed from the router source so a rename/addition is picked up
+    automatically rather than hardcoded."""
+    text = _read(MC_BIN / "mc")
+    branch = re.compile(
+        r'^\s*([a-z|]+)\)\s+exec\s+(?:"\$PY"\s+)?(?:bash\s+)?"\$MC/([^"]+)"', re.M
+    )
+    canonical = set()
+    for names, _fname in branch.findall(text):
+        canonical.add(names.split("|")[0])
+    # Sanity: every canonical name is a real dispatch target.
+    assert canonical <= set(dispatch), (
+        f"canonical parse drifted from dispatch: {sorted(canonical - set(dispatch))}"
+    )
+    return canonical
+
+
+def test_mc_help_heredoc_lists_every_router_subcommand():
+    """PRESENCE lock: every canonical router subcommand is advertised in the `mc help`
+    heredoc. The other help tests only catch a BOGUS subcommand/flag; without this,
+    DELETING a real help line (e.g. dropping `mc tasks`) would stay green. Parsed from the
+    router dispatch (not hardcoded), so a new subcommand that's never documented in help also
+    fails here."""
+    dispatch = _router_dispatch()
+    canonical = _router_canonical_subcommands(dispatch)
+    advertised, _pairs = _mc_help_invocations()
+    missing = sorted(canonical - advertised)
+    assert not missing, (
+        f"mc help heredoc no longer advertises router subcommand(s): {missing} "
+        f"(advertised: {sorted(advertised)})"
     )
 
 
