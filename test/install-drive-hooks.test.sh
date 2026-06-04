@@ -172,6 +172,48 @@ check "nested settings is valid JSON (cp/mv/jq '--' all ran)" "$?" "0"
 nested_gate=$(jq --arg p "$MERGE_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' -- "$NESTED")
 check "nested settings has merge gate" "$nested_gate" "1"
 
+# --- Migrate-on-rename: stale-path entries are updated, not duplicated ----------
+# The rename-safety contract: a settings.json whose drive hooks point at an OLD path
+# (e.g. left over from before claude-harness -> autodrive) must, on re-run, MIGRATE to
+# the current path — the stale dead path removed, no duplicate added. Keyed on the
+# script BASENAME, so the installer recognises the moved entry as the same hook.
+MIG="$WORK/migrate-settings.json"
+OLD_MERGE="/Users/someone/workspace/claude-harness/bin/drive-merge-gate.sh"
+OLD_STOP="/Users/someone/workspace/claude-harness/bin/drive-stop-guard.sh"
+cat > "$MIG" <<JSON
+{
+  "model": "opus",
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "/existing/keep.sh" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$OLD_MERGE" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "$OLD_STOP" } ] }
+    ]
+  }
+}
+JSON
+bash "$INSTALLER" "$MIG" >/dev/null 2>&1
+check "installer exits 0 migrating stale paths" "$?" "0"
+# new (current) paths present exactly once
+mig_merge_new=$(jq --arg p "$MERGE_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$MIG")
+check "merge gate migrated to current path (count 1)" "$mig_merge_new" "1"
+mig_stop_new=$(jq --arg p "$STOP_GUARD" '[.hooks.Stop[].hooks[]? | select((.command//"")==$p)] | length' "$MIG")
+check "stop guard migrated to current path (count 1)" "$mig_stop_new" "1"
+# stale paths GONE (the core of the contract)
+mig_merge_old=$(jq --arg p "$OLD_MERGE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$MIG")
+check "stale merge-gate path removed" "$mig_merge_old" "0"
+mig_stop_old=$(jq --arg p "$OLD_STOP" '[.hooks.Stop[].hooks[]? | select((.command//"")==$p)] | length' "$MIG")
+check "stale stop-guard path removed" "$mig_stop_old" "0"
+# no duplicate merge gates anywhere; non-managed hook preserved
+mig_merge_total=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-merge-gate.sh$"))] | length' "$MIG")
+check "exactly one merge gate after migration (no dup)" "$mig_merge_total" "1"
+mig_keep=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")=="/existing/keep.sh")] | length' "$MIG")
+check "non-managed PreToolUse hook preserved across migration" "$mig_keep" "1"
+mig_model=$(jq -r '.model' "$MIG")
+check "unrelated key preserved across migration" "$mig_model" "opus"
+
 # --- Summary --------------------------------------------------------------
 echo "----------------------------------------"
 echo "PASS: $PASS  FAIL: $FAIL"

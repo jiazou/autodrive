@@ -136,3 +136,78 @@ def test_preserves_unrelated_settings_and_hooks(fake_home):
     # The other two events got their mc-hook entries too.
     for event in ("Notification", "UserPromptSubmit"):
         assert len(_mc_entries(settings["hooks"][event])) == 1, settings["hooks"][event]
+
+
+# --------------------------------------------------------------------------- #
+# Migrate-on-rename (the rename-safety contract)
+# --------------------------------------------------------------------------- #
+def test_migrates_stale_path_on_rerun(fake_home):
+    """A pre-existing mc-hook entry at an OLD path (e.g. left over from before a repo
+    rename claude-harness -> autodrive) is MIGRATED to the current command on re-run:
+    updated in place to the new path, NOT duplicated, and the stale dead path removed.
+    Without this, a renamed install leaves a hook pointing at a deleted file."""
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    stale_cmd = (
+        "/usr/bin/python3 /Users/old/claude-harness/mission-control/bin/mc-hook.py idle"
+    )
+    foreign = {"hooks": [{"type": "command", "command": "echo keep-me"}]}
+    preexisting = {
+        "hooks": {
+            # foreign hook + a STALE-path mc-hook entry on the same event
+            "Stop": [foreign, {"hooks": [{"type": "command", "command": stale_cmd}]}],
+        },
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(preexisting), encoding="utf-8")
+
+    proc = _run(fake_home)
+    assert proc.returncode == 0, proc.stderr
+
+    stop = _read_settings(fake_home)["hooks"]["Stop"]
+    # exactly ONE mc-hook entry — migrated, not duplicated
+    mc = _mc_entries(stop)
+    assert len(mc) == 1, f"expected 1 mc entry after migration, got {stop}"
+    # it points at the CURRENT repo's mc-hook.py, not the stale claude-harness path
+    cmd = mc[0]["hooks"][0]["command"]
+    assert "claude-harness" not in cmd, f"stale path not migrated: {cmd}"
+    assert cmd.rstrip().endswith("/bin/mc-hook.py idle"), cmd
+    # the stale dead-path entry is gone
+    assert not any(stale_cmd in json.dumps(e) for e in stop), f"stale entry remained: {stop}"
+    # the foreign hook on the same event is preserved
+    assert foreign in stop, f"foreign hook dropped: {stop}"
+
+
+def test_foreign_hook_bundled_in_same_entry_survives_migration(fake_home):
+    """A foreign hook that shares an entry-GROUP with a stale mc-hook (same
+    "hooks" array) must survive — stripping happens at the individual hook level,
+    not by deleting the whole entry. Without hook-level stripping the foreign
+    `echo keep-me` would be silently lost."""
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    stale = "/usr/bin/python3 /old/claude-harness/mission-control/bin/mc-hook.py idle"
+    preexisting = {
+        "hooks": {
+            # ONE entry whose hooks array bundles a foreign hook + a stale mc-hook
+            "Stop": [
+                {
+                    "hooks": [
+                        {"type": "command", "command": "echo keep-me"},
+                        {"type": "command", "command": stale},
+                    ]
+                }
+            ],
+        },
+    }
+    (claude_dir / "settings.json").write_text(json.dumps(preexisting), encoding="utf-8")
+
+    proc = _run(fake_home)
+    assert proc.returncode == 0, proc.stderr
+
+    stop = _read_settings(fake_home)["hooks"]["Stop"]
+    flat = [h for e in stop for h in e.get("hooks", [])]
+    cmds = [h.get("command", "") for h in flat]
+    # foreign hook preserved
+    assert "echo keep-me" in cmds, f"bundled foreign hook lost: {stop}"
+    # stale mc-hook migrated away; exactly one current mc-hook entry
+    assert not any(stale in c for c in cmds), f"stale mc-hook remained: {stop}"
+    assert sum("mc-hook.py" in c for c in cmds) == 1, f"expected 1 mc-hook, got {stop}"
