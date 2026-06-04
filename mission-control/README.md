@@ -158,8 +158,8 @@ reading the recent transcript tail through headless `claude`. The 6:45am job and
 - **Identity:** ID, iTerm tab, color, name all auto-resolved. Only the task binding is manual.
 - **Capture:** manual `mc bind` now; passive notification-hooks layer on later.
 - **Vault log:** harvests append to `Daily/<date>.md` (the operations cockpit) — no separate folder.
-- **Scheduling:** `harvest` read-only now; 7am run is `harvest --log` (digest only). The
-  `--prep` standup that *drafts* the day lands everything as `needs_review`.
+- **Scheduling:** `harvest` read-only now; the 6:45am run is `standup --draft` + `harvest
+  --log --summarize`. The `standup --draft` that *drafts* the day lands everything as `needs_review`.
 
 ## Future polish (not core)
 
