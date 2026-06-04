@@ -214,6 +214,42 @@ check "non-managed PreToolUse hook preserved across migration" "$mig_keep" "1"
 mig_model=$(jq -r '.model' "$MIG")
 check "unrelated key preserved across migration" "$mig_model" "opus"
 
+# --- Wrapped / env-prefixed / substituted commands are NOT collapsed ----------
+# A foreign hook whose command merely ENDS in the managed basename but is wrapped,
+# piped, env-prefixed, arg-bearing, or command-substituted must be preserved — only a
+# LONE path invocation (no whitespace, no shell metacharacters) is the managed gate.
+# Collapsing such a command into the bare stock gate would silently weaken enforcement.
+WRAP="$WORK/wrapped-settings.json"
+PIPED_MERGE="/usr/local/bin/strict-wrapper.sh | /opt/custom/bin/drive-merge-gate.sh"
+ENV_MERGE="env STRICT=1 /opt/custom/bin/drive-merge-gate.sh"
+SUBST_STOP="\$(echo /x)/drive-stop-guard.sh"
+cat > "$WRAP" <<JSON
+{
+  "hooks": {
+    "PreToolUse": [
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$PIPED_MERGE" } ] },
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$ENV_MERGE" } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "$SUBST_STOP" } ] }
+    ]
+  }
+}
+JSON
+bash "$INSTALLER" "$WRAP" >/dev/null 2>&1
+check "installer exits 0 with wrapped same-basename commands" "$?" "0"
+piped_kept=$(jq --arg p "$PIPED_MERGE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
+check "piped merge-gate command preserved (not collapsed)" "$piped_kept" "1"
+env_kept=$(jq --arg p "$ENV_MERGE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
+check "env-prefixed merge-gate command preserved (not collapsed)" "$env_kept" "1"
+subst_kept=$(jq --arg p "$SUBST_STOP" '[.hooks.Stop[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
+check "command-substitution stop-guard preserved (not collapsed)" "$subst_kept" "1"
+# AND the canonical stock gate/guard is still added alongside (enforcement present)
+wrap_canon_merge=$(jq --arg p "$MERGE_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
+check "stock merge gate still added alongside wrapped ones" "$wrap_canon_merge" "1"
+wrap_canon_stop=$(jq --arg p "$STOP_GUARD" '[.hooks.Stop[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
+check "stock stop guard still added alongside substitution one" "$wrap_canon_stop" "1"
+
 # --- Summary --------------------------------------------------------------
 echo "----------------------------------------"
 echo "PASS: $PASS  FAIL: $FAIL"

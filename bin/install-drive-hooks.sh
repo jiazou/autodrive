@@ -54,14 +54,28 @@ jq \
   '
   # basename of a command path (everything after the last "/"; bare names unchanged).
   def bn($p): ($p | sub(".*/"; ""));
-  # Drop every hook whose command BASENAME matches $base from each group, then drop
-  # groups left empty. Keyed on the basename (not the full path) so a moved/renamed
-  # repo (e.g. claude-harness -> autodrive) MIGRATES the entry on re-run instead of
-  # leaving the stale path behind and appending a duplicate. Non-managed hooks (other
-  # basenames, e.g. mc-hook.py / drive-stop-hook.py) are untouched.
+  # Is $cmd a LONE invocation of the managed script $base? True iff it is just a path
+  # ending in "/<base>" (or the bare "<base>") with NO whitespace and NO shell
+  # metacharacters. This recognises a stale-path copy of the managed gate (migrate it)
+  # but deliberately does NOT match a wrapped / piped / substituted / env-prefixed /
+  # arg-bearing command that merely ends in the same basename (a piped wrapper, an
+  # "env FOO=1 .../gate.sh", or a stricter custom gate). Collapsing such a command into
+  # the bare stock gate would silently WEAKEN enforcement. Match on script IDENTITY,
+  # not just basename.
+  # NOTE: keep this jq program free of apostrophes/backticks in comments -- it is in
+  # shell single quotes, so a stray apostrophe would terminate it.
+  def is_managed($cmd; $base):
+    (($cmd | endswith("/" + $base)) or ($cmd == $base))
+    and (($cmd | test("[[:space:]|&;<>()`$]")) | not);
+  # Drop every hook that is a lone invocation of $base from each group, then drop
+  # groups left empty. Keyed on the script identity so a moved/renamed repo
+  # (e.g. claude-harness -> autodrive) MIGRATES the entry on re-run instead of leaving
+  # the stale path behind and appending a duplicate. Non-managed hooks (other basenames,
+  # e.g. mc-hook.py / drive-stop-hook.py, AND wrapped commands sharing the basename)
+  # are untouched.
   def strip_managed($arr; $base):
     [ $arr[]?
-      | .hooks = [ .hooks[]? | select(bn(.command // "") != $base) ]
+      | .hooks = [ .hooks[]? | select(is_managed(.command // ""; $base) | not) ]
       | select((.hooks | length) > 0) ];
   # ensure container shapes
   .hooks = (.hooks // {})
