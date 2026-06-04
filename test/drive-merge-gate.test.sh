@@ -418,6 +418,69 @@ test_ship_git_C_other_repo_inert() {
   fi
 }
 
+# --git-dir / --work-tree resolve the TARGET REPO exactly like -C. conformance runs
+# via `cd "$REPO" && drive-conformance`, doing only SHA/ref ops (rev-parse, for-each-ref,
+# diff R..tip) — which resolve identically whether REPO is a worktree root OR a .git dir.
+# These lock that in: the gate's decision via --git-dir/--work-tree must match the bare
+# form (deny when unreviewed, silent when reviewed, inert for a non-drive target), with
+# cwd OUTSIDE the repo so resolution MUST come from the flag, not cwd. Covers both the
+# `--opt=val` and the space `--opt val` parse branches.
+
+# `git --git-dir=<repo>/.git push` (=form), unreviewed, cwd outside → DENY.
+test_ship_git_dir_eq_outside_cwd_deny() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/outside-gd-$runid"; mkdir -p "$outside"   # NOT a git repo
+  run_gate "git --git-dir=$repo/.git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "ship denies git --git-dir=<repo>/.git push from outside cwd (=form)"
+  else
+    fail "ship should deny git --git-dir=… push from outside cwd; got: $out"
+  fi
+}
+
+# `git --git-dir <repo>/.git push` (space form), REVIEWED, cwd outside → silent.
+# The key no-false-deny case: --git-dir must resolve to the right repo so conformance
+# finds the converged phase review (keyed by runId from that repo's HEAD).
+test_ship_git_dir_space_reviewed_silent() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo_reviewed "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/outside-gds-$runid"; mkdir -p "$outside"
+  run_gate "git --git-dir $repo/.git push" "$outside"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
+    pass "ship silent via git --git-dir <repo>/.git when reviewed (space form, no false-deny)"
+  else
+    fail "ship via --git-dir should be silent when reviewed; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `git --work-tree=<repo> push`, REVIEWED, cwd outside → silent.
+test_ship_work_tree_reviewed_silent() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo_reviewed "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/outside-wt-$runid"; mkdir -p "$outside"
+  run_gate "git --work-tree=$repo push" "$outside"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
+    pass "ship silent via git --work-tree=<repo> when reviewed (no false-deny)"
+  else
+    fail "ship via --work-tree should be silent when reviewed; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `git --git-dir=<other_nonDrive>/.git push` from a drive cwd → inert (targets OTHER repo).
+test_ship_git_dir_other_repo_inert() {
+  local runid info drive_repo out other
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; drive_repo="${info%% *}"
+  other="$TMPROOT/other-gd-$runid-repo"; _init_repo "$other"
+  _commit "$other" README base base >/dev/null   # other stays on main (non-drive)
+  run_gate "git --git-dir=$other/.git push" "$drive_repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "ship inert for git --git-dir=<other_nonDrive>/.git push from a drive cwd"
+  else
+    fail "ship should be inert for git --git-dir=<other_repo> push; got rc=$GATE_RC out='$out'"
+  fi
+}
+
 # ---------------------------------------------------------------------------------
 # Tightened matching kills false positives (round-2 finding 2)
 # ---------------------------------------------------------------------------------
@@ -827,6 +890,10 @@ main() {
   # -C/--git-dir/--work-tree target repo (finding 1)
   test_ship_git_C_outside_cwd_deny
   test_ship_git_C_other_repo_inert
+  test_ship_git_dir_eq_outside_cwd_deny
+  test_ship_git_dir_space_reviewed_silent
+  test_ship_work_tree_reviewed_silent
+  test_ship_git_dir_other_repo_inert
   # tightened matching false-positive guards (finding 2)
   test_echo_git_push_inert
   test_gh_pr_view_createdAt_inert
