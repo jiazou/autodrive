@@ -76,10 +76,12 @@ Docs scanned: top-level `README.md`, `CLAUDE.md`, `docs/flow.md`, and
 (fenced ```` ``` ```` blocks and inline `` `backtick` `` spans) are scanned; prose that
 merely contains a word like "today"/"done" is out of scope.
 
-NOTE on BARE forms still in the docs: `mission-control/README.md` also writes a few BARE
-invocations (`standup --draft`, `harvest --log` at lines ~95,141). Those are being
-normalized to `mc `-prefixed in a SEPARATE Phase-2 harden step, so it is CORRECT that
-this `mc`-prefixed-only check does not pin them yet.
+NOTE on the `mc`-prefix normalization (Phase-2 harden): `mission-control/README.md` no
+longer writes BARE (un-`mc`-prefixed) command invocations — the morning-job row, the
+"Automated" line, the Scheduling decision, and the `--unbind` note were all normalized to
+`mc `-prefixed forms so this `mc`-prefixed-only check actually covers them (drift in any of
+those lines now fails). Plain `harvest`/`standup`/`weekly` words that remain are SKILL names
+in prose, not CLI command invocations, so they correctly pin nothing.
 
 This scoping catches a reintroduced `--prep`-style drift: `mc standup ... --prep`
 resolves to `standup.py`, which handles no `--prep`, and fails with the doc location
@@ -1071,6 +1073,115 @@ def test_known_real_flags_are_handled_by_their_entrypoint():
         assert not missing, (
             f"{entry.name} (mc {sub}) no longer parses {sorted(missing)} "
             f"(handled: {sorted(handled)})"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# `mc` help heredoc as a doc surface (slice-2.4 regression guard).
+#
+# The `mc` router's `help|-h|--help)` arm prints a `cat <<'EOF' ... EOF` heredoc that
+# documents every `mc <sub> [--flags]` form. That heredoc is the user-facing CLI surface,
+# yet the markdown DOC_FILES scan never sees it (it lives in a shell file, not a fenced/
+# inline markdown context), so a slice-2.4-style drift — a bogus flag added to the help
+# text, or a help line for a non-existent subcommand — would stay green. These tests treat
+# the help heredoc as its own doc surface, parsed with the SAME sound machinery the markdown
+# scan uses (per-segment `mc <sub>` anchoring, real-parse-site flag detection, pipe-group
+# masking), so help drift is caught WITHOUT reintroducing brittle prose matching.
+# --------------------------------------------------------------------------- #
+def _mc_help_heredoc():
+    """Extract the BODY lines of the `mc` router's help `cat <<'EOF' ... EOF` heredoc.
+
+    Walks the router source, finds the heredoc opener on the `help)` arm, and returns the
+    lines between it and its terminator. This is the inverse of `_sh_strip` (which BLANKS
+    heredoc bodies); here the body is exactly what we want to scan."""
+    text = _read(MC_BIN / "mc")
+    lines = text.splitlines()
+    body = []
+    term = None
+    for line in lines:
+        if term is None:
+            m = _SH_HEREDOC_START.search(line)
+            if m:
+                term = m.group(2)
+            continue
+        if line.strip() == term:
+            break
+        body.append(line)
+    assert term is not None, "no heredoc found in the `mc` router (help text changed?)"
+    assert body, "the `mc` help heredoc body is empty"
+    return body
+
+
+def _mc_help_invocations():
+    """Scan the `mc` help heredoc as command snippets, reusing `_invocations_in_snippet`.
+
+    Each heredoc line is a one-line snippet, so a line like `mc standup [--draft|--json]`
+    yields (standup, --draft) and (standup, --json) via the same anchoring + pipe-masking
+    used for markdown. Returns (subs, pairs): subs = set of subcommand names documented,
+    pairs = set of (sub, flag)."""
+    subs, pairs = set(), set()
+    for line in _mc_help_heredoc():
+        subs_off, line_pairs, _ = _invocations_in_snippet(line)
+        for sub, _off in subs_off:
+            if sub != "help":
+                subs.add(sub)
+        for sub, flag in line_pairs:
+            if sub != "help":
+                pairs.add((sub, flag))
+    return subs, pairs
+
+
+def test_mc_help_heredoc_documents_real_subcommands():
+    """Every `mc <sub>` the help heredoc advertises is a subcommand the router dispatches.
+    A help line for a non-existent subcommand (slice-2.4 drift) fails here."""
+    dispatch = _router_dispatch()
+    subs, _pairs = _mc_help_invocations()
+    assert subs, "no `mc <sub>` forms found in the help heredoc — heredoc or scanner changed"
+    unresolved = sorted(s for s in subs if s not in dispatch)
+    assert not unresolved, (
+        f"mc help documents subcommand(s) the router can't dispatch: {unresolved}"
+    )
+
+
+def test_mc_help_heredoc_flags_resolve_in_their_entrypoint():
+    """Every `--flag` the help heredoc lists next to an `mc <sub>` is parsed by that
+    subcommand's REAL entrypoint. Adding a bogus flag to the help text (e.g.
+    `mc standup [--draft|--json] [--bogus]`) makes this FAIL — the slice-2.4 regression
+    guard. Uses the same real-parse-site flag detection (`_handled_flags`) as the markdown
+    contract, so it stays sound (no prose matching)."""
+    dispatch = _router_dispatch()
+    _subs, pairs = _mc_help_invocations()
+    assert pairs, "no flags found next to any `mc <sub>` in the help heredoc — scanner changed"
+    failures = []
+    for sub, flag in sorted(pairs):
+        entry = dispatch.get(sub)
+        if entry is None:
+            continue  # covered by the subcommand-resolution test
+        handled = _handled_flags(entry)
+        if flag not in handled:
+            failures.append(
+                f"mc help lists `mc {sub} {flag}` but {entry.name} parses no {flag} "
+                f"(handled: {sorted(handled) or 'none'})"
+            )
+    assert not failures, "doc-only flag(s) in the `mc` help heredoc:\n  " + "\n  ".join(failures)
+
+
+def test_mc_help_heredoc_covers_known_flags():
+    """Positive guard: the help heredoc actually advertises the known real flag surface, so
+    the two checks above can't pass vacuously (e.g. if heredoc extraction silently matched
+    nothing). Locks the slice-2.4 intent — `--summarize`/`--json`/`--tab`/`--unbind` and
+    `mc weekly --json` are all present in the help text."""
+    _subs, pairs = _mc_help_invocations()
+    for expected in (
+        ("harvest", "--summarize"), ("harvest", "--log"),
+        ("standup", "--draft"), ("standup", "--json"),
+        ("today", "--swiftbar"),
+        ("weekly", "--json"),
+        ("done", "--status"),
+        ("bind", "--project"), ("bind", "--task"), ("bind", "--tab"), ("bind", "--unbind"),
+    ):
+        assert expected in pairs, (
+            f"mc help no longer advertises `mc {expected[0]} {expected[1]}`; got {sorted(pairs)}"
         )
 
 

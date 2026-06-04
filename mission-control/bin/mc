@@ -17,7 +17,7 @@ case "$cmd" in
 mc — Mission Control (a personal operating harness)
 
   mc harvest [--summarize] [--log]   live Claude session digest (+ per-session summaries, + log to today's daily note)
-  mc standup [--draft] [--json]      plan the day for max parallelism (+ write the daily note, + machine-readable output)
+  mc standup [--draft|--json]        plan the day for max parallelism (--draft writes the daily note; --json prints machine-readable output and takes precedence over --draft)
   mc today [--swiftbar]              today's tasks in one glance (+ SwiftBar menu-bar format)
   mc weekly [--json]                 weekly review agenda (+ machine-readable output)
   mc tasks                           vault task buckets (overdue/due/waiting)
