@@ -31,9 +31,17 @@ changed = False
 for event, status in wiring.items():
     cmd = f"{sys.executable} {MC}/bin/mc-hook.py {status}"
     arr = hooks.setdefault(event, [])
-    if any("mc-hook.py" in json.dumps(e) for e in arr):
-        continue
-    arr.append({"hooks": [{"type": "command", "command": cmd}]})
+    desired = {"hooks": [{"type": "command", "command": cmd}]}
+    # Canonicalize by IDENTITY (the mc-hook.py marker), not by exact command string:
+    # strip any existing mc-hook entry for this event — including one whose path or
+    # python interpreter changed (a moved MC dir, e.g. claude-harness -> autodrive) —
+    # then append exactly one at the current command. Idempotent (no-op when already
+    # canonical) AND migrates a stale path on re-run instead of leaving the dead entry
+    # behind. Non-mc-hook entries for the event are preserved in order.
+    existing_mc = [e for e in arr if "mc-hook.py" in json.dumps(e)]
+    if existing_mc == [desired]:
+        continue  # already exactly right — no change
+    hooks[event] = [e for e in arr if "mc-hook.py" not in json.dumps(e)] + [desired]
     changed = True
 
 if changed:

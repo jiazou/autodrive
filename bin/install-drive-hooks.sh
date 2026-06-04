@@ -3,9 +3,12 @@
 #   - PreToolUse(matcher "Bash") -> bin/drive-merge-gate.sh   (merge/ship/plan gate)
 #   - Stop                        -> bin/drive-stop-guard.sh   (review backstop)
 # Mirrors bin/install-operating-rules.sh: set -euo pipefail, REPO_DIR from BASH_SOURCE,
-# a timestamped backup before mutating. Keyed on the script path so re-running is a
-# no-op (no duplicate entries). All existing hooks are preserved. Fails loudly on
-# malformed JSON. The repo never commits ~/.claude/settings.json.
+# a timestamped backup before mutating. Keyed on the script BASENAME (not the full
+# path): re-running is a no-op when the path is unchanged, and when the repo has moved
+# or been renamed (e.g. claude-harness -> autodrive) it MIGRATES the existing entry to
+# the new path instead of leaving a stale, dead path behind and adding a duplicate.
+# All non-managed hooks are preserved. Fails loudly on malformed JSON. The repo never
+# commits ~/.claude/settings.json.
 #
 # Target: $1 (if given) else $DRIVE_HOOKS_SETTINGS (so tests can point at a temp file)
 # else $HOME/.claude/settings.json.
@@ -38,8 +41,10 @@ BACKUP="$SETTINGS.bak.$(date +%Y%m%d-%H%M%S)"
 cp -- "$SETTINGS" "$BACKUP"
 echo "Backed up existing settings -> $BACKUP"
 
-# Inject both hooks idempotently. Detection is keyed on the script path: an entry
-# counts as already-present iff some hook under the event has command == the path.
+# Inject both hooks idempotently, canonicalizing by script BASENAME: strip any prior
+# entry for the managed script (at ANY path, incl. a stale pre-rename one) from the
+# event, then append exactly one at the current path. This is idempotent AND migrates
+# a moved/renamed path on re-run (no stale dead path, no duplicate).
 # .hooks, .hooks.PreToolUse, .hooks.Stop are normalised to arrays so a partial /
 # missing structure does not break the update.
 TMP="$SETTINGS.tmp.$$"
@@ -47,22 +52,28 @@ jq \
   --arg merge "$MERGE_GATE" \
   --arg stop "$STOP_GUARD" \
   '
-  # does any entry in the given event array already reference $path?
-  def has_cmd($arr; $path):
-    ([ $arr[]? | .hooks[]? | (.command // "") ] | any(. == $path));
+  # basename of a command path (everything after the last "/"; bare names unchanged).
+  def bn($p): ($p | sub(".*/"; ""));
+  # Drop every hook whose command BASENAME matches $base from each group, then drop
+  # groups left empty. Keyed on the basename (not the full path) so a moved/renamed
+  # repo (e.g. claude-harness -> autodrive) MIGRATES the entry on re-run instead of
+  # leaving the stale path behind and appending a duplicate. Non-managed hooks (other
+  # basenames, e.g. mc-hook.py / drive-stop-hook.py) are untouched.
+  def strip_managed($arr; $base):
+    [ $arr[]?
+      | .hooks = [ .hooks[]? | select(bn(.command // "") != $base) ]
+      | select((.hooks | length) > 0) ];
   # ensure container shapes
   .hooks = (.hooks // {})
   | .hooks.PreToolUse = (.hooks.PreToolUse // [])
   | .hooks.Stop = (.hooks.Stop // [])
-  # append PreToolUse Bash gate unless already present
-  | (if has_cmd(.hooks.PreToolUse; $merge) then .
-     else .hooks.PreToolUse += [ { "matcher": "Bash",
-       "hooks": [ { "type": "command", "command": $merge } ] } ]
-     end)
-  # append Stop guard unless already present
-  | (if has_cmd(.hooks.Stop; $stop) then .
-     else .hooks.Stop += [ { "hooks": [ { "type": "command", "command": $stop } ] } ]
-     end)
+  # canonicalize the PreToolUse merge gate: strip any prior (incl. stale-path)
+  # entries, then append exactly one at the current path. Idempotent; migrates on rename.
+  | .hooks.PreToolUse = strip_managed(.hooks.PreToolUse; bn($merge))
+      + [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": $merge } ] } ]
+  # canonicalize the Stop guard the same way.
+  | .hooks.Stop = strip_managed(.hooks.Stop; bn($stop))
+      + [ { "hooks": [ { "type": "command", "command": $stop } ] } ]
   ' -- "$SETTINGS" > "$TMP"
 
 # Sanity: result must be valid JSON before we move it into place.
