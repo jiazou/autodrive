@@ -63,3 +63,11 @@ F6 (P3 harden phase1, deferred) Drifted `module.py:NN` source-line citations in 
 - NOTE (still open, pre-existing): composed git path options (`-C a -C b`, `-C /repo --git-dir=.git`)
   use last-wins; git composes. /drive never emits these; ship gate (HEAD/whole-tree) backstops. See
   line 29. Genuine hardening vs adversarial input, not an omission gap.
+
+## Run run-graph-20260604-164012 — Emit run graph (2026-06-04)
+- [run-graph] OPTIONAL enhancement: persist codex review output per-round
+  (`codex-review-<scope>-N.md`) IN ADDITION to the canonical bare `codex-review-<scope>.md`
+  (keep the bare file so bin/drive-conformance.sh stays green). Would let the run graph show
+  the codex P1 count for HISTORICAL rounds too, not only the terminal round. Current design
+  handles this structurally (non-terminal rounds are FINDINGS by construction; `Codex —`),
+  which is correct but loses historical codex counts. Low priority.
