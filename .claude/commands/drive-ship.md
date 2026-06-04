@@ -26,7 +26,12 @@ If any fails → STOP with which one + what to do.
   `$RUN_DIR/decisions.md` + `$RUN_DIR/followups.md` entries to the repo's
   `.harness/decisions.md` + `.harness/followups.md` (the cross-task ledgers), then
   `git commit` that on `featureBranch`. (Slice subagents wrote to `$RUN_DIR`; this
-  is where it lands in the repo.)
+  is where it lands in the repo.) **This commit MUST touch EXACTLY those two files
+  and nothing else, as a single commit** — they are the ship gate's ledger allowlist
+  (`SHIP_LEDGER_ALLOWLIST` in `bin/drive-conformance.sh`). The ship invariant tolerates
+  one post-review commit only if `R..tip` is a subset of that allowlist; staging any
+  other file (incl. other `.harness/*`), or splitting into >1 commit, makes the ship
+  conformance check fail. Keep this in sync with the allowlist constant.
 
 ## Run the full suite (flaky-retry)
 
@@ -40,6 +45,18 @@ report the failures (a human-fix blocker, not a decision).
   Classification) + any followups added.
 - Propose a commit/PR title + body from `$RUN_DIR/design.md` + the
   `git diff <baseRef>..<featureBranch>`.
+
+## Ship conformance (defense-in-depth, before Gate B)
+
+Before surfacing the PR for approval, run `bin/drive-conformance.sh $RUN_DIR --mode
+ship` and proceed only if it reports clean — it verifies all shipped **code** was
+covered by a converged, SHA-bound review (∃ a counting phase review with `reviewed-sha
+R` s.t. `R` is an ancestor of `featureBranch`'s tip and `R..tip` is ≤1 commit touching
+only the two allowlisted ledger files). On a violation, run `/drive-review phase <P>` for
+the final phase so its reviewed-sha covers the shipped tip (ship-mode reads `review-phase*`
+artifacts; it has no `ship` scope), then retry. The PreToolUse hook enforces this
+same gate (fail-CLOSED) on the push/PR; running it in-prose first makes enforcement
+degrade gracefully where the hooks aren't installed.
 
 ## Gate B — approval before push
 

@@ -181,3 +181,19 @@ task and stage to maintain consistency.
 **Reasoning:** `/drive-review` is a passive conformance audit scoped to acceptance criteria — folding a fix-first loop in would break its single responsibility and the reviewer-independence boundary. Per-phase (not end-of-run) was the user's directive and catches defects phase-by-phase. The dedicated cap + conformance-yield veto are what keep the loop terminating. Design dual-reviewed: architect subagent CONVERGED; codex (after an initial transient 429 throttle, then recovered) found 5 issues fixed before finalizing — (a) the cap must count FIX rounds with a free confirming audit (else an off-by-one false-STOPs a converged phase); (b) harden's regression re-review uses its own counter, NOT the conformance cap-8; (c) featureBranch advance changed from `merge --ff-only`/`reset --hard` to a pure ref move `git branch -f` (refs-only invariant — phaseInt is a provable FF descendant); (d) resume reconciles `hardenRound` from artifacts, not state alone; (e) scope gate loosened to allow test-support files + flagged root-cause fixes.
 **Reversibility:** medium
 **Classification:** User-Challenge (user-directed feature; design second-opinioned)
+
+## Run drive-review-hooks-20260603-135659 (2026-06-03) — review-enforcement hooks
+
+- **D1 git-truth, not state-trust** [Taste] — conformance derives merge/ship inventory + verdict from git refs + SHA-bound artifacts; never `step`/`phaseReview`. Root-cause fix.
+- **D2 SHA-bound reviews** [Mechanical] — `reviewed-sha:` ties a review to the exact diffed tip.
+- **D3 ref-keyed self-location, no sentinel** [Taste] — runId from `drive/<runId>`/`slice/<runId>/<id>` ref or HEAD.
+- **D4 asymmetric fail mode** [Taste] — exit-2 fail-CLOSED for ship, open for slice/phase+Stop.
+- **D5 deny-only gate** [Mechanical] — relies on platform deny>allow precedence.
+- **D6 Stop = best-effort backstop** [Taste] — in-flight-phase audit only; gate chain is the guarantee.
+- **D7 threat model = omission, not forgery** [User-Challenge — Gate A] — forgery → component D follow-up.
+- **D8 skip full autoplan CEO/DX gauntlet** [Taste] — internal no-UI change; dual-voice design review only.
+- **D9 bash+jq+git, plain-bash tests** [Mechanical] — no new dep; repo convention.
+- **D10 Stop only, not SubagentStop** [Taste].
+- **D11 run-keyed `phaseInt/<runId>/<P>`** [Taste] — isolates concurrent runs (also hardens a pre-existing /drive hazard).
+- **D12 ship tolerates ledger commit, existential R, exact-2-file allowlist, ≤1 commit** [Mechanical] — round-2/3 fixes.
+- **D13 phase-merge consumes the post-harden review** [Mechanical] — harden cannot advance unreviewed.
