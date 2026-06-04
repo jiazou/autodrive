@@ -71,8 +71,12 @@ b) **Dual-voice design-review convergence** — run `/drive-review` scoped `desi
 Once autoplan has approved AND the design review has converged, present **Gate A**
 to me: the direction plus any Taste / User-Challenge items autoplan or the
 reviewers surfaced. The dual-voice convergence is automated — Gate A is still the
-only human gate here; wait for my approval. **Set `state.waiting = "gateA"` before
-you present it** (so the Stop hook lets the turn end here); clear it on approval.
+only human gate here; wait for my approval. Run the **Present human pause** routine —
+(1) set `state.waiting = "gateA"`; (2) **emit the run graph**: read
+`~/.claude/commands/drive.md` § *Emit run graph* and follow it (if `drive.md` is
+unreachable, emit a one-line `(run graph unavailable: drive.md not found)` note and
+continue; do NOT paraphrase the spec); (3) present Gate A and wait for approval; clear
+`waiting = null` on approval.
 
 Reaching this gate satisfied (and so auto-cleared) the leg-1 `/goal`, so also hand
 me the **leg-2** goal to paste *alongside* my approval — it keeps the execute half
@@ -92,8 +96,13 @@ across turns. After Gate B the push is immediate, so no further goal is needed.)
 
 - Approved → update $RUN_DIR/state.json (`stage=execute`, `lastGate="A"`,
   `waiting=null`), parse the `## Phases & Slices` breakdown into `state.slices`/phase
-  list, and begin the execute half (per-phase, per-slice — see drive.md).
+  list and record the ordered phase ids in `state.phaseList`, and begin the execute
+  half (per-phase, per-slice — see drive.md).
 - No approved/converged design (cancelled, or can't converge in 8 rounds) → STOP
-  and report what's missing.
+  and report what's missing **via the Present human pause routine**: set
+  `state.waiting="stop:<reason>"`, then emit the run graph — read
+  `~/.claude/commands/drive.md` § *Emit run graph* and follow it (if `drive.md` is
+  unreachable, emit `(run graph unavailable: drive.md not found)` and continue) — then
+  report. (This makes a standalone `/drive-plan` STOP self-sufficient.)
 
 Do not begin implementation on this command.

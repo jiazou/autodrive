@@ -17,7 +17,11 @@ main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR
 3. **`featureBranch` exists** with each phase's integration merged in.
 4. **Tooling:** git remote, `gh` (or `glab`), `jq`, a runnable test runner.
 
-If any fails → STOP with which one + what to do.
+If any fails → STOP with which one + what to do, **via the Present human pause routine**:
+set `state.waiting="stop:<reason>"`, then emit the run graph — read
+`~/.claude/commands/drive.md` § *Emit run graph* and follow it (if `drive.md` is unreachable,
+emit `(run graph unavailable: drive.md not found)` and continue) — then report. (Makes a
+standalone `/drive-ship` precondition STOP self-sufficient.)
 
 ## Ship worktree + ledger promotion
 
@@ -37,7 +41,11 @@ If any fails → STOP with which one + what to do.
 
 Run the FULL test suite in the ship worktree. **Red → retry once**; green →
 continue (log the flake to `$RUN_DIR/event-log.jsonl`); **still red → STOP** and
-report the failures (a human-fix blocker, not a decision).
+report the failures (a human-fix blocker, not a decision) **via the Present human pause
+routine** — set `state.waiting="stop:suite-red"`, then emit the run graph (read
+`~/.claude/commands/drive.md` § *Emit run graph* and follow it; if unreachable, emit
+`(run graph unavailable: drive.md not found)`), then report. Record the suite result to
+`state.ship.suite` (e.g. "191 passed").
 
 ## Build the PR (no push yet)
 
@@ -56,13 +64,16 @@ only the two allowlisted ledger files). On a violation, run `/drive-review phase
 the final phase so its reviewed-sha covers the shipped tip (ship-mode reads `review-phase*`
 artifacts; it has no `ship` scope), then retry. The PreToolUse hook enforces this
 same gate (fail-CLOSED) on the push/PR; running it in-prose first makes enforcement
-degrade gracefully where the hooks aren't installed.
+degrade gracefully where the hooks aren't installed. Record the conformance result to
+`state.ship.conformance` (e.g. "clean").
 
 ## Gate B — approval before push
 
-Surface the diff summary + proposed PR text and WAIT for explicit approval. Do NOT
-push or open the PR until approved. **Set `state.waiting = "gateB"` before you
-present it** so the Stop hook lets the turn end here.
+Run the **Present human pause** routine — (1) set `state.waiting = "gateB"`; (2)
+**emit the run graph**: read `~/.claude/commands/drive.md` § *Emit run graph* and follow
+it (if unreachable, emit `(run graph unavailable: drive.md not found)` and continue; no
+paraphrase); (3) surface the diff summary + proposed PR text and WAIT for approval. Do
+NOT push or open the PR until approved.
 
 End commit messages with:
 Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
@@ -72,7 +83,8 @@ End PR bodies with:
 
 ## After approval
 
-Push `featureBranch`; open ONE PR (`gh pr create --base <baseRef>` / `glab`).
+Push `featureBranch`; open ONE PR (`gh pr create --base <baseRef>` / `glab`). Record
+the PR url to `state.ship.prUrl`.
 Update `$RUN_DIR/state.json` (`lastGate="B"`, `stage="done"`). `git worktree
 remove` the ship worktree. Report the PR link and the `$RUN_DIR` path (kept for
 the run record). The user's main working tree was never touched.

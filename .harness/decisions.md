@@ -219,3 +219,40 @@ D11 (User-Challenge, approved) REBASE run onto main (9da9fb9) after chore/distri
 D12 (Mechanical, incident) RUN_DIR + branches under the old run-id were deleted by a branch-name-keyed
    cleanup triggered by the chore/distribution-readiness merge/delete. Work recovered from
    /tmp patch + dangling commits; re-established under run-id harness-tests-* (collision-free).
+
+## Run run-graph-20260604-164012 — Emit run graph at gates/STOPs (2026-06-04)
+(promoted from $RUN_DIR/decisions.md)
+# Decisions — run-graph
+
+- D0 [Taste] Pipeline weight = LEAN /drive (user choice at Stage 0): design + dual-voice
+  design review → Gate A; one implement pass; one dual-voice code review; ship PR → Gate B.
+  No per-slice worktrees, no harden pass — nothing parallelizable, no test surface to harden.
+- D1 [Mechanical] Canonical "Emit run graph" spec lives once in drive.md; drive-plan.md /
+  drive-ship.md reference it with a one-line "what" + pointer (DRY).
+- D2 [Taste] Graph derives PRIMARILY from structured artifacts (state.json + review/harden md
+  files); event-log.jsonl is a best-effort chronological supplement only — its event names are
+  provably inconsistent across runs, so parsing them as a contract would be brittle.
+- D3 [Mechanical] Graph emitted to chat (task says "emit"); no new artifact file / flag.
+- D4 [Mechanical] No sync step needed: ~/.claude/commands/drive*.md are symlinks into the repo.
+
+## Round-1 design review resolutions (rev 2)
+- D5 [Taste] Verify/Ship/phase-order get durable state.json homes (verify/ship/phaseList) —
+  soft contract permits non-core keys; chosen over canonical event-log events (state.json is
+  the graph's existing single-value source; no event-name dependency). Kills the drift BLOCKER.
+- D6 [Mechanical] `‖` redefined = structural independence (disjoint owns + no inter-deps),
+  explicitly NOT a wall-clock concurrency claim. Resolves codex's false-equivalence BLOCKER.
+- D7 [Mechanical] Single "Present human pause" routine (emit graph → set waiting → present);
+  emission is step 1 → omission-proof. AUQ gets waiting="ask:<header>" + a `? <header>` leaf.
+- D8 [Mechanical] DRY pointer = HARD "read drive.md § Emit run graph" instruction + unreachable
+  fallback; also covers drive-plan/drive-ship own STOPs. Drops false self-sufficiency claim.
+- D9 [Mechanical] Combined dual-voice round verdict (CONVERGED iff BOTH voices zero P1) for all
+  scopes; collapse LADDER with unconditional last rung (always ≤~45); general missing-artifact
+  rule (verdict `?`, never fabricate) for all scopes; worked example renders added to ACs.
+
+## Round-2/3 resolutions (rev 3, design CONVERGED)
+- Pause routine reordered: set waiting → emit graph → present (← YOU ARE HERE needs waiting set
+  first); aligned all prose + D7 (no "step 1" emission claim remains).
+- Slice review glob corrected to review-<id>-*.md / codex-review-<id>*.md (bare-id scope).
+- Budget ladder given unconditional rung 6 (spine-only, depth-bounded) → always ≤~45.
+- Dropped state.mode (read-but-never-written); empty-slices disambiguated via stage.
+- Missing-artifact "?" rule enumerates all families incl. harden-<P>-*.md / codex-harden-<P>*.md.
