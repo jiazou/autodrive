@@ -182,7 +182,15 @@ def _invocations_in_snippet(snippet, valid_subs):
     def follows_mc(pos):
         return any(s <= pos < e for s, e in mc_or_slash_spans)
 
-    for m in re.finditer(r"(?<![\w/])([a-z]+)(?![\w/-])", snippet):
+    # WHOLE-TOKEN boundary on BOTH sides: the candidate word must be a standalone
+    # command token, so reject it when an adjacent `-`/`/`/word char makes it part of
+    # a larger token. The leading `(?<![-\w/])` is what excludes a subcommand-alias word
+    # EMBEDDED in a hyphen/slash compound — `drive-review`, `plan-eng-review`,
+    # `plan-ceo-review`, `qa-only` no longer pin `review`/`only` to an MC alias (the
+    # /drive-* exclusion the docstring promises). The trailing `(?![\w/-])` mirrors it so
+    # a command word that BEGINS a compound (`drive` in `drive-review`) is likewise not
+    # anchored.
+    for m in re.finditer(r"(?<![-\w/])([a-z]+)(?![\w/-])", snippet):
         word = m.group(1)
         if word not in valid_subs:
             continue
