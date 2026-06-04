@@ -40,6 +40,21 @@ def _runs_glob():
     return os.path.join(os.path.expanduser("~"), ".claude", "harness-runs", "*", "state.json")
 
 
+def _run_state_paths():
+    """The state.json paths to scan, in deterministic order.
+
+    Production: sorted(glob(...)) — a stable order that never depends on the
+    filesystem's incidental glob order. Tests that must pin a SPECIFIC scan order
+    (so a regression guard is red/green independent of dir names or FS order) set
+    DRIVE_STOP_HOOK_PATHS to a JSON array of paths, which is returned verbatim.
+    This env var is a test-only seam, not supported runtime behavior; when unset,
+    production behavior is identical to sorted(glob(...))."""
+    override = os.environ.get("DRIVE_STOP_HOOK_PATHS")
+    if override:
+        return json.loads(override)
+    return sorted(glob.glob(_runs_glob()))
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -54,28 +69,29 @@ def main():
     if not sid:
         _allow()  # no session identity -> can't safely attribute a run
 
-    # (2) Find a not-done run OWNED by this session. No match -> not a /drive session.
+    # (2) Find a BLOCKABLE run OWNED by this session: not done, not disabled by the
+    # per-run kill-switch (autoContinue:false), and not waiting on the human. We must
+    # keep scanning past owned-but-non-blockable runs (a waiting/disabled one) — if it
+    # short-circuited on the first owned not-done run, a non-blockable run enumerated
+    # ahead of an active one would mask it and fail-OPEN past real autonomous work.
     run = None
-    for path in sorted(glob.glob(_runs_glob())):
+    for path in _run_state_paths():
         try:
             st = json.load(open(path, encoding="utf-8"))
         except Exception:
             continue  # skip an unreadable/partial run file
         if not isinstance(st, dict):
             continue  # valid JSON but not an object -> skip like any other bad file
-        if st.get("sessionId") == sid and st.get("stage") != "done":
-            run = st
-            break
+        if st.get("sessionId") != sid or st.get("stage") == "done":
+            continue  # not this session's, or already finished -> not blockable
+        if st.get("autoContinue") is False:
+            continue  # (3) kill-switch: this run is disabled, but keep scanning
+        if st.get("waiting"):
+            continue  # paused for the human on this run, but keep scanning
+        run = st  # first owned, not-done, not-disabled, not-waiting run -> block on it
+        break
     if run is None:
-        _allow()
-
-    # (3) Kill-switch: an explicit autoContinue:false disables the hook for this run.
-    if run.get("autoContinue") is False:
-        _allow()
-
-    # Genuinely paused for the human -> allow the pause.
-    if run.get("waiting"):
-        _allow()
+        _allow()  # no blockable owned run found in the full scan
 
     # Positive evidence of autonomous work remaining -> block and steer the next turn.
     # The reason explicitly defers to gates/STOPs so the agent never barrels past one.
