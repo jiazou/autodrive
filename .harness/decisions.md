@@ -198,7 +198,7 @@ task and stage to maintain consistency.
 - **D12 ship tolerates ledger commit, existential R, exact-2-file allowlist, ≤1 commit** [Mechanical] — round-2/3 fixes.
 - **D13 phase-merge consumes the post-harden review** [Mechanical] — harden cannot advance unreviewed.
 
-## Run: comprehensive test plan for claude-harness (run harness-tests-20260604-070040)
+## Run: comprehensive test plan for autodrive (run harness-tests-20260604-070040)
 
 D0 (Mechanical) Single runner = pytest 9.0.2; shell scripts driven via subprocess. No bats/shellcheck.
 D1 (Taste, SUPERSEDED by D11) baseRef was chore/distribution-readiness@c1bda3f.
