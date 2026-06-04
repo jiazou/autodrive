@@ -48,8 +48,8 @@ ln -sfn "$DATA/bin/today.py" "$HOME/.local/bin/today"
 
 # 4. 6:45am launchd job (render template → ~/Library/LaunchAgents, reload)
 LA="$HOME/Library/LaunchAgents"; mkdir -p "$LA"
-PLIST="$LA/com.claude-harness.missioncontrol.morning.plist"
-sed "s#__HOME__#$HOME#g" "$MC/launchd/com.claude-harness.missioncontrol.morning.plist" > "$PLIST"
+PLIST="$LA/com.autodrive.missioncontrol.morning.plist"
+sed "s#__HOME__#$HOME#g" "$MC/launchd/com.autodrive.missioncontrol.morning.plist" > "$PLIST"
 launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 
