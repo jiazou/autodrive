@@ -196,9 +196,6 @@ def _router_dispatch():
 # --- Real argv parse-site idioms (NOT incidental string literals) ----------- #
 # A flag-shaped string LITERAL value (the content of a `"--x"` token, quotes stripped).
 _FLAG_LITERAL = re.compile(r"^--[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
-# The argv receiver an `in`/`.index` parse site must reference: `sys.argv`, a bare `argv`,
-# or the local alias `args` used by done.py (`args = list(sys.argv[1:])`).
-_ARGV_NAME = re.compile(r"^(?:.*\.)?argv$|^args$")
 
 
 def _py_handled_flags(text):
@@ -206,10 +203,18 @@ def _py_handled_flags(text):
     not a text regex) so parse-shaped text inside COMMENTS / DOCSTRINGS / printed strings is
     never counted (codex round-5 finding 1). A flag is handled when a STRING token whose
     value is `--x` is used as either:
-      * the LEFT operand of an `in` against an argv receiver: `"--x" in sys.argv|argv|args`
-        — token shape: STRING("--x"), NAME("in"), <argv receiver>; or
-      * an argument to `<argv>.index(...)`: `args.index("--x")` / `sys.argv.index("--x")`
-        — token shape: NAME(argv-ish), OP("."), NAME("index"), OP("("), STRING("--x").
+      * the LEFT operand of an `in` against an argv receiver: `"--x" in sys.argv|argv|<alias>`; or
+      * an argument to `<argv>.index(...)`: `args.index("--x")` / `sys.argv.index("--x")`.
+
+    Receiver tightening (codex-P2): the receiver must PROVABLY be `sys.argv`, NOT just any
+    attribute named `.argv`. We accept only:
+      * the `sys.argv` chain — NAME("sys") OP(".") NAME("argv");
+      * a bare `argv` (from `from sys import argv`); and
+      * a local ALIAS provably derived from `sys.argv` — a name first bound by an assignment
+        whose right-hand side TOKENS contain the `sys.argv` chain (done.py:
+        `args = list(sys.argv[1:])`). Aliases are collected in a first pass over the token
+        stream, then required at the parse site. An unrelated `foo.argv` receiver (no `sys.`
+        base) and an unrelated `args` that was never bound from sys.argv are both REJECTED.
     A `# "--x" in sys.argv` comment yields a COMMENT token (not a STRING), and a docstring
     `'... "--x" in sys.argv ...'` is ONE STRING token whose VALUE is the whole sentence (not
     `--x`), so neither is mistaken for a parse site. harvest.py:309's printed `--project`
@@ -240,41 +245,82 @@ def _py_handled_flags(text):
             return None
         return val if isinstance(val, str) else None
 
-    handled = set()
     n = len(toks)
+
+    def is_sys_argv_chain(j):
+        """True if tokens at j..j+2 are the `sys` `.` `argv` chain."""
+        return (
+            j + 2 < n
+            and toks[j].type == tokenize.NAME and toks[j].string == "sys"
+            and toks[j + 1].type == tokenize.OP and toks[j + 1].string == "."
+            and toks[j + 2].type == tokenize.NAME and toks[j + 2].string == "argv"
+        )
+
+    # First pass: collect local aliases provably derived from sys.argv. An alias is a NAME
+    # at statement start assigned (`=`) a right-hand side whose tokens contain the sys.argv
+    # chain — `args = sys.argv`, `args = sys.argv[1:]`, `args = list(sys.argv[1:])`. The RHS
+    # span runs from the `=` to the logical end (NEWLINE/NL was dropped, so until the next
+    # plausible statement boundary; we just scan forward a bounded window for the chain).
+    argv_aliases = set()
+    for i, t in enumerate(toks):
+        if (
+            t.type == tokenize.NAME
+            and i + 1 < n
+            and toks[i + 1].type == tokenize.OP and toks[i + 1].string == "="
+        ):
+            # Scan the RHS until a statement-terminating token; a NEWLINE was filtered out,
+            # so stop at the next `=`-led assignment isn't needed — instead bound the scan to
+            # the same source line via token start rows.
+            rhs_row = toks[i + 1].start[0]
+            j = i + 2
+            while j < n and toks[j].start[0] == rhs_row:
+                if is_sys_argv_chain(j):
+                    argv_aliases.add(t.string)
+                    break
+                j += 1
+
+    def receiver_at(j):
+        """If tokens starting at j are a recognized argv receiver, return (kind, advance):
+        kind in {"chain","name"} and advance = number of tokens consumed. Else (None, 0)."""
+        if is_sys_argv_chain(j):
+            return "chain", 3
+        if j < n and toks[j].type == tokenize.NAME:
+            name = toks[j].string
+            if name == "argv" or name in argv_aliases:
+                # Reject `sys.argv` mis-detected as bare here: a bare `argv` must NOT be the
+                # `.argv` tail of a `something.argv` chain (the chain branch above handles
+                # the real `sys.argv`). If preceded by a `.`, it's an attribute access.
+                if j >= 1 and toks[j - 1].type == tokenize.OP and toks[j - 1].string == ".":
+                    return None, 0
+                return "name", 1
+        return None, 0
+
+    handled = set()
     for i, t in enumerate(toks):
         # Membership: STRING("--x") `in` <argv receiver>.
         val = str_value(t)
-        if val and _FLAG_LITERAL.match(val):
-            if (
-                i + 2 < n
-                and toks[i + 1].type == tokenize.NAME and toks[i + 1].string == "in"
-                and toks[i + 2].type == tokenize.NAME and _ARGV_NAME.match(toks[i + 2].string)
-            ):
-                handled.add(val)
-            # `in sys.argv` — the receiver is NAME("sys") OP(".") NAME("argv"); the NAME
-            # right after `in` is `sys`, so also accept when a later `.argv` follows.
-            if (
-                i + 4 < n
-                and toks[i + 1].type == tokenize.NAME and toks[i + 1].string == "in"
-                and toks[i + 3].type == tokenize.OP and toks[i + 3].string == "."
-                and toks[i + 4].type == tokenize.NAME and toks[i + 4].string in ("argv",)
-            ):
-                handled.add(val)
-        # Index: NAME(argv-ish) "." "index" "(" STRING("--x").
         if (
-            t.type == tokenize.NAME
-            and i + 4 < n
-            and toks[i + 1].type == tokenize.OP and toks[i + 1].string == "."
-            and toks[i + 2].type == tokenize.NAME and toks[i + 2].string == "index"
-            and toks[i + 3].type == tokenize.OP and toks[i + 3].string == "("
+            val and _FLAG_LITERAL.match(val)
+            and i + 1 < n
+            and toks[i + 1].type == tokenize.NAME and toks[i + 1].string == "in"
         ):
-            argv_ref = t.string
-            # walk back over an attribute chain so `sys.argv.index(...)` resolves to `argv`.
-            if i >= 2 and toks[i - 1].type == tokenize.OP and toks[i - 1].string == ".":
-                argv_ref = toks[i].string  # e.g. `argv` in `sys.argv`
-            if _ARGV_NAME.match(argv_ref):
-                aval = str_value(toks[i + 4])
+            kind, _adv = receiver_at(i + 2)
+            if kind is not None:
+                handled.add(val)
+        # Index: <argv receiver> "." "index" "(" STRING("--x"). The receiver may be the
+        # `sys.argv` chain or a bare alias name; require `.index(` immediately after it.
+        kind, adv = receiver_at(i)
+        if kind is not None and (i == 0 or not (
+            toks[i - 1].type == tokenize.OP and toks[i - 1].string == "."
+        )):
+            j = i + adv
+            if (
+                j + 3 < n
+                and toks[j].type == tokenize.OP and toks[j].string == "."
+                and toks[j + 1].type == tokenize.NAME and toks[j + 1].string == "index"
+                and toks[j + 2].type == tokenize.OP and toks[j + 2].string == "("
+            ):
+                aval = str_value(toks[j + 3])
                 if aval and _FLAG_LITERAL.match(aval):
                     handled.add(aval)
     return handled
@@ -365,17 +411,34 @@ def _command_snippets(text):
 
 _PROMPT = re.compile(r"^[ \t]*(?:[$>][ \t]+)?")
 
+# Subcommands that take a LEADING POSITIONAL argument before their flags (codex-P1
+# concrete-positional fix). Derived from the real entrypoints, NOT invented:
+#   * `bind` — mc-bind.sh's option loop has a `*) session_arg="$1"` arm, i.e. a bare
+#     non-flag word is consumed as the (optional) SESSION_ID positional.
+#   * `done` — done.py does `args = list(sys.argv[1:]); ...; slug = args[0]`, i.e. the
+#     first non-flag word is the task SLUG positional.
+# For these, ONE leading CONCRETE positional token (a bare word like `af85ee12` /
+# `2026-06-02-pa-rental`, which is otherwise binding-terminating) is allowed BETWEEN the
+# subcommand and its flags WITHOUT ending the binding — so a doc example written with a
+# real id/slug (not a `<id>`/`<slug>` placeholder) still pins its flags. A SECOND bare
+# word, or any new-command token, still terminates (the /drive-*, second-command cutoff
+# is preserved). Subcommands NOT in this set take no positional, so any bare word
+# terminates immediately as before.
+_POSITIONAL_SUBS = frozenset({"bind", "done"})
+
 
 def _segment_invocations(segment):
     """Attribute `--flags` to the `mc <sub>` anchor at the START of ONE command segment.
 
-    Returns (subs, flag_pairs):
-      * subs       — set of EVERY syntactic `mc <sub>` (or slash-joined `mc a/b/c`)
-                     subcommand token at this segment's command START. This is recorded
-                     INDEPENDENT of the router's real subcommand set (the codex-P1a
-                     fail-open fix): a documented `mc bogus` MUST surface here so the
-                     subcommand-resolution test can fail on it, rather than being dropped
-                     before the assertion.
+    Returns (subs_with_off, flag_pairs):
+      * subs_with_off — list of (subcommand, segment_local_offset) for EVERY syntactic
+                     `mc <sub>` (or slash-joined `mc a/b/c`) subcommand token at this
+                     segment's command START. Recorded INDEPENDENT of the router's real
+                     subcommand set (the codex-P1a fail-open fix): a documented `mc bogus`
+                     MUST surface here so the subcommand-resolution test can fail on it,
+                     rather than being dropped before the assertion. The offset is the
+                     sub token's OWN position so the resolution test reports the sub's
+                     true line, not the snippet's first line (codex-P3).
       * flag_pairs — list of (subcommand, flag, segment_local_offset): a flag is owned by
                      the segment's `mc <sub>` anchor only while the binding is still open.
 
@@ -407,7 +470,7 @@ def _segment_invocations(segment):
     # offset within the ORIGINAL segment.
     tokens = [(body_off + m.start(), m.group(0)) for m in _TOKEN.finditer(body)]
 
-    subs = set()
+    subs = []  # (subcommand, segment_local_offset)
     pairs = []  # (subcommand, flag, segment_local_offset)
     if not tokens:
         return subs, pairs
@@ -418,15 +481,22 @@ def _segment_invocations(segment):
 
     # The subcommand token: a bare lowercase word, or a slash-joined list `a/b/c`. Strip
     # nothing else — a `<...>`/`--flag`/quoted token in the sub slot means no real sub.
-    sub_tok = tokens[1][1]
+    sub_off, sub_tok = tokens[1]
     sub_parts = sub_tok.split("/")
     if not all(re.fullmatch(r"[a-z]+", p) for p in sub_parts):
         return subs, pairs  # not an `mc <sub>` form (e.g. `mc --help` handled elsewhere)
     for p in sub_parts:
-        subs.add(p)
+        subs.append((p, sub_off))
     # The binding owner is the (single) subcommand; for a slash-joined list, flags after
     # it are documentation of the shared surface, so attribute to each listed sub.
     owners = list(sub_parts)
+    # A leading CONCRETE positional is allowed for positional-taking subcommands (codex-P1).
+    # Allow exactly ONE such token between the sub and its flags. A slash-joined sub list
+    # is the shared-surface doc form and never carries a concrete positional, so the
+    # allowance applies only to a single positional-taking subcommand.
+    positional_budget = (
+        1 if len(owners) == 1 and owners[0] in _POSITIONAL_SUBS else 0
+    )
 
     for off, tok in tokens[2:]:
         flags_in = list(_FLAG.finditer(tok))
@@ -444,6 +514,15 @@ def _segment_invocations(segment):
             # word, so we never need an `expect_value` heuristic that a bare word like the
             # `foo` in `--draft foo` would falsely swallow.)
             continue
+        # A bare WORD here. For a positional-taking subcommand, the FIRST such word is the
+        # subcommand's CONCRETE leading positional (a real id/slug like `af85ee12` /
+        # `2026-06-02-pa-rental`) — consume it WITHOUT ending the binding so flags after a
+        # concrete id/slug still pin (codex-P1). The budget is 1, so a SECOND bare word —
+        # or a bare word for a non-positional subcommand — is a NEW command token and ENDS
+        # the binding (the /drive-*, second-command cutoff is preserved).
+        if positional_budget > 0:
+            positional_budget -= 1
+            continue
         # Any other BARE word is a NEW command token (a fresh `mc`, a slash command like
         # `/drive-review`, or just `foo`): it ENDS the binding (codex-P2 generic cutoff).
         break
@@ -459,13 +538,17 @@ def _invocations_in_snippet(snippet):
     a neighbouring segment. Documentation `|`s that are NOT shell pipes (escaped `\\|`
     table cells, `[--a|--b]` flag groups) are masked first so they never split a segment.
 
-    Returns (subs, pairs) where `pairs` is a set of (subcommand, flag). Segments are
-    walked with their base offset into the snippet so each pair's SNIPPET-LOCAL offset
-    can be computed (used by `_scan_docs` to report the exact doc line, not just the
-    snippet's first line). Walking via `finditer` over the separators (rather than
-    `re.split`, which discards positions) is what preserves those offsets."""
+    Returns (subs_off, pairs, pairs_off):
+      * subs_off  — set of (subcommand, snippet_local_offset): the offset is the sub
+                    token's OWN position so `_scan_docs` reports the sub's true line, not
+                    the snippet's first line (codex-P3).
+      * pairs     — set of (subcommand, flag).
+      * pairs_off — set of (subcommand, flag, snippet_local_offset).
+    Segments are walked with their base offset into the snippet so each token's
+    SNIPPET-LOCAL offset can be computed. Walking via `finditer` over the separators
+    (rather than `re.split`, which discards positions) is what preserves those offsets."""
     masked = _mask_non_separator_pipes(snippet)
-    subs = set()
+    subs_off = set()
     pairs = set()
     # Segment spans: text between consecutive separators, with the segment's base offset.
     base = 0
@@ -475,11 +558,12 @@ def _invocations_in_snippet(snippet):
         base = sep.end()
     spans.append((base, masked[base:]))
     for seg_base, segment in spans:
-        s, triples = _segment_invocations(segment)
-        subs |= s
+        sub_list, triples = _segment_invocations(segment)
+        for sub, off in sub_list:
+            subs_off.add((sub, seg_base + off))
         for sub, flag, off in triples:
             pairs.add((sub, flag, seg_base + off))
-    return subs, {(sub, flag) for sub, flag, _ in pairs}, pairs
+    return subs_off, {(sub, flag) for sub, flag, _ in pairs}, pairs
 
 
 def _scan_docs():
@@ -496,11 +580,14 @@ def _scan_docs():
         # repo-relative path so the two README.md files are distinguishable in messages.
         doc_label = str(doc.relative_to(REPO_ROOT))
         for base_lineno, snippet in _command_snippets(_read(doc)):
-            subs, _pairs, pairs_off = _invocations_in_snippet(snippet)
-            for sub in subs:
+            subs_off, _pairs, pairs_off = _invocations_in_snippet(snippet)
+            for sub, off in subs_off:
                 if sub == "help":  # router builtin, not a dispatched entrypoint
                     continue
-                documented_subs.setdefault(sub, []).append((doc_label, base_lineno))
+                # Exact doc line of THIS sub = snippet's base line + newlines before it
+                # (codex-P3): report the subcommand's OWN line, not the snippet start.
+                sub_lineno = base_lineno + snippet.count("\n", 0, off)
+                documented_subs.setdefault(sub, []).append((doc_label, sub_lineno))
             for sub, flag, off in pairs_off:
                 if sub == "help":
                     continue
@@ -533,10 +620,11 @@ def _documented_flags_by_subcommand():
 # these probe the raw extraction + ownership-cutoff behaviour directly.
 # --------------------------------------------------------------------------- #
 def _pins(snippet):
-    """(subs, pairs) the scanner pins for a raw snippet. Drops the offset-tagged third
-    element so unit tests assert on plain (sub, flag)."""
-    subs, pairs, _pairs_off = _invocations_in_snippet(snippet)
-    return subs, pairs
+    """(subs, pairs) the scanner pins for a raw snippet. `subs` is flattened to plain
+    subcommand NAMES (dropping the per-sub offset) and `pairs` to plain (sub, flag), so
+    unit tests assert on names/pairs without the offset tags."""
+    subs_off, pairs, _pairs_off = _invocations_in_snippet(snippet)
+    return {sub for sub, _ in subs_off}, pairs
 
 
 def test_unit_mc_sub_flag_pins():
@@ -556,6 +644,50 @@ def test_unit_real_bind_done_flags_pin_past_positionals():
     assert ("bind", "--tab") in pairs, f"expected (bind, --tab); got {pairs}"
     _, pairs = _pins("mc done <slug> [--status <s>]")
     assert ("done", "--status") in pairs, f"expected (done, --status); got {pairs}"
+
+
+def test_unit_concrete_leading_positional_does_not_mask_flags():
+    """codex-P1: a CONCRETE leading positional (a real id/slug, not a `<id>`/`<slug>`
+    placeholder) for a positional-taking subcommand must NOT terminate the binding, so the
+    flags after it still pin and drift is still caught. `bind` takes a session-id positional
+    (mc-bind.sh `*) session_arg=`), `done` takes a slug positional (done.py `slug=args[0]`)."""
+    # bind with a concrete short-id: both flags must still pin.
+    _, pairs = _pins('mc bind af85ee12 --project "X" --task t1')
+    assert ("bind", "--project") in pairs, f"expected (bind, --project); got {pairs}"
+    assert ("bind", "--task") in pairs, f"expected (bind, --task); got {pairs}"
+    # done with a concrete slug: --status must still pin.
+    _, pairs = _pins("mc done 2026-06-02-pa-rental --status all")
+    assert ("done", "--status") in pairs, f"expected (done, --status); got {pairs}"
+    _, pairs = _pins("mc done somereal-slug --status all")
+    assert ("done", "--status") in pairs, f"expected (done, --status); got {pairs}"
+
+
+def test_unit_concrete_positional_still_catches_drift():
+    """codex-P1: allowing ONE concrete leading positional must NOT mask a bogus flag — a
+    drift flag after a concrete id still pins so the resolution test fails on it."""
+    _, pairs = _pins("mc bind af85ee12 --bogus")
+    assert ("bind", "--bogus") in pairs, (
+        f"a drift flag after a concrete id must still pin; got {pairs}"
+    )
+
+
+def test_unit_only_one_leading_positional_allowed():
+    """codex-P1: the positional allowance is exactly ONE token — a SECOND bare word is a new
+    command token and ENDS the binding, so a flag after it is NOT attributed to the sub."""
+    _, pairs = _pins("mc done slug-one secondword --bogus")
+    assert not any(flag == "--bogus" for _, flag in pairs), (
+        f"a second bare word must end the binding; --bogus must NOT pin; got {pairs}"
+    )
+
+
+def test_unit_non_positional_sub_bare_word_still_terminates():
+    """codex-P1: only positional-taking subs (bind/done) get the leading-positional
+    allowance. A non-positional sub (standup) still terminates on the FIRST bare word, so a
+    concrete leading word does NOT let a later flag pin."""
+    _, pairs = _pins("mc standup somearg --bogus")
+    assert not any(flag == "--bogus" for _, flag in pairs), (
+        f"standup takes no positional; the bare word must end the binding; got {pairs}"
+    )
 
 
 def test_unit_new_command_token_ends_binding():
@@ -631,6 +763,40 @@ def test_unit_handled_flags_reject_parse_shaped_text():
     assert handled == {"--real", "--realarg"}, (
         f"only genuine token-level parse sites must count; got {sorted(handled)}"
     )
+
+
+def test_unit_handled_flags_require_sys_argv_derived_receiver():
+    """codex-P2: the argv receiver must PROVABLY be sys.argv — `"--x" in sys.argv`, a bare
+    `argv`, or an alias bound from sys.argv (`args = list(sys.argv[1:]); "--x" in args`).
+    An unrelated `foo.argv` (no sys. base) and an `args` never bound from sys.argv are NOT
+    parse sites and must NOT be counted."""
+    src = (
+        'if "--unrelated" in foo.argv:\n'          # foo.argv — NOT sys.argv-derived
+        '    pass\n'
+        'bogus = get_args()\n'                       # bogus NOT bound from sys.argv
+        'if "--alsobogus" in bogus:\n'
+        '    pass\n'
+        'if "--direct" in sys.argv:\n'               # real: sys.argv chain
+        '    pass\n'
+        'args = list(sys.argv[1:])\n'                # real: alias derived from sys.argv
+        'if "--viaalias" in args:\n'
+        '    pass\n'
+        'x = args.index("--viaindex")\n'             # real: index on derived alias
+        'y = sys.argv.index("--viachain")\n'         # real: index on sys.argv chain
+    )
+    handled = _py_handled_flags(src)
+    assert handled == {"--direct", "--viaalias", "--viaindex", "--viachain"}, (
+        f"only sys.argv-derived receivers must count; got {sorted(handled)}"
+    )
+
+
+def test_unit_handled_flags_reject_unrelated_argv_attr():
+    """codex-P2, sharpened: `if "--x" in foo.argv:` must NOT be counted — the `.argv` tail
+    alone is not enough; the receiver must be the `sys.argv` chain or a derived alias."""
+    handled = _py_handled_flags('if "--x" in foo.argv:\n    pass\n')
+    assert handled == set(), f"foo.argv must not be a parse site; got {sorted(handled)}"
+    handled = _py_handled_flags('if "--x" in sys.argv:\n    pass\n')
+    assert handled == {"--x"}, f"sys.argv must be a parse site; got {sorted(handled)}"
 
 
 def test_unit_shell_case_arm_rejects_heredoc_and_comment():
@@ -753,6 +919,34 @@ def test_unit_real_pipe_still_splits():
     assert not any(flag == "--color" for _, flag in pairs), (
         f"--color is past a real pipe; got {pairs}"
     )
+
+
+def test_unit_subcommand_offset_is_its_own_line():
+    """codex-P3: the unresolved-subcommand diagnostic must report the subcommand's OWN line,
+    not the snippet's first line. A fenced block whose body starts a few lines before the
+    `mc bogus` line must yield the `mc bogus` line, computed from the sub token's offset the
+    same way flag offsets already are."""
+    # A snippet with several leading lines before the `mc bogus` invocation.
+    snippet = (
+        "mc today        # line 0 of the body\n"
+        "mc standup      # line 1\n"
+        "mc bogus --x    # line 2 — the unresolved sub lives here\n"
+    )
+    subs_off, _pairs, _pairs_off = _invocations_in_snippet(snippet)
+    bogus_offs = [off for sub, off in subs_off if sub == "bogus"]
+    assert bogus_offs, f"expected `bogus` to surface; got {subs_off}"
+    # mirror _scan_docs' line math: base_lineno + newlines before the sub's offset.
+    base_lineno = 10  # arbitrary block-body start line
+    bogus_line = base_lineno + snippet.count("\n", 0, bogus_offs[0])
+    assert bogus_line == base_lineno + 2, (
+        f"`mc bogus` must report its own line (base+2), not the block start; got {bogus_line}"
+    )
+    # And the block start (`mc today`) is a DIFFERENT, earlier line — proving the diagnostic
+    # is not collapsing every sub onto the snippet's first line.
+    today_offs = [off for sub, off in subs_off if sub == "today"]
+    today_line = base_lineno + snippet.count("\n", 0, today_offs[0])
+    assert today_line == base_lineno, f"`mc today` is on the block-start line; got {today_line}"
+    assert bogus_line != today_line, "bogus and today must report distinct lines"
 
 
 def test_scan_reports_exact_flag_line():
