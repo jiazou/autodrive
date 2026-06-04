@@ -22,7 +22,7 @@ fi
 cat > "$GLOBAL" <<EOF
 # CLAUDE.md (global) — machine-local pointer
 
-My Claude operating rules are canonical in the claude-harness repo's OPERATING.md.
+My Claude operating rules are canonical in the autodrive repo's OPERATING.md.
 This file imports them so they apply in every session on this machine.
 Edit rules in the repo's OPERATING.md, not here. Re-run bin/install-operating-rules.sh
 if you move the clone.

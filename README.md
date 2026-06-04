@@ -1,4 +1,4 @@
-# Claude Harness
+# autodrive
 
 Autonomous engineering pipeline for Claude Code. `/drive` runs the task lifecycle
 with **gstack for planning** and **harness-owned stages for execution**.
@@ -96,13 +96,13 @@ See **[`mission-control/README.md`](mission-control/README.md)** for its full se
 **1. Clone the repo** (anywhere; the path is remembered by the installer):
 
 ```bash
-git clone https://github.com/jiazou/claude-harness ~/workspace/claude-harness
+git clone https://github.com/jiazou/autodrive ~/workspace/autodrive
 ```
 
 **2. Register the rules + commands machine-wide** — one command, path auto-detected:
 
 ```bash
-~/workspace/claude-harness/bin/install-operating-rules.sh
+~/workspace/autodrive/bin/install-operating-rules.sh
 ```
 
 This is **idempotent and safe**. It:
@@ -147,7 +147,7 @@ Only if you want the session-tracking / daily-standup layer:
 
 ```bash
 export MC_VAULT="$HOME/Documents/YourVault"   # add to your shell profile
-~/workspace/claude-harness/mission-control/install.sh
+~/workspace/autodrive/mission-control/install.sh
 mc today                                        # verify
 ```
 

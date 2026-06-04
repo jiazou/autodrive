@@ -49,7 +49,7 @@ For each new entry, label as ONE of:
   across every codebase and language. Examples: design doc updates before
   implementation; cite evidence as OLD/NEW; present choices with English +
   technical. Candidates for the canonical operating rules in
-  **`claude-harness/OPERATING.md`** (which the global `~/CLAUDE.md` imports).
+  **`autodrive/OPERATING.md`** (which the global `~/CLAUDE.md` imports).
   **Guard against over-classification:** "broadly applicable *within one
   domain*" is NOT universal. A heuristic that holds across all of, say, hardware
   troubleshooting is still domain-specific — OPERATING.md is for how Claude does
@@ -75,7 +75,7 @@ Two checks:
   Duplicate filenames or near-duplicate descriptions = the user (or another
   subagent) already saved it; delete one.
 - `grep` MEMORY.md for promotion markers (the
-  `**promoted to canonical claude-harness/OPERATING.md** YYYY-MM-DD` line in the
+  `**promoted to canonical autodrive/OPERATING.md** YYYY-MM-DD` line in the
   index is the authoritative signal). If an entry already shows that marker, it's
   promoted; don't propose it again.
 
@@ -109,7 +109,7 @@ consequential. Present recommendations as a question with explicit options:
 
 ```
 AskUserQuestion(
-  question: "Promote these N universal rules to claude-harness/OPERATING.md?",
+  question: "Promote these N universal rules to autodrive/OPERATING.md?",
   options: [
     { label: "Yes — add all N + memory pointers (Recommended)",
       description: "<English: what changes for future sessions> ... <Technical: which files edited, format of added lines>" },
@@ -122,8 +122,8 @@ AskUserQuestion(
 ```
 
 If the user approves, perform the edits with care: add each rule to the
-appropriate section of `claude-harness/OPERATING.md`, and update MEMORY.md to
-mark the entry with the `**promoted to canonical claude-harness/OPERATING.md**`
+appropriate section of `autodrive/OPERATING.md`, and update MEMORY.md to
+mark the entry with the `**promoted to canonical autodrive/OPERATING.md**`
 marker.
 
 ## Step 7 — Final output
