@@ -12,8 +12,9 @@
 #   featureBranch = drive/<runId>
 #   A review "counts" iff the highest-N review-<scope>-N.md has `## Verdict: CONVERGED`
 #   AND a `reviewed-sha: <40hex>` line equal to the git tip the mode checks, AND a
-#   sibling codex-review-<scope>.md exists (its degradation marker, if present, must be
-#   the anchored first-line token CODEX_UNAVAILABLE).
+#   sibling codex-review-<scope>.md exists and is non-empty (any non-empty content
+#   satisfies — a real codex review OR a CODEX_UNAVAILABLE degradation note; the file's
+#   content is NOT inspected).
 #
 # Output (stdout JSON): {"clean":bool,"mode":"...","tip":"<sha>","violations":[...]}
 # Exit: 0 clean · 1 violations · 2 usage/IO/git error.
@@ -69,18 +70,16 @@ highest_review_file() {
 }
 
 # Is the codex side satisfied for scope? codex-review-<scope>.md must exist AND be
-# non-empty. If its anchored FIRST line equals exactly the bare token
-# CODEX_UNAVAILABLE, that's the degraded-but-satisfied case (codex down). Any other
-# non-empty content is a real review and also satisfies. An EMPTY file (bare `touch`)
-# does NOT satisfy. A buried CODEX_UNAVAILABLE substring is irrelevant — it's just a
-# normal non-empty review file, which satisfies on the strength of its content.
+# non-empty. ANY existing non-empty codex-review-<scope>.md satisfies — the content is
+# NOT inspected: it may be a real codex review OR a CODEX_UNAVAILABLE degradation note
+# (the codex-down case). Only an EMPTY file (a bare `touch`) or a missing file fails.
 # rc0 satisfied, rc1 missing/empty. $1=scope
 codex_present() {
   local scope="$1"
   local f="$RUN_DIR/codex-review-$scope.md"
   [ -f "$f" ] || return 1
   [ -s "$f" ] || return 1           # empty file does NOT satisfy
-  # Non-empty: a real review OR an anchored-first-line CODEX_UNAVAILABLE both satisfy.
+  # Any non-empty content satisfies (real review OR CODEX_UNAVAILABLE note); not inspected.
   return 0
 }
 

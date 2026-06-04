@@ -45,12 +45,19 @@ decision policy: **[`docs/flow.md`](docs/flow.md)** and `CLAUDE.md`.
 A `/drive` run **cannot skip plan/design review or code review by omission**: a
 git-truth conformance checker plus a PreToolUse gate chain (`plan → slice → phase →
 ship`) blocks each transition until its scope has a SHA-bound CONVERGED review, with a
-Stop hook as backstop. It is omission-proof, not forgery-proof. Install once per
-machine:
+Stop hook (`bin/drive-stop-guard.sh`) as backstop. It is omission-proof, not
+forgery-proof. Install once per machine:
 
     bin/install-drive-hooks.sh
 
 Full reference (mechanism, gate chain, limitations): **[`docs/drive-enforcement.md`](docs/drive-enforcement.md)**.
+
+> `/drive` installs **two distinct Stop hooks** that coexist: this **review-omission
+> backstop** (`drive-stop-guard.sh`, installed by `bin/install-drive-hooks.sh`) blocks a
+> stop when merged work lacks a review; the **autonomous-continuation hook**
+> (`drive-stop-hook.py`, installed by `bin/install-operating-rules.sh`) blocks a stop while
+> a run still has autonomous work, so the pipeline keeps driving across turns. Both fail
+> open and are no-ops outside an active `/drive` run.
 
 ## Requirements
 
@@ -108,7 +115,10 @@ git clone https://github.com/jiazou/autodrive ~/workspace/autodrive
 This is **idempotent and safe**. It:
 - backs up any existing `~/CLAUDE.md`, then writes a new one that `@import`s this repo's `OPERATING.md`;
 - symlinks bundled skills (e.g. `/decant`) into `~/.claude/skills/` so `OPERATING.md`'s references resolve;
-- symlinks the pipeline commands (`/drive`, `/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`) into `~/.claude/commands/` so they work from **any** directory.
+- symlinks the pipeline commands (`/drive`, `/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`) into `~/.claude/commands/` so they work from **any** directory;
+- registers the `/drive` **autonomous-continuation** Stop hook (`bin/drive-stop-hook.py`) in `~/.claude/settings.json` — it keeps a run driving across turns and is a no-op outside an active `/drive` run owned by the firing session. Disable it per-run with `autoContinue: false` in that run's `state.json`, or remove it globally by deleting the `drive-stop-hook.py` entry from `~/.claude/settings.json` under `hooks.Stop`.
+
+> This is a **separate** Stop hook from the review-enforcement backstop (`bin/drive-stop-guard.sh`) installed by `bin/install-drive-hooks.sh`; the two coexist. See [Review enforcement](#review-enforcement-a-run-cannot-skip-review-by-omission).
 
 > ⚠️ It uses **symlinks back into the clone**, so don't move or delete the clone after installing. If you move it, just re-run the script. (Manual alternative: add `@<clone-path>/OPERATING.md` to `~/CLAUDE.md` yourself.)
 
@@ -157,9 +167,10 @@ Full details, the expected vault layout, and `MC_VAULT_NAME` are in
 ## Files
 
 - `OPERATING.md` -- canonical, portable operating rules (imported by CLAUDE.md + global)
-- `bin/install-operating-rules.sh` -- link global ~/CLAUDE.md at OPERATING.md + bundled skills
+- `bin/install-operating-rules.sh` -- link global ~/CLAUDE.md at OPERATING.md + bundled skills + /drive commands; register the autonomous-continuation Stop hook
 - `bin/install-drive-hooks.sh` -- wire the /drive review-enforcement hooks into ~/.claude/settings.json
 - `bin/{drive-conformance,drive-hook-lib,drive-merge-gate,drive-stop-guard}.sh` -- review-enforcement checker, ref→run lib, PreToolUse gate, Stop backstop
+- `bin/drive-stop-hook.py` -- /drive autonomous-continuation Stop hook (keeps a run driving across turns; registered by install-operating-rules.sh)
 - `docs/drive-enforcement.md` -- review-enforcement reference (git-truth mechanism, gate chain, limitations)
 - `skills/decant/` -- bundled `/decant` skill (symlinked into ~/.claude/skills by the installer)
 - `CLAUDE.md` -- imports OPERATING.md, plus the coordinator pipeline + decision policy

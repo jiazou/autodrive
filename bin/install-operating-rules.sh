@@ -114,4 +114,4 @@ echo "The /drive autonomous-continuation Stop hook is registered (no-op outside 
 echo "active /drive run). Disable per-run: set autoContinue:false in the run's"
 echo "state.json. Remove globally: delete the drive-stop-hook.py entry from"
 echo "~/.claude/settings.json hooks.Stop."
-echo "To run the /drive pipeline you also need gstack + codex — see README 'Setup'."
+echo "To run the /drive pipeline you also need gstack + codex — see README 'Installation'."
