@@ -44,16 +44,17 @@ def tail_text(sid):
     if not hits:
         return ""
     turns = []
-    for line in open(hits[0]):
-        try:
-            e = json.loads(line)
-        except Exception:
-            continue
-        if e.get("type") in ("user", "assistant"):
-            t = _text(e.get("message", {}).get("content"))
-            t = " ".join(t.split())
-            if t:
-                turns.append(f"{e['type']}: {t[:600]}")
+    with open(hits[0]) as fh:
+        for line in fh:
+            try:
+                e = json.loads(line)
+            except Exception:
+                continue
+            if e.get("type") in ("user", "assistant"):
+                t = _text(e.get("message", {}).get("content"))
+                t = " ".join(t.split())
+                if t:
+                    turns.append(f"{e['type']}: {t[:600]}")
     blob = "\n".join(turns[-TAIL_MESSAGES:])
     return blob[-MAX_CHARS:]
 

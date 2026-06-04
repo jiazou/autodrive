@@ -31,8 +31,9 @@ from datetime import date
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vault_tasks
 
-# Tolerates an optional UTF-8 BOM and CRLF (re interprets /\r/\n in the
-# pattern) so a note saved by a non-Obsidian editor isn't refused as "no frontmatter".
+# Tolerates an optional UTF-8 BOM and CRLF line endings (the `\r?\n` alternation
+# matches both LF and CRLF) so a note saved by a non-Obsidian editor isn't refused
+# as "no frontmatter".
 FM_RE = re.compile(r"^(\ufeff?---\r?\n)(.*?)(\r?\n---\r?\n?)", re.DOTALL)
 # Bounded '## Log' section: heading line + body up to the next '## ' heading or EOF.
 LOG_SECTION_RE = re.compile(r"(^##\s+Log\s*\n)(.*?)(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
@@ -50,7 +51,8 @@ def _resolve(slug):
     for path in glob.glob(vault_tasks.TASKS_GLOB):
         if os.path.splitext(os.path.basename(path))[0] != slug:
             continue
-        text = open(path, encoding="utf-8").read()
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
         fm = vault_tasks._parse_frontmatter(text)
         if fm.get("type") != "task":
             continue
@@ -89,14 +91,9 @@ def _append_log(text, line):
 
 
 def _atomic_write(path, data):
-    """Write `data` to `path` atomically: temp file in the same dir, fsync, os.replace."""
-    d = os.path.dirname(path) or "."
-    tmp = os.path.join(d, f".{os.path.basename(path)}.tmp")
-    with open(tmp, "w", encoding="utf-8") as fh:
-        fh.write(data)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    """Write `data` to `path` atomically. Delegates to the shared vault_tasks.atomic_write
+    (temp file + fsync + os.replace) so every vault writer shares one implementation."""
+    vault_tasks.atomic_write(path, data)
 
 
 def mark(slug, status="done"):
@@ -111,11 +108,13 @@ def mark(slug, status="done"):
         print("refusing to edit; the slug collides across projects.", file=sys.stderr)
         return 2
     t = hits[0]
-    text = open(t["path"], encoding="utf-8").read()
+    with open(t["path"], encoding="utf-8") as fh:
+        text = fh.read()
+    # _resolve() only returns files whose frontmatter parsed with `type: task`, which
+    # requires vault_tasks.FRONTMATTER_RE to have matched a `---\n...\n---` fence. FM_RE
+    # matches that same fence (identical opening group + BOM/CRLF tolerance), so a
+    # resolved hit ALWAYS has a matching fence — m is never None here.
     m = FM_RE.match(text)
-    if not m:
-        print(f"done: {t['path']} has no frontmatter — refusing to edit", file=sys.stderr)
-        return 3
 
     need_status = t["status"] != status
     need_clear = t["needs_review"]

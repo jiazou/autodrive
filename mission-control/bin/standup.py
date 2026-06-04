@@ -187,10 +187,11 @@ def draft(d):
     to other sections). Creates the note from template if absent. Returns the path."""
     date_str = d["generated_at"].split(" ")[0]
     path, _ = harvest.ensure_daily_note(date_str)
-    text = open(path).read()
+    with open(path) as fh:
+        text = fh.read()
     text = _replace_or_append_section(text, "Today's Focus", _focus_md(d))
     text = _replace_or_append_section(text, "Parallel Plan", _plan_md(d))
-    open(path, "w").write(text)
+    vault_tasks.atomic_write(path, text)
     return path
 
 
