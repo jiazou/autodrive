@@ -48,7 +48,9 @@ verdict / merge / gate.
   so a partially-applied round is simply re-audited and completed.
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
-  initialize and write `$RUN_DIR/state.json` in this shape:
+  initialize and write `$RUN_DIR/state.json` in this shape (set `sessionId` from the
+  `$CLAUDE_CODE_SESSION_ID` env var so the Stop hook can attribute this run to this
+  session; leave it `null` if unset):
 
 ```json
 { "runId": "<id>", "task": "<task>", "stage": "premises",
@@ -56,6 +58,7 @@ verdict / merge / gate.
   "phase": 1, "phaseBaseSha": null, "concurrencyCap": 4, "designReview": 0,
   "budget": { "ceilingCalls": null, "ceilingMin": null, "calls": 0, "startedAt": "<iso>" },
   "slices": {}, "phaseReview": {}, "lastGate": null,
+  "sessionId": null, "autoContinue": true, "waiting": null,
   "designPath": "$RUN_DIR/design.md" }
 ```
 
@@ -70,31 +73,47 @@ Update `state.json` after every transition. Increment `budget.calls` on each
 subagent/codex dispatch; if `ceilingCalls`/`ceilingMin` is set and exceeded → STOP
 with a spend summary (budget circuit-breaker).
 
+**Autonomous-continuation contract (`waiting`).** The `drive-stop-hook` (installed by
+`bin/install-operating-rules.sh`, no-op if absent) keeps a run driving across turns
+*without* a `/goal` by reading `state.json`: it blocks the turn from ending while this
+session's run has `stage != "done"` and `waiting` is empty, and allows it the moment
+`waiting` is set or `stage = done`. So you MUST set `state.waiting` to a short reason
+**before pausing for the human at any point** — Gate A, Gate B, every non-decision
+STOP, or any AskUserQuestion — and clear it (`waiting = null`) the instant you resume
+autonomous work. Forgetting to set it just means the hook nudges you to continue (it
+biases toward letting you stop and fails open); it never forces you past a STOP. This
+is independent of `/goal` — use either or both. Set `autoContinue:false` to disable
+the hook for this run.
+
 ## Pipeline
 
 ### Stage 0 — Premises & session goal
 1. **Premises:** if the task is ambiguous about WHAT problem to solve, pause and ask.
-2. **Set the session goal** (do this once, at the start of the run — the session is
-   fresh and the user is present). `/drive` is autonomous across many turns, and
-   Claude Code's native **`/goal`** keeps a session driving turn-to-turn instead of
-   stopping mid-pipeline (after each turn a fast model checks the condition; if unmet,
-   it continues). It **cannot be set programmatically** — only the user can type it —
-   so derive a tailored completion condition from the (now-resolved) task and present
-   the exact line for them to paste, then **continue regardless** (never block the
-   pipeline waiting for them to set it). Bind `<task>` = the resolved premise (`$ARGUMENTS`).
-   Present:
+2. **Set the session goal** (do this once now, at the start — the session is fresh
+   and the user is present). `/drive` is autonomous across many turns, and Claude
+   Code's native **`/goal`** keeps a session driving turn-to-turn instead of stopping
+   mid-pipeline (after each turn a fast model checks the condition; if unmet, it
+   continues). Two facts about native `/goal` shape how we use it: it **cannot be set
+   programmatically** (only the user can type it), and it **auto-clears the instant its
+   condition is met**. A single whole-run goal therefore can't span a human gate — to
+   let the run *pause* at Gate A the gate has to count as a satisfying state, but that
+   same satisfaction auto-clears the goal, leaving the execute half with none. So we
+   scope **one goal per autonomous leg**, re-armed at each gate (Gate A and Gate B hand
+   the user the next leg's line to paste on approval).
 
-   > Set the session goal so this run drives autonomously through the stages and only
-   > rests when it needs you — paste this:
+   Present the **leg-1** goal (drives planning → Gate A). Bind `<task>` = the resolved
+   premise (`$ARGUMENTS`), then **continue regardless** (never block waiting for them):
+
+   > Paste this to drive planning autonomously up to Gate A:
    >
    > ```
-   > /goal The /drive run for "<task>" has opened its PR (Gate B passed, stage=done), OR is paused awaiting my input at Gate A, Gate B, a non-decision STOP, or an AskUserQuestion. Treat the goal as NOT met while autonomous plan/implement/review/ship work remains and nothing is awaiting my decision.
+   > /goal The /drive run for "<task>" has reached Gate A and is presenting the plan for my approval, OR is paused awaiting my input at a non-decision STOP or an AskUserQuestion. NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.
    > ```
 
    This complements the gates rather than overriding them: `/goal` continues the
    autonomous stages, while Gate A / Gate B / STOPs still pause for you (an
-   AskUserQuestion blocks the turn regardless of any goal). The user may skip it;
-   if so, `/drive` still advances — it just won't auto-continue across turns.
+   AskUserQuestion blocks the turn regardless of any goal). The user may skip the goal;
+   `/drive` still advances — it just won't auto-continue across turns.
 
    → `stage = plan`
 

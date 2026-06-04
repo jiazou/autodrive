@@ -1,9 +1,14 @@
-# 🛰 Mission Control — Jia's personal operating harness
+# 🛰 Mission Control — a personal operating harness
 
-Mission Control is the **operating layer** on top of the existing Obsidian task *system*. The
+> **Optional, opinionated add-on.** Mission Control is **macOS-specific** (launchd + SwiftBar)
+> and assumes an **Obsidian PARA vault**. It is independent of the core `/drive` pipeline —
+> skip it entirely if you don't use Obsidian. Point it at your own vault with the `MC_VAULT`
+> environment variable (see **Setup** below); it defaults to `~/Documents/Vault`.
+
+Mission Control is the **operating layer** on top of an existing Obsidian task *system*. The
 task system (PARA vault, per-project `Tasks/`, Bases dashboards) holds the *what*; Mission
 Control adds the recurring *loops* and the **session tracking** that make the system actually
-get operated — and that let Jia context-switch across many parallel Claude sessions without
+get operated — and that let you context-switch across many parallel Claude sessions without
 losing the thread. Morning briefing skill: **`harvest`**.
 
 ## The core insight (why this exists)
@@ -39,6 +44,28 @@ never tracked independently (a "done" task with a stuck agent is the trap).
 | Session **name** | latest `agent-name` in same transcript (set by `/rename`) | ✅ |
 
 Only the **binding** (which task a session is working) is a human decision.
+
+## Setup — point it at your vault
+
+Mission Control reads tasks from an Obsidian PARA vault. Tell it where yours lives with two
+optional environment variables:
+
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `MC_VAULT` | Absolute path to your Obsidian vault | `~/Documents/Vault` |
+| `MC_VAULT_NAME` | Vault name used in `obsidian://` deep links | basename of `MC_VAULT` |
+
+Set them in your shell, then run `install.sh` — it **captures their values into
+`~/mission-control/config`**. This matters because the 6:45am launchd job and the SwiftBar
+plugin run with a *bare environment* and do **not** read your `~/.zshrc`; the config file is
+how they learn your vault. An exported env var still wins at runtime, so interactive `mc`
+commands honor it immediately; **re-run `install.sh` after changing `MC_VAULT`** so the
+scheduled job and menu bar pick up the new value.
+
+It expects the PARA layout it reads: `01 Projects/<Project>/Tasks/*.md` (one task per file,
+frontmatter `status:`), `Daily/<date>.md` for the cockpit note, and optionally
+`03 Resources/Templates/daily-note-template.md`. Without a matching vault, the loops simply
+find no tasks — nothing breaks.
 
 ## Install
 
@@ -137,14 +164,15 @@ reading the recent transcript tail through headless `claude`. The 6:45am job and
 ## Future polish (not core)
 
 - Richer LLM standup at 6:45am (currently a deterministic draft; the `standup` skill adds the
-  two-lane "you vs. fan-out-to-agents" judgment when Jia is in the loop).
+  two-lane "you vs. fan-out-to-agents" judgment when you're in the loop).
 - Task `depends_on` adoption so the parallel plan computes a real critical path.
 - Optional Apple Reminders relay for timed notifications (vault stays the only source of truth).
 
 ## Reversibility
 
-Additive and reversible: the install is all symlinks + one launchd job + a hooks merge.
-The only vault writes are new `Daily/<date>.md` cockpit notes — disposable by design; no
-existing task or doc is ever modified.
+Additive and reversible: the install copies `bin/` + `swiftbar-plugins/` into
+`~/mission-control/`, symlinks `mc`/`today` onto your `PATH`, adds one launchd job, and
+merges a few hooks into `settings.json`. The only vault writes are new `Daily/<date>.md`
+cockpit notes — disposable by design; no existing task or doc is ever modified.
 
 See `RELATED-WORK.md` for the prior-art scan this design draws from.

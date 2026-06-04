@@ -10,7 +10,20 @@ import sys
 
 MC = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 settings_path = os.path.expanduser("~/.claude/settings.json")
-settings = json.load(open(settings_path)) if os.path.exists(settings_path) else {}
+
+# Load existing settings. If the file is present but unparseable (hand-edited,
+# comments, trailing comma), DON'T abort the whole install (this runs under
+# `set -e`) — skip the hook wiring with a clear message and let the user add it.
+settings = {}
+if os.path.exists(settings_path):
+    try:
+        with open(settings_path, encoding="utf-8") as fh:
+            settings = json.load(fh)
+    except (ValueError, OSError) as e:
+        print(f"  skipped: could not parse {settings_path} ({e}).", file=sys.stderr)
+        print("  add the Mission Control hooks manually, or fix the JSON and re-run.",
+              file=sys.stderr)
+        sys.exit(0)
 
 hooks = settings.setdefault("hooks", {})
 wiring = {"Notification": "waiting", "UserPromptSubmit": "active", "Stop": "idle"}
@@ -24,7 +37,16 @@ for event, status in wiring.items():
     changed = True
 
 if changed:
-    json.dump(settings, open(settings_path, "w"), indent=2)
+    # Atomic write (temp + os.replace) so a crash can't corrupt the user's
+    # live Claude config — same discipline as done.py's vault writes.
+    tmp = settings_path + ".tmp"
+    os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(settings, fh, indent=2)
+        fh.write("\n")
+        fh.flush()
+        os.fsync(fh.fileno())
+    os.replace(tmp, settings_path)
     print("  wired Mission Control hooks into settings.json")
 else:
     print("  hooks already present — no change")
