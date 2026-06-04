@@ -189,6 +189,33 @@ Per-run state — design, `state.json`, review files, worktrees — lives in an
 external run dir `~/.claude/harness-runs/<run-id>/`. The committed `.harness/`
 holds only the cross-task ledgers (`decisions.md`, `followups.md`).
 
+## Testing
+
+The repo has **two test suites**, split by language and runner. This split is
+intentional (D5) — the `/drive` coordinator is shell, Mission Control + hooks are
+Python, so each is tested by its native runner; they are **not** merged.
+
+| Suite | Dir | Language / runner | Covers |
+| --- | --- | --- | --- |
+| Bash | `test/` (singular) | `bash` per `*.test.sh` | The `/drive` coordinator gates (`drive-conformance.sh`, `drive-merge-gate.sh`, `drive-hook-lib.sh`, `drive-stop-guard.sh`, the installers, and the e2e enforcement test) |
+| Pytest | `tests/` (plural) | `python3 -m pytest` (`testpaths = ["tests"]` in `pyproject.toml`) | Mission Control + the hooks |
+
+**Run the pytest suite:**
+
+```bash
+python3 -m pytest -q
+```
+
+**Run the bash suite** — loop over each file so one script's failure stops the run
+(do **not** `bash test/*.test.sh`, which runs the first file with the rest as argv):
+
+```bash
+for f in test/*.test.sh; do bash "$f" || exit 1; done
+```
+
+CI (`.github/workflows/test.yml`) now runs **both** suites as separate jobs
+(`pytest` and `bash-suite`) for independent red/green signal.
+
 ## License
 
 MIT — see [LICENSE](LICENSE). Builds on third-party tools installed separately:
