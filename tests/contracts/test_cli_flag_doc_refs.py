@@ -17,13 +17,28 @@ The check is data-driven from the REAL sources, not a hardcoded allow-list:
     `bind` subcommand's flags resolve in `mc-bind.sh`.
 
 Docs scanned: top-level `README.md`, `CLAUDE.md`, `docs/flow.md`, and
-`mission-control/README.md`. Each documented `mc <sub>` usage (and the standalone
-`today`) is associated with the `--flags` mentioned in the SAME context (line / table
-row); every such flag must resolve in that subcommand's entrypoint. This scoping is
-what makes the check MC-only even in docs that also carry `/drive --flag` prose — a
-flag is only pinned when it sits next to an `mc` command — and it is what catches a
-reintroduced `--prep`-style drift: `mc standup ... --prep` would resolve to
-`standup.py`, which handles no `--prep`, and fail with the doc location named.
+`mission-control/README.md`. The docs invoke MC commands two ways, BOTH covered:
+
+  * prefixed `mc <sub> --flags` (e.g. `mc standup --draft`), and
+  * BARE `<sub> --flags` — the docs also write the entrypoint name without the `mc`
+    router prefix (`standup --draft`, `harvest --log --summarize`, mission-control
+    README:95,141-142,161-162). These are AC3 surface too and are pinned.
+
+To stay CLI-only and avoid false positives from prose that merely contains a word like
+"today"/"done", the scan only treats tokens as invocations inside a COMMAND/CODE
+context — fenced ```` ``` ```` blocks and inline `` `backtick` `` spans (the spans may
+wrap a newline, as the README's `harvest`/`--log --summarize` span does). Within such a
+snippet, flags are attributed to the command token they FOLLOW (left-to-right token
+walk), so `--draft` is pinned to `standup` and never bleeds onto a neighbouring
+`harvest`. The bare-command set is exactly the `mc` router's own subcommands (parsed
+from the router, not hardcoded). Slash-prefixed `/mc ...` (the `/mc` Claude-skill
+examples, README:103-105) is EXCLUDED — it's a skill invocation, not the CLI binary.
+
+This scoping is what makes the check MC-only even in docs that also carry `/drive
+--flag` prose — a flag is only pinned when it follows an MC command in a code context —
+and it is what catches a reintroduced `--prep`-style drift: `mc standup ... --prep` (or
+bare `standup ... --prep`) resolves to `standup.py`, which handles no `--prep`, and
+fails with the doc location named.
 """
 import re
 
@@ -49,11 +64,20 @@ DOC_FILES = (
 _FLAG = re.compile(r"--[a-z][a-z0-9]*(?:-[a-z0-9]+)*")
 
 # An `mc <subcommand>` usage. The subcommand is the first bare lowercase word after
-# `mc`. Matches `mc standup`, `` `mc harvest --log` ``, and the slash-joined compact
-# form `mc harvest/today/tasks` (each subcommand picked up via _MC_SLASH below).
-_MC_CMD = re.compile(r"\bmc\s+([a-z]+)")
+# `mc`. The negative lookbehind `(?<!/)` excludes the slash-skill form `/mc <sub>`
+# (README:103-105) — that's a Claude-skill invocation, not the CLI binary. Matches
+# `mc standup`, `` `mc harvest --log` ``, and the slash-joined compact form
+# `mc harvest/today/tasks` (each subcommand picked up via _MC_SLASH below).
+_MC_CMD = re.compile(r"(?<!/)\bmc\s+([a-z]+)")
 # Compact slash-joined list e.g. `mc harvest/today/tasks` -> harvest, today, tasks.
-_MC_SLASH = re.compile(r"\bmc\s+([a-z]+(?:/[a-z]+)+)")
+_MC_SLASH = re.compile(r"(?<!/)\bmc\s+([a-z]+(?:/[a-z]+)+)")
+
+# A fenced ``` code block: capture its body (group 1) so its commands are in-scope.
+_FENCE = re.compile(r"^[ \t]*```[^\n]*\n(.*?)^[ \t]*```[ \t]*$", re.M | re.S)
+# An inline `backtick` span. `[^`\n]` segments joined by single newlines lets a span
+# wrap ONE line break (the README's `harvest`/`--log --summarize` span) without letting
+# a stray backtick swallow whole paragraphs.
+_INLINE = re.compile(r"`([^`\n]*(?:\n[^`\n]*)*?)`")
 
 
 def _read(path):
@@ -94,45 +118,132 @@ def _handled_flags(path):
 
 
 # --------------------------------------------------------------------------- #
-# Documented surface (scanned from docs, scoped to mc context)
+# Documented surface (scanned from docs, scoped to mc command/code contexts)
 # --------------------------------------------------------------------------- #
-def _documented_subcommands():
-    """{subcommand: [(doc_name, lineno), ...]} for every `mc <sub>` usage in the docs."""
-    found = {}
+def _command_snippets(text):
+    """Yield (lineno, snippet) for each COMMAND/CODE context in `text`.
+
+    Two contexts count as a place where a token may be a CLI invocation: fenced ```
+    code blocks and inline `backtick` spans. Restricting to these is what keeps prose
+    that merely contains the word "today"/"done" out of scope. Fenced blocks are
+    extracted first and blanked out (newlines preserved so line numbers stay accurate)
+    so their inner backticks can't make an inline span swallow an entire block. `lineno`
+    is the 1-based line where the snippet's body starts."""
+
+    def lineno_at(pos):
+        return text.count("\n", 0, pos) + 1
+
+    chars = list(text)
+    for m in _FENCE.finditer(text):
+        yield lineno_at(m.start(1)), m.group(1)
+        for i in range(m.start(), m.end()):  # blank the fence, keep newlines
+            if chars[i] != "\n":
+                chars[i] = " "
+    masked = "".join(chars)
+    for m in _INLINE.finditer(masked):
+        yield lineno_at(m.start(1)), m.group(1)
+
+
+def _invocations_in_snippet(snippet, valid_subs):
+    """Walk one command snippet left-to-right and attribute its `--flags` to the MC
+    subcommand they FOLLOW. Returns (subs, flag_pairs):
+
+      * subs       — set of MC subcommands invoked (prefixed `mc <sub>`, slash-joined
+                     `mc a/b/c`, or BARE `<sub>` standing on its own as a command).
+      * flag_pairs — set of (subcommand, flag) where `flag` appears after that command
+                     and before the next command anchor. A flag preceding any command
+                     anchor is unattributed (dropped), which keeps `/drive --flag`-style
+                     leading flags out of MC scope.
+
+    `valid_subs` is the router's real subcommand set, so a bare token only anchors when
+    it is a genuine MC entrypoint name. `/mc` is excluded upstream by _MC_CMD's negative
+    lookbehind; the bare-token branch never sees the literal `mc`/`/mc` as a subcommand
+    because `mc` is not in `valid_subs`."""
+    anchors = []  # (offset, subcommand)
+    # Prefixed `mc <sub>` (and slash-joined) — record the SUBCOMMAND's offset.
+    for m in _MC_CMD.finditer(snippet):
+        anchors.append((m.start(1), m.group(1)))
+    for m in _MC_SLASH.finditer(snippet):
+        base = m.start(1)
+        run = m.group(1)
+        off = base
+        for part in run.split("/"):
+            anchors.append((off, part))
+            off += len(part) + 1  # +1 for the '/'
+    # Bare command tokens: a standalone word that is a real subcommand and is NOT the
+    # subcommand of an `mc <sub>` OR slash-skill `/mc <sub>` invocation. We span BOTH
+    # `mc <sub>` and `/mc <sub>` (note: no `(?<!/)` here) so that a subcommand following
+    # the slash-skill form is skipped — the CLI-only `_MC_CMD` deliberately does not
+    # anchor `/mc`, and the bare branch must not re-introduce it. This is the P2 fix.
+    mc_or_slash_spans = [
+        (m.start(), m.end()) for m in re.finditer(r"/?\bmc\s+[a-z]+", snippet)
+    ]
+
+    def follows_mc(pos):
+        return any(s <= pos < e for s, e in mc_or_slash_spans)
+
+    for m in re.finditer(r"(?<![\w/])([a-z]+)(?![\w/-])", snippet):
+        word = m.group(1)
+        if word not in valid_subs:
+            continue
+        if follows_mc(m.start(1)):
+            continue  # belongs to an `mc`/`/mc <sub>` form, not a standalone command
+        anchors.append((m.start(1), word))
+
+    flags = [(m.start(), m.group(0)) for m in _FLAG.finditer(snippet)]
+    anchors.sort()
+    subs = {sub for _, sub in anchors}
+    pairs = set()
+    for foff, flag in flags:
+        # nearest anchor at or before this flag
+        owner = None
+        for aoff, sub in anchors:
+            if aoff <= foff:
+                owner = sub
+            else:
+                break
+        if owner is not None:
+            pairs.add((owner, flag))
+    return subs, pairs
+
+
+def _scan_docs(valid_subs):
+    """Scan all docs once. Returns (documented_subs, documented_flags):
+
+      * documented_subs  — {sub: [(doc, lineno), ...]} every MC subcommand invoked.
+      * documented_flags — {sub: {flag: [(doc, lineno), ...]}} each flag attributed to
+                           the subcommand it follows in a command/code context."""
+    documented_subs = {}
+    documented_flags = {}
     for doc in DOC_FILES:
-        for lineno, line in enumerate(_read(doc).splitlines(), start=1):
-            subs = set(_MC_CMD.findall(line))
-            for slash in _MC_SLASH.findall(line):
-                subs.update(slash.split("/"))
+        # repo-relative path so the two README.md files are distinguishable in messages.
+        doc_label = str(doc.relative_to(REPO_ROOT))
+        for lineno, snippet in _command_snippets(_read(doc)):
+            subs, pairs = _invocations_in_snippet(snippet, valid_subs)
             for sub in subs:
-                # `mc help` is the router's own builtin, not a dispatched entrypoint.
-                if sub in ("help",):
+                if sub == "help":  # router builtin, not a dispatched entrypoint
                     continue
-                found.setdefault(sub, []).append((doc.name, lineno))
-    return found
+                documented_subs.setdefault(sub, []).append((doc_label, lineno))
+            for sub, flag in pairs:
+                if sub == "help":
+                    continue
+                documented_flags.setdefault(sub, {}).setdefault(flag, []).append(
+                    (doc_label, lineno)
+                )
+    return documented_subs, documented_flags
+
+
+def _documented_subcommands():
+    """{subcommand: [(doc_name, lineno), ...]} for every MC subcommand usage in docs."""
+    return _scan_docs(set(_router_dispatch()))[0]
 
 
 def _documented_flags_by_subcommand():
-    """{subcommand: {flag: [(doc_name, lineno), ...]}} — flags scoped to the mc command
-    they sit next to (same line / table row). A flag with no neighbouring `mc <sub>` is
-    NOT attributed to MC, which is how `/drive --flag` prose stays out of scope."""
-    found = {}
-    for doc in DOC_FILES:
-        for lineno, line in enumerate(_read(doc).splitlines(), start=1):
-            subs = set(_MC_CMD.findall(line))
-            for slash in _MC_SLASH.findall(line):
-                subs.update(slash.split("/"))
-            subs.discard("help")
-            if not subs:
-                continue
-            flags = set(_FLAG.findall(line))
-            if not flags:
-                continue
-            for sub in subs:
-                bucket = found.setdefault(sub, {})
-                for flag in flags:
-                    bucket.setdefault(flag, []).append((doc.name, lineno))
-    return found
+    """{subcommand: {flag: [(doc_name, lineno), ...]}} — flags scoped to the MC command
+    they follow in a command/code context (prefixed `mc <sub>` OR bare `<sub>`). A flag
+    that follows no MC command is NOT attributed, which is how `/drive --flag` prose and
+    slash-skill `/mc` examples stay out of scope."""
+    return _scan_docs(set(_router_dispatch()))[1]
 
 
 # --------------------------------------------------------------------------- #
