@@ -110,11 +110,14 @@ def mark(slug, status="done"):
     t = hits[0]
     with open(t["path"], encoding="utf-8") as fh:
         text = fh.read()
-    # _resolve() only returns files whose frontmatter parsed with `type: task`, which
-    # requires vault_tasks.FRONTMATTER_RE to have matched a `---\n...\n---` fence. FM_RE
-    # matches that same fence (identical opening group + BOM/CRLF tolerance), so a
-    # resolved hit ALWAYS has a matching fence — m is never None here.
+    # _resolve() validated the fence on a SEPARATE read; this is a second read, so the
+    # file could have changed in between (TOCTOU) — e.g. its frontmatter stripped. Guard
+    # against that race rather than crashing on m.group(): refuse to edit and exit 3.
     m = FM_RE.match(text)
+    if not m:
+        print(f"done: {t['path']} frontmatter changed underfoot — refusing to edit",
+              file=sys.stderr)
+        return 3
 
     need_status = t["status"] != status
     need_clear = t["needs_review"]
