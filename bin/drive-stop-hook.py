@@ -56,11 +56,13 @@ def main():
 
     # (2) Find a not-done run OWNED by this session. No match -> not a /drive session.
     run = None
-    for path in glob.glob(_runs_glob()):
+    for path in sorted(glob.glob(_runs_glob())):
         try:
             st = json.load(open(path, encoding="utf-8"))
         except Exception:
             continue  # skip an unreadable/partial run file
+        if not isinstance(st, dict):
+            continue  # valid JSON but not an object -> skip like any other bad file
         if st.get("sessionId") == sid and st.get("stage") != "done":
             run = st
             break

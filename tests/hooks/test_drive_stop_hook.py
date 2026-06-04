@@ -189,14 +189,10 @@ def test_unreadable_run_file_is_skipped_and_allows(fake_home):
     assert decision(cp) is None
 
 
-def test_nondict_run_file_hits_outer_failopen_backstop(fake_home):
-    """A state.json that is VALID JSON but not an object (e.g. a list) parses past the
-    per-file `json.load` try/except, then `st.get(...)` raises AttributeError — which is
-    NOT caught by the inner per-file handler (that wraps only the load). The crash escapes
-    main() and is swallowed by the OUTER absolute fail-open backstop (`except Exception:
-    sys.exit(0)`), so the hook allows with no traceback. This is the only path that
-    exercises that last-resort guard; without it the hook would exit non-zero / spew a
-    traceback (verified: main() raises uncaught AttributeError on this input)."""
+def test_nondict_run_file_allows_when_no_owned_run(fake_home):
+    """A state.json that is VALID JSON but not an object (e.g. a list) is skipped like
+    any other bad file; with no owned, not-done run present the hook allows with no
+    traceback. Pins the allow contract for the non-dict-only scan."""
     path = fake_home / ".claude" / "harness-runs" / "run-nondict" / "state.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("[1, 2, 3]", encoding="utf-8")  # valid JSON, not a dict
@@ -204,6 +200,30 @@ def test_nondict_run_file_hits_outer_failopen_backstop(fake_home):
     assert cp.returncode == 0          # backstop converts the crash to a clean exit
     assert cp.stderr == ""             # no traceback leaked
     assert decision(cp) is None        # fail-open == allow (no block emitted)
+
+
+def test_nondict_foreign_file_before_owned_run_still_blocks(fake_home):
+    """A foreign run-dir whose state.json is VALID JSON but not an object (e.g. [1,2,3])
+    is globbed BEFORE an owned, not-done run that should block. The non-dict file must be
+    skipped like any other bad file so the scan CONTINUES to the owned run and BLOCKS.
+
+    Regression guard for the fail-open bug: before the fix, the non-dict file parsed past
+    the per-file `json.load` try, then `st.get(...)` raised AttributeError outside that
+    try, aborting the WHOLE scan into the outer fail-open backstop -> the hook ALLOWED
+    instead of blocking the owned not-done run. The hook scans run-dirs in sorted order,
+    and the dir names are chosen so the non-dict dir (run-aaa-nondict) sorts ahead of the
+    owned dir (run-zzz-mine) — so the non-dict file is provably reached first."""
+    nondict = fake_home / ".claude" / "harness-runs" / "run-aaa-nondict" / "state.json"
+    nondict.parent.mkdir(parents=True, exist_ok=True)
+    nondict.write_text("[1, 2, 3]", encoding="utf-8")  # valid JSON, not a dict
+    write_run(fake_home, "run-zzz-mine", _block_state(runId="run-zzz-mine"))
+
+    cp = run_hook({"session_id": SID}, home=fake_home)
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block", \
+        "scan must continue past the non-dict foreign file and block the owned run"
+    assert "run-zzz-mine" in d["reason"]
 
 
 def test_owned_run_among_unreadable_and_foreign_still_blocks(fake_home):
