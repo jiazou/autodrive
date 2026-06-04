@@ -1,0 +1,5 @@
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# REPO_ROOT and mission-control/bin are put on sys.path by tests/conftest.py,
+# not here. No packaging — this block is the entire test configuration.
