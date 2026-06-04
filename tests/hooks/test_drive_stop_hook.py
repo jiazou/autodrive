@@ -172,6 +172,23 @@ def test_malformed_stdin_allows(fake_home):
     assert decision(cp) is None
 
 
+def test_nondict_stdin_payload_hits_outer_failopen_backstop(fake_home):
+    """STDIN is VALID JSON but not a dict (e.g. `[]`), so json.load succeeds (past the
+    inner stdin try/except) and the very first `payload.get(...)` in main() raises
+    AttributeError. That escapes to the OUTER `except Exception: sys.exit(0)` backstop
+    in __main__ -> the hook must still exit 0, emit no stderr/traceback, and ALLOW.
+
+    This directly exercises the outer fail-open backstop on a path the inner handlers
+    do NOT catch (unlike test_malformed_stdin_allows, which is caught by the inner
+    json.load except). Removing the outer `except Exception: sys.exit(0)` wrapper makes
+    this AttributeError propagate -> non-zero rc + traceback on stderr (proven red)."""
+    write_run(fake_home, "run-42", _block_state())  # a blockable run exists; never reached
+    cp = run_hook("[]", home=fake_home)
+    assert cp.returncode == 0          # outer backstop swallowed the AttributeError
+    assert cp.stderr == ""             # no traceback leaked
+    assert decision(cp) is None        # allow == no block emitted
+
+
 def test_no_runs_directory_allows(fake_home):
     """No harness-runs dir at all -> glob finds nothing -> allow (this is the
     common case for a non-/drive session)."""
@@ -279,4 +296,32 @@ def test_nonblockable_owned_run_before_active_owned_run_still_blocks(fake_home):
     d = decision(cp)
     assert d is not None and d["decision"] == "block", \
         "scan must continue past the waiting owned run and block the active owned run"
+    assert "run-active" in d["reason"]
+
+
+def test_disabled_owned_run_before_active_owned_run_still_blocks(fake_home):
+    """Sibling of the waiting-first masking test for the OTHER non-blockable owned
+    state: a kill-switched run (autoContinue: False) owned by THIS session scanned
+    FIRST, and a blockable owned run (not-done, not-waiting, autoContinue truthy)
+    scanned LATER. The hook must scan PAST the disabled run and BLOCK on the active one.
+
+    Regression guard for the same-session multi-run masking fail-open via the
+    autoContinue:False branch: a kill-switched run enumerated ahead of an active one
+    must not mask it. Order is pinned via DRIVE_STOP_HOOK_PATHS (the test-only
+    scan-order seam) so the disabled run is provably reached first, independent of FS
+    order."""
+    disabled = write_run(
+        fake_home, "run-disabled", _block_state(runId="run-disabled", autoContinue=False)
+    )
+    active = write_run(fake_home, "run-active", _block_state(runId="run-active"))
+
+    cp = run_hook(
+        {"session_id": SID},
+        home=fake_home,
+        env={"DRIVE_STOP_HOOK_PATHS": json.dumps([str(disabled), str(active)])},
+    )
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block", \
+        "scan must continue past the disabled owned run and block the active owned run"
     assert "run-active" in d["reason"]
