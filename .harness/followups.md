@@ -53,7 +53,7 @@ F6 (P3 harden phase1, deferred) Drifted `module.py:NN` source-line citations in 
   runs `cd "$REPO" && drive-conformance` doing only SHA/ref ops (rev-parse, for-each-ref, diff R..tip,
   merge-base --is-ancestor, symbolic-ref HEAD); these resolve IDENTICALLY whether CWD is a worktree
   root or a `.git` dir (verified empirically). Decision via --git-dir/--work-tree matches the bare form
-  (deny unreviewed / silent reviewed / inert non-drive). LOCKED IN by 4 regression tests in
+  (deny unreviewed / silent reviewed / inert non-drive). LOCKED IN by 5 regression tests in
   test/drive-merge-gate.test.sh (both `--opt=val` and `--opt val` forms).
 - ~~factor the 4x copy-pasted skip loop~~ — DECLINED (per scope-creep gate). Reviewed: the 4 scanners
   share only an env-prefix skip + a generic option table, but each does something genuinely different

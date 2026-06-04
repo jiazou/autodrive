@@ -439,31 +439,49 @@ test_ship_git_dir_eq_outside_cwd_deny() {
   fi
 }
 
-# `git --git-dir <repo>/.git push` (space form), REVIEWED, cwd outside → silent.
-# The key no-false-deny case: --git-dir must resolve to the right repo so conformance
-# finds the converged phase review (keyed by runId from that repo's HEAD).
+# Reviewed-silent via a repo-locating flag — NON-VACUOUS construction. cwd is set to a
+# DIFFERENT, UNREVIEWED drive repo. If the flag resolves correctly → REPO = the reviewed
+# repo → silent. If the flag were IGNORED → REPO falls back to cwd (the unreviewed drive
+# repo) → DENY. So "silent" can ONLY happen when the flag actually retargets resolution.
+# (Resolving to a non-git cwd would go inert/empty too — which is why cwd must itself be
+# an unreviewed DRIVE repo, making ignore→deny and resolve→silent distinguishable.)
+
+# `git --git-dir <reviewed>/.git push` (space form), cwd = unreviewed drive repo → silent.
 test_ship_git_dir_space_reviewed_silent() {
-  local runid info repo out outside
-  runid="$(new_runid)"; info="$(mk_ship_repo_reviewed "$runid")"; repo="${info%% *}"
-  outside="$TMPROOT/outside-gds-$runid"; mkdir -p "$outside"
-  run_gate "git --git-dir $repo/.git push" "$outside"; out="$GATE_OUT"
+  local ra rb rinfo repo cwdrepo out
+  ra="$(new_runid)"; rinfo="$(mk_ship_repo_reviewed "$ra")"; repo="${rinfo%% *}"
+  rb="$(new_runid)"; cwdrepo="$(mk_ship_repo "$rb")"; cwdrepo="${cwdrepo%% *}"
+  run_gate "git --git-dir $repo/.git push" "$cwdrepo"; out="$GATE_OUT"
   if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
-    pass "ship silent via git --git-dir <repo>/.git when reviewed (space form, no false-deny)"
+    pass "ship silent via git --git-dir <reviewed>/.git from an UNREVIEWED-drive cwd (non-vacuous, space form)"
   else
-    fail "ship via --git-dir should be silent when reviewed; got rc=$GATE_RC out='$out'"
+    fail "ship via --git-dir should resolve to the reviewed repo (silent); got rc=$GATE_RC out='$out'"
   fi
 }
 
-# `git --work-tree=<repo> push`, REVIEWED, cwd outside → silent.
-test_ship_work_tree_reviewed_silent() {
-  local runid info repo out outside
-  runid="$(new_runid)"; info="$(mk_ship_repo_reviewed "$runid")"; repo="${info%% *}"
-  outside="$TMPROOT/outside-wt-$runid"; mkdir -p "$outside"
-  run_gate "git --work-tree=$repo push" "$outside"; out="$GATE_OUT"
+# `git --work-tree=<reviewed> push` (=form), cwd = unreviewed drive repo → silent.
+test_ship_work_tree_eq_reviewed_silent() {
+  local ra rb rinfo repo cwdrepo out
+  ra="$(new_runid)"; rinfo="$(mk_ship_repo_reviewed "$ra")"; repo="${rinfo%% *}"
+  rb="$(new_runid)"; cwdrepo="$(mk_ship_repo "$rb")"; cwdrepo="${cwdrepo%% *}"
+  run_gate "git --work-tree=$repo push" "$cwdrepo"; out="$GATE_OUT"
   if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
-    pass "ship silent via git --work-tree=<repo> when reviewed (no false-deny)"
+    pass "ship silent via git --work-tree=<reviewed> from an UNREVIEWED-drive cwd (non-vacuous, =form)"
   else
-    fail "ship via --work-tree should be silent when reviewed; got rc=$GATE_RC out='$out'"
+    fail "ship via --work-tree= should resolve to the reviewed repo (silent); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `git --work-tree <reviewed> push` (SPACE form), cwd = unreviewed drive repo → silent.
+test_ship_work_tree_space_reviewed_silent() {
+  local ra rb rinfo repo cwdrepo out
+  ra="$(new_runid)"; rinfo="$(mk_ship_repo_reviewed "$ra")"; repo="${rinfo%% *}"
+  rb="$(new_runid)"; cwdrepo="$(mk_ship_repo "$rb")"; cwdrepo="${cwdrepo%% *}"
+  run_gate "git --work-tree $repo push" "$cwdrepo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
+    pass "ship silent via git --work-tree <reviewed> from an UNREVIEWED-drive cwd (non-vacuous, space form)"
+  else
+    fail "ship via --work-tree (space) should resolve to the reviewed repo (silent); got rc=$GATE_RC out='$out'"
   fi
 }
 
@@ -892,7 +910,8 @@ main() {
   test_ship_git_C_other_repo_inert
   test_ship_git_dir_eq_outside_cwd_deny
   test_ship_git_dir_space_reviewed_silent
-  test_ship_work_tree_reviewed_silent
+  test_ship_work_tree_eq_reviewed_silent
+  test_ship_work_tree_space_reviewed_silent
   test_ship_git_dir_other_repo_inert
   # tightened matching false-positive guards (finding 2)
   test_echo_git_push_inert
