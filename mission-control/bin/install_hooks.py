@@ -25,7 +25,21 @@ if os.path.exists(settings_path):
               file=sys.stderr)
         sys.exit(0)
 
-hooks = settings.setdefault("hooks", {})
+# A parseable file may still not be a JSON object (e.g. a top-level array). Don't crash
+# (this runs under `set -e`) and don't clobber whatever the user has — skip like the
+# unparseable case above.
+if not isinstance(settings, dict):
+    print(f"  skipped: {settings_path} is not a JSON object.", file=sys.stderr)
+    print("  add the Mission Control hooks manually, or fix the file and re-run.",
+          file=sys.stderr)
+    sys.exit(0)
+
+# Normalize the hooks container: a parseable settings file may legally hold a non-dict
+# "hooks" (e.g. null) — replace any non-dict with {} so the wiring below cannot crash.
+hooks = settings.get("hooks")
+if not isinstance(hooks, dict):
+    hooks = {}
+    settings["hooks"] = hooks
 wiring = {"Notification": "waiting", "UserPromptSubmit": "active", "Stop": "idle"}
 changed = False
 def _strip_mc(arr):
@@ -51,7 +65,16 @@ def _strip_mc(arr):
 
 for event, status in wiring.items():
     cmd = f"{sys.executable} {MC}/bin/mc-hook.py {status}"
-    arr = hooks.setdefault(event, [])
+    # A parseable file may hold a non-list event value. Normalize so _strip_mc never
+    # iterates a non-list, WITHOUT discarding recoverable hooks: a lone group object
+    # (a dict placed where the array wrapper was forgotten) is wrapped into a one-item
+    # list so any foreign hook inside it survives; a scalar (null / 42) holds nothing
+    # recoverable and becomes [].
+    arr = hooks.get(event)
+    if isinstance(arr, dict):
+        arr = [arr]
+    elif not isinstance(arr, list):
+        arr = []
     desired = {"hooks": [{"type": "command", "command": cmd}]}
     # Canonicalize by IDENTITY (the mc-hook.py marker), not by exact command string:
     # strip the existing mc-hook hook(s) for this event — including one whose path or

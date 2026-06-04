@@ -211,3 +211,74 @@ def test_foreign_hook_bundled_in_same_entry_survives_migration(fake_home):
     # stale mc-hook migrated away; exactly one current mc-hook entry
     assert not any(stale in c for c in cmds), f"stale mc-hook remained: {stop}"
     assert sum("mc-hook.py" in c for c in cmds) == 1, f"expected 1 mc-hook, got {stop}"
+
+
+# --------------------------------------------------------------------------- #
+# Robustness: parseable-but-malformed settings must not crash the install
+# --------------------------------------------------------------------------- #
+import pytest
+
+
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        {"hooks": None},                    # non-dict hooks container
+        {"hooks": {"Stop": None}},          # non-list event value
+        {"hooks": {"Stop": 42}},            # non-list, non-null event value
+        {"hooks": {"Stop": {"weird": 1}}},  # dict where a list is expected
+        {"hooks": []},                      # hooks is a list, not a dict
+    ],
+    ids=["hooks-null", "stop-null", "stop-int", "stop-dict", "hooks-list"],
+)
+def test_malformed_container_does_not_crash(fake_home, malformed):
+    """A settings.json that PARSES but has a non-dict `hooks` or a non-list event value
+    must NOT crash install_hooks.py — it runs under install.sh `set -e`, so a crash
+    aborts the whole Mission Control install. The installer normalizes the bad container
+    and still wires all three mc-hook events. Exit 0."""
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    (claude_dir / "settings.json").write_text(json.dumps(malformed), encoding="utf-8")
+
+    proc = _run(fake_home)
+    assert proc.returncode == 0, f"crashed on {malformed}: {proc.stderr}"
+
+    hooks = _read_settings(fake_home)["hooks"]
+    assert isinstance(hooks, dict), hooks
+    for event in EXPECTED_EVENTS:
+        assert len(_mc_entries(hooks.get(event, []))) == 1, (
+            f"event {event} not wired from {malformed}: {hooks.get(event)}"
+        )
+
+
+def test_top_level_non_object_settings_is_skipped_not_crashed(fake_home):
+    """A settings.json that is valid JSON but NOT an object (e.g. a top-level array)
+    must be skipped with a message and exit 0 — never crash, and never clobber the
+    user's file."""
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    settings_path = claude_dir / "settings.json"
+    settings_path.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
+
+    proc = _run(fake_home)
+    assert proc.returncode == 0, f"crashed on top-level array: {proc.stderr}"
+    # the non-object file is left untouched (not clobbered into an object)
+    assert json.loads(settings_path.read_text(encoding="utf-8")) == [1, 2, 3]
+
+
+def test_dict_shaped_event_value_recovers_foreign_hook(fake_home):
+    """If an event value is a single GROUP object (a dict) instead of the array wrapper
+    — a plausible hand-edit — its foreign hook must be RECOVERED, not dropped: wrap the
+    dict into a one-item list so the foreign hook survives alongside the canonical
+    mc-hook entry."""
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    malformed = {"hooks": {"Stop": {"hooks": [{"type": "command", "command": "echo keep"}]}}}
+    (claude_dir / "settings.json").write_text(json.dumps(malformed), encoding="utf-8")
+
+    proc = _run(fake_home)
+    assert proc.returncode == 0, proc.stderr
+
+    stop = _read_settings(fake_home)["hooks"]["Stop"]
+    cmds = [h.get("command", "") for e in stop for h in e.get("hooks", [])]
+    assert "echo keep" in cmds, f"foreign hook in dict-shaped value lost: {stop}"
+    assert sum("mc-hook.py" in c for c in cmds) == 1, f"expected 1 mc-hook: {stop}"
