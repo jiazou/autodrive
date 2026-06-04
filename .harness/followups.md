@@ -48,6 +48,18 @@ F6 (P3 harden phase1, deferred) Drifted `module.py:NN` source-line citations in 
    here: harden scope was the goal-precedence + de-slop fixes; editing 4 unrelated files for cosmetic
    comments would exceed the cheap-blast-radius bound.
 
-## Quality-pass deferrals (chore/quality-pass) — enforcement scripts, separate PR
-- drive-merge-gate.sh: `--git-dir`/`--work-tree` relative-path resolution feeds `cd "$REPO"` then worktree-relative `git diff` in conformance; for a `--git-dir` (bare git dir) this can mis-target. Drive emits `git -C`/plain push so low-likelihood, but harden: pass --git-dir/--work-tree through to the conformance git invocation instead of cd-ing. (P2, needs its own dual-voice PR.)
-- drive-merge-gate.sh: the env-prefix + git-global-option skip loop is copy-pasted 4x (detect_subcommand/action_after/git_target_repo/push_ship_runid) and already slightly out of sync; factor one `_skip_to_subcommand` helper. (P2 refactor; no flagged P1, so deferred per scope-creep gate.)
+## Quality-pass deferrals (chore/quality-pass) — RESOLVED in fix/merge-gate-git-dir-and-dedup
+- ~~drive-merge-gate.sh `--git-dir`/`--work-tree` mis-targets~~ — INVESTIGATED, NOT A BUG. conformance
+  runs `cd "$REPO" && drive-conformance` doing only SHA/ref ops (rev-parse, for-each-ref, diff R..tip,
+  merge-base --is-ancestor, symbolic-ref HEAD); these resolve IDENTICALLY whether CWD is a worktree
+  root or a `.git` dir (verified empirically). Decision via --git-dir/--work-tree matches the bare form
+  (deny unreviewed / silent reviewed / inert non-drive). LOCKED IN by 5 regression tests in
+  test/drive-merge-gate.test.sh (both `--opt=val` and `--opt val` forms).
+- ~~factor the 4x copy-pasted skip loop~~ — DECLINED (per scope-creep gate). Reviewed: the 4 scanners
+  share only an env-prefix skip + a generic option table, but each does something genuinely different
+  after (find subcommand / find action word / CAPTURE the -C/--git-dir value / scan refspecs); the
+  shared part is small and the parser is safety-critical + heavily tested. A pure-DRY refactor of working
+  enforcement code without a flagged P1 is net-negative risk. Left as-is intentionally.
+- NOTE (still open, pre-existing): composed git path options (`-C a -C b`, `-C /repo --git-dir=.git`)
+  use last-wins; git composes. /drive never emits these; ship gate (HEAD/whole-tree) backstops. See
+  line 29. Genuine hardening vs adversarial input, not an omission gap.
