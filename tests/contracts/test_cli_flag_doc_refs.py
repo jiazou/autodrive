@@ -419,8 +419,11 @@ _PROMPT = re.compile(r"^[ \t]*(?:[$>][ \t]+)?")
 #     first non-flag word is the task SLUG positional.
 # For these, ONE leading CONCRETE positional token (a bare word like `af85ee12` /
 # `2026-06-02-pa-rental`, which is otherwise binding-terminating) is allowed BETWEEN the
-# subcommand and its flags WITHOUT ending the binding — so a doc example written with a
-# real id/slug (not a `<id>`/`<slug>` placeholder) still pins its flags. A SECOND bare
+# subcommand and its FIRST flag WITHOUT ending the binding — so a doc example written with a
+# real id/slug (not a `<id>`/`<slug>` placeholder) still pins its flags. The allowance is
+# gated to PRE-FIRST-FLAG: once a `--flag` of the invocation has been seen, a subsequent bare
+# word terminates the binding normally (the leading positional is never written after a flag),
+# which closes the over-attribution edge `mc bind --project bareval --bogus`. A SECOND bare
 # word, or any new-command token, still terminates (the /drive-*, second-command cutoff
 # is preserved). Subcommands NOT in this set take no positional, so any bare word
 # terminates immediately as before.
@@ -497,6 +500,13 @@ def _segment_invocations(segment):
     positional_budget = (
         1 if len(owners) == 1 and owners[0] in _POSITIONAL_SUBS else 0
     )
+    # The leading-positional allowance applies ONLY to a bare word that appears BEFORE the
+    # invocation's FIRST flag (a real id/slug is always written `mc bind <id> --project ...`,
+    # never after a flag). Once a `--flag` has been seen, a subsequent bare word is the normal
+    # binding-terminating new-command token regardless of remaining budget — this closes the
+    # over-attribution edge where `mc bind --project bareval --bogus` let `bareval` absorb the
+    # budget post-flag and wrongly kept `--bogus` pinned.
+    flag_seen = False
 
     for off, tok in tokens[2:]:
         flags_in = list(_FLAG.finditer(tok))
@@ -506,6 +516,7 @@ def _segment_invocations(segment):
             for fm in flags_in:
                 for owner in owners:
                     pairs.append((owner, fm.group(0), off + fm.start()))
+            flag_seen = True
             continue
         if _TOK_PLACEHOLDER.search(tok):
             # `<id>`, `<slug>]`, quoted `"<P>"` — a positional/flag VALUE placeholder, not
@@ -519,8 +530,10 @@ def _segment_invocations(segment):
         # `2026-06-02-pa-rental`) — consume it WITHOUT ending the binding so flags after a
         # concrete id/slug still pin (codex-P1). The budget is 1, so a SECOND bare word —
         # or a bare word for a non-positional subcommand — is a NEW command token and ENDS
-        # the binding (the /drive-*, second-command cutoff is preserved).
-        if positional_budget > 0:
+        # the binding (the /drive-*, second-command cutoff is preserved). The allowance is
+        # gated to PRE-FIRST-FLAG: a bare word after a flag has been seen is never a leading
+        # positional, so it terminates normally even with budget remaining.
+        if positional_budget > 0 and not flag_seen:
             positional_budget -= 1
             continue
         # Any other BARE word is a NEW command token (a fresh `mc`, a slash command like
@@ -677,6 +690,19 @@ def test_unit_only_one_leading_positional_allowed():
     _, pairs = _pins("mc done slug-one secondword --bogus")
     assert not any(flag == "--bogus" for _, flag in pairs), (
         f"a second bare word must end the binding; --bogus must NOT pin; got {pairs}"
+    )
+
+
+def test_unit_leading_positional_allowance_is_pre_first_flag_only():
+    """The leading-positional allowance applies ONLY to a bare word BEFORE the invocation's
+    first flag. Once a `--flag` has been seen, a subsequent bare word is a normal
+    binding-terminating new-command token regardless of remaining budget — closing the
+    over-attribution edge where `mc bind --project bareval --bogus` let the post-flag bare
+    word `bareval` absorb the budget and wrongly kept `--bogus` pinned."""
+    _, pairs = _pins("mc bind --project bareval --bogus")
+    assert ("bind", "--project") in pairs, f"expected (bind, --project); got {pairs}"
+    assert not any(flag == "--bogus" for _, flag in pairs), (
+        f"a bare word AFTER the first flag must terminate; --bogus must NOT pin; got {pairs}"
     )
 
 
