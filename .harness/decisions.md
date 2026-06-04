@@ -197,3 +197,25 @@ task and stage to maintain consistency.
 - **D11 run-keyed `phaseInt/<runId>/<P>`** [Taste] — isolates concurrent runs (also hardens a pre-existing /drive hazard).
 - **D12 ship tolerates ledger commit, existential R, exact-2-file allowlist, ≤1 commit** [Mechanical] — round-2/3 fixes.
 - **D13 phase-merge consumes the post-harden review** [Mechanical] — harden cannot advance unreviewed.
+
+## Run: comprehensive test plan for claude-harness (run harness-tests-20260604-070040)
+
+D0 (Mechanical) Single runner = pytest 9.0.2; shell scripts driven via subprocess. No bats/shellcheck.
+D1 (Taste, SUPERSEDED by D11) baseRef was chore/distribution-readiness@c1bda3f.
+D2 (User) Scope = all 4 surfaces: MC Python, shell installers, hook plumbing, markdown contracts.
+D3 (Taste) Reload-based env injection: mc_env sets HOME/MC_VAULT then importlib.reload in dep order.
+D4 (Taste) Import functions directly; subprocess only for shell scripts + weekly --json + mc-hook stdin.
+D5 (Mechanical) tests/ at repo root, per-surface subdirs; minimal pyproject [tool.pytest.ini_options].
+D6 (Mechanical) conftest puts mission-control/bin on sys.path (autouse session).
+D7 (Taste) Stub the environment not the code (iterm_tab_names->{}, real os.getpid(), never claude -p).
+D8 (Taste) "two CLAUDE.md" = repo CLAUDE.md + generated ~/CLAUDE.md from installer.
+D9 (Mechanical) Design-review r1 corrections: done.mark exit 2 not 3 (F1); mc-bind/mc-hook need
+   ~/mission-control/ via seed_mc_home (F2); AC28 parse+core-key-set {runId,baseRef,featureBranch,phase};
+   AC16 swiftbar |->/ ; AC5 waiting unsorted; AC20 bin/ path; today.py uses _obsidian_href call-time.
+D10 (Taste) Collapse Phase-1 per-slice reviews into the phase-integration review (test-only, disjoint).
+D11 (User-Challenge, approved) REBASE run onto main (9da9fb9) after chore/distribution-readiness was
+   merged (PR #12) + deleted and main reworked 7 tested modules (c9a6921). Tests target main now.
+   Re-target: bucket edge-8/scheduled-only now -> backlog (main else: catch-all). PR targets main.
+D12 (Mechanical, incident) RUN_DIR + branches under the old run-id were deleted by a branch-name-keyed
+   cleanup triggered by the chore/distribution-readiness merge/delete. Work recovered from
+   /tmp patch + dangling commits; re-established under run-id harness-tests-* (collision-free).
