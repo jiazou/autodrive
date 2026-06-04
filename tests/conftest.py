@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the claude-harness test suite.
+"""Shared pytest fixtures for the autodrive test suite.
 
 This is the ONLY owner of conftest.py (slice 1.1). The central fixture is `mc_env`:
 it redirects HOME + MC_VAULT into a per-test tempdir and RELOADS the mission-control
