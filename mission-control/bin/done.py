@@ -90,12 +90,6 @@ def _append_log(text, line):
     return f"{text}{sep}\n## Log\n{bullet}\n"
 
 
-def _atomic_write(path, data):
-    """Write `data` to `path` atomically. Delegates to the shared vault_tasks.atomic_write
-    (temp file + fsync + os.replace) so every vault writer shares one implementation."""
-    vault_tasks.atomic_write(path, data)
-
-
 def mark(slug, status="done"):
     hits = _resolve(slug)
     if not hits:
@@ -135,7 +129,7 @@ def mark(slug, status="done"):
         changes.append("cleared needs_review")
     new = m.group(1) + fm + m.group(3) + text[m.end():]
     new = _append_log(new, ", ".join(changes) + " (via mc done).")
-    _atomic_write(t["path"], new)
+    vault_tasks.atomic_write(t["path"], new)
     print(f"✓ {t['title']}  →  {status}")
     return 0
 
