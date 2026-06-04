@@ -65,11 +65,15 @@ def _strip_mc(arr):
 
 for event, status in wiring.items():
     cmd = f"{sys.executable} {MC}/bin/mc-hook.py {status}"
-    # A parseable file may hold a non-list event value (null / 42 / {}); coerce to []
-    # so _strip_mc never iterates a non-list. A malformed value held no recoverable
-    # hook entries, so it is replaced wholesale by the canonical entry below.
+    # A parseable file may hold a non-list event value. Normalize so _strip_mc never
+    # iterates a non-list, WITHOUT discarding recoverable hooks: a lone group object
+    # (a dict placed where the array wrapper was forgotten) is wrapped into a one-item
+    # list so any foreign hook inside it survives; a scalar (null / 42) holds nothing
+    # recoverable and becomes [].
     arr = hooks.get(event)
-    if not isinstance(arr, list):
+    if isinstance(arr, dict):
+        arr = [arr]
+    elif not isinstance(arr, list):
         arr = []
     desired = {"hooks": [{"type": "command", "command": cmd}]}
     # Canonicalize by IDENTITY (the mc-hook.py marker), not by exact command string:

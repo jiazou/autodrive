@@ -64,6 +64,13 @@ jq \
   # not just basename.
   # NOTE: keep this jq program free of apostrophes/backticks in comments -- it is in
   # shell single quotes, so a stray apostrophe would terminate it.
+  # RESERVED-NAME CONTRACT: a LONE invocation of drive-merge-gate.sh / drive-stop-guard.sh
+  # is always treated as THE managed gate, wherever it lives -- this is what lets a
+  # moved/renamed install migrate (the old entry is a lone same-basename path at a
+  # different location, indistinguishable from any other). Do NOT name a custom hook with
+  # these basenames; a re-install will canonicalize it to the stock gate. The stock gate
+  # is always (re-)added, so enforcement is never removed -- only a same-named custom
+  # override is not preserved.
   def is_managed($cmd; $base):
     (($cmd | endswith("/" + $base)) or ($cmd == $base))
     and (($cmd | test("[[:space:]|&;<>()`$]")) | not);

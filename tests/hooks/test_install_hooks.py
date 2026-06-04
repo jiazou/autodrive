@@ -263,3 +263,22 @@ def test_top_level_non_object_settings_is_skipped_not_crashed(fake_home):
     assert proc.returncode == 0, f"crashed on top-level array: {proc.stderr}"
     # the non-object file is left untouched (not clobbered into an object)
     assert json.loads(settings_path.read_text(encoding="utf-8")) == [1, 2, 3]
+
+
+def test_dict_shaped_event_value_recovers_foreign_hook(fake_home):
+    """If an event value is a single GROUP object (a dict) instead of the array wrapper
+    — a plausible hand-edit — its foreign hook must be RECOVERED, not dropped: wrap the
+    dict into a one-item list so the foreign hook survives alongside the canonical
+    mc-hook entry."""
+    claude_dir = fake_home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    malformed = {"hooks": {"Stop": {"hooks": [{"type": "command", "command": "echo keep"}]}}}
+    (claude_dir / "settings.json").write_text(json.dumps(malformed), encoding="utf-8")
+
+    proc = _run(fake_home)
+    assert proc.returncode == 0, proc.stderr
+
+    stop = _read_settings(fake_home)["hooks"]["Stop"]
+    cmds = [h.get("command", "") for e in stop for h in e.get("hooks", [])]
+    assert "echo keep" in cmds, f"foreign hook in dict-shaped value lost: {stop}"
+    assert sum("mc-hook.py" in c for c in cmds) == 1, f"expected 1 mc-hook: {stop}"
