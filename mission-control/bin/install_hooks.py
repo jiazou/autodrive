@@ -28,20 +28,40 @@ if os.path.exists(settings_path):
 hooks = settings.setdefault("hooks", {})
 wiring = {"Notification": "waiting", "UserPromptSubmit": "active", "Stop": "idle"}
 changed = False
+def _strip_mc(arr):
+    """Remove mc-hook.py at the individual HOOK level (mirrors install-drive-hooks.sh's
+    strip_managed): for each entry, drop only the hooks whose command references
+    mc-hook.py, keep all other hooks, and drop an entry only if it is left empty. This
+    preserves a FOREIGN hook that happens to share an entry-group with the mc-hook
+    (filtering whole entries by a json.dumps substring would silently delete it)."""
+    out = []
+    for e in arr:
+        inner = e.get("hooks") if isinstance(e, dict) else None
+        if isinstance(inner, list):
+            kept = [h for h in inner if "mc-hook.py" not in json.dumps(h)]
+            if kept:
+                ne = dict(e)
+                ne["hooks"] = kept
+                out.append(ne)
+            # else: the entry held only mc-hook hook(s) -> drop the now-empty entry
+        elif "mc-hook.py" not in json.dumps(e):
+            out.append(e)  # odd-shaped entry with no hooks list: keep unless it is mc's
+    return out
+
+
 for event, status in wiring.items():
     cmd = f"{sys.executable} {MC}/bin/mc-hook.py {status}"
     arr = hooks.setdefault(event, [])
     desired = {"hooks": [{"type": "command", "command": cmd}]}
     # Canonicalize by IDENTITY (the mc-hook.py marker), not by exact command string:
-    # strip any existing mc-hook entry for this event — including one whose path or
+    # strip the existing mc-hook hook(s) for this event — including one whose path or
     # python interpreter changed (a moved MC dir, e.g. claude-harness -> autodrive) —
     # then append exactly one at the current command. Idempotent (no-op when already
-    # canonical) AND migrates a stale path on re-run instead of leaving the dead entry
-    # behind. Non-mc-hook entries for the event are preserved in order.
-    existing_mc = [e for e in arr if "mc-hook.py" in json.dumps(e)]
-    if existing_mc == [desired]:
+    # canonical) AND migrates a stale path on re-run instead of leaving a dead entry.
+    new_arr = _strip_mc(arr) + [desired]
+    if new_arr == arr:
         continue  # already exactly right — no change
-    hooks[event] = [e for e in arr if "mc-hook.py" not in json.dumps(e)] + [desired]
+    hooks[event] = new_arr
     changed = True
 
 if changed:
