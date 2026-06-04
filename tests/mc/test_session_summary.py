@@ -101,3 +101,88 @@ def test_summarize_returns_empty_dict_on_empty_transcript(mc_env, monkeypatch):
 
     monkeypatch.setattr(mc_env.session_summary.subprocess, "run", _boom)
     assert mc_env.session_summary.summarize("absent-sid") == {}
+
+
+# --------------------------------------------------------------------------- #
+# summarize — JSON extraction from a prose-wrapped `claude -p` reply
+# --------------------------------------------------------------------------- #
+class _FakeProc:
+    """Stand-in for subprocess.CompletedProcess: only .stdout is read by summarize."""
+    def __init__(self, stdout):
+        self.stdout = stdout
+
+
+def _stub_claude(monkeypatch, mc_env, stdout):
+    """Replace session_summary.subprocess.run with one returning `stdout`. Asserts
+    the real `claude` binary is NEVER invoked (we feed canned output)."""
+    monkeypatch.setattr(mc_env.session_summary.subprocess, "run",
+                        lambda *a, **k: _FakeProc(stdout))
+
+
+def _seed_transcript(claude_state, sid="sess-sum"):
+    """A non-empty transcript so tail_text != "" and summarize reaches the call site
+    (the path under test); without this it short-circuits before subprocess.run."""
+    claude_state.add_transcript(sid, [
+        {"type": "user", "message": {"content": "what next"}},
+        {"type": "assistant", "message": {"content": "working on it"}},
+    ])
+    return sid
+
+
+def test_summarize_extracts_json_wrapped_in_prose(mc_env, claude_state, monkeypatch):
+    """`claude -p` often replies with prose before/after the JSON object. summarize
+    must find the FIRST '{' .. LAST '}' span and parse it (session_summary.py:76-79).
+    Pin both fields are extracted from the embedded object."""
+    sid = _seed_transcript(claude_state)
+    _stub_claude(monkeypatch, mc_env,
+                 'Sure! Here is the summary you asked for:\n'
+                 '{"progress": "wired the parser", "next": "add tests"}\n'
+                 'Let me know if you need more.')
+
+    out = mc_env.session_summary.summarize(sid, goal="ship it")
+
+    assert out == {"progress": "wired the parser", "next": "add tests"}
+
+
+def test_summarize_picks_outermost_braces_with_nested_json(mc_env, claude_state, monkeypatch):
+    """find('{')..rfind('}') spans the OUTERMOST object even when the values contain
+    nested braces — proves the extraction isn't a naive first-pair match."""
+    sid = _seed_transcript(claude_state)
+    _stub_claude(monkeypatch, mc_env,
+                 'prose... {"progress": "did {x} and {y}", "next": "do {z}"} ...more prose')
+
+    out = mc_env.session_summary.summarize(sid)
+
+    assert out == {"progress": "did {x} and {y}", "next": "do {z}"}
+
+
+def test_summarize_malformed_braces_returns_empty_dict(mc_env, claude_state, monkeypatch):
+    """A reply with brace characters but invalid JSON between them -> json.loads
+    raises -> the bare-except path returns {} (session_summary.py:80-82). Without a
+    transcript this would short-circuit BEFORE the parse, so we seed one to force the
+    real except path under test."""
+    sid = _seed_transcript(claude_state)
+    _stub_claude(monkeypatch, mc_env,
+                 'here you go: { progress: not-valid-json, next: nope } done')
+
+    assert mc_env.session_summary.summarize(sid) == {}
+
+
+def test_summarize_no_braces_returns_empty_dict(mc_env, claude_state, monkeypatch):
+    """A reply with NO JSON object at all -> start/end indices fail the
+    `start >= 0 and end > start` guard -> {} (no parse attempted)."""
+    sid = _seed_transcript(claude_state)
+    _stub_claude(monkeypatch, mc_env, "I could not produce a summary, sorry.")
+
+    assert mc_env.session_summary.summarize(sid) == {}
+
+
+def test_summarize_defaults_missing_fields_to_empty_string(mc_env, claude_state, monkeypatch):
+    """A valid JSON object missing one field -> summarize fills it with "" via
+    obj.get(field, "") rather than raising (session_summary.py:79)."""
+    sid = _seed_transcript(claude_state)
+    _stub_claude(monkeypatch, mc_env, '{"progress": "only progress here"}')
+
+    out = mc_env.session_summary.summarize(sid)
+
+    assert out == {"progress": "only progress here", "next": ""}
