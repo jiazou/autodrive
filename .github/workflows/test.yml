@@ -19,3 +19,19 @@ jobs:
         run: python -m pip install --upgrade pip pytest pyyaml
       - name: Run test suite
         run: python -m pytest -q
+
+  bash-suite:
+    # Separate job for an independent red/green signal: the bash suite is the
+    # regression guard for the security-critical /drive gate machinery and must
+    # not be hidden inside the pytest job. macOS for the same mac-centric reason;
+    # jq + git are preinstalled on GitHub-hosted runners, and the gate scripts the
+    # tests drive are self-contained shell (no Python needed).
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run bash test suite
+        run: |
+          for f in test/*.test.sh; do
+            echo "== $f =="
+            bash "$f" || exit 1
+          done
