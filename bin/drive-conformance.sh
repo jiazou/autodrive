@@ -95,8 +95,14 @@ reviewed_sha_of() {
 }
 
 # Does the highest-N review for scope have CONVERGED verdict? rc0 yes. $1=file
+# Decide on the FIRST `## Verdict:` line ONLY — the schema puts the real verdict first
+# (drive-review.md). A later standalone `## Verdict: CONVERGED` heading elsewhere in a
+# FINDINGS file (e.g. quoting a prior round) must NOT flip the verdict to converged.
 verdict_converged() {
-  grep -qE '^## Verdict:[[:space:]]*CONVERGED[[:space:]]*$' "$1" 2>/dev/null
+  local line
+  line="$(grep -m1 -E '^## Verdict:' "$1" 2>/dev/null || true)"
+  [ -n "$line" ] || return 1
+  printf '%s\n' "$line" | grep -qE '^## Verdict:[[:space:]]*CONVERGED[[:space:]]*$'
 }
 
 # Evaluate whether scope <id> has a COUNTING review for tip <sha>.

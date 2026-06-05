@@ -38,17 +38,27 @@ Generate `runId = <branch>-<timestamp>` and `RUN_DIR = ~/.claude/harness-runs/<r
 from any worktree. Append a line to `$RUN_DIR/event-log.jsonl` at every dispatch /
 verdict / merge / gate.
 
-- **Resume:** if invoked with an existing runId (its `$RUN_DIR/state.json` exists),
-  load it, **reconcile worktrees** (`git worktree list` vs `state.slices[].worktree`
-  / `phaseReview[].integrationWorktree`; `git worktree remove` + `branch -D`
-  orphans; a phase left `integrating` is rebuilt from scratch — see Execute), and
-  continue each slice from its `step`. A phase left `hardening` is **NOT** rebuilt —
-  its harden commits live on `phaseInt/<runId>/<P>`; resume HARDEN on that branch (rebuilding
-  would discard the harden work). **Reconcile `hardenRound` from artifacts, not state
-  alone** (a crash can land a `harden-<P>-N.md` or a `phaseInt/<runId>/<P>` commit before the
-  state write): `hardenRound = max(state value, count of `harden-<P>-*.md` with
-  `AppliedEdits: yes`)`; the next round re-audits from the actual `phaseInt/<runId>/<P>` tree,
-  so a partially-applied round is simply re-audited and completed.
+- **Resume:** if invoked with an existing runId (its `$RUN_DIR/state.json` exists), load it
+  and reconcile from git — `git worktree list`, branch tips, and ancestry are authoritative;
+  state fields are hints. Never re-dispatch, advance, or clean up on a state value alone:
+  - **Current phase:** `state.phase` = the lowest phase in `state.phaseList` whose
+    `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch` (branch absent, or
+    `git merge-base --is-ancestor phaseInt/<runId>/<P> <featureBranch>` fails). All are
+    ancestors → `stage = verify`.
+  - **Worktrees:** classify each `$RUN_DIR/wt/` worktree by its checked-out branch and
+    remove stale ones with `git worktree remove` only — never `branch -D` (branch cleanup is
+    the guarded assemble/advance steps' job). A `slice/<runId>/<id>` worktree is live until
+    its slice is `converged`; a `phaseInt/<runId>/<P>` worktree is live only for the current
+    phase with `phaseReview[<P>].status` not yet `hardened`.
+  - **Each slice, by `step`:** `queued` → leave it for the phase-loop to dispatch.
+    `implementing` → if `git rev-list <phaseBaseSha>..slice/<runId>/<id>` is non-empty and
+    slice-local tests pass, promote to `awaiting_review`, else re-dispatch IMPLEMENT.
+    `awaiting_review` → run REVIEW. `needs_fix` → re-dispatch IMPLEMENT (re-create the
+    worktree if removed). `converged` → done (branch kept for assembly). `blocked` → STOP.
+  - **Phase `hardening`:** resume HARDEN on `phaseInt/<runId>/<P>` (don't rebuild). If
+    `status == hardened` but `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch`,
+    complete its `git branch -f` advance (Execute step 5) instead. Set `hardenRound =
+    max(state, count of `harden-<P>-*.md` with `AppliedEdits: yes`)`.
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
   initialize and write `$RUN_DIR/state.json` in this shape (set `sessionId` from the
@@ -360,7 +370,8 @@ the gate.
 For each PHASE in order (steps 1–4 build & review the phase; step 5 HARDENS it before
 it advances):
 
-1. **Freeze base:** `phaseBaseSha = git rev-parse <featureBranch>`.
+1. **Freeze base:** `phaseBaseSha = git rev-parse <featureBranch>`; initialize
+   `state.phaseReview[<P>] = { "round": 0 }` if absent.
 2. **Dispatch slices** whose `deps` are CONVERGED, ≤ `concurrencyCap` in flight.
    Slices with **disjoint `owns`** run in PARALLEL; create a worktree per slice
    `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>`, copy
@@ -420,7 +431,9 @@ it advances):
      `featureBranch` (`git merge-base --is-ancestor <featureBranch> phaseInt/<runId>/<P>`
      succeeds — exit 0; a non-zero exit means NOT a descendant → STOP, a concurrent ref
      move broke the invariant). Then `git worktree remove` the integration worktree
-     (slice worktrees were already removed on convergence), delete slice branches; next phase.
+     (slice worktrees were already removed on convergence), delete slice branches, and
+     advance `state.phase` to the next id in `state.phaseList` (if this was the last phase,
+     `stage = verify`). Proceed to the next phase.
    - `STOP` (3 fix rounds exceeded / BLOCKED / NEEDS_CONTEXT) → STOP; the phase stays
      `hardening` and does **not** advance — its half-hardened state is preserved on
      `phaseInt/<runId>/<P>` for resume.
