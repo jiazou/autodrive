@@ -163,27 +163,84 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
   reviewer can. That is **component D** (a deterministic external driver / out-of-band
   reviewer), recorded as a follow-up. SHA-binding raises the forgery cost incidentally
   but does not claim to defeat a determined forger.
-- **Gate matcher — shell-accurate command tokenization.** The four command parsers
-  (`subcommand_of`, `action_after`, `git_target_repo`, `push_ship_runid`) lex `$CMD`
-  through ONE shared `tokenize_cmd` (a bash-3.2 char state machine — no `eval`, no command
-  execution, no `$var` expansion) rather than raw `set -- $CMD` whitespace word-splitting.
-  This closes silent bypasses on **legitimate** input: a quoted path **with a space**
-  (`git -C "/tmp/unreviewed repo" push`) is now one `-C` value (not split into `"/tmp/unreviewed`
-  + `repo"`, which mis-read the subcommand and skipped ship detection), and `""`/`''`
-  preserve an **empty arg** (so `git -C "" push` is a git no-op → identity stays `$CWD` →
-  the drive HEAD is seen → DENY, instead of resolving `$CWD/""` and silently failing). The
-  tokenizer handles single/double quotes and backslash escapes. *Fail-safe:* an
-  **unterminated quote** is unparseable — the real shell would reject the command and git
-  would never run — so the tokenizer returns "no tokens" and the gate goes **inert** rather
-  than emit a mis-split argv that could desync the gate from git (safe because such a
-  command cannot execute). **Variable refs remain a documented limitation:** the gate sees
-  the PRE-expansion string by design (no `$var`/`$(…)` expansion), so a command that names
-  its repo/ref purely through a runtime variable — `git -C "$dir" push`, `git merge
-  "slice/$v/$id"` — is parsed with the literal token, not the runtime value; such mid-build
-  merges silently pass the per-unit gate and are backstopped by the HEAD-based ship gate
-  (whole-tip diff) plus the `/drive` literal-ref instruction. This is the same forgery/
-  evasion class as the `$GIT_DIR`/`$GIT_WORK_TREE` env residual below (→ Component D), not
-  an omission gap for the literal command forms `/drive` actually emits.
+- **Gate matcher — shell-accurate command tokenization (the boundary principle).** The
+  command parsers (`subcommand_of`, `action_after`, `git_target_repo`, `push_ship_runid`)
+  lex `$CMD` through ONE shared `tokenize_cmd` (a bash-3.2 char state machine — no `eval`, no
+  command execution) rather than raw `set -- $CMD` whitespace word-splitting. The gate
+  intercepts the command STRING in a PreToolUse hook **before the shell expands it**, so it
+  faithfully reproduces only what is a deterministic function of the literal string:
+  **quote-removal + word-splitting**, plus two cheap lexical resolutions —
+  **line-continuation** (a backslash immediately followed by a newline is elided, both
+  unquoted AND inside double quotes, exactly as bash does; NOT inside single quotes) and a
+  **leading `~/` or bare `~`** in a repo-locating path value (`-C`/`--git-dir`/`--work-tree`),
+  which `expand_tilde` resolves to `$HOME`. This closes silent bypasses on **legitimate**
+  input: a quoted path **with a space** (`git -C "/tmp/unreviewed repo" push`) is now one
+  `-C` value (not split into `"/tmp/unreviewed` + `repo"`); `""`/`''` preserve an **empty
+  arg** (so `git -C "" push` is a git no-op → identity stays `$CWD` → the drive HEAD is seen
+  → DENY); a line-continued `git push \`↵ and `git -C ~/drive-repo push` both resolve to the
+  same target git would use. The tokenizer handles single/double quotes and backslash
+  escapes.
+  - *Fail-safe (unterminated quote):* an **unterminated quote** is a real shell error — the
+    command would be rejected and git would never run — so the tokenizer returns "no tokens"
+    and the gate goes **inert**, never emitting a mis-split argv that could desync the gate
+    from git (safe because the command cannot execute). NOTE: a **trailing bare backslash**
+    is *not* a shell error — bash runs `git push \` as `git push`, dropping the dangling
+    backslash — so it does NOT fail-closed-as-unparseable; the lexer drops the backslash to
+    match bash, and any residual evasion via a trailing backslash is a forgery-class residual,
+    not an omission gap. (The round-2 comment that lumped a trailing backslash in with
+    unterminated quotes as "the shell rejects it" was factually wrong and has been corrected.)
+  - **Quote-aware expansion-active flags (`_TOK_EXP`).** The lexer emits, per token, a flag
+    marking whether that token carried a construct bash WOULD expand from the literal string —
+    an **unquoted or double-quoted** `$`/backtick, an **unquoted brace expansion** `{…,…}` /
+    `{…..…}`, or an **unquoted leading `~user`**. A **single-quoted** `'slice/$run/4a'` or
+    `'~root/repo'` is LITERAL (bash never expands inside `'…'`), so its flag is **0** — the
+    gate does not mistake it for an expansion. This preserves quote context that a strip-then-
+    rescan of the quote-removed token would lose. (Brace expansion is deterministic from the
+    string, like line-continuation, but resolving its cartesian product is out of scope — the
+    gate detects the brace and fails closed rather than reimplement it.)
+  - **Ref extraction reads the LEXED command (`CMD_LEX`), not the raw `$CMD`.** The
+    `slice/…` / `phaseInt/…` ref greps and `drive_runid_from_command` consume the command
+    re-serialized from the lexed tokens (one per line), so they see the SAME string the argv
+    parsers do — line-continuations elided, quotes removed. Reading the raw `$CMD` here would
+    **desync** the gate from git: a ref split by a `\`↵ continuation (`git merge sli\`↵`ce/R/4a`)
+    is one token `slice/R/4a` to git AND the lexer, but the raw string still holds the
+    backslash+newline → a raw grep would miss the ref → the gate would go inert on a real
+    managed merge.
+  - **Fail-closed on unresolvable shell EXPANSION (`managed_git_expansion_deny`).** The gate
+    resolves the literal string + line-continuation + `~/`; it CANNOT reproduce expansions
+    that need external context — `$var`, `$(…)`, backticks, `$'…'` (ANSI-C), `~user` (passwd
+    lookup), or a brace expansion `{…,…}`. When an **expansion-active** token (per `_TOK_EXP`)
+    sits in a **decision-critical** position — the subcommand token, a `-C`/`--git-dir`/
+    `--work-tree` value, or a positional ref/refspec of a managed verb — of a **would-be-
+    managed git operation** (START binary `git` AND the subcommand is a managed verb
+    `push`/`merge`/`branch`/`worktree` OR the subcommand token is *itself* expansion-active so
+    a managed verb can't be ruled out, e.g. `git $'push'` / `git {push,}`), the gate **FAILS
+    CLOSED = DENY** ("cannot safely parse a managed git command containing shell expansion …
+    use a literal, fully-expanded form"). This ends the bypass class where `git $'push'` /
+    `git {push,}` lexed to a non-`push` subcommand → went inert, or `git -C ~user/repo push`
+    mis-targeted. It is omission-safe: an unresolvable managed command DENIES instead of
+    silently bypassing. **Non-git and non-managed commands are unaffected** — `echo $X`,
+    `ls $HOME`, `git commit -m "$msg"`, `git log --format=$x`, and a **read-only verb that
+    merely names a managed ref** (`git -C "$HOME/repo" show slice/R/4a` — `show` is not a
+    gated op) all stay **inert** (no over-deny; a managed ref alone does NOT make a command
+    would-be-managed — only a managed/unresolved *verb* does). Full `$var`/`$(…)` *resolution*
+    (computing the runtime value) remains out of scope by design (→ Component D), the same
+    class as the literal-ref / `$GIT_DIR` limitation below; the gate refuses what it cannot
+    safely interpret rather than reimplement the shell. *Residual (forgery-class, → Component
+    D):* a single-quoted **`'~/repo'`** (literal `~/`, which bash does NOT expand inside `'…'`)
+    is still tilde-resolved by `git_target_repo`'s `expand_tilde` to `$HOME/repo`, a marginal
+    mis-resolution — non-exploitable in practice (the literal `~/repo` dir almost never exists,
+    so git errors and nothing ships).
+  - **Variable refs that pass the per-unit gates remain a documented limitation only where
+    fail-closed does NOT fire.** The mid-build per-unit gates (slice/phase) deliberately fail
+    **OPEN** (a transient error can't wedge a run); a runtime-variable ref in a *non-managed-
+    verb* position that those gates would have read (e.g. `git merge "$ref"` where `$ref`
+    holds a slice ref) is parsed with the literal token, not the runtime value — but a managed
+    verb (`merge`) with a tainted positional arg now trips the fail-closed deny above. Any
+    residual is backstopped by the HEAD-based ship gate (whole-tip diff) plus the `/drive`
+    literal-ref instruction. Same forgery/evasion class as the `$GIT_DIR`/`$GIT_WORK_TREE`
+    env residual below (→ Component D), not an omission gap for the literal command forms
+    `/drive` actually emits.
 - **Gate matcher — composed git global-option resolution.** `git_target_repo()` now
   models the way *real git* resolves the repo identity: `-C` is composed left-to-right
   (`-C a -C b` → `a/b`; an absolute `-C` resets the accumulator), `--git-dir` is the

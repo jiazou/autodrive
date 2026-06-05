@@ -18,6 +18,11 @@ mkdir -p "$HARNESS_RUNS"
 
 TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/drive-gate-test.XXXXXX")"
 
+# A dedicated $HOME root so the round-3 `~/...` tests (bash expands ~ to $HOME) reach a real
+# fixture. Defined here so cleanup() sweeps it.
+HOME_FIXROOT="$HOME/.drive-gate-test-$$"
+mkdir -p "$HOME_FIXROOT"
+
 # All RUN_DIRs this process creates share the prefix gatetest-<PID>- (mk_rundir runs
 # inside command-substitution subshells, so tracking via a global var would be lost to
 # the subshell — glob-remove by the PID-scoped prefix instead, which is robust).
@@ -27,6 +32,7 @@ cleanup() {
     [ -d "$d" ] && rm -rf "$d"
   done
   [ -d "$TMPROOT" ] && rm -rf "$TMPROOT"
+  [ -d "$HOME_FIXROOT" ] && rm -rf "$HOME_FIXROOT"
 }
 trap cleanup EXIT
 
@@ -1236,6 +1242,352 @@ test_push_mirror_nondrive_head_inert() {
 }
 
 # ---------------------------------------------------------------------------------
+# Round-3 BLOCKINGs: shell-expansion boundary (line-continuation + tilde resolution;
+# fail-closed on unresolvable $ / backtick / ~user in a would-be-managed git command).
+# ---------------------------------------------------------------------------------
+
+# Build an UNREVIEWED drive-branch repo UNDER $HOME (so `~/<rel>` targets it). Echoes
+# "repo rd rel" where rel is the repo path RELATIVE to $HOME (for the ~/ form).
+mk_ship_repo_in_home() {
+  local runid="$1" rd repo rel
+  rd="$(mk_rundir "$runid")"
+  repo="$HOME_FIXROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$runid"
+  _commit "$repo" feature.sh "echo hi" "unreviewed code" >/dev/null
+  rel="${repo#$HOME/}"
+  printf '%s %s %s\n' "$repo" "$rd" "$rel"
+}
+
+# (b) TILDE targeting: `git -C ~/<reldrive> push` from OUTSIDE → ~/ expands to $HOME →
+# resolves the unreviewed drive repo → DENY (conformance ship deny). Pre-fix the gate kept
+# the literal `~/<rel>` token → wrong target → ungated bypass.
+test_tilde_C_targets_home_drive_deny() {
+  local runid info repo rel out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo_in_home "$runid")"
+  repo="$(printf '%s' "$info" | cut -d' ' -f1)"; rel="$(printf '%s' "$info" | cut -d' ' -f3)"
+  outside="$TMPROOT/tilde-out-$runid"; mkdir -p "$outside"   # NOT a git repo
+  run_gate "git -C ~/$rel push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "tilde: git -C ~/<reldrive> push expands ~ to \$HOME → targets the drive repo → DENY"
+  else
+    fail "tilde: git -C ~/<reldrive> push should expand ~ and DENY; got: $out"
+  fi
+}
+
+# (b) bare `~` -C value composes with a following relative -C: `git -C ~ -C <rel> push`
+# → $HOME/<rel>. Targets the home drive repo → DENY. Proves bare ~ → $HOME.
+test_tilde_bare_C_compose_deny() {
+  local runid info repo rel out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo_in_home "$runid")"
+  repo="$(printf '%s' "$info" | cut -d' ' -f1)"; rel="$(printf '%s' "$info" | cut -d' ' -f3)"
+  outside="$TMPROOT/tilde-bare-out-$runid"; mkdir -p "$outside"
+  run_gate "git -C ~ -C $rel push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "tilde: bare ~ -C composes to \$HOME/<rel> → DENY (bare ~ → \$HOME)"
+  else
+    fail "tilde: bare ~ -C should resolve \$HOME and DENY; got: $out"
+  fi
+}
+
+# (b) `git -C ~/<nondrive> push` to a NON-drive target → inert (no over-deny). The tilde
+# resolves but the target is not a managed run.
+test_tilde_C_nondrive_inert() {
+  local out
+  run_gate "git -C ~/.no-such-drive-repo-xyz-$$ push" "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "tilde: git -C ~/<nondrive> push resolves ~ but stays inert (no managed run; no over-deny)"
+  else
+    fail "tilde: git -C ~/<nondrive> push should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (a) LINE CONTINUATION (unquoted): `git push \<newline>` on an unreviewed drive cwd → the
+# backslash-newline is elided exactly as bash does → `push` detected → ship DENY. Pre-fix
+# the lexer kept the `\` and newline → mis-split tokens → ship detection missed.
+test_linecont_unquoted_push_deny() {
+  local runid info repo out cmd
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  cmd="$(printf 'git push \\\n')"   # trailing backslash-newline (line continuation)
+  run_gate "$cmd" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "line-cont (unquoted): git push \\<newline> elides the continuation → ship → DENY"
+  else
+    fail "line-cont (unquoted): git push \\<newline> should DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (a) LINE CONTINUATION splitting a -C flag from its value: `git -C \<newline><repo> push`
+# from OUTSIDE → the continuation is elided so -C and its value rejoin → targets the
+# unreviewed drive repo → DENY. Pre-fix the elision didn't happen → wrong target.
+test_linecont_splits_C_value_deny() {
+  local runid info repo out outside cmd
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/lc-C-out-$runid"; mkdir -p "$outside"
+  cmd="$(printf 'git -C \\\n%s push' "$repo")"   # -C, line-cont, then the value
+  run_gate "$cmd" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "line-cont: git -C \\<newline><repo> push rejoins -C+value → DENY"
+  else
+    fail "line-cont: -C \\<newline><repo> should rejoin and DENY; got: $out"
+  fi
+}
+
+# (a) LINE CONTINUATION inside DOUBLE QUOTES: `git -C "<re\<newline>po>" push` — bash elides
+# the backslash-newline INSIDE the double quotes too, so the path rejoins to <repo> →
+# targets the unreviewed drive repo → DENY. Proves the dquote-state elision.
+test_linecont_inside_dquote_deny() {
+  local runid info repo out outside cmd half1 half2
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/lc-dq-out-$runid"; mkdir -p "$outside"
+  # Split the repo path across a backslash-newline INSIDE the double-quoted -C value.
+  half1="${repo%??}"; half2="${repo#$half1}"   # split into two non-empty halves
+  cmd="$(printf 'git -C "%s\\\n%s" push' "$half1" "$half2")"
+  run_gate "$cmd" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "line-cont (in \"…\"): backslash-newline inside double quotes is elided → path rejoins → DENY"
+  else
+    fail "line-cont (in \"…\"): in-dquote continuation should rejoin + DENY; got: $out"
+  fi
+}
+
+# (a) Trailing BARE backslash is NOT a shell error (bash runs `git push \` as `git push`),
+# so it must NOT fail-closed-as-unparseable. From a non-drive cwd it stays INERT (push
+# detected, but HEAD is non-drive). Guards the round-2 MINOR (item d): the old comment
+# wrongly claimed the shell rejects a trailing backslash.
+test_trailing_bare_backslash_inert() {
+  local runid repo out
+  runid="$(new_runid)"
+  repo="$TMPROOT/$runid-trailbs"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null   # stays on main (non-drive HEAD)
+  run_gate 'git push \' "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "trailing bare backslash: git push \\ runs as git push (non-drive → inert, NOT fail-closed)"
+  else
+    fail "trailing bare backslash should be inert from non-drive cwd; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) FAIL-CLOSED on an unresolvable SUBCOMMAND: `git $'push'` (ANSI-C quoting) from an
+# unreviewed-drive cwd → the lexer keeps `$'push'` (a `$`) → can't confirm the subcommand →
+# would-be-managed git op with a tainted subcommand → DENY. Pre-fix it lexed to a non-push
+# subcommand → ship detection went inert (the BLOCKING bypass).
+test_failclosed_ansi_c_subcommand_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git \$'push'" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git \$'push' (ANSI-C subcommand) → DENY (cannot safely parse managed op)"
+  else
+    fail "fail-closed: git \$'push' should DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) FAIL-CLOSED on a tainted positional REF of a managed verb, where a LITERAL drive ref
+# also appears (establishes managed-ness): `git push origin drive/<id> $X` → DENY.
+test_failclosed_tainted_ref_with_drive_ref_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git push origin drive/$runid \$X" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git push origin drive/<id> \$X (tainted refspec on a managed push) → DENY"
+  else
+    fail "fail-closed: tainted refspec on a managed push should DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) FAIL-CLOSED on a tainted REPO-PATH value: `git -C \$REPO merge slice/<id>` → the -C
+# value carries a `$` → can't resolve the target repo → DENY (would-be-managed merge).
+test_failclosed_tainted_repo_path_deny() {
+  local runid out
+  runid="$(new_runid)"; mk_rundir "$runid" >/dev/null
+  run_gate "git -C \$REPO merge slice/$runid/4a" "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git -C \$REPO merge slice/<id> (tainted -C value) → DENY"
+  else
+    fail "fail-closed: tainted -C value on a managed merge should DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) FAIL-CLOSED on a ~user repo-path value (passwd-lookup form we don't emulate):
+# `git -C ~root/x push` → DENY.
+test_failclosed_tilde_user_repo_path_deny() {
+  local out
+  run_gate "git -C ~root/x push" "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git -C ~root/x push (~user repo path) → DENY"
+  else
+    fail "fail-closed: ~user repo path should DENY; got: $out"
+  fi
+}
+
+# (c) FAIL-CLOSED on a backtick command-substitution subcommand: git \`echo push\` → DENY.
+test_failclosed_backtick_subcommand_deny() {
+  local out
+  run_gate 'git `echo push`' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git \`echo push\` (backtick subcommand) → DENY"
+  else
+    fail "fail-closed: backtick subcommand should DENY; got: $out"
+  fi
+}
+
+# (c) NON-over-deny: unrelated NON-GIT commands with a `$` stay INERT.
+test_failclosed_echo_dollar_inert() {
+  local out
+  run_gate 'echo $X' "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "no-over-deny: echo \$X (non-git) is inert"
+  else
+    fail "echo \$X should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+test_failclosed_ls_home_inert() {
+  local out
+  run_gate 'ls $HOME' "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "no-over-deny: ls \$HOME (non-git) is inert"
+  else
+    fail "ls \$HOME should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) NON-over-deny: a NON-MANAGED git command with a `$` (not a managed verb, no managed
+# ref) stays INERT — `git commit -m "$msg"`, `git log --format=$x`.
+test_failclosed_nonmanaged_git_dollar_inert() {
+  local out
+  run_gate 'git commit -m "$msg"' "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    run_gate 'git log --format=$x' "$TMPROOT"; out="$GATE_OUT"
+    if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+      pass "no-over-deny: non-managed git command with \$ (commit -m / log --format=) is inert"
+    else
+      fail "git log --format=\$x should be inert; got rc=$GATE_RC out='$out'"
+    fi
+  else
+    fail "git commit -m \"\$msg\" should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Round-3 codex adversarial findings (regression guards). The argv lexer now emits a
+# per-token expansion-active flag (_TOK_EXP) so quote context is preserved, recognizes
+# brace expansion, and the ref-extraction reads the LEXED command (CMD_LEX) so it can't
+# desync from the tokenizer on a line-continuation.
+# ---------------------------------------------------------------------------------
+
+# F1: BRACE EXPANSION smuggles a managed verb. `git {push,}` / `git {merge,}` expand
+# deterministically to `git push` / `git merge` in bash. The subcommand token `{push,}` is
+# expansion-active (unquoted brace + comma) → would-be-managed + tainted → DENY. Pre-fix the
+# lexer saw the literal `{push,}` subcommand → not a managed verb → silent bypass.
+test_codex_brace_expansion_push_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git {push,} origin drive/$runid" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    run_gate "git {merge,} slice/$runid/4a" "$repo"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+      pass "codex-F1: brace expansion git {push,} / {merge,} (smuggled managed verb) → DENY"
+    else
+      fail "codex-F1: git {merge,} should DENY; got: $out"
+    fi
+  else
+    fail "codex-F1: git {push,} should DENY; got: $out"
+  fi
+}
+
+# F1b: a QUOTED brace `git "{push,}"` is LITERAL in bash (no expansion) — the subcommand is
+# the literal `{push,}`, which is NOT a managed verb and NOT expansion-active → inert (git
+# itself would error on it). Confirms the brace detection is scoped to UNQUOTED braces.
+test_codex_quoted_brace_inert() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'git "{push,}" origin main' "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "codex-F1b: quoted git \"{push,}\" is literal (no expansion) → inert (no over-deny)"
+  else
+    fail "codex-F1b: quoted brace should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# F2: LINE-CONTINUATION DESYNC. A managed ref split across a `\`<newline> continuation —
+# `git merge sli\`↵`ce/<runId>/4a` — lexes to ONE token `slice/<runId>/4a` (what git sees),
+# so the ref-extraction (reading CMD_LEX, the lexed command) must find it → slice-merge DENY.
+# Pre-fix the ref greps read the RAW $CMD (still holding the backslash+newline) → missed the
+# ref → the gate went inert on a real managed merge (a bypass introduced by line-cont support).
+test_codex_linecont_ref_split_merge_deny() {
+  local runid info repo out cmd
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; repo="${info%% *}"
+  cmd="$(printf 'git merge sli\\\nce/%s/4a' "$runid")"
+  run_gate "$cmd" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review slice 4a'; then
+    pass "codex-F2: merge of a ref SPLIT across a line-continuation → DENY (CMD_LEX, no desync)"
+  else
+    fail "codex-F2: line-continuation-split ref merge should DENY; got: $out"
+  fi
+}
+
+# F2: same desync for a phaseInt branch-advance whose ref is split across a continuation.
+test_codex_linecont_ref_split_phase_deny() {
+  local runid info repo out cmd
+  runid="$(new_runid)"; info="$(mk_phase_repo "$runid" unreviewed)"; repo="${info%% *}"
+  cmd="$(printf 'git branch -f drive/%s pha\\\nseInt/%s/1' "$runid" "$runid")"
+  run_gate "$cmd" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase 1'; then
+    pass "codex-F2: phase advance with a line-continuation-split phaseInt ref → DENY"
+  else
+    fail "codex-F2: line-continuation-split phaseInt advance should DENY; got: $out"
+  fi
+}
+
+# F3: NO over-deny of a READ-ONLY git verb that merely NAMES a managed ref while carrying an
+# unresolved `$` in an unrelated -C. `git -C "$HOME/repo" show slice/<id>` is not a gated op
+# (show is read-only) → inert. Pre-fix `ref_seen` made any slice-ref token would-be-managed,
+# so the `$`-tainted -C forced a wrong deny.
+test_codex_readonly_verb_with_ref_inert() {
+  local runid out
+  runid="$(new_runid)"; mk_rundir "$runid" >/dev/null
+  run_gate "git -C \"\$HOME/repo\" show slice/$runid/4a" "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "codex-F3: read-only git show with a slice ref + \$-tainted -C is inert (no over-deny)"
+  else
+    fail "codex-F3: read-only verb with a managed ref should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# F4: SINGLE-QUOTED literals are NOT expansions (bash does not expand inside '…'). A managed
+# merge of a single-quoted literal `'slice/$run/4a'` must NOT be force-denied as an expansion
+# (the token is the literal `slice/$run/4a`, which is not a resolvable managed runId, so the
+# command is genuinely inert — but critically it is NOT a spurious shell-expansion DENY).
+# Pre-fix the lexer stripped the quotes then rescanned, seeing the `$` → false DENY.
+test_codex_single_quoted_dollar_not_expansion() {
+  local runid out
+  runid="$(new_runid)"; mk_rundir "$runid" >/dev/null
+  run_gate "git merge 'slice/\$run/4a'" "$TMPROOT"; out="$GATE_OUT"
+  # Must NOT be the shell-expansion deny (the false positive). Inert is the correct outcome
+  # (literal 'slice/$run/4a' is not a valid managed runId match).
+  if ! printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "codex-F4: single-quoted 'slice/\$run/4a' is a LITERAL ref → not a spurious expansion DENY"
+  else
+    fail "codex-F4: single-quoted literal must NOT trip the expansion deny; got: $out"
+  fi
+}
+
+# F4: single-quoted '~root/repo' is a LITERAL path (bash does not tilde-expand inside '…'),
+# so a read-only `git -C '~root/repo' show slice/<id>` must NOT be force-denied → inert.
+test_codex_single_quoted_tilde_user_not_expansion() {
+  local runid out
+  runid="$(new_runid)"; mk_rundir "$runid" >/dev/null
+  run_gate "git -C '~root/repo' show slice/$runid/4a" "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "codex-F4: single-quoted '~root/repo' is literal (no ~user expansion) → inert"
+  else
+    fail "codex-F4: single-quoted ~user path must not deny; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
   test_plangate_deny
@@ -1317,6 +1669,33 @@ main() {
   test_push_mirror_aggregate_is_ship
   test_push_mirror_reviewed_silent
   test_push_mirror_nondrive_head_inert
+  # round-3: shell-expansion boundary — tilde resolution
+  test_tilde_C_targets_home_drive_deny
+  test_tilde_bare_C_compose_deny
+  test_tilde_C_nondrive_inert
+  # round-3: line continuation (unquoted / split flag / inside double quotes) + trailing bs
+  test_linecont_unquoted_push_deny
+  test_linecont_splits_C_value_deny
+  test_linecont_inside_dquote_deny
+  test_trailing_bare_backslash_inert
+  # round-3: fail-closed on unresolvable expansion in a would-be-managed git op
+  test_failclosed_ansi_c_subcommand_deny
+  test_failclosed_tainted_ref_with_drive_ref_deny
+  test_failclosed_tainted_repo_path_deny
+  test_failclosed_tilde_user_repo_path_deny
+  test_failclosed_backtick_subcommand_deny
+  # round-3: no-over-deny (non-git / non-managed commands with a $ stay inert)
+  test_failclosed_echo_dollar_inert
+  test_failclosed_ls_home_inert
+  test_failclosed_nonmanaged_git_dollar_inert
+  # round-3 codex adversarial findings (regression guards)
+  test_codex_brace_expansion_push_deny
+  test_codex_quoted_brace_inert
+  test_codex_linecont_ref_split_merge_deny
+  test_codex_linecont_ref_split_phase_deny
+  test_codex_readonly_verb_with_ref_inert
+  test_codex_single_quoted_dollar_not_expansion
+  test_codex_single_quoted_tilde_user_not_expansion
 
   echo
   echo "----------------------------------------"
