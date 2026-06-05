@@ -20,6 +20,45 @@ SETTINGS="${1:-${DRIVE_HOOKS_SETTINGS:-$HOME/.claude/settings.json}}"
 MERGE_GATE="$REPO_DIR/bin/drive-merge-gate.sh"
 STOP_GUARD="$REPO_DIR/bin/drive-stop-guard.sh"
 
+# --- Disclosure banner (ALWAYS printed) ---------------------------------------
+# Tell the user exactly what this touches before anything is modified.
+cat >&2 <<BANNER
+============================================================
+  /drive enforcement hooks — installer
+============================================================
+This modifies your Claude Code settings file:
+  $SETTINGS
+
+It adds two hooks (existing hooks are preserved; a timestamped
+backup of the settings file is written first):
+
+  • PreToolUse(Bash) -> $MERGE_GATE
+      Fires on every Bash tool call. The gate itself decides whether
+      to act — only /drive plan/merge/ship git operations are gated;
+      everything else passes straight through.
+  • Stop             -> $STOP_GUARD
+      A review backstop that runs when a session stops.
+
+The repo never commits ~/.claude/settings.json.
+What these hooks do and their threat model: see SECURITY.md.
+============================================================
+BANNER
+
+# --- Confirm gate -------------------------------------------------------------
+# Prompt ONLY when run interactively by a human with no explicit target. Skip when:
+#   - an explicit target path ($1) was given (scripted installs / the test suite),
+#   - DRIVE_INSTALL_ASSUME_YES=1 is set,
+#   - stdin/stdout is not a TTY (non-interactive / piped).
+# On decline: exit 1 having changed nothing.
+if [ -z "${1:-}" ] && [ "${DRIVE_INSTALL_ASSUME_YES:-}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
+  printf 'Proceed and modify your settings? [y/N] ' >&2
+  read -r _reply
+  case "$_reply" in
+    [yY] | [yY][eE][sS]) ;;
+    *) echo "Aborted; nothing was changed." >&2; exit 1 ;;
+  esac
+fi
+
 command -v jq >/dev/null 2>&1 || { echo "error: jq is required but not found in PATH" >&2; exit 1; }
 
 # Create a valid minimal settings file if absent.

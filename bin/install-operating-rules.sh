@@ -14,6 +14,44 @@ GLOBAL="$HOME/CLAUDE.md"
 
 [ -f "$OPERATING" ] || { echo "error: OPERATING.md not found at $OPERATING" >&2; exit 1; }
 
+# --- Disclosure banner (ALWAYS printed) ---------------------------------------
+# This installer configures Claude Code MACHINE-WIDE — disclose it loudly before
+# touching anything.
+cat >&2 <<BANNER
+============================================================
+  autodrive operating rules — machine-wide installer
+============================================================
+This configures Claude Code GLOBALLY for THIS machine — every
+session, in every directory. It will:
+
+  • OVERWRITE ~/CLAUDE.md with a pointer that imports
+        $OPERATING
+      (any existing ~/CLAUDE.md is backed up to ~/CLAUDE.md.bak.<ts> first)
+  • symlink this repo's skills   -> ~/.claude/skills/
+  • symlink this repo's commands -> ~/.claude/commands/   (/drive and stages)
+  • symlink the status line      -> ~/.claude/statusline.sh
+  • register a /drive Stop hook in ~/.claude/settings.json
+        (no-op outside an active /drive run owned by the firing session;
+         fails open on every error)
+
+Existing real files are backed up before being replaced.
+What this touches and the threat model: see SECURITY.md.
+============================================================
+BANNER
+
+# --- Confirm gate -------------------------------------------------------------
+# Prompt ONLY when run interactively by a human. Skip when DRIVE_INSTALL_ASSUME_YES=1
+# or when stdin/stdout is not a TTY (non-interactive / piped / test suite).
+# On decline: exit 1 having changed nothing.
+if [ "${DRIVE_INSTALL_ASSUME_YES:-}" != "1" ] && [ -t 0 ] && [ -t 1 ]; then
+  printf 'Proceed and configure this machine? [y/N] ' >&2
+  read -r _reply
+  case "$_reply" in
+    [yY] | [yY][eE][sS]) ;;
+    *) echo "Aborted; nothing was changed." >&2; exit 1 ;;
+  esac
+fi
+
 if [ -f "$GLOBAL" ]; then
   BACKUP="$GLOBAL.bak.$(date +%Y%m%d-%H%M%S)"
   cp "$GLOBAL" "$BACKUP"
