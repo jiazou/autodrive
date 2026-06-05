@@ -87,7 +87,9 @@ tokenize_cmd() {
   # Per-token EXPANSION-ACTIVE flag: 1 iff THIS token carries a shell-expansion construct
   # that bash WOULD expand from the literal string but the gate cannot reproduce — set ONLY
   # in expansion-active contexts (unquoted or double-quoted `$`/backtick; an unquoted leading
-  # `~user`; an unquoted brace-expansion `{…,…}`/`{…..…}`). NOT set inside SINGLE quotes,
+  # `~user`; an unquoted brace-expansion `{…,…}` — the COMMA form only: the lexer flags `,`
+  # inside an open brace, NOT the `{…..…}` range form, which cannot synthesize a managed verb
+  # or a 3-segment ref since a bash range expands only single chars/ints). NOT set inside SINGLE quotes,
   # where `$`/backtick/`~`/`{` are all literal (so `'slice/$run/4a'` is a literal ref, not an
   # expansion — quote context is preserved, fixing the strip-then-rescan false positive). The
   # parallel _TOK_EXP array mirrors _TOKENS 1:1 so downstream can ask "did THIS lexed token

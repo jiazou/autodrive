@@ -191,8 +191,11 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
     unterminated quotes as "the shell rejects it" was factually wrong and has been corrected.)
   - **Quote-aware expansion-active flags (`_TOK_EXP`).** The lexer emits, per token, a flag
     marking whether that token carried a construct bash WOULD expand from the literal string —
-    an **unquoted or double-quoted** `$`/backtick, an **unquoted brace expansion** `{…,…}` /
-    `{…..…}`, or an **unquoted leading `~user`**. A **single-quoted** `'slice/$run/4a'` or
+    an **unquoted or double-quoted** `$`/backtick, an **unquoted brace expansion** `{…,…}`
+    (the **comma form** only — the lexer flags `,` inside an open brace, NOT the `{…..…}`
+    range form, which a bash range expands to single chars/ints and so cannot synthesize a
+    managed verb or a 3-segment ref → no range bypass), or an **unquoted leading `~user`**.
+    A **single-quoted** `'slice/$run/4a'` or
     `'~root/repo'` is LITERAL (bash never expands inside `'…'`), so its flag is **0** — the
     gate does not mistake it for an expansion. This preserves quote context that a strip-then-
     rescan of the quote-removed token would lose. (Brace expansion is deterministic from the
@@ -279,6 +282,14 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
   the attacker-influenced *command string*; it does not honor `$GIT_DIR`/`$GIT_WORK_TREE`
   env vars (which `/drive` never sets). A command that retargets git purely via those env
   vars is a forgery-class residual (→ Component D), not an omission gap.
+- **Attached short-option branch refs (`-b<branch>`) are out of scope.** The gate matches
+  branch/ref operands in the SEPARATE (`-b slice/<id>`) and `=` (`-b=slice/<id>`) forms that
+  `/drive` emits; git also accepts the ATTACHED form (`-bslice/<id>` as one token) for
+  `worktree add`/`checkout`/`switch`. A managed ref smuggled via the attached form is a
+  forgery-class residual (→ Component D): `/drive` always emits the separate literal form, and
+  a precise verb/position-aware attached-form parser was deliberately NOT added because the
+  shortcut (a global token split) introduced wrong-review and over-deny regressions — the
+  cost/risk of a correct attached parser is not warranted for a form `/drive` never emits.
 - **`git push` classification is best-effort over arbitrary push syntax.** The ship
   gate errs *toward* gating — it gates a push if any refspec source is the drive branch,
   an aggregate flag (`--all`/`--mirror`) is present, or HEAD is the drive branch — so the
