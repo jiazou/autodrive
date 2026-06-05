@@ -36,10 +36,13 @@ def run_script(args, *, home, cwd=None, env=None, timeout=30):
 def seed_mc_home(home):
     """Create the data dirs that mc-bind.sh / mc-hook.py assume already exist.
 
-    On a real machine `mission-control/install.sh` creates ~/mission-control; the
-    scripts themselves only APPEND to ~/mission-control/*.jsonl and never mkdir it
-    (followup F2). The short-id path of mc-bind also reads ~/.claude/sessions/*.json.
-    Mirroring install.sh here is real usage, not a test workaround. Returns `home`.
+    On a real machine `mission-control/install.sh` creates ~/mission-control. As of
+    the F2 fix, mc-hook.py self-creates it via os.makedirs(..., exist_ok=True) before
+    appending to status.jsonl, but mc-bind.sh still only APPENDS to
+    ~/mission-control/bindings.jsonl and never mkdirs it. Seeding here mirrors
+    install.sh so mc-bind.sh and the short-id session path (which also reads
+    ~/.claude/sessions/*.json) work in tests — real usage, not a test workaround.
+    Returns `home`.
     """
     home = Path(home)
     (home / "mission-control").mkdir(parents=True, exist_ok=True)
