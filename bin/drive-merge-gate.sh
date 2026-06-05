@@ -483,9 +483,9 @@ is_drive_branch_ref() {
 }
 
 # managed_git_expansion_deny : rc 0 (and sets _MGED_REASON) iff $CMD is a WOULD-BE-MANAGED
-# git operation whose DECISION-CRITICAL argv carries an UNRESOLVED shell-expansion construct
+# operation whose DECISION-CRITICAL argv carries an UNRESOLVED shell-expansion construct
 # — the structural fail-closed catch-all that ends the `$'push'` / `git -C ~user/repo` /
-# `git {push,}` bypass class.
+# `git {push,}` / `gh {pr,} create` bypass class.
 #
 # QUOTE-AWARE: it reads the per-token expansion-active flags `_TOK_EXP[]` the lexer produces
 # (1 iff that token had a construct bash WOULD expand from the literal string — an unquoted or
@@ -494,30 +494,57 @@ is_drive_branch_ref() {
 # NOT treated as an expansion (fixes the strip-then-rescan false positive). Resolvable forms
 # (`~/…`, bare `~`, line-continuation) are NOT flagged either.
 #
-# WOULD-BE-MANAGED: START binary (after env VAR=val prefixes) == git AND the subcommand is a
-# managed verb (push|merge|branch|worktree) OR the subcommand token is ITSELF expansion-active
-# (so a managed verb can't be ruled out — e.g. `git $'push'`, `git {push,}`). This EXCLUDES
-# non-git commands (`echo $X`, `ls $HOME`) and non-managed git verbs (`git commit -m "$msg"`,
-# `git log --format=$x`, `git show slice/R/4a`) — they never qualify → stay inert (a managed
-# ref under a read-only verb is NOT a gated op, so it does not force a deny).
+# WOULD-BE-MANAGED:
+#   - START binary == git AND the subcommand is a managed verb (push|merge|branch|worktree) OR
+#     the subcommand token is ITSELF expansion-active (so a managed verb can't be ruled out —
+#     e.g. `git $'push'`, `git {push,}`); OR
+#   - START binary == gh/glab AND the subcommand (pr/mr) OR the action (create) token is
+#     expansion-active (so a managed ship verb can't be ruled out — e.g. `gh {pr,} create`,
+#     `gh pr {create,}`, `glab {mr,} create`).
+# This EXCLUDES non-managed commands (`echo $X`, `ls $HOME`) and non-managed git verbs
+# (`git commit -m "$msg"`, `git log --format=$x`, `git show slice/R/4a`) — they never qualify
+# → stay inert (a managed ref under a read-only verb is NOT a gated op, so it does not deny).
 #
-# DECISION-CRITICAL tokens (those the gate must interpret) are checked for an active construct:
-# the subcommand token, every -C/--git-dir/--work-tree VALUE, and — for a managed verb — every
-# NON-FLAG positional ref/refspec arg (push/merge/branch/worktree read these). A `$` in a pure
-# FLAG VALUE the gate already ignores (`--push-option`/`-m` body) does NOT trip this. bash
-# 3.2-safe (index-walk over _TOKENS/_TOK_EXP; no associative arrays).
+# DECISION-CRITICAL tokens (those the gate actually interprets for its verdict) are checked for
+# an active construct — and ONLY those, so an incidental `$`-path/value the gate IGNORES never
+# trips the net (this is what keeps /drive's OWN `git worktree add $RUN_DIR/wt/<id> -b
+# slice/<runId>/<id> <sha>` and `git merge -s $strategy slice/<runId>/4a` from being denied):
+#   - the subcommand/verb token (and, for gh/glab, the action token);
+#   - every -C/--git-dir/--work-tree repo-path VALUE (git only);
+#   - the per-verb REF/REFSPEC operand(s) ONLY — extracted exactly as the gate's own matchers
+#     read them: `push` → refspecs AFTER the remote (positional #2..); `merge` → the ref
+#     positionals (skipping `-s/-X/--strategy*/-m` VALUES); `branch` → the branch-name + start-
+#     point positionals (skipping `-u/--set-upstream-to` VALUE); `worktree add` → the `-b/-B`
+#     branch VALUE ONLY (NOT the worktree-PATH positional, NOT the start-point sha).
+# A `$` in any consumed/skipped non-critical value/path (`worktree add <path>`, `merge -s <val>`,
+# `-m <msg>`, `--push-option`) does NOT trip this. bash 3.2-safe (index-walk; no assoc arrays).
 _MGED_REASON=""
+_mged_reason_set() {
+  _MGED_REASON="drive-merge-gate: cannot safely parse a managed command containing shell expansion (\`\$\`/backtick/\`~user\`/brace \`{…,…}\`); use a literal, fully-expanded form (the gate sees the pre-expansion command string by design — see docs/drive-enforcement.md)."
+}
 managed_git_expansion_deny() {
   set_argv_from_cmd || return 1            # unparseable (unterminated quote) → handled elsewhere
   local ntok=${#_TOKENS[@]} idx=0
-  # Skip leading env VAR=val prefixes; require START binary == git.
+  # Skip leading env VAR=val prefixes; identify the START binary.
   while [ "$idx" -lt "$ntok" ]; do
     case "${_TOKENS[$idx]}" in [A-Za-z_]*=*) idx=$((idx+1)); continue ;; *) break ;; esac
   done
-  [ "$idx" -lt "$ntok" ] && [ "${_TOKENS[$idx]}" = git ] || return 1   # non-git → not our concern
-  idx=$((idx+1))
+  [ "$idx" -lt "$ntok" ] || return 1
+  local bin="${_TOKENS[$idx]}"
+  case "$bin" in
+    git)       managed_git_expansion_deny_git "$idx" "$ntok" ;;
+    gh|glab)   managed_cli_expansion_deny "$bin" "$idx" "$ntok" ;;
+    *) return 1 ;;                          # non-managed binary → not our concern
+  esac
+}
+
+# git branch of the net. $1=idx of the `git` token, $2=ntok. rc 0 (sets _MGED_REASON) iff a
+# would-be-managed git op carries an expansion in a DECISION-CRITICAL token.
+managed_git_expansion_deny_git() {
+  local idx="$1" ntok="$2"
+  idx=$((idx+1))                            # drop the `git` token
   # Walk the global-option region to the subcommand, checking repo-path VALUES en route.
-  local tainted=0 sub="" sub_exp=0 cur val_exp
+  local tainted=0 sub="" sub_exp=0 cur
   while [ "$idx" -lt "$ntok" ]; do
     cur="${_TOKENS[$idx]}"
     case "$cur" in
@@ -544,20 +571,139 @@ managed_git_expansion_deny() {
   case "$sub" in push|merge|branch|worktree) managed_verb=1 ;; esac
   [ "$sub_exp" = 1 ] && managed_verb=1
   [ "$managed_verb" -eq 1 ] || return 1     # not a would-be-managed op → inert (no over-deny)
-  # Scan positional ref/refspec args AFTER the subcommand (decision-critical for managed verbs).
+  # PRECISE per-verb operand scan. Taint-check ONLY the ref/refspec operand(s) the gate's own
+  # matchers read for this verb — never a blanket positional scan (which would deny /drive's own
+  # `$`-path worktree-add / `-s $strategy` merge). An expansion-active subcommand (`$sub`/brace)
+  # has no known verb shape → scan conservatively (every positional) so a smuggled managed verb
+  # with a tainted ref is still caught.
   idx=$((idx+1))                            # drop the subcommand token
+  case "$sub" in
+    push)
+      # Refspecs are positional #2.. (positional #1 is the remote). A `$`-remote is NOT a
+      # decision ref; only the refspecs are. Skip value-consuming push flags.
+      local pos=0
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          -o|--push-option|--repo|--receive-pack|--exec) idx=$((idx+2)); continue ;;
+          --*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) pos=$((pos+1))
+             [ "$pos" -ge 2 ] && [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1
+             idx=$((idx+1)) ;;
+        esac
+      done ;;
+    merge)
+      # Ref positionals; skip strategy/message VALUES (the args /drive's `merge -s $strategy`
+      # parks the `$` in — NOT a decision ref). Inline `--strategy=…` forms are single flag words.
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          -s|-X|--strategy|--strategy-option|-m|--message|-F|--file) idx=$((idx+2)); continue ;;
+          --*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1; idx=$((idx+1)) ;;   # ref operand
+        esac
+      done ;;
+    branch)
+      # `git branch -f <name> [<start-point>]`: the name + start-point positionals are refs the
+      # gate reads (phase-advance: `git branch -f drive/<runId> phaseInt/<runId>/<P>`). Skip the
+      # upstream VALUE; -f/-d/-D etc are bare flags.
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          -u|--set-upstream-to|-t|--track) idx=$((idx+2)); continue ;;
+          --*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1; idx=$((idx+1)) ;;   # name / start-point
+        esac
+      done ;;
+    worktree)
+      # `git worktree add <path> -b <branch> [<commit-ish>]`: the ONLY decision ref is the
+      # `-b`/`-B` branch VALUE. The worktree PATH positional and the start-point commit-ish are
+      # NOT refs (this is exactly /drive's `git worktree add $RUN_DIR/wt/<id> -b slice/.. <sha>`,
+      # whose `$RUN_DIR` path must NOT taint). Taint-check ONLY the -b/-B value.
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          -b|-B)
+            if [ "$((idx+1))" -lt "$ntok" ]; then
+              [ "${_TOK_EXP[$((idx+1))]}" = 1 ] && tainted=1; idx=$((idx+2))
+            else idx=$((idx+1)); fi
+            continue ;;
+          -b=*|-B=*|--*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) idx=$((idx+1)) ;;              # path / commit-ish positionals → NOT decision refs
+        esac
+      done ;;
+    *)
+      # Expansion-active (unknown-shape) subcommand: conservatively scan every positional, since
+      # we can't know which is the ref. (`$sub`/brace already forced tainted=1 above, but a
+      # smuggled verb could carry a tainted ref too — keep catching it.)
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          --*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1; idx=$((idx+1)) ;;
+        esac
+      done ;;
+  esac
+  [ "$tainted" -eq 1 ] || return 1
+  _mged_reason_set
+  return 0
+}
+
+# gh/glab branch of the net (finding #1). $1=bin (gh|glab), $2=idx of the bin token, $3=ntok.
+# Ship detection manages `gh pr create` and `glab mr create`. If the SUBCOMMAND token (pr/mr)
+# OR the ACTION token (create) is expansion-active, the gate can't confirm the subcommand/action
+# pair from the literal string → a would-be-managed ship op it can't safely parse → DENY. Mirrors
+# the git path. Walks the gh/glab global-option region the SAME way subcommand_of/action_after do
+# (env prefixes already skipped by the caller; the START binary is $bin).
+managed_cli_expansion_deny() {
+  local bin="$1" idx="$2" ntok="$3"
+  idx=$((idx+1))                            # drop the gh/glab token
+  local sub="" sub_exp=0 action="" action_exp=0 cur seen_sub=0
+  # Reach the subcommand (skip global options exactly as subcommand_of/action_after do).
   while [ "$idx" -lt "$ntok" ]; do
-    cur="${_TOKENS[$idx]}"; val_exp="${_TOK_EXP[$idx]}"
+    cur="${_TOKENS[$idx]}"
     case "$cur" in
-      -o|--push-option|--repo|--receive-pack|--exec|-m|--message) idx=$((idx+2)); continue ;;
+      -C|-c|-R|--repo|--git-dir|--work-tree) idx=$((idx+2)); continue ;;
       --*=*|--*) idx=$((idx+1)); continue ;;
       -?*) idx=$((idx+1)); continue ;;
-      *) [ "$val_exp" = 1 ] && tainted=1; idx=$((idx+1)) ;;   # positional ref/refspec
+      *) sub="$cur"; sub_exp="${_TOK_EXP[$idx]}"; seen_sub=1; idx=$((idx+1)); break ;;
     esac
   done
-  [ "$tainted" -eq 1 ] || return 1
-  _MGED_REASON="drive-merge-gate: cannot safely parse a managed git command containing shell expansion (\`\$\`/backtick/\`~user\`/brace \`{…,…}\`); use a literal, fully-expanded form (the gate sees the pre-expansion command string by design — see docs/drive-enforcement.md)."
-  return 0
+  [ "$seen_sub" -eq 1 ] || return 1         # no subcommand → not a managed op
+  # Reach the action (first non-flag word after the subcommand).
+  while [ "$idx" -lt "$ntok" ]; do
+    cur="${_TOKENS[$idx]}"
+    case "$cur" in
+      --*=*|--*) idx=$((idx+1)); continue ;;
+      -?*) idx=$((idx+1)); continue ;;
+      *) action="$cur"; action_exp="${_TOK_EXP[$idx]}"; break ;;
+    esac
+  done
+  # The managed gh/glab op is the `pr create` / `mr create` PAIR. If EITHER the subcommand or the
+  # action token is expansion-active, the pair can't be confirmed → fail closed. We further gate
+  # on the op being plausibly that pair: the subcommand is pr/mr (or tainted, so unknown), AND
+  # the action is create (or tainted/absent, so unknown). A clearly-different literal pair
+  # (`gh pr view --json $x`, `gh issue list`) is NOT force-denied (no over-deny on unrelated gh).
+  local sub_ok=0 action_ok=0
+  case "$bin" in
+    gh)   case "$sub" in pr) sub_ok=1 ;; esac ;;
+    glab) case "$sub" in mr) sub_ok=1 ;; esac ;;
+  esac
+  [ "$sub_exp" = 1 ] && sub_ok=1            # tainted subcommand → can't rule out pr/mr
+  case "$action" in create|"") action_ok=1 ;; esac
+  [ "$action_exp" = 1 ] && action_ok=1     # tainted action → can't rule out create
+  [ "$sub_ok" -eq 1 ] && [ "$action_ok" -eq 1 ] || return 1
+  # Only DENY when a decision-critical token is actually tainted.
+  if [ "$sub_exp" = 1 ] || [ "$action_exp" = 1 ]; then
+    _mged_reason_set
+    return 0
+  fi
+  return 1
 }
 
 # --- match the command to a gate mode ---------------------------------------------

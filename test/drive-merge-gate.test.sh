@@ -1588,6 +1588,99 @@ test_codex_single_quoted_tilde_user_not_expansion() {
 }
 
 # ---------------------------------------------------------------------------------
+# Round-4 findings: (1) gh/glab managed ship verbs must NOT bypass the expansion net via a
+# tainted subcommand/action token; (2) the net must NOT over-deny incidental $-paths/values
+# that are NOT the decision ref — most critically /drive's OWN command shapes.
+# ---------------------------------------------------------------------------------
+
+# F2 (MAJOR over-deny — /drive's OWN worktree-add). `git worktree add "$TMP/wt" -b
+# slice/run1/4a` is EXACTLY what /drive emits (`git worktree add $RUN_DIR/wt/<id> -b
+# slice/<runId>/<id> <sha>`): the `$`-token is the worktree PATH (NOT a ref), the LITERAL
+# `-b slice/...` is the real ref. The net must taint-check ONLY the -b value → NOT a shell-
+# expansion DENY. Round-3 blanket-scanned every positional → wrongly denied this → would wedge
+# every /drive run. (We assert NOT-shell-expansion-deny; run1 is unmanaged → inert is correct.)
+test_r4_overdeny_worktree_add_dollar_path() {
+  local out
+  run_gate 'git worktree add "$TMP/wt" -b slice/run1/4a' "$TMPROOT"; out="$GATE_OUT"
+  if ! printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4: git worktree add \"\$TMP/wt\" -b slice/run1/4a (\$-PATH, literal -b ref) → NOT a spurious expansion DENY (/drive's own shape)"
+  else
+    fail "r4: /drive's own \$-path worktree-add must NOT shell-expansion-DENY; got: $out"
+  fi
+}
+
+# F2 (MAJOR over-deny — merge strategy VALUE). `git merge -s "$strategy" slice/run1/4a`: the
+# `$strategy` is a STRATEGY value the gate ignores, the LITERAL `slice/...` is the real ref. The
+# net must skip the -s value → NOT a shell-expansion DENY. Round-3 scanned `$strategy` as a ref.
+test_r4_overdeny_merge_strategy_value() {
+  local out
+  run_gate 'git merge -s "$strategy" slice/run1/4a' "$TMPROOT"; out="$GATE_OUT"
+  if ! printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4: git merge -s \"\$strategy\" slice/run1/4a (\$-strategy VALUE, literal ref) → NOT a spurious expansion DENY"
+  else
+    fail "r4: merge -s \$strategy <literal-ref> must NOT shell-expansion-DENY; got: $out"
+  fi
+}
+
+# F2 NON-VACUOUS guard: a TAINTED -b worktree branch VALUE (`git worktree add /p -b $branch`)
+# IS the decision ref → STILL DENY. Distinguishes "skip the path" from "ignore the -b ref".
+test_r4_worktree_add_tainted_b_ref_deny() {
+  local out
+  run_gate 'git worktree add /tmp/wt -b $branch' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4: git worktree add /p -b \$branch (tainted -b ref VALUE) → DENY (the -b value IS the decision ref)"
+  else
+    fail "r4: tainted -b branch value must DENY; got: $out"
+  fi
+}
+
+# F1 (BLOCKING — gh/glab ship verbs bypass). `gh {pr,} create` / `gh pr {create,}` / `glab
+# {mr,} create` expand to managed ship commands, but the gate sees `{pr,}`/`{create,}` as
+# expansion-active tokens. The net must taint-check the gh/glab subcommand + action tokens →
+# DENY. Round-3 bailed unless start binary == git → these silently bypassed (INERT).
+test_r4_gh_brace_subcommand_deny() {
+  local out
+  run_gate 'gh {pr,} create --fill' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4-F1: gh {pr,} create --fill (tainted subcommand) → DENY (gh ship verb no longer bypasses)"
+  else
+    fail "r4-F1: gh {pr,} create must DENY; got: $out"
+  fi
+}
+
+test_r4_gh_brace_action_deny() {
+  local out
+  run_gate 'gh pr {create,} --fill' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4-F1: gh pr {create,} --fill (tainted action) → DENY"
+  else
+    fail "r4-F1: gh pr {create,} must DENY; got: $out"
+  fi
+}
+
+test_r4_glab_brace_subcommand_deny() {
+  local out
+  run_gate 'glab {mr,} create' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4-F1: glab {mr,} create (tainted subcommand) → DENY"
+  else
+    fail "r4-F1: glab {mr,} create must DENY; got: $out"
+  fi
+}
+
+# F1 NON-OVER-DENY: a literal NON-ship gh pair with an unrelated `$` stays INERT (no over-deny
+# on unrelated gh). `gh pr view --json $x` → action `view` (not create) → not a managed pair.
+test_r4_gh_nonship_dollar_inert() {
+  local out
+  run_gate 'gh pr view --json $x' "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "r4-F1: gh pr view --json \$x (non-ship pair, action view) → inert (no over-deny on unrelated gh)"
+  else
+    fail "r4-F1: gh pr view with a \$ should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
   test_plangate_deny
@@ -1696,6 +1789,14 @@ main() {
   test_codex_readonly_verb_with_ref_inert
   test_codex_single_quoted_dollar_not_expansion
   test_codex_single_quoted_tilde_user_not_expansion
+  # round-4: precise taint scan (no over-deny of /drive's own $-paths/values) + gh/glab net
+  test_r4_overdeny_worktree_add_dollar_path
+  test_r4_overdeny_merge_strategy_value
+  test_r4_worktree_add_tainted_b_ref_deny
+  test_r4_gh_brace_subcommand_deny
+  test_r4_gh_brace_action_deny
+  test_r4_glab_brace_subcommand_deny
+  test_r4_gh_nonship_dollar_inert
 
   echo
   echo "----------------------------------------"

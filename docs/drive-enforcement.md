@@ -210,20 +210,37 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
     resolves the literal string + line-continuation + `~/`; it CANNOT reproduce expansions
     that need external context — `$var`, `$(…)`, backticks, `$'…'` (ANSI-C), `~user` (passwd
     lookup), or a brace expansion `{…,…}`. When an **expansion-active** token (per `_TOK_EXP`)
-    sits in a **decision-critical** position — the subcommand token, a `-C`/`--git-dir`/
-    `--work-tree` value, or a positional ref/refspec of a managed verb — of a **would-be-
-    managed git operation** (START binary `git` AND the subcommand is a managed verb
-    `push`/`merge`/`branch`/`worktree` OR the subcommand token is *itself* expansion-active so
-    a managed verb can't be ruled out, e.g. `git $'push'` / `git {push,}`), the gate **FAILS
-    CLOSED = DENY** ("cannot safely parse a managed git command containing shell expansion …
-    use a literal, fully-expanded form"). This ends the bypass class where `git $'push'` /
-    `git {push,}` lexed to a non-`push` subcommand → went inert, or `git -C ~user/repo push`
-    mis-targeted. It is omission-safe: an unresolvable managed command DENIES instead of
-    silently bypassing. **Non-git and non-managed commands are unaffected** — `echo $X`,
-    `ls $HOME`, `git commit -m "$msg"`, `git log --format=$x`, and a **read-only verb that
-    merely names a managed ref** (`git -C "$HOME/repo" show slice/R/4a` — `show` is not a
-    gated op) all stay **inert** (no over-deny; a managed ref alone does NOT make a command
-    would-be-managed — only a managed/unresolved *verb* does). Full `$var`/`$(…)` *resolution*
+    sits in a **decision-critical** position of a **would-be-managed operation**, the gate
+    **FAILS CLOSED = DENY** ("cannot safely parse a managed command containing shell expansion
+    … use a literal, fully-expanded form"). Two managed-binary branches:
+      - **git** (START binary `git`, subcommand a managed verb `push`/`merge`/`branch`/
+        `worktree` OR the subcommand token *itself* expansion-active so a managed verb can't be
+        ruled out, e.g. `git $'push'` / `git {push,}`): decision-critical tokens are the
+        subcommand, every `-C`/`--git-dir`/`--work-tree` value, and the **per-verb ref operand(s)
+        ONLY** — extracted exactly as the gate's matchers read them (`push` → refspecs after the
+        remote; `merge` → the ref positionals, skipping `-s`/`-X`/`--strategy*`/`-m` VALUES;
+        `branch` → the name + start-point, skipping `-u`/`--set-upstream-to`; `worktree add` →
+        the `-b`/`-B` branch VALUE only, **NOT** the worktree-PATH positional or the start-point
+        sha). This **precise** scan (not a blanket positional scan) is what keeps `/drive`'s OWN
+        commands from being false-denied: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id>
+        <sha>` (the `$`-path is the worktree path, the literal `-b` is the real ref) and
+        `git merge -s $strategy slice/<runId>/4a` (the `$`-strategy is a value, the literal is the
+        ref) both stay allowed; only a tainted REAL ref (`git merge $ref`, `git push origin $ref`,
+        `git worktree add /p -b $branch`) denies.
+      - **gh/glab** (START binary `gh`/`glab`): ship detection manages `gh pr create` /
+        `glab mr create`, so if the **subcommand** (`pr`/`mr`) OR the **action** (`create`) token
+        is expansion-active — `gh {pr,} create`, `gh pr {create,}`, `glab {mr,} create` — the
+        pair can't be confirmed from the literal string → DENY. A clearly-different literal pair
+        (`gh pr view --json $x`, `gh issue list`) is NOT force-denied (no over-deny on unrelated
+        gh/glab).
+    This ends the bypass class where `git $'push'` / `git {push,}` / `gh {pr,} create` lexed to a
+    non-managed subcommand → went inert, or `git -C ~user/repo push` mis-targeted. It is
+    omission-safe: an unresolvable managed command DENIES instead of silently bypassing.
+    **Non-managed commands are unaffected** — `echo $X`, `ls $HOME`, `git commit -m "$msg"`,
+    `git log --format=$x`, and a **read-only verb that merely names a managed ref**
+    (`git -C "$HOME/repo" show slice/R/4a` — `show` is not a gated op) all stay **inert** (no
+    over-deny; a managed ref alone does NOT make a command would-be-managed — only a
+    managed/unresolved *verb* does). Full `$var`/`$(…)` *resolution*
     (computing the runtime value) remains out of scope by design (→ Component D), the same
     class as the literal-ref / `$GIT_DIR` limitation below; the gate refuses what it cannot
     safely interpret rather than reimplement the shell. *Residual (forgery-class, → Component
@@ -236,7 +253,7 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
     **OPEN** (a transient error can't wedge a run); a runtime-variable ref in a *non-managed-
     verb* position that those gates would have read (e.g. `git merge "$ref"` where `$ref`
     holds a slice ref) is parsed with the literal token, not the runtime value — but a managed
-    verb (`merge`) with a tainted positional arg now trips the fail-closed deny above. Any
+    verb (`merge`) with a tainted REF operand now trips the fail-closed deny above. Any
     residual is backstopped by the HEAD-based ship gate (whole-tip diff) plus the `/drive`
     literal-ref instruction. Same forgery/evasion class as the `$GIT_DIR`/`$GIT_WORK_TREE`
     env residual below (→ Component D), not an omission gap for the literal command forms
