@@ -5,7 +5,7 @@
 # state.json's `step`/`phaseReview` for the verdict (D1: git-truth, not state-trust).
 #
 # Usage:
-#   drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | ship | audit
+#   drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit
 #
 # Truth model:
 #   runId        = basename(RUN_DIR)
@@ -26,7 +26,7 @@ set -euo pipefail
 SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md")
 
 usage() {
-  echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|phasedesign-gate:<P>|slice-merge:<id>|phase-merge:<P>|ship|audit" >&2
+  echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|phasedesign-gate:<P>|slice-merge:<id>|phase-merge:<P>|impl-presence:<id>|ship|audit" >&2
 }
 
 # Emit the JSON result and exit. $1=clean(true|false) $2=mode $3=tip $4=violations-json-array
@@ -150,6 +150,50 @@ git_or_die() {
   printf '%s' "$out"
 }
 
+# Does a changed path count as test evidence (a file a REAL repo test runner executes)?
+# Anchored to the two runner roots (README ## Testing / pyproject testpaths), NOT a bare
+# basename anywhere — `test_root.py`, `docs/x.test.md`, `scratch/x.test.json` do NOT count.
+#   - test/*.test.sh                                  (bash suite runner root), OR
+#   - tests/**/{test_*.py | *_test.py}                (pytest testpaths root),
+#     EXCLUDING support files even under tests/: _helpers.py, conftest.py, any path with a
+#     `fixtures/` segment, *.pyc, any `__pycache__/` segment.
+# rc0 = counts as test evidence; rc1 = does not. $1=path
+is_test_path() {
+  local p="$1" b
+  b="${p##*/}"   # basename
+
+  # A DOTFILE basename is NEVER a runnable test: the real bash runner glob
+  # (`for f in test/*.test.sh`) and CI's pytest collection both SKIP dotfiles (a leading
+  # `.` is not matched by `*` without `dotglob`). So `test/.noop.test.sh` /
+  # `tests/mc/.test_x.py` would pass the patterns below on bash 3.2's `case` (which DOES
+  # match a leading dot) yet never actually run — reject them up front. (Applies to both
+  # the test/*.test.sh and tests/** branches.)
+  case "$b" in .*) return 1;; esac
+
+  # --- bash suite: exactly test/<name>.test.sh (one segment under test/) ---
+  case "$p" in
+    test/*.test.sh)
+      # reject nested (test/sub/x.test.sh): the runner globs only test/*.test.sh
+      case "${p#test/}" in (*/*) ;; (*) return 0;; esac
+      ;;
+  esac
+
+  # --- pytest: under tests/ with a runnable basename, minus support exclusions ---
+  case "$p" in
+    tests/*)
+      # exclusions (apply even under tests/)
+      case "$b" in (_helpers.py|conftest.py|*.pyc) return 1;; esac
+      case "$p" in (*/fixtures/*|fixtures/*) return 1;; esac   # any fixtures/ segment
+      case "$p" in (*/__pycache__/*|__pycache__/*) return 1;; esac
+      case "$b" in
+        (test_*.py|*_test.py) return 0;;
+      esac
+      ;;
+  esac
+
+  return 1
+}
+
 case "$MODE_ARG" in
 
   plan-gate)
@@ -209,6 +253,60 @@ case "$MODE_ARG" in
       emit true "phase-merge:$P" "$tip" "[]"
     else
       emit false "phase-merge:$P" "$tip" "[$v]"
+    fi
+    ;;
+
+  impl-presence:*)
+    # IMPLEMENT-stage test-presence invariant (Item C). A slice branch's diff against its
+    # fork-point off drive/<runId> must add/modify a runnable test path, OR a commit in that
+    # range must carry a real `Drive-Test-Waiver:` git TRAILER. Pure git-truth (no state.json).
+    # base = merge-base(slice, drive/<runId>) via git_or_die so rc>=1 (unresolvable ref OR
+    # genuinely-disjoint histories) → exit 2 (fail-closed at the HOOK; here it is just abnormal),
+    # never a silent empty base feeding a malformed <empty>..tip diff.
+    id="${MODE_ARG#impl-presence:}"
+    [ -n "$id" ] || { usage; exit 2; }
+    ref="slice/$runId/$id"
+    if ! tip="$(rev "$ref")"; then
+      echo "error: cannot resolve ref $ref" >&2; exit 2
+    fi
+    base="$(git_or_die merge-base "$ref" "$featureBranch")"   # rc>=1 → exit 2 (no silent empty)
+    [ -n "$base" ] || { echo "error: empty merge-base for $ref..$featureBranch" >&2; exit 2; }
+
+    # test? — ANY NON-DELETION change to a runnable test path in base..tip matches the
+    # runner-anchored predicate. `--diff-filter=d` (lowercase d = EXCLUDE deletions) so a
+    # DELETED test path (D) does NOT count as test evidence — deleting tests/test_auth.py
+    # must NOT satisfy the invariant — while ADD (A), MODIFY (M), RENAME (R), COPY (C), and
+    # TYPE-CHANGE (T) all DO count. Uppercase `AM` would over-block: git classes a renamed or
+    # copied test as R/C (and a type-change as T), so `AM` false-DENIES a slice that adds
+    # coverage by renaming/copying a file INTO a runnable test path. With `--name-only`, a
+    # rename prints only the DESTINATION path, so a rename AWAY from a test path (test → docs)
+    # prints the non-runnable dest and is correctly NOT counted (the test was removed); a
+    # rename INTO a test path prints the runnable dest and IS counted.
+    changed="$(git_or_die diff --diff-filter=d --name-only "$base..$tip")"
+    has_test=false
+    while IFS= read -r path; do
+      [ -n "$path" ] || continue
+      if is_test_path "$path"; then has_test=true; break; fi
+    done <<EOF
+$changed
+EOF
+
+    # waived? — ANY commit in base..tip has a REAL `Drive-Test-Waiver:` git trailer with a
+    # NON-WHITESPACE value (real trailer parsing, NOT a %B body substring). The format emits
+    # one (possibly blank) value per commit + NUL separators, so check for non-whitespace.
+    waived=false
+    if [ "$has_test" != true ]; then
+      wvals="$(git_or_die log "$base..$tip" \
+        --format='%(trailers:key=Drive-Test-Waiver,valueonly,separator=%x00)')"
+      # Strip NULs and all whitespace; any leftover char = a real non-empty trailer value.
+      stripped="$(printf '%s' "$wvals" | tr -d '\000[:space:]')"
+      [ -n "$stripped" ] && waived=true
+    fi
+
+    if [ "$has_test" = true ] || [ "$waived" = true ]; then
+      emit true "impl-presence:$id" "$tip" "[]"
+    else
+      emit false "impl-presence:$id" "$tip" "[$(violation "slice:$id" "no-test-evidence" "$tip" "")]"
     fi
     ;;
 

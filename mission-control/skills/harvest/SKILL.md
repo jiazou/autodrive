@@ -64,13 +64,26 @@ mc bind <SHORT_ID> --project "<Project>" [--task <slug>] [--tab "<tab name>"]
   the binding only carries what can't be inferred: which task/project the session is on.
 - Unbind with `mc bind --unbind <SHORT_ID>`. The ledger is append-only; latest event wins.
 
-## Scheduled / `--prep` mode (opt-in, writes a draft)
+## Scheduled pre-wake run (the 6:45am job)
 
-For the 7am pre-wake run, the intended behavior is **prep, not finalize**: draft tomorrow's
-daily note + a proposed parallel plan into the vault with `needs_review: true`, so you wake
-to a draft rather than a blank page — never an auto-accepted change. This mode is NOT built
-yet; the spike is read-only. When implementing it, everything it writes MUST be
-`needs_review: true` and land in `Daily/`, never mutating existing task files.
+A launchd agent fires `bin/morning.sh` around 6:45am so you wake to today's surface already
+written. It runs two real commands (see `bin/morning.sh`), appending output to
+`~/mission-control/morning.log`:
+
+```bash
+mc standup --draft              # writes Today's Focus + Parallel Plan into the daily note
+mc harvest --log --summarize    # per-session Goal/Progress/Next digest, appended to the daily note
+```
+
+`mc harvest --summarize` enriches each session with Progress + Next (one headless `claude`
+call per live session); `--log` appends the rendered digest to today's daily note. These are
+the only harvest flags — there is no `--prep` flag.
+
+**Future (not built yet):** a richer "prep" mode would draft *tomorrow's* daily note plus a
+proposed parallel plan with `needs_review: true`, so the pre-wake run produces a reviewable
+draft rather than finalizing anything. This is unbuilt — you can't pass it today. When it is
+built, everything it writes MUST be `needs_review: true` and land in `Daily/`, never mutating
+existing task files.
 
 ## Design notes
 

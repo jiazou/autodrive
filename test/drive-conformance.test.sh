@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Plain-bash test runner for bin/drive-conformance.sh.
-# Asserts acceptance criteria 0,1,2,3,4,4b,4c,5,10. Prints PASS/FAIL per case and
+# Asserts acceptance criteria 0,1,2,3,4,4b,4c,5,10 and Item-C C1..C4b. Prints PASS/FAIL per case and
 # exits nonzero if any fail. Builds hermetic throwaway repos via test/fixtures/mkfixture.sh.
 set -uo pipefail
 
@@ -147,6 +147,72 @@ echo "=== AC10: concurrency — run-keyed phaseInt isolation ==="
 read -r repo rd1 rd2 < <(mk_two_concurrent)
 run_conf "$repo" "$rd1" --mode phase-merge:1;       assert_rc "AC10 R1 phase-merge clean (own ref)" 0 "$RC"
 run_conf "$repo" "$rd2" --mode phase-merge:1;       assert_rc "AC10 R2 phase-merge blocked (own ref)" 1 "$RC"
+
+echo "=== AC-C: impl-presence (test-presence invariant) ==="
+# AC-C1: slice diff adds a runnable test path -> exit 0 (clean).
+read -r repo rd < <(mk_impl_presence test)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C1 slice with pytest test -> clean" 0 "$RC"
+read -r repo rd < <(mk_impl_presence test_sh)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C1 slice with bash test -> clean" 0 "$RC"
+# *_test.py suffix form (the other runnable pytest basename) -> clean.
+read -r repo rd < <(mk_impl_presence test_suffix)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C1 slice with *_test.py suffix form -> clean" 0 "$RC"
+# Nested test/sub/x.test.sh: the bash runner globs only test/*.test.sh, so a NESTED path
+# is NOT a runnable test -> violation (proves the predicate anchors to the runner glob,
+# not a bare `.test.sh` substring).
+read -r repo rd < <(mk_impl_presence test_sh_nested)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b nested test/sub/x.test.sh not runner-globbed -> violation" 1 "$RC"
+# AC-C2: no test path AND no waiver trailer -> exit 1 (violation).
+read -r repo rd < <(mk_impl_presence notest)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C2 slice code-only no waiver -> violation" 1 "$RC"
+# AC-C3: no test path but a real Drive-Test-Waiver: commit TRAILER -> exit 0.
+read -r repo rd < <(mk_impl_presence waiver)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C3 real waiver trailer -> clean" 0 "$RC"
+# AC-C3b: waiver string in body PROSE (not a trailer block) -> exit 1 (NOT waived).
+read -r repo rd < <(mk_impl_presence waiver_prose)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C3b waiver in body prose (not trailer) -> violation" 1 "$RC"
+# AC-C4: unresolvable ref / missing drive/<runId> -> exit 2 (abnormal, explicit rc-2 case).
+read -r repo rd < <(mk_impl_presence no_drive)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4 missing drive/<runId> merge-base -> exit 2" 2 "$RC"
+# AC-C4 (unresolvable slice ref): a slice id that does not exist -> exit 2.
+read -r repo rd < <(mk_impl_presence test impl-absent-ref)
+run_conf "$repo" "$rd" --mode impl-presence:nope;   assert_rc "AC-C4 absent slice ref -> exit 2" 2 "$RC"
+# AC-C4b (predicate anchored to runners): support/non-runnable paths do NOT count -> exit 1.
+read -r repo rd < <(mk_impl_presence pred_helpers)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b tests/_helpers.py excluded -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_conftest)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b tests/conftest.py excluded -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_fixtures)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b tests/fixtures/* excluded -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_pyc)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b *.pyc excluded -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_root)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b root test_root.py not under tests/ -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_docs)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b docs/*.test.md (no runner) -> violation" 1 "$RC"
+# Finding 1 (BLOCKING): a DELETED test path is NOT test evidence (--diff-filter=d excludes D). A slice
+# whose only test-path change is deleting tests/foo/test_existing.py (+ a code edit), with no
+# new test + no waiver -> violation. (Pre-fix the plain `git diff --name-only` listed the
+# deleted path and is_test_path matched it, falsely passing.)
+read -r repo rd < <(mk_impl_presence del_test)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(del) deleted test path is NOT evidence -> violation" 1 "$RC"
+# Harden round-3 (MAJOR): a slice that adds coverage by RENAMING a runnable test INTO another
+# runnable test path (test/foo.test.sh -> test/bar.test.sh, with a real edit so git classes it R)
+# + a code change must be CLEAN. The old --diff-filter=AM EXCLUDED R/C/T and false-DENIED this;
+# --diff-filter=d (exclude deletions only) keeps the rename DESTINATION -> counted. NON-VACUOUS:
+# this fails under the old AM filter (the R rename's dest is dropped, leaving only the code file).
+read -r repo rd < <(mk_impl_presence rename_test)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(rename) rename runnable test INTO test path (R) is evidence -> clean" 0 "$RC"
+# Finding 2 (BLOCKING): a dotfile-basename test path is NOT runnable (the real runners skip
+# dotfiles), so it must NOT count even though bash 3.2 `case test/*.test.sh` matches it.
+read -r repo rd < <(mk_impl_presence dot_test_sh)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(dot) test/.noop.test.sh dotfile not runnable -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence dot_test_py)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(dot) tests/mc/.foo_test.py dotfile not runnable -> violation" 1 "$RC"
+# usage guard: empty id after impl-presence: -> exit 2
+read -r repo rd < <(mk_impl_presence test impl-empty-id)
+OUT="$(cd "$repo" && "$CONF" "$rd" --mode "impl-presence:" 2>/dev/null)"; RC=$?
+assert_rc "AC-C empty impl-presence id -> exit 2" 2 "$RC"
 
 echo
 echo "=== usage/error guards ==="

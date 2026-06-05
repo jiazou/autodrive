@@ -223,19 +223,32 @@ stage_plan_gate() {
 }
 
 # =================================================================================
-# STAGE 2: slice-merge — DENY (no slice review) then ALLOW (reviewed-sha == slice tip).
+# STAGE 2: slice-merge — DENY (no slice review) then ALLOW once the slice is BOTH
+# reviewed (reviewed-sha == slice tip) AND carries test evidence. Item C added the
+# impl-presence test-presence check (fail-CLOSED) alongside the slice-merge review
+# check (fail-OPEN) at this boundary, so the happy path must satisfy BOTH:
+#   - a real drive/<runId> base branch exists (so impl-presence's
+#     merge-base(slice, drive/<runId>) resolves instead of exiting 2 → fail-closed), and
+#   - the slice's work commit adds a runnable TEST path (test/*.test.sh) so impl-presence
+#     sees test evidence (exit 0) rather than denying for no-test.
 # =================================================================================
 stage_slice_merge() {
   local runid rd repo tip
   runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
   repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
   _commit "$repo" README base base >/dev/null
+  # Real drive/<runId> base branch (the featureBranch impl-presence merge-bases against).
+  _gitc "$repo" checkout -q -b "drive/$runid"
+  # Slice branch cut from drive/<runId>; its work commit adds a TEST file so impl-presence
+  # sees test evidence (Item C). The merge target (HEAD at merge time) is drive/<runId>.
   _gitc "$repo" checkout -q -b "slice/$runid/4a"
-  tip="$(_commit "$repo" feature.sh "echo hi" "slice 4a work")"
-  _gitc "$repo" checkout -q main
+  tip="$(_commit "$repo" test/feature.test.sh "echo test" "slice 4a work + test")"
+  _gitc "$repo" checkout -q "drive/$runid"
 
   local cmd="git merge --no-ff slice/$runid/4a"
 
+  # No slice review yet → DENY. impl-presence is already satisfied (drive base + test), so
+  # this DENY comes from the review-presence check naming /drive-review slice 4a.
   run_installed_gate "$INSTALLED_GATE" "$cmd" "$repo"
   if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-review slice 4a'; then
     pass "slice-merge: DENY merge with NO slice review (names /drive-review slice 4a)"
@@ -243,24 +256,33 @@ stage_slice_merge() {
     fail "slice-merge: expected DENY naming slice 4a; got rc=$GATE_RC out='$GATE_OUT'"
   fi
 
-  # Review bound to the EXACT slice tip + codex → silent ALLOW.
+  # Review bound to the EXACT slice tip + codex → BOTH checks pass (review present +
+  # test present) → silent ALLOW.
   _write_review "$rd" 4a 1 "$tip"
   _write_codex "$rd" 4a
   run_installed_gate "$INSTALLED_GATE" "$cmd" "$repo"
   if is_empty "$GATE_OUT" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$GATE_OUT"; then
-    pass "slice-merge: ALLOW (silent) once reviewed-sha == slice tip + codex present"
+    pass "slice-merge: ALLOW (silent) once reviewed-sha == slice tip + codex + test present"
   else
     fail "slice-merge: expected silent allow; got rc=$GATE_RC out='$GATE_OUT'"
   fi
 
   # Distinguish "gate allowed because checker passed" from "gate fell open" on this same
   # state: the underlying conformance must be GENUINELY clean (exit 0 AND "clean":true),
-  # not abnormal. (A fail-open ALLOW would also be rc=0+silent at the gate.)
+  # not abnormal. (A fail-open ALLOW would also be rc=0+silent at the gate.) Assert BOTH
+  # the review-presence (slice-merge:4a) AND the test-presence (impl-presence:4a) checks
+  # are genuinely clean for the allowed state.
   run_conformance_direct "$rd" "slice-merge:4a" "$repo"
   if [ "$CONF_RC" -eq 0 ] && conf_is_clean "$CONF_OUT"; then
-    pass "slice-merge: conformance GENUINELY clean (exit 0 + \"clean\":true) for the allowed state"
+    pass "slice-merge: review-presence conformance GENUINELY clean (exit 0 + \"clean\":true) for the allowed state"
   else
-    fail "slice-merge: expected genuine clean; got rc=$CONF_RC out='$CONF_OUT'"
+    fail "slice-merge: expected genuine clean (review-presence); got rc=$CONF_RC out='$CONF_OUT'"
+  fi
+  run_conformance_direct "$rd" "impl-presence:4a" "$repo"
+  if [ "$CONF_RC" -eq 0 ] && conf_is_clean "$CONF_OUT"; then
+    pass "slice-merge: impl-presence (test-presence) conformance GENUINELY clean (exit 0 + \"clean\":true) for the allowed state"
+  else
+    fail "slice-merge: expected genuine clean (impl-presence); got rc=$CONF_RC out='$CONF_OUT'"
   fi
 }
 
@@ -446,12 +468,18 @@ stage_fail_modes() {
     fail "fail-mode: expected conformance slice-merge exit 2; got rc=$CONF_RC out='$CONF_OUT'"
   fi
 
-  # slice-merge fail-OPEN: same exit-2 condition through the slice-merge gate → SILENT.
+  # slice-merge fail-CLOSED on exit 2 (Item C): the slice-merge boundary runs TWO checks —
+  # the REVIEW-presence check (slice-merge:9z, fail-OPEN, backstopped by ship) AND the
+  # TEST-presence check (impl-presence:9z, fail-CLOSED, NO ship backstop). The unresolvable
+  # slice ref makes impl-presence:9z ALSO exit 2, and because impl-presence fails CLOSED the
+  # gate now DENIES (the review check alone would have fallen open silently). This is the
+  # irreversible test-presence boundary: an abnormal git result must not silently allow a
+  # no-test merge with nothing catching it later.
   run_installed_gate "$INSTALLED_GATE" "git merge slice/$runid/9z" "$repo"
-  if is_empty "$GATE_OUT" && [ "$GATE_RC" -eq 0 ]; then
-    pass "fail-mode: slice-merge fail-OPEN (SILENT) on conformance exit 2 (runId resolves, RUN_DIR present)"
+  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q 'adds no test file'; then
+    pass "fail-mode: slice-merge fail-CLOSED (DENY) on conformance exit 2 via impl-presence (runId resolves, RUN_DIR present)"
   else
-    fail "fail-mode: slice-merge should be SILENT on exit 2; got rc=$GATE_RC out='$GATE_OUT'"
+    fail "fail-mode: slice-merge should fail-CLOSED DENY on exit 2 (impl-presence has no ship backstop); got rc=$GATE_RC out='$GATE_OUT'"
   fi
 }
 

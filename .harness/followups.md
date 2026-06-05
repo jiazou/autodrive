@@ -91,6 +91,57 @@ F6 (P3 harden phase1, deferred) Drifted `module.py:NN` source-line citations in 
 - [P3, slice 3.1 -> phase-3 harden] README ## Testing `tests/` coverage cell understates scope ("Mission Control + the hooks"); tests/ also has contract (test_drive_command_refs, test_cli_flag_doc_refs) + installer tests. Broaden the cell.
 - [P2, Phase-1 test robustness] tests/hooks/test_drive_stop_hook.py multi-run masking regression tests (the waiting/disabled/nondict-before-active cases) rely on the DRIVE_STOP_HOOK_PATHS seam to order the hazard first; if the seam ever stops taking effect they false-pass (run-mine/run-active sort before run-nondict/waiting/disabled naturally). Rename the fixture dirs so the hazard sorts FIRST even without the seam (or add explicit seam-activation assertion), so the tests keep proving the Phase-1 masking fixes.
 
+## Run drive-followups-20260605-085318 — 2026-06-05
+(promoted from $RUN_DIR/followups.md)
+
+# Followups — drive-followups-20260605-085318
+
+## Out-of-scope discoveries (design stage, 2026-06-05)
+
+- [B / F6 remainder] The `module.py:NN` source-line citations in
+  `tests/mc/test_weekly.py` (weekly.py:26/41-48), `tests/mc/test_session_summary.py`
+  (session_summary.py:62-64/72), and `tests/contracts/test_cli_flag_doc_refs.py`
+  (harvest.py:309/13) are the SAME rotting-citation class as F6 but are out of this batch's
+  scope (task §B + F6 name only test_done.py / test_bucket.py). Fix by citing the function
+  name when those files are next touched.
+
+- [C residual, → Component D] Item C's test-presence gate is omission-proof, not
+  forgery-proof: a trivial/empty test file (`def test_noop(): pass`) passes the gate. Quality
+  (does the test exercise the slice's code) belongs to the harden phase's "add missing tests"
+  lens and to Component D (out-of-band forgery-proof reviewer). Documented as a known residual.
+
+- [C residual] `$GIT_DIR` / `$GIT_WORK_TREE` env-var repo targeting is NOT modeled by the
+  gate (Item A scopes to the attacker-influenced command STRING, not the gate's own env;
+  /drive never sets them). Known residual; note in docs/drive-enforcement.md.
+
+## Run drive-followups-20260605-085318 — harden targets
+- [P1 harden] test/fixtures/mkfixture.sh mk_linked_worktree() is dead (AC-A10 tests build the
+  gitfile worktree inline). Drop it or wire AC-A10 through it. (Claude slice-1.1 review MINOR.)
+- [DONE in r3] bin/drive-merge-gate.sh + docs/drive-enforcement.md comment inaccurately
+  claimed a trailing bare backslash makes the shell reject the command; only unterminated
+  QUOTES do. FIXED (item d): scoped the claim to quotes; trailing backslash now finalizes
+  inert (matches bash `git push \`). (Claude slice-1.1 r2 review MINOR → resolved r3.)
+- [P3, → Component D] sudo/env-WRAPPING of the binary is not recognized: `sudo git $'push'`
+  / `env git push` have START binary `sudo`/`env` (not git), so the gate (incl. the new
+  fail-closed catch-all) is inert. Same forgery/evasion class as the documented
+  $GIT_DIR/symlink residuals — /drive never wraps its git calls; an out-of-band reviewer
+  (Component D) is the real defense. Noted while implementing r3 fail-closed. (slice-1.1 r3.)
+- [P3, → Component D] single-quoted `'~/repo'` is still tilde-resolved by git_target_repo's
+  expand_tilde to $HOME/repo, but bash does NOT expand `~` inside single quotes (it's the
+  literal dir `~/repo`). Marginal mis-resolution, non-exploitable (literal `~/repo` ~never
+  exists → git errors → nothing ships). Threading quote-context into git_target_repo's tilde
+  resolution would close it; deferred as gold-plating. (slice-1.1 r3 codex F4 residual.)
+- [P3 harden] drive-merge-gate.sh:90 + docs/drive-enforcement.md:194-195 overclaim brace `{..}`
+  RANGE detection (lexer flags only comma-in-brace). Not a bypass. Correct to comma-form-only, or
+  add `.`-in-brace detection. (Claude slice-1.1 r3 MINOR.)
+- [P1 harden Phase-1] drive-merge-gate.sh expansion taint scan: handle the ATTACHED short-option
+  form `-b<val>`/`-B<val>`/`-c<val>` (checkout/switch/worktree add) — git accepts `-bslice/x`
+  attached; the scan only checks `-b <sep>`/`-b=<eq>`. Taint-check the embedded value. Forgery-
+  class (/drive uses separate literal form) but cheap + concrete. (codex slice-1.1 r4.)
+- [HIGH followup — own run] gh/glab ship-detection keys runId off cwd HEAD, not an explicit
+  `gh pr create --head <branch>` / `glab mr create --source-branch`. Pre-existing; push-gate
+  backstops it (branch must be pushed first). Audit the gh/glab ship path for --head/--source-
+  branch targeting in a dedicated run. (codex slice-1.1 r4.)
 ## Next-level gate review (2026-06-05) — Tier-2 gate hardening, DEFERRED
 
 Found during the dual-voice (Claude + codex-adversarial) next-level review of the whole

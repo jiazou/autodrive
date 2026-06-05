@@ -280,3 +280,433 @@ D12 (Mechanical, incident) RUN_DIR + branches under the old run-id were deleted 
 - D12 (harden scope-widen): Phase-1 harden edits bin/drive-stop-hook.py (just OUTSIDE the phase diff) — it is the root cause of a flagged P1: `st.get` outside the per-file try lets a non-dict foreign state.json abort the scan and fail-OPEN past an owned not-done run (should BLOCK). Slice 1.2's testing work surfaced it; deferring would knowingly ship a fail-open bug in a security-relevant Stop hook. Fix = skip non-dict state.json in the per-file loop (same resilience as unreadable/unparseable) + regression test. Classification: Mechanical. Surface at Gate B.
 
 - D13 (harden round 2, within D12's stop-hook scope): fix a same-session multi-run masking fail-open in bin/drive-stop-hook.py (loop breaks on first not-done run before checking blockability, so a waiting/disabled run masks a later active one). codex-only P1, verified against source. Move blockability checks into the scan loop; allow only if no blockable owned run. Also harden the prior regression test to be strictly red/green via the DRIVE_STOP_HOOK_PATHS scan-order env seam (the hook runs as a subprocess, so the child glob can not be monkeypatched). Classification: Mechanical (real fail-open correctness bug, on-thesis). Surface at Gate B.
+
+## Run drive-followups-20260605-085318 (prioritize + fix top follow-ups) — 2026-06-05
+(promoted from $RUN_DIR/decisions.md)
+
+# Decisions — drive-followups (prioritize + fix top follow-ups)
+
+- D0 [User] Scope = batch of 3 (user-composed at Stage 0 multi-select): (A) gate matcher
+  composed git-path-option hardening [#1], (B) doc/comment drift sweep [#3-7,F6], (C) extend
+  git-truth enforcement to IMPLEMENT-stage [#2]. Component D (forgery-proof reviewer) DEFERRED
+  to its own run (large/architectural). Already-resolved followups (stop-hook seam #8/#9, CI
+  wiring F4, CONTRIBUTING/Testing) excluded after a verification sweep vs the current tree.
+
+## Design stage (2026-06-05)
+
+- B0 [Mechanical] Three README §B items (L95 launchd row, L31 `--unbind`, ## Testing
+  `tests/` coverage cell) were ALREADY fixed by run #28 (commit 229d6eb) — verified against
+  the tree. EXCLUDED from the sweep (no-op churn = risk, not value). Only the genuinely-stale
+  items remain in B: B1 tests/_helpers.py seed_mc_home docstring ("never mkdir it (followup
+  F2)" stale after mc-hook.py:38 os.makedirs), B2 harvest/SKILL.md:67-73 `--prep`-as-flag
+  heading, B3 F6 module.py:NN citations in test_done.py + test_bucket.py.
+- A1 [Taste] Item A models only git's effective-cwd + gitdir/worktree override for bare-ref
+  lookups, NOT a full git CLI emulation (no $GIT_DIR env, no gitdir-vs-worktree divergence) —
+  conformance's ref ops resolve identically from <repo> or <repo>/.git. Minimal correct
+  compose suffices. Surfaced at Gate A.
+- A2 [Mechanical] Final $CWD anchoring stays in the existing caller case (drive-merge-gate.sh
+  :337-342); git_target_repo composes only among git options, echoes abs-or-$CWD-relative. DRY.
+- A3 [Taste] Echo worktree-preferred override (worktree→gitdir→-C base) to preserve the
+  existing test-locked --git-dir/--work-tree/-C all-target-<repo> equivalence while composing
+  the -C chain correctly per git's left-to-right (absolute-resets) rule.
+- C1 [Taste] IMPLEMENT-stage invariant = test-presence (slice diff adds/modifies a test path)
+  + explicit audited impl-waiver-<id> opt-out. Presence not coverage → cheap, omission-proof,
+  git-truth. Coverage = harden/Component-D. Surfaced at Gate A.
+- C2 [Mechanical] base = git merge-base slice/<runId>/<id> drive/<runId> (pure git), NOT
+  state.json.phaseBaseSha — preserves git-truth-not-state-trust (D1).
+- C3 [Mechanical] Fire impl-presence at the slice-merge boundary in the existing matcher,
+  mid-build fail-OPEN, alongside the review check. One boundary, two checks; ship gate backstops.
+
+## Round-1 design-review resolutions (rev 2 — codex found P1s Claude missed)
+- DR1 [codex BLOCKING] Item A `--work-tree` excluded from repo-IDENTITY (was "worktree-preferred",
+  a silent-allow bypass). Verified empirically: `git --work-tree=X rev-parse HEAD` keeps the
+  cwd/gitdir's branch; --work-tree never retargets HEAD. Identity = --git-dir else composed -C
+  else $CWD. The two test_ship_work_tree_*_reviewed_silent tests (which locked the bypass) flip to DENY.
+- DR2 [codex MINOR] `-C=<p>` dropped — not real git syntax (git rejects it). -C is separate-arg only.
+- DR3 [codex BLOCKING] Item C fail-CLOSED (rc1 AND rc2 -> DENY), not fail-open. Ship mode never
+  re-derives test presence, so there is NO backstop -> the slice-merge boundary is irreversible for
+  test-presence and must fail closed (OPERATING canonical rule). Documented posture asymmetry vs the
+  fail-open review sibling (which ship DOES backstop).
+- DR4 [codex MAJOR] Item C waiver = `Drive-Test-Waiver:` commit trailer (SHA-bound, in slice history),
+  NOT a coordinator-writable `impl-waiver-<id>` RUN_DIR file. Same omission-proof bar as the review gates.
+- DR5 [codex MAJOR] Item C tests use fixtures with a REAL `drive/<runId>` base + explicit
+  clean/deny/rc-2/predicate cases (existing slice fixtures lack drive/<runId> -> a naive test would pass
+  while the mode never runs). mkfixture.sh ownership -> slice 3.1.
+- DR6 [codex MINOR + Claude MINOR] TEST-PATH predicate narrowed to runnable-test basenames (exclude
+  _helpers.py/conftest.py/fixtures/.pyc); merge-base via git_or_die so rc>=1 -> exit 2 (no empty base).
+- Both former Open Questions resolved by the above (merge-base safe under fail-closed; trailer = waiver).
+
+## Round-2 design-review resolutions (rev 3 — codex found a new BLOCKING + MAJOR)
+- DR7 [codex BLOCKING R2] Item A gitfile case: a --git-dir pointing at a LINKED-WORKTREE
+  .git FILE breaks the directory-based callers (git -C / cd fail on a file) -> review gate
+  fail-opens. Fix: after $CWD-anchoring, if REPO is a regular file (gitfile), reduce to its
+  parent dir (dirname). Verified on the real worktree: dirname(<wt>/.git)=<wt>; git -C <wt>
+  rev-parse reads the same branch the --git-dir command targets. + a linked-worktree fixture
+  (mkfixture.sh -> slice 1.1). This is in-scope hardening: item A's mandate is wrong-target
+  closure, and a gitfile --git-dir is the same adversarial-input axis as composed -C.
+- DR8 [codex MAJOR R2] Item C waiver must be a REAL git trailer (git log
+  --format='%(trailers:key=Drive-Test-Waiver...)' / interpret-trailers --parse), NOT a %B
+  body substring (which falsely waives on quoted/example text). + a negative regression test.
+- DR9 [codex MINOR R2] TEST-PATH predicate anchored to the repo's real runner roots
+  (test/*.test.sh + tests/**/test_*.py), not bare basenames anywhere (test_root.py /
+  docs/*.test.md must NOT count). Supersedes DR6's basename framing.
+- DR10 [Claude MINOR R2] Split AC-A9 (was conflated): A9 = -C no =form; A9b = --work-tree
+  consumed-not-identity; added AC-A11 (abs-then-rel compose -C /abs -C rel -> /abs/rel).
+
+## Round-3 design-review resolution (rev 4 — converged on in-scope work)
+- DR11 [User-Challenge, ratified at Stage-1 AUQ 2026-06-05] codex R3 BLOCKING = symlinked/
+  non-canonical-gitfile --git-dir bypass of Item A's dirname reduction. RESOLUTION (user chose
+  "tier per ratified threat model"): keep the canonical-worktree gitfile fix (closes the
+  realistic /drive case; strict improvement, no regression — the symlink case was already
+  bypassed pre-change via cd-fail fail-open); document the symlinked/non-canonical-gitfile +
+  -f-follows-symlink TOCTOU as a FORGERY-CLASS residual in docs/drive-enforcement.md next to
+  the $GIT_DIR residual (-> Component D). Consistent with the ratified omission-proof-not-
+  forgery-proof threat model (D7). Item A ships compose + --work-tree + canonical-gitfile
+  hardening. Surfaced + ratified before convergence; re-surfaced at Gate A.
+- DR12 [codex MINOR+NIT R3] Decision C4 stale `*.test.*` corrected to the anchored predicate;
+  waiver detection requires a NON-WHITESPACE trailer value (range format emits blank lines).
+- DR0b [Taste, per prior D6/D8 precedent] Folded autoplan's completeness/scope lens INTO the
+  dual-voice design review rather than running the full gstack autoplan CEO/Design/Eng/DX
+  gauntlet — this batch is internal tooling (gate parser + conformance + doc fixes) with no
+  product/UX/architecture tradeoffs autoplan adds value on; the load-bearing check is the
+  adversarial dual-voice review (which found 3 real bypass classes). Surfaced at Gate A.
+
+## Design-review convergence summary
+- Items B (doc drift) + C (impl-presence): CONVERGED both voices, all 3 rounds (no in-scope P1).
+- Item A: CONVERGED on the IN-SCOPE hardening (compose, --work-tree exclusion, canonical gitfile);
+  both voices agree those are fixed. The one remaining codex P1 (symlink gitfile) is the
+  user-ratified out-of-scope forgery residual (DR11). 3 design rounds; codex found a real
+  bypass each of the first 3 — the adversarial voice was load-bearing throughout.
+
+## Slice 1.1 (Item A) implement-stage decisions
+- **[Mechanical]** Added `mk_linked_worktree` to `test/fixtures/mkfixture.sh` per the
+  slice's file-ownership/AC mandate, but the merge-gate test is self-contained (it does
+  NOT source mkfixture.sh — its RUN_DIR must live under `$HARNESS_RUNS` via `mk_rundir`),
+  so AC-A10's gitfile fixtures are built inline in the test with its own helpers + a direct
+  `git worktree add`. mkfixture's helper stays available for the conformance suite. DRY is
+  honored within each suite's own helper namespace; duplicating the 2-line worktree-add
+  inline avoids cross-sourcing two incompatible RUN_DIR conventions. (P5 explicit-over-clever.)
+- **[Mechanical]** AC-A10(b)/AC-A10 push fixtures build the drive repo inline and check the
+  MAIN repo out on `main` before `git worktree add … drive/<runId>`, because git refuses a
+  linked worktree on a branch already checked out in the main repo (the stock `mk_ship_repo`
+  leaves HEAD on drive/<runId>). Verified the resulting `.git` is a gitfile via `[ -f ]`.
+- **[Mechanical]** Added a `$GIT_DIR`/`$GIT_WORK_TREE` env-residual bullet to
+  docs/drive-enforcement.md alongside the new symlinked-gitfile residual note — the design's
+  "Out of scope" lists both as forgery-class residuals to document there; the doc previously
+  had neither. Completeness + DRY (both residuals sit together).
+- Verified non-vacuousness: disabling the `[ -f "$REPO" ] && REPO=$(dirname …)` reduction
+  makes AC-A10(a)+(b) FAIL (fail-open/inert), proving the gitfile bypass is real and closed.
+
+## Slice 1.1 review round 1 (codex BLOCKING — fix, not tier)
+- DR13 [Mechanical] codex slice-1.1 BLOCKING = raw `set -- $CMD` tokenization mis-handles
+  quoted/empty args -> wrong-target bypass on LEGITIMATE input (spaces in paths, `-C ""`).
+  Decision: FIX (not tier) — unlike the symlink residual this breaks legitimate commands (not
+  a forgery construct), the root-cause fix is a proper shell-accurate tokenizer (structural >
+  brittle word-split), and it's within slice 1.1's owned drive-merge-gate.sh. Re-dispatch
+  implement (reviewCount 0->1, cap 8). Surface at Gate B.
+
+## Slice 1.1 round 2 — shell-accurate tokenizer (BLOCKING fix)
+- **Root-cause fix:** replaced raw `set -f; set -- $CMD` whitespace word-splitting in all
+  four parsers (`subcommand_of`, `action_after`, `git_target_repo`, `push_ship_runid`)
+  with ONE shared `tokenize_cmd` — a bash-3.2 char state machine (default/single/double/
+  escape/dquote_escape). Splits on unquoted whitespace; treats `'…'`/`"…"` as literal
+  (quotes removed, no `$var` expansion by design); handles backslash escapes; PRESERVES
+  empty args from `""`/`''`. Reuse via `set_argv_from_cmd` → global `_TOKENS` → each fn
+  `set -- "${_TOKENS[@]}"`.
+- **set -u empty-array guard:** bash 3.2 errors on `"${_TOKENS[@]}"` when the array is
+  empty under `set -u`. `set_argv_from_cmd` returns rc 1 on zero tokens (whitespace-only)
+  OR unparseable, and every caller bails before the expansion on rc 1. (Mechanical.)
+- **Fail-safe for unterminated quote:** return rc 1 / empty `_TOKENS` → callers treat as
+  "no recognizable command" → gate goes INERT. Rationale: the real shell rejects an
+  unterminated-quote command, so git never runs — going inert is safe and avoids emitting
+  a mis-split argv that desyncs the gate from git. (Taste; explicit + tested.)
+- **dquote_escape semantics:** inside `"…"`, backslash only escapes `" \ $ \``; any other
+  backslash is preserved literally (close to bash). Adequate for the path/flag tokens the
+  gate parses. (Mechanical.)
+- **MINOR — dead `mk_linked_worktree`:** REMOVED from mkfixture.sh (not wired). The
+  merge-gate test is self-contained (own `_gitc`/`_init_repo`, does NOT source mkfixture
+  per its header), and the AC-A10 tests build worktrees inline; sourcing mkfixture just to
+  reuse one helper would mix two harness conventions. Removal is the cleaner DRY outcome.
+- **Tests:** +7 non-vacuous regression cases (empty `-C`, spaced `-C` path, quoted
+  `--git-dir` = and space forms, quoted `-C` slice-merge, quoted `"push"` subcommand,
+  `VAR="x y"` env prefix, unterminated-quote inert). Proven to FAIL against the pre-fix
+  word-split (7/7) and PASS post-fix. Suite: 66/0 merge-gate, 32/0 conformance.
+
+## Slice 1.1 review round 2 (codex 2 BLOCKING — structural fail-closed fix)
+- DR14 [Taste, extends ratified DR11/D7] codex r2 found tokenize_cmd mis-handles shell-EXPANSION
+  forms (tilde, ANSI-C $'...', line-continuation) the literal-string lexer can't reproduce — the
+  unbounded tail of reimplementing bash lexing. Resolution (codex's own minimal-fix): fix the
+  cheap deterministic ones (tilde->$HOME, strip \<newline>); for the rest ($'...', $var, $(...),
+  backtick, ~user) that need unavailable context, FAIL-CLOSED (deny) for would-be-managed
+  commands instead of silent bypass. This converts the whole class from bypass->deny (omission-
+  safe) and ends the whack-a-mole, unifying with the pre-existing accepted $var-ref limitation
+  (the gate sees the PRE-expansion string; full shell-expansion resolution is Component D). NOT
+  reimplementing bash. reviewCount 1->2, cap 8. Surface prominently at Gate B.
+
+## Slice 1.1 IMPLEMENT round 3 (DR14 executed — structural fail-closed)
+- **(a) Line-continuation:** elide `\`+newline state-aware in tokenize_cmd (escape +
+  dquote_escape states emit nothing for newline); NOT in single-quote state (literal, per
+  POSIX). Bare `\` no longer pre-marks `started` (so a continuation-only token doesn't emit
+  an empty arg, matching `git push \`↵ → `git push`). Verified empirically vs bash.
+- **(b) Tilde:** new `expand_tilde` resolves leading `~/` and bare `~` → `$HOME`, applied to
+  `-C`/`--git-dir` values in `git_target_repo` (and `--git-dir=`). `~user` NOT expanded
+  (passwd) → caught fail-closed.
+- **(c) Fail-closed catch-all `managed_git_expansion_deny`** (placed right after
+  git_sub/gh_sub/glab_sub, BEFORE repo/ref resolution → unconditional emit_deny, not
+  conformance-gated). Decision-critical tokens scanned = subcommand + `-C`/`--git-dir`/
+  `--work-tree` values + managed-verb positional refs. Would-be-managed = managed verb OR
+  unresolved subcommand OR drive/slice/phaseInt ref referenced. `_has_unresolved_expansion`
+  flags `$`/backtick/`~user`. NON-git + non-managed-verb (`echo $X`, `ls $HOME`,
+  `git commit -m "$msg"`, `git -C $x status`) stay inert — no over-deny.
+- **(d) MINOR comment fix:** scoped the "shell rejects" claim to UNTERMINATED QUOTES only
+  (bin:67 region + docs Limitations); trailing bare backslash now finalizes like default
+  state (state=default|escape) → inert, NOT fail-closed (matches bash `git push \`).
+- **(e) Docs:** rewrote the tokenization Limitations bullet — the boundary principle
+  (resolve literal+line-cont+`~/`; fail-closed on unresolvable `$`/`(...)`/backtick/`$'...'`/
+  `~user` for managed ops; full expansion → Component D).
+- **Tests:** +15 non-vacuous cases (tilde target/bare/nondrive-inert; line-cont unquoted/
+  split-flag/in-dquote; trailing-bs inert; fail-closed ANSI-C sub / tainted ref+drive /
+  tainted -C / ~user / backtick; no-over-deny echo/ls/non-managed-git). Built a $HOME-rooted
+  fixture (HOME_FIXROOT) for the `~/` tests; cleanup() extended to sweep it.
+- **Suites:** merge-gate 81/0 (was 66), conformance 32/0. bash 3.2-safe throughout.
+
+## Slice 1.1 IMPLEMENT round 3 — codex adversarial pass (4 findings, all fixed)
+Ran codex adversarial review of the r3 diff; it found 4 real issues (2 High bypass, 2 over-deny):
+- **F1 (High bypass): brace expansion** `git {push,}`/`{merge,}` expand deterministically →
+  managed verb smuggled past the literal lexer. FIX: lexer now flags an unquoted
+  brace-expansion `{…,…}` as expansion-active (cur_exp on `,` inside an open unquoted brace);
+  the fail-closed catch-all denies it. Quoted `"{push,}"` stays literal → inert.
+- **F2 (High bypass I INTRODUCED): line-continuation desync.** Eliding `\`<newline> in the
+  tokenizer while the ref greps (slice_tokens/phaseint_token/drive_runid_from_command) still
+  read RAW $CMD → a ref split across a continuation was missed → inert on a real managed merge.
+  FIX: build CMD_LEX (lexed tokens, one per line) and feed ALL ref-extraction from it.
+- **F3 (over-deny): read-only verb + managed ref.** `ref_seen` made any slice-ref token
+  would-be-managed, so `git -C "$HOME/x" show slice/R/4a` wrongly denied. FIX: DROPPED ref_seen
+  as a managed-ness trigger — would-be-managed = managed verb OR expansion-active subcommand
+  ONLY (the gate only gates push/merge/branch/worktree, all literal verbs; an unresolved verb
+  is still caught). No security loss; read-only verbs no longer over-deny.
+- **F4 (over-deny): single-quoted literals.** Strip-then-rescan saw the `$` in `'slice/$run/4a'`
+  and the `~` in `'~root/repo'` as expansions → false deny. FIX: lexer tracks expansion-active
+  PER TOKEN in expansion-active CONTEXTS only (not inside single quotes), via the parallel
+  _TOK_EXP array; catch-all + decision-token checks now consult _TOK_EXP (quote-aware) instead
+  of re-scanning the stripped token.
+- **Refactor:** managed_git_expansion_deny is now an index-walk over _TOKENS/_TOK_EXP (bash
+  3.2-safe). _has_unresolved_expansion removed (replaced by the lexer's per-token flag).
+- **Residual (→ Component D, documented):** single-quoted `'~/repo'` is still tilde-resolved
+  (marginal, non-exploitable — literal `~/repo` dir ~never exists → git errors → nothing ships).
+- **Tests:** +7 codex-finding regression guards (brace expand deny / quoted-brace inert /
+  line-cont ref-split merge+phase deny / readonly-verb inert / single-quoted $-and-~user inert).
+- **Suites:** merge-gate 88/0, conformance 32/0. All bash 3.2-safe.
+
+## Slice 1.1 review round 3 (codex BLOCKING+MAJOR — make the fail-closed net PRECISE)
+- DR15 [Mechanical] The round-3 fail-closed net was too broad on both ends: (a) it skipped
+  gh/glab managed ship verbs (BLOCKING bypass), and (b) it scanned ALL post-subcommand
+  positionals, false-denying incidental $-paths/values — critically /drive's OWN `git worktree
+  add $RUN_DIR/wt/<id> -b slice/...`. Round-4 fix: taint-check expansion ONLY on the decision-
+  critical tokens the gate already extracts (the verb/subcommand + the specific ref/refspec for
+  merge/push/worktree-add + gh/glab pr|mr+create action) — never all positionals. This keeps the
+  net omission-safe (verb/ref obfuscation -> deny) WITHOUT breaking /drive's literal-ref-but-
+  $-path commands. reviewCount 2->3, cap 8.
+
+## Slice 1.1 round-4 (IMPLEMENT) — fail-closed expansion net: gh/glab extension + precise taint scan
+
+- **F1 (BLOCKING) gh/glab ship verbs bypassed the net.** Round-3 `managed_git_expansion_deny`
+  bailed unless START binary == `git`, so `gh {pr,} create` / `gh pr {create,}` / `glab {mr,}
+  create` (which expand to managed ship commands) stayed INERT. FIX: split the net into two
+  binary branches via a `case "$bin"` dispatcher — `managed_git_expansion_deny_git` (unchanged
+  git logic, refactored) + new `managed_cli_expansion_deny` for gh/glab. The gh/glab branch
+  walks to the subcommand (pr/mr) and action (create) the same way `subcommand_of`/`action_after`
+  do, and DENIES iff either token is `_TOK_EXP`-tainted AND the pair could be the managed
+  `pr/mr create` shape (literal mismatches like `gh pr view --json $x` stay inert → no over-deny).
+- **F2 (MAJOR over-deny — would wedge /drive) blanket positional scan.** Round-3 taint-checked
+  EVERY non-flag positional after the subcommand as a ref, so `git worktree add $RUN_DIR/wt/<id>
+  -b slice/.. <sha>` (/drive's OWN command) and `git merge -s $strategy slice/..` were wrongly
+  DENIED. FIX: replaced the blanket scan with a PRECISE per-verb operand scan that taint-checks
+  ONLY the real ref operand(s): push→refspecs after the remote; merge→ref positionals (skip
+  -s/-X/--strategy*/-m/-F values); branch→name+start-point (skip -u/--set-upstream-to/-t);
+  worktree add→the -b/-B branch VALUE only (path positional + start-point sha are NOT refs).
+  An expansion-active (unknown-shape) subcommand still falls back to a conservative full scan.
+- **Tests:** +7 (95 total, was 88). Vacuity proven: the 2 over-deny + 3 gh/glab tests FAIL
+  against round-3 bin (over-deny → wrong shell-expansion DENY; gh/glab → empty/inert bypass).
+  drive-conformance (32) + all other suites green.
+- **Doc:** updated docs/drive-enforcement.md (expansion-net section) to describe the two binary
+  branches + the precise per-verb ref-operand extraction, replacing the stale "every positional
+  ref/refspec of a managed verb" wording. No deviation from the prompt scope.
+
+## Slice 1.1 CONVERGED (round 4) — DR16
+- DR16 [Taste, extends DR11/D7] Converge slice 1.1 after 4 review rounds. Claude r4 CONVERGED
+  clean (zero findings); codex r4 died exit-144 (flaky infra) before a verdict but surfaced 2
+  residuals, both ROUTED: (a) attached short-option `-b<val>` form -> Phase-1 HARDEN (cheap,
+  concrete, forgery-class /drive-never-emits hardening); (b) gh `--head` ship-detection ->
+  HIGH-sev followup (pre-existing, push-gate-backstopped, out-of-matcher-scope). Continuing the
+  slice loop on the unbounded adversarial-parser tail is gold-plating a surface the ratified
+  threat model excludes; the high-value hardening (--work-tree bypass, compose, gitfile, quoting,
+  fail-closed net, gh/glab, precise taint) is shipped + dual-verified. Surface at Gate B.
+
+## Phase 1 HARDENED — attached short-option + doc accuracy
+- DR-H1 [Mechanical] Attached short-option `-b<val>`/`-B<val>` (git accepts `-bslice/x` as ONE
+  token, verified). Fixed BOTH dimensions: (1) expansion taint — `managed_git_expansion_deny_git`
+  worktree arm now taint-checks the attached token's own `_TOK_EXP` flag (`-b?*|-B?*`), so
+  `git worktree add /p -b$branch` DENIES like the separate `-b $branch`; (2) literal-attached
+  plan-gate detection — CMD_LEX now splits an attached `-b`/`-B` off its value onto a separate
+  line so the slice ref grep's name-char boundary no longer misses `-bslice/<runId>/<id>` (was a
+  literal-attached plan-gate/slice bypass). 4 new tests (tainted -b/-B DENY; literal-attached
+  plan-gate DENY + reviewed-silent non-vacuous pair).
+- DR-H2 [Mechanical] SCOPED to `-b`/`-B` only (NOT `-c`/`-C`): git's GLOBAL `-C`/`-c` REJECT the
+  attached form (`-C/path` → "unknown option", verified), and attached `-c<branch>`/`-C<branch>`
+  belong to `git checkout`/`git switch` — which are NOT managed verbs in this gate. So there is no
+  managed-verb attached `-c`/`-C` ref to taint. The followup's mention of `-c<val>` is therefore
+  out of the matcher's managed surface; no action needed beyond the `-b`/`-B` worktree fix.
+- DR-H3 [Mechanical] Doc accuracy: corrected the brace-RANGE overclaim (gate:~90 + docs:194-195)
+  to COMMA-form-only — the lexer flags only `,`-in-brace; a bash `{a..z}`/`{1..9}` range expands
+  single chars/ints so it cannot build a managed verb/ref (no range-form bypass). Added the
+  rationale comment at the `,`-in-brace lexer line. The trailing-backslash claim (target #2) was
+  already correct in tree (gate 71-79 + docs 183-191) — no edit needed.
+- HARDENED: full bash suite green (merge-gate 99/0, +4 new; conformance 33, hook-lib 30, e2e 24,
+  install 49, stop-guard 10), pytest 263/0, all under bash 3.2.
+
+## Phase 1 harden round 1 (codex harden-regress: revert a net-negative forgery-class fix) — DR17
+- DR17 [Taste, extends DR11/D16] The harden's attached-`-b` closure (7959eaf) used a GLOBAL
+  CMD_LEX split that codex harden-regress showed introduced a real wrong-review BYPASS
+  (`git merge -m -bphaseInt/<id>/1 phaseInt/<id>/2`) + an over-deny (`worktree lock --reason
+  -b$note`). The gap it closed is forgery-class (/drive uses the separate literal form). A
+  forgery-class fix that introduces a real bypass is net-negative -> REVERT the attached-form
+  code to converged 71eac86; KEEP the safe doc-accuracy fixes (brace-range comma-form-only +
+  attached-form residual note). Attached-form -> documented out-of-scope residual (DR11 tier).
+  (Pattern: don't gold-plate a forgery-class surface, esp. when the fix regresses. Claude
+  harden-regress approved it; codex caught the over-broad split — adversarial voice load-bearing.)
+
+## Phase 2 doc-drift slices CONVERGED — DR19
+- DR19 [Mechanical] Phase-2 slices 2.1/2.2/2.3 are PURE doc/comment edits (helpers docstring,
+  harvest SKILL --prep retitle, F6 line->function citations). Claude review verified all 3
+  accurate vs code + docs-only (CONVERGED). codex infra was DOWN (2 consecutive network
+  disconnects, retried once) -> CODEX_UNAVAILABLE for this round (documented degradation; zero
+  P1; justified by zero logic/security surface). Will insist codex returns for the Phase-3
+  impl-presence code. Surface at Gate B.
+
+- 3.1 [Mechanical] impl-presence mode: waiver detection uses `git log base..tip
+  --format='%(trailers:key=Drive-Test-Waiver,valueonly,separator=%x00)'`, then strips NULs +
+  all whitespace and treats any leftover char as a real non-empty trailer value. This is
+  REAL trailer parsing (empirically: a mid-body prose mention of the string yields no value),
+  not a %B body substring — closes the AC-C3b forgery-by-prose path. NUL separator avoids a
+  newline-in-value ambiguity across multiple commits.
+- 3.1 [Mechanical] base = `git_or_die merge-base slice/<runId>/<id> drive/<runId>`; an empty
+  merge-base (disjoint, rc=1) or unresolvable ref (rc=128) both exit 2 via git_or_die — never
+  a silent empty base feeding a malformed `<empty>..tip` diff (fail-closed at the hook).
+- 3.1 [Mechanical] is_test_path predicate anchored to runner roots, bash-3.2 `case`-globs only
+  (no regex): `test/*.test.sh` rejects nested `test/sub/x.test.sh`; under `tests/` requires
+  basename `test_*.py`/`*_test.py` and excludes `_helpers.py`/`conftest.py`/`*.pyc`/any
+  `fixtures/` or `__pycache__/` segment. Verified across 13 edge paths.
+
+## Codex infra outage during Item C — DR20
+- DR20 [User-Challenge, ratified at Stage-3 AUQ 2026-06-05] codex (the load-bearing adversarial
+  voice) went into a sustained infra outage during Item C (the security-relevant impl-presence
+  gate). User chose "proceed + queue codex re-review": continue Item C on the adversarially-
+  oriented Claude voice (single-voice, CODEX_UNAVAILABLE this round), but DO NOT ship Item C
+  without a codex adversarial pass — retry codex at each review point; if still down at ship,
+  surface PROMINENTLY at Gate B as a REQUIRED codex re-review of the Item C diff before merge.
+  state.codexReReviewC=true tracks the obligation. (Phase 1/2 were full dual-voice / pure-doc;
+  only Item C's codex coverage is deferred.)
+
+## Slice 3.2 (Item C) — gate hook + matcher wiring (fail-CLOSED)
+- 3.2 [Mechanical] No separate fail-closed VARIANT of run_conformance needed. run_conformance
+  already normalizes the raw exit to 0|1|9, and the fail-closed-vs-fail-open posture lives at the
+  CALL SITE (exactly like plan/ship use `rc -ne 0` and slice/phase-review use `rc -eq 1`). The
+  impl-presence check therefore reuses run_conformance and tests `rc -ne 0 → DENY` (covers rc 1
+  violation AND rc 9 abnormal = fail-CLOSED), placed right after the existing fail-OPEN
+  `slice-merge:<id>` review check in the same per-slice loop. One boundary, two checks, deliberate
+  posture asymmetry (Decision C3 / DR3). The review check's posture is untouched.
+- 3.2 [Mechanical] THREE pre-existing slice-merge tests had to be updated because the boundary now
+  runs a SECOND (fail-closed) check: (a) test_slicemerge_allow_silent now uses a complete fixture
+  (real drive/<runId> base + a test-carrying slice) via a new mk_impl_slice_repo helper, since
+  "silent" now requires BOTH checks to pass; (b)+(c) test_rcnorm_brokenconf_slice_silent and
+  test_cdfail_slice_silent are RENAMED to *_failclosed_deny — a broken-checker/cd-fail (rc 9) is
+  fail-OPEN for the review check but fail-CLOSED for impl-presence, so the boundary now DENYs via
+  impl-presence (the correct new behavior per Decision C3). The unreviewed slice-merge DENY tests
+  are unaffected (the review check denies first). Vacuity proven: flipping impl-presence to
+  fail-open makes 8 merge-gate tests FAIL.
+- 3.2 [Mechanical] mk_impl_slice_repo builds fixtures inline in the test (mkfixture.sh is NOT owned
+  by 3.2) with content knobs test|notest|waiver|waiver-body. The waiver-body negative fixture puts
+  the `Drive-Test-Waiver:` line in the MIDDLE of the body with prose AFTER it so git does NOT parse
+  it as a trailer (guards the substring trap, AC-C3b's sibling at the gate layer).
+- Suites: merge-gate 102/0 (+5 new Item-C cases, 3 updated), conformance 46/0. bash 3.2-safe.
+
+## Phase 3 integration: e2e test plan-amendment — DR21
+- DR21 [Mechanical, plan-amendment] The Phase-3 integration suite is RED: drive-enforcement-e2e.test.sh
+  2 fails — its slice-merge scenarios encode PRE-impl-presence behavior (a reviewed-but-test-less slice
+  was silent-allow; slice-merge on exit-2 was fail-open-silent). Item C INTENTIONALLY changes both
+  (no-test -> DENY; abnormal -> fail-CLOSED DENY, Decision C3). The e2e fixtures also lack a
+  drive/<runId> base branch, so impl-presence merge-base exits 2. The e2e test was owned by NO slice
+  (plan gap — it should have been in slice 3.2's surface since 3.2 changed the gate). Amendment:
+  extend the Phase-3 surface to include test/drive-enforcement-e2e.test.sh; update the 2 scenarios to
+  the new enforcement (add a drive base + a test file to the happy-path slice fixture so both checks
+  pass; flip the exit-2 fail-mode assertion to fail-CLOSED DENY). Test-only; production code is correct
+  + reviewed. Fixed as a phase-integration fix in the phaseInt/3 worktree.
+
+## Phase 3 HARDEN stage (2026-06-05)
+
+- H3-1 [Mechanical] Doc root-cause exception applied: docs/drive-enforcement.md (owned by
+  Phase 1 only — plan omission) updated for Item C's new impl-presence gate: usage/mode line,
+  a conformance-section paragraph describing the mode (merge-base base, runner-anchored
+  test-path predicate incl. nested-test/sub rejection, real trailer parsing, exit-2 abnormal),
+  a gate-chain TABLE row + a "Posture asymmetry at the slice-merge boundary (C3)" paragraph
+  (impl-presence fail-CLOSED vs the fail-OPEN review check; no ship backstop), and a Limitations
+  bullet (impl-presence omission-proof not forgery-proof — forged trivial test passes).
+- H3-2 [Mechanical] Doc↔code coherence: the rc-normalization comment block (~ln 909) AND the
+  file-header D4 fail-mode comment (~ln 15) AND the variable-ref Limitations bullet all said
+  "mid-build gates fail OPEN" as a blanket rule; corrected each to scope it to the REVIEW gates
+  and carve out the impl-presence fail-CLOSED exception (propagate-the-fix-everywhere lens).
+- H3-3 [Mechanical] Missing-coverage lens: added two test cases for previously-untested
+  is_test_path branches — test_suffix (tests/foo/x_test.py → *_test.py form → clean) and
+  test_sh_nested (test/sub/x.test.sh → nested, runner globs only test/*.test.sh → violation).
+  New fixture variants in mkfixture.sh. No production logic changed (the Item C code had only
+  doc-coherence findings; no slop/dead-code/logic bugs found). Suite stays green: bash
+  conformance 48, e2e 25, merge-gate 102, stop-guard 9, install 48, hook-lib PASS; pytest 263.
+
+## Phase 3 harden round 2 (codex recovered, found 3 Item-C bypasses) — DR22
+- DR22 [Mechanical] codex infra recovered; the DR20-required Item-C adversarial pass ran and found 3
+  real bypasses Claude single-voice missed (deleted-test counts; dotfile test counts; multi-runId
+  octopus checks only the first runId). Fix in harden round 2: (1) impl-presence diff uses
+  --diff-filter=AM (deletions don't count) — supersedes design edge-case-3's weak "deletion counts";
+  (2) is_test_path rejects dotfile basenames (match the real runner glob); (3) gate resolves each
+  slice token's own runId (or fail-closed on a multi-runId merge). + regression tests for all 3.
+  This VALIDATES DR20 (requiring codex on Item C) — the adversarial voice was load-bearing.
+
+## Phase 3 HARDEN — Item C codex adversarial fixes (2026-06-05)
+
+- H-C1 [Mechanical] Finding 1 (BLOCKING): impl-presence counted DELETED test paths as
+  evidence. Fixed by changing the slice diff to `git diff --diff-filter=AM --name-only`
+  (added/modified only) in bin/drive-conformance.sh — deleting tests/test_auth.py no longer
+  satisfies the invariant. Regression: mkfixture `del_test` variant + conformance test.
+- H-C2 [Mechanical] Finding 2 (BLOCKING): is_test_path matched dotfile basenames
+  (`test/.noop.test.sh`, `tests/mc/.foo_test.py`) on bash 3.2 `case`, but the real bash
+  runner glob + pytest collection SKIP dotfiles. Fixed by rejecting any `.*` basename up
+  front in is_test_path (covers both branches). Regression: `dot_test_sh` + `dot_test_py`
+  fixtures (the pytest one uses `.foo_test.py` so it MATCHES `*_test.py` — non-vacuous).
+- H-C3 [Taste→chose option (b)] Finding 3 (MAJOR): multi-slice octopus merge across
+  different runIds checked only the first runId in bin/drive-merge-gate.sh. Chose the
+  simpler-safe option (b): a merge naming >1 distinct runId fails CLOSED (deny) — it is
+  never a normal /drive op (/drive emits one `git merge slice/<runId>/<id>` per slice).
+  slice_runids tracks the distinct-runId set; >1 → emit_deny before the per-slice loop.
+  Regression: multi-runId octopus DENY + single-runId multi-slice not-over-denied tests.
+- H-C4 [Mechanical] docs/drive-enforcement.md: impl-presence row now states ADD/MODIFY
+  (`--diff-filter=AM`, deleted/dotfile excluded); added a paragraph documenting the
+  multi-runId octopus fail-closed posture under "per slice token".
+- Verify: full bash suite (104+51+25+9+48 + hook-lib PASS) + pytest (263) all green;
+  all 4 new positive tests proven to FAIL against pre-fix code (non-vacuous).
+
+## Phase 3 harden round 3 (refine the round-2 fixes — both voices) — DR23
+- DR23 [Mechanical] Dual-voice harden-regress on the round-2 fixes found 2 edges: (a) --diff-filter=AM
+  over-blocks R/C/T test additions (Claude: rename false-deny; codex: R/C/T) -> use --diff-filter=d
+  (exclude deletions only); (b) the multi-runId octopus deny is order-dependent + fires AFTER the
+  single-runId inert-exit, so a stale-first octopus bypasses (codex) -> move the distinct-runId
+  fail-closed deny BEFORE single-runId resolution. + R/C-into-test and stale-first-octopus regression
+  tests. Round 3 (harden cap). Dotfile + delete-only fixes confirmed good.
+
+## Ship: dedicated de-slop pass — DR24
+- DR24 [Taste, user-requested at Gate B] Ran a dedicated conservative de-slop/simplify pass over the
+  full diff before push (harden's de-slop lens had run but was overshadowed by the security findings).
+  Outcome: the diff was already clean — only 3 comment-only fixes (stale --diff-filter=AM -> =d
+  references in 2 test files). Gate logic, postures, fixtures all deliberately LEFT (load-bearing /
+  meaningfully-distinct). Suite stayed 270/0 + 263/0. Confirms the iterative-patching slop was minimal
+  (the harden passes + dual-voice reviews kept it clean). Comment-only delta -> phase-3 review re-bound.
