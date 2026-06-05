@@ -33,6 +33,18 @@ _commit() {
   _gitc "$r" rev-parse HEAD
 }
 
+# Commit a file with an EXPLICIT multi-line message (for trailer fixtures). The message
+# is passed verbatim so a real `Drive-Test-Waiver:` trailer block (or body prose) is
+# preserved exactly. $1=repo $2=path $3=content $4=msg ; echoes resulting tip sha
+_commit_msg() {
+  local r="$1" p="$2" c="$3" m="$4"
+  mkdir -p "$r/$(dirname "$p")"
+  printf '%s\n' "$c" > "$r/$p"
+  _gitc "$r" add -A
+  _gitc "$r" commit -q -m "$m"
+  _gitc "$r" rev-parse HEAD
+}
+
 # Write a CONVERGED review artifact. $1=run_dir $2=scope $3=N $4=reviewed-sha
 _write_review() {
   local rd="$1" scope="$2" n="$3" sha="$4"
@@ -347,6 +359,82 @@ mk_audit_git_error() {
   _write_codex "$rd" "phase$P"
   # Corrupt the live phaseInt tip so for-each-ref lists it but rev-parse errors.
   _corrupt_object "$repo" "$tip"
+  echo "$repo $rd"
+}
+
+# ---------------------------------------------------------------------------------
+# impl-presence fixtures (Item C). Build a repo with a REAL drive/<runId> base branch
+# and a slice/<runId>/<id> branch cut FROM it (so merge-base(slice, drive) resolves to
+# the fork point), then add slice commits per variant. The mode derives base =
+# merge-base(slice, drive/<runId>), diffs base..tip, checks the test-path predicate and
+# the Drive-Test-Waiver trailer. runId = basename(RUN_DIR) = $name, so featureBranch =
+# drive/$name. Echoes "REPO RUN_DIR".
+#
+# variant:
+#   test            -- slice adds tests/foo/test_x.py (a runnable pytest path)   -> clean
+#   test_sh         -- slice adds test/foo.test.sh (a runnable bash path)        -> clean
+#   notest          -- slice adds only src.sh (no test, no waiver)               -> violation
+#   waiver          -- slice adds only src.sh but a real Drive-Test-Waiver: TRAILER -> clean
+#   waiver_prose    -- slice adds only src.sh; the waiver string sits MID-BODY as
+#                      prose (non-Key:val text after it) so git does NOT parse it as a
+#                      trailer                                                    -> violation
+#   pred_helpers    -- slice only touches tests/_helpers.py (excluded)           -> violation
+#   pred_conftest   -- slice only touches tests/conftest.py (excluded)           -> violation
+#   pred_fixtures   -- slice only touches tests/fixtures/data.py (excluded)      -> violation
+#   pred_pyc        -- slice only touches tests/foo/test_x.pyc (excluded)        -> violation
+#   pred_root       -- slice only touches root-level test_root.py (not under tests/) -> violation
+#   pred_docs       -- slice only touches docs/guide.test.md (no runner)         -> violation
+#   no_drive        -- slice exists but NO drive/<runId> branch (merge-base fails) -> exit 2
+mk_impl_presence() {
+  local variant="$1" name="${2:-impl-$1}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  mkdir -p "$rd"   # runId = basename(rd); needed even though no review artifacts here
+
+  if [ "$variant" = "no_drive" ]; then
+    # slice branch off main, but NEVER create drive/<runId> -> merge-base unresolvable -> exit 2
+    _gitc "$repo" checkout -q -b "slice/$name/3a"
+    _commit "$repo" "src.sh" "echo hi" "slice work no drive base" >/dev/null
+    echo "$repo $rd"
+    return 0
+  fi
+
+  # Real drive/<runId> base branch, then cut the slice FROM it.
+  _gitc "$repo" checkout -q -b "drive/$name"
+  _commit "$repo" "featureBase" "fb" "drive base advance" >/dev/null
+  _gitc "$repo" checkout -q -b "slice/$name/3a"
+
+  case "$variant" in
+    test)
+      _commit "$repo" "tests/foo/test_x.py" "def test_x(): pass" "slice 3a + test" >/dev/null ;;
+    test_sh)
+      _commit "$repo" "test/foo.test.sh" "echo ok" "slice 3a + bash test" >/dev/null ;;
+    notest)
+      _commit "$repo" "src.sh" "echo hi" "slice 3a code only" >/dev/null ;;
+    waiver)
+      _commit "$repo" "src.sh" "echo hi" "slice 3a code only" >/dev/null
+      # real trailing trailer block: blank line then Key: val at end of message
+      _commit_msg "$repo" "doc.md" "docs" \
+        "$(printf 'doc slice work\n\nDrive-Test-Waiver: pure documentation slice, no testable surface')" >/dev/null ;;
+    waiver_prose)
+      _commit "$repo" "src.sh" "echo hi" "slice 3a code only" >/dev/null
+      # waiver string MID-BODY with non-Key:val prose AFTER it -> NOT a trailer block
+      _commit_msg "$repo" "doc.md" "docs" \
+        "$(printf 'explain the policy\n\nWe reference Drive-Test-Waiver: here as an example.\nMore prose follows so this is body text, not a trailer.')" >/dev/null ;;
+    pred_helpers)
+      _commit "$repo" "tests/_helpers.py" "X = 1" "slice 3a touches helpers only" >/dev/null ;;
+    pred_conftest)
+      _commit "$repo" "tests/conftest.py" "X = 1" "slice 3a touches conftest only" >/dev/null ;;
+    pred_fixtures)
+      _commit "$repo" "tests/fixtures/data.py" "X = 1" "slice 3a touches fixtures only" >/dev/null ;;
+    pred_pyc)
+      _commit "$repo" "tests/foo/test_x.pyc" "bin" "slice 3a touches pyc only" >/dev/null ;;
+    pred_root)
+      _commit "$repo" "test_root.py" "def test_root(): pass" "slice 3a root test only" >/dev/null ;;
+    pred_docs)
+      _commit "$repo" "docs/guide.test.md" "# guide" "slice 3a docs only" >/dev/null ;;
+  esac
   echo "$repo $rd"
 }
 
