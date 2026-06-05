@@ -15,6 +15,7 @@ the script's ACTUAL behavior (read from main's bin/install-operating-rules.sh):
 The script also registers a Stop hook in ~/.claude/settings.json; it fails open and
 is not part of AC20, so we only require exit 0 (a temp HOME has no settings.json).
 """
+import os
 import sys
 from pathlib import Path
 
@@ -185,3 +186,39 @@ def test_backs_up_preexisting_real_skill_target(fake_home):
     backups = sorted(bk_dir.glob(f"{victim_name}.*"))
     assert len(backups) == 1, f"expected one skill backup, got {backups}"
     assert (backups[0] / "SKILL.md").read_text() == sentinel
+
+
+# --- Global status line (bin/statusline.sh) -------------------------------------
+
+STATUSLINE = REPO_ROOT / "bin" / "statusline.sh"
+
+
+def test_statusline_source_exists_and_executable():
+    assert STATUSLINE.is_file(), f"status line source missing at {STATUSLINE}"
+    assert os.access(STATUSLINE, os.X_OK), "bin/statusline.sh must be executable"
+
+
+def test_symlinks_statusline(fake_home):
+    res = _run(fake_home)
+    assert res.returncode == 0, f"stdout={res.stdout}\nstderr={res.stderr}"
+    link = fake_home / ".claude" / "statusline.sh"
+    assert link.is_symlink(), f"{link} should be a symlink"
+    assert link.resolve() == STATUSLINE.resolve()
+
+
+def test_backs_up_preexisting_real_statusline(fake_home):
+    # A REAL ~/.claude/statusline.sh (not a symlink) is backed up before linking.
+    dst = fake_home / ".claude" / "statusline.sh"
+    dst.parent.mkdir(parents=True)
+    sentinel = "#!/bin/bash\n# my old hand-written status line\n"
+    dst.write_text(sentinel)
+
+    res = _run(fake_home)
+    assert res.returncode == 0, f"stdout={res.stdout}\nstderr={res.stderr}"
+
+    assert dst.is_symlink()
+    assert dst.resolve() == STATUSLINE.resolve()
+    bk_dir = fake_home / ".claude" / "statusline-backups"
+    backups = sorted(bk_dir.glob("statusline.sh.*"))
+    assert len(backups) == 1, f"expected one status line backup, got {backups}"
+    assert backups[0].read_text() == sentinel
