@@ -78,7 +78,7 @@ CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
 # fail-CLOSED-against-misparse for the unterminated-quote case: we never emit a mis-split
 # argv that could desync the gate from git. bash 3.2-safe (char state machine; no bash-4
 # features). NOTE: this lexer resolves the LITERAL string only — it does NOT perform shell
-# EXPANSIONS ($var/$(…)/backtick/$'…'/~user); those are caught fail-closed downstream
+# EXPANSIONS ($var/$(…)/backtick/$'…'/~user/brace `{…,…}`/`{…..…}`); those are caught fail-closed downstream
 # (see has_unresolved_expansion + expand_tilde).
 tokenize_cmd() {
   local s="$1" n=${#1} i=0 ch
@@ -742,8 +742,9 @@ glab_sub="$(subcommand_of glab)"
 
 # --- structural fail-closed catch-all (ends the shell-expansion bypass class) -------
 # BEFORE any repo/ref resolution: if $CMD is a would-be-managed git op whose decision-
-# critical argv carries an UNRESOLVED shell-expansion construct (a `$` form, a backtick, or
-# a `~user`), the gate cannot faithfully interpret it from the literal string — so it FAILS
+# critical argv carries an UNRESOLVED shell-expansion construct (a `$` form, a backtick, a
+# `~user`, or a brace expansion `{…,…}`/`{…..…}`), the gate cannot faithfully interpret it
+# from the literal string — so it FAILS
 # CLOSED = DENY rather than silently mis-resolve and bypass (e.g. `git $'push'` lexes to a
 # non-`push` subcommand → would-be-inert; `git -C ~user/repo push` mis-targets). This is
 # omission-safe: an unresolvable managed command DENIES. Non-git and non-managed commands
