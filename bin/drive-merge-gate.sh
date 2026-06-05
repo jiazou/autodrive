@@ -87,9 +87,10 @@ tokenize_cmd() {
   # Per-token EXPANSION-ACTIVE flag: 1 iff THIS token carries a shell-expansion construct
   # that bash WOULD expand from the literal string but the gate cannot reproduce — set ONLY
   # in expansion-active contexts (unquoted or double-quoted `$`/backtick; an unquoted leading
-  # `~user`; an unquoted brace-expansion `{…,…}` — the COMMA form only: the lexer flags `,`
-  # inside an open brace, NOT the `{…..…}` range form, which cannot synthesize a managed verb
-  # or a 3-segment ref since a bash range expands only single chars/ints). NOT set inside SINGLE quotes,
+  # `~user`; an unquoted brace-expansion — BOTH the comma form `{…,…}` (a `,` inside an open
+  # brace) AND the range form `{…..…}` (a `..` inside an open brace; an embedded range like
+  # `pus{g..h}` / `slic{e..f}/R/4a` CAN synthesize a managed verb or ref, so it is flagged too)).
+  # NOT set inside SINGLE quotes,
   # where `$`/backtick/`~`/`{` are all literal (so `'slice/$run/4a'` is a literal ref, not an
   # expansion — quote context is preserved, fixing the strip-then-rescan false positive). The
   # parallel _TOK_EXP array mirrors _TOKENS 1:1 so downstream can ask "did THIS lexed token
@@ -127,7 +128,12 @@ tokenize_cmd() {
           \{) cur="$cur$ch"; started=1; cur_first=0; brace_depth=$((brace_depth+1)) ;;  # open brace
           \}) cur="$cur$ch"; started=1; cur_first=0; [ "$brace_depth" -gt 0 ] && brace_depth=$((brace_depth-1)) ;;
           ,)  cur="$cur$ch"; started=1; cur_first=0
-              [ "$brace_depth" -gt 0 ] && cur_exp=1 ;;   # `,` inside an open unquoted brace → brace expansion
+              [ "$brace_depth" -gt 0 ] && cur_exp=1 ;;   # `,` inside an open unquoted brace → brace expansion (comma form)
+          .)  cur="$cur$ch"; started=1; cur_first=0
+              # `..` (two consecutive dots) inside an open unquoted brace → brace RANGE expansion
+              # (`pus{g..h}`→`pusg push`, `slic{e..f}/R/4a`→`slice/R/4a`). Flagged the same as the
+              # comma form. A SINGLE dot (e.g. a `{1.1}` ref id) is NOT a range → not flagged.
+              case "$cur" in *..) [ "$brace_depth" -gt 0 ] && cur_exp=1 ;; esac ;;
           *)  cur="$cur$ch"; started=1; cur_first=0 ;;
         esac ;;
       single)

@@ -191,11 +191,11 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
     unterminated quotes as "the shell rejects it" was factually wrong and has been corrected.)
   - **Quote-aware expansion-active flags (`_TOK_EXP`).** The lexer emits, per token, a flag
     marking whether that token carried a construct bash WOULD expand from the literal string —
-    an **unquoted or double-quoted** `$`/backtick, an **unquoted brace expansion** `{…,…}`
-    (the **comma form** only — the lexer flags `,` inside an open brace, NOT the `{…..…}`
-    range form, which a bash range expands to single chars/ints and so cannot synthesize a
-    managed verb or a 3-segment ref → no range bypass), or an **unquoted leading `~user`**.
-    A **single-quoted** `'slice/$run/4a'` or
+    an **unquoted or double-quoted** `$`/backtick, an **unquoted brace expansion** — BOTH the
+    **comma form** `{…,…}` (a `,` inside an open brace) AND the **range form** `{…..…}` (a `..`
+    inside an open brace): an embedded range CAN synthesize a managed verb or ref
+    (`pus{g..h}`→`pusg push`, `slic{e..f}/R/4a`→`slice/R/4a`), so both are flagged fail-closed —
+    or an **unquoted leading `~user`**. A **single-quoted** `'slice/$run/4a'` or
     `'~root/repo'` is LITERAL (bash never expands inside `'…'`), so its flag is **0** — the
     gate does not mistake it for an expansion. This preserves quote context that a strip-then-
     rescan of the quote-removed token would lose. (Brace expansion is deterministic from the

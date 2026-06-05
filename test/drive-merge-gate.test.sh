@@ -1511,6 +1511,40 @@ test_codex_quoted_brace_inert() {
   fi
 }
 
+# F1c: BRACE *RANGE* expansion smuggles a managed verb/ref (harden-regress finding). A bash
+# RANGE `{g..h}` expands like the comma form: `pus{g..h}`→`pusg push`, `slic{e..f}/R/4a`→
+# `slice/R/4a slicf/R/4a`. The lexer now flags a `..` inside an open brace expansion-active (the
+# comma form was already flagged), so a range-obscured managed verb OR ref → DENY. A SINGLE dot
+# (e.g. a `{1.1}` ref-id) is NOT a range → not over-flagged.
+test_codex_brace_range_expansion_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git pus{g..h} origin drive/$runid" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    run_gate "git push origin slic{e..f}/$runid/4a" "$repo"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+      pass "codex-F1c: brace RANGE pus{g..h} / slic{e..f}/R/4a (smuggled verb/ref) → DENY"
+    else
+      fail "codex-F1c: range-obscured ref slic{e..f}/R/4a should DENY; got: $out"
+    fi
+  else
+    fail "codex-F1c: range-obscured verb pus{g..h} should DENY; got: $out"
+  fi
+}
+
+# F1d: a SINGLE dot inside a brace (`{1.1}`, not a `..` range) must NOT trip the expansion deny
+# — it is not a range; flagging it would over-deny. Confirms the `..`-precise range detection.
+test_codex_single_dot_brace_not_overflagged() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git merge -m {1.1} main" "$repo"; out="$GATE_OUT"
+  if ! { is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; }; then
+    pass "codex-F1d: single-dot brace {1.1} (not a range) → no spurious expansion deny"
+  else
+    fail "codex-F1d: single-dot brace {1.1} must NOT expansion-deny; got: $out"
+  fi
+}
+
 # F2: LINE-CONTINUATION DESYNC. A managed ref split across a `\`<newline> continuation —
 # `git merge sli\`↵`ce/<runId>/4a` — lexes to ONE token `slice/<runId>/4a` (what git sees),
 # so the ref-extraction (reading CMD_LEX, the lexed command) must find it → slice-merge DENY.
@@ -1784,6 +1818,8 @@ main() {
   # round-3 codex adversarial findings (regression guards)
   test_codex_brace_expansion_push_deny
   test_codex_quoted_brace_inert
+  test_codex_brace_range_expansion_deny
+  test_codex_single_dot_brace_not_overflagged
   test_codex_linecont_ref_split_merge_deny
   test_codex_linecont_ref_split_phase_deny
   test_codex_readonly_verb_with_ref_inert
