@@ -116,7 +116,9 @@ test_plangate_deny() {
   fi
 }
 
-# Reviewed plan-gate → no output, exit 0.
+# Reviewed plan-gate → no output, exit 0. A worktree-add now requires BOTH the whole-run
+# design review AND the slice's phase design review (Tier 2), so write both. Slice id `4a`
+# → phase P=`4a` (id prefix before the first '.') → scope `phasedesign4a`.
 test_plangate_allow_silent() {
   local runid rd repo
   runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
@@ -124,12 +126,53 @@ test_plangate_allow_silent() {
   _commit "$repo" README base base >/dev/null
   _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
   _write_codex "$rd" design
+  _write_review "$rd" phasedesign4a 1 "$(printf '0%.0s' {1..40})"
+  _write_codex "$rd" phasedesign4a
   local out
   run_gate "git worktree add ../wt/4a -b slice/$runid/4a" "$repo"; out="$GATE_OUT"
   if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
-    pass "plan-gate silent (no output, exit 0, never allow) when design reviewed"
+    pass "plan-gate silent (no output, exit 0, never allow) when design + phase design reviewed"
   else
-    fail "plan-gate should be silent when reviewed; got rc=$GATE_RC out='$out'"
+    fail "plan-gate should be silent when both reviewed; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# Per-phase design gate (Tier 2): whole-run design IS reviewed (plan-gate passes) but the
+# slice's PHASE design is NOT → DENY on worktree add, naming `/drive-review phase <P> design`.
+# Slice id `1.1` → phase P=`1`.
+test_phasedesign_gate_deny() {
+  local runid rd repo
+  runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
+  repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"   # whole-run design reviewed
+  _write_codex "$rd" design
+  # NO review-phasedesign1-*.md → phase-1 design unconverged.
+  local out
+  run_gate "git worktree add ../wt/1.1 -b slice/$runid/1.1" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase 1 design'; then
+    pass "phasedesign-gate denies a phase whose design is unreviewed (names /drive-review phase 1 design)"
+  else
+    fail "phasedesign-gate should deny unreviewed phase design; got: $out"
+  fi
+}
+
+# Both whole-run design AND phase-1 design reviewed → silent.
+test_phasedesign_gate_allow_silent() {
+  local runid rd repo
+  runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
+  repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
+  _write_codex "$rd" design
+  _write_review "$rd" phasedesign1 1 "$(printf '0%.0s' {1..40})"
+  _write_codex "$rd" phasedesign1
+  local out
+  run_gate "git worktree add ../wt/1.1 -b slice/$runid/1.1" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
+    pass "phasedesign-gate silent when phase design reviewed"
+  else
+    fail "phasedesign-gate should be silent when phase design reviewed; got rc=$GATE_RC out='$out'"
   fi
 }
 
@@ -889,6 +932,8 @@ main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
   test_plangate_deny
   test_plangate_allow_silent
+  test_phasedesign_gate_deny
+  test_phasedesign_gate_allow_silent
   test_slicemerge_deny
   test_slicemerge_allow_silent
   test_phasemerge_deny

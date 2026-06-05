@@ -200,14 +200,25 @@ stage_plan_gate() {
     fail "plan-gate: expected DENY naming design review; got rc=$GATE_RC out='$GATE_OUT'"
   fi
 
-  # Add CONVERGED design review + codex → silent ALLOW (exit 0, no output, never allow).
+  # Add CONVERGED design review + codex → still DENY: a worktree-add now ALSO requires the
+  # slice's PHASE design review (Tier 2). Slice `4a` → phase P=`4a`.
   _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
   _write_codex "$rd" design
   run_installed_gate "$INSTALLED_GATE" "$cmd" "$repo"
-  if is_empty "$GATE_OUT" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$GATE_OUT"; then
-    pass "plan-gate: ALLOW (silent) once design review CONVERGED + codex present"
+  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-review phase 4a design'; then
+    pass "phasedesign-gate: DENY worktree add when phase design unreviewed (names /drive-review phase 4a design)"
   else
-    fail "plan-gate: expected silent allow; got rc=$GATE_RC out='$GATE_OUT'"
+    fail "phasedesign-gate: expected DENY naming phase design; got rc=$GATE_RC out='$GATE_OUT'"
+  fi
+
+  # Add the phase design review too → silent ALLOW (exit 0, no output, never allow).
+  _write_review "$rd" phasedesign4a 1 "$(printf '0%.0s' {1..40})"
+  _write_codex "$rd" phasedesign4a
+  run_installed_gate "$INSTALLED_GATE" "$cmd" "$repo"
+  if is_empty "$GATE_OUT" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$GATE_OUT"; then
+    pass "plan+phasedesign gate: ALLOW (silent) once BOTH the design and phase design reviews CONVERGED + codex"
+  else
+    fail "plan-gate: expected silent allow once both reviewed; got rc=$GATE_RC out='$GATE_OUT'"
   fi
 }
 

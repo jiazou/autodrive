@@ -181,6 +181,34 @@ mk_plan() {
   echo "$repo $rd"
 }
 
+# Per-phase design-gate fixtures (Tier 2). RUN_DIR holds review-phasedesign<P>-N.md +
+# codex-review-phasedesign<P>.md. Mirrors mk_plan, scoped to phasedesign<P>. Like plan-gate,
+# no git tip (it audits a design DOC). $1=variant (clean|nodesign|nocodex|findings) $2=P.
+mk_phasedesign() {
+  local variant="$1"
+  local P="${2:-1}"
+  local name="phasedesign-$variant-$P"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  local scope="phasedesign$P"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  mkdir -p "$rd"
+  case "$variant" in
+    clean)
+      _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})"
+      _write_codex "$rd" "$scope" ;;
+    findings)
+      _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})"
+      _write_review_findings "$rd" "$scope" 2 "$(printf '0%.0s' {1..40})"  # highest-N FINDINGS
+      _write_codex "$rd" "$scope" ;;
+    nodesign)
+      _write_codex "$rd" "$scope" ;;
+    nocodex)
+      _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})" ;;
+  esac
+  echo "$repo $rd"
+}
+
 # Ship fixtures. featureBranch = drive/<runId>. A phase review with reviewed-sha=R, then
 # one ledger-only commit advances tip.
 # variant: clean | code_past_r | other_harness_past_r | two_ledger_commits
