@@ -141,3 +141,36 @@ them — they want their own focused change with a reliable adversarial codex pa
   BELOW the shell (a `reference-transaction`/`update-ref` git hook or server-side check) — the real
   shape of the existing "component D" follow-up (see line 27). Update docs/drive-enforcement.md to say
   this. **Severity: low (doc honesty), but it reframes component D.**
+
+## Per-phase design gate (phasedesign-gate) — adversarial findings (2026-06-05)
+
+Added the omission-proof per-phase design gate (Tier-2): a `git worktree add -b slice/<runId>/<id>`
+now fires `phasedesign-gate:<P>` (P = id prefix before first `.`) requiring the phase's
+`review-phasedesign<P>` converged + codex, mirroring plan-gate, fail-CLOSED. The honest-coordinator
+OMISSION case is now gated (the goal; proven by AC0c conformance tests + merge-gate + e2e). The
+adversarial codex pass surfaced three **pre-existing** matcher weaknesses that affect the EXISTING
+plan-gate IDENTICALLY (`bin/drive-hook-lib.sh` is unchanged by this work) — they are deliberate-EVASION
+(the threat model is "omission-proof, not evasion-proof"), the canonical `/drive` flow never triggers
+them, and the ship gate backstops. Log here as matcher-hardening, NOT closed:
+
+- **[matcher, P2] runId keyed from the first `slice/...` token anywhere in the command (incl. the
+  worktree PATH), not the `-b` branch arg.** Attack: `git worktree add ../slice/evil/1.1 -b
+  slice/<realRun>/1.1` → `drive_runid_from_command` returns `evil`; if `~/.claude/harness-runs/evil`
+  absent → gate inert → real build ungated. Normal flow safe: `$RUN_DIR/wt/<id>` paths carry no
+  `slice/` token, so runId resolves from `-b`. Root: full-command token scan + first-hit selection in
+  drive-hook-lib.sh:60,80 (UNCHANGED by this diff — affects plan-gate too). Fix: derive runId from the
+  `-b` value specifically for worktree-add; or parse argv structurally below the shell.
+
+- **[matcher, P2] non-canonical slice-create forms bypass the gate entirely.** `git branch
+  slice/<runId>/1.1 HEAD` then `git -C ../wt switch -c slice/...` — `branch`/`switch` are not gated
+  modes and the `worktree add --detach` carries no `slice/` token, so `is_plan_gate` never sets.
+  Bypasses plan-gate AND phasedesign-gate. Pre-existing (plan-gate only ever fired on `worktree add -b
+  slice/...`). Fix: gate all ref-create paths that yield a `slice/<runId>/<id>` branch, or enforce
+  below the shell (ties to the existing component-D / below-the-shell follow-up).
+
+- **[matcher, P3] over-gating: any `worktree` subcommand with any `slice/` substring trips the gate.**
+  `git worktree remove ../x/slice/<runId>/1.1`, `git worktree move …`, `git worktree add ../wt
+  origin/slice/…` all false-trip plan+phasedesign. Pre-existing in the `git_sub=worktree && slice_tokens`
+  detection; this diff widens it to also run phasedesign-gate. SAFE direction (false-block, not a hole)
+  and normal flow unaffected (`/drive` removes use `$RUN_DIR/wt/<id>` paths, no `slice/` token). Fix:
+  match specifically `worktree add … -b slice/<runId>/<id>` (the `-b` VALUE), not any slice substring.

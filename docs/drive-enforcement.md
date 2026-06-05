@@ -40,7 +40,7 @@ Three shifts make the check independent of coordinator-writable state:
 `bin/drive-conformance.sh` is a pure function over git + the run dir:
 
 ```
-drive-conformance.sh <RUN_DIR> --mode plan-gate | slice-merge:<id> | phase-merge:<P> | ship | audit
+drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | ship | audit
 ```
 
 A review artifact **counts** iff: the highest-N `review-<scope>-N.md` has
@@ -75,14 +75,15 @@ and the gate's `deny` must still win).
 
 | Gate | Fires on (command match) | Mode | Blocks until | Exit-2 |
 |------|--------------------------|------|--------------|--------|
-| **plan-gate** | `git worktree add … -b slice/<runId>/<id>` (the first slice worktree of the run) | `plan-gate` | `review-design-*` CONVERGED + `codex-review-design` present and non-empty — implementation cannot begin until the **design** review converged | **fail-CLOSED** (deny) |
+| **plan-gate** | `git worktree add … -b slice/<runId>/<id>` (any slice worktree) | `plan-gate` | `review-design-*` CONVERGED + `codex-review-design` present — implementation cannot begin until the whole-run **design** review converged | **fail-CLOSED** (deny) |
+| **phasedesign-gate** | the SAME `git worktree add … -b slice/<runId>/<id>` — for each slice's phase `P` (= the id prefix before the first `.`) | `phasedesign-gate:<P>` | `review-phasedesign<P>-*` CONVERGED + `codex-review-phasedesign<P>` present — a phase's slices cannot be built until its **detailed (Tier-2) design** review converged. Like plan-gate, audits a design DOC (no `reviewed-sha`) | **fail-CLOSED** (deny) |
 | **slice-merge** | `git merge … slice/<runId>/<id>` (each slice token in the command) | `slice-merge:<id>` | SHA-bound CONVERGED review for the slice tip | fail-OPEN (silent) |
 | **phase-merge** | `git branch -f drive/<runId> phaseInt/<runId>/<P>` or `git merge … phaseInt/<runId>/<P>` | `phase-merge:<P>` | SHA-bound CONVERGED review for the phase-integration tip (naturally requires the post-harden review, since HARDEN re-emits `reviewed-sha`) | fail-OPEN (silent) |
 | **ship** | `gh pr create`, `glab mr create`, or any `git push` whose head is the drive branch (incl. bare `git push`, `git push -u origin HEAD`) | `ship` | all shipped code covered by a counting review (ledger-only `R..tip` tolerated) | **fail-CLOSED** (deny) |
 
-**Asymmetric fail mode (D4):** the two **run-boundary** gates — `plan-gate` (start)
-and `ship` (end) — fail **closed** on a checker/git error (never wave through the
-start of build or a PR). The **mid-build** per-unit gates (slice/phase merge + the
+**Asymmetric fail mode (D4):** the **run-/phase-boundary** gates — `plan-gate` (run start),
+`phasedesign-gate` (phase start), and `ship` (end) — fail **closed** on a checker/git error
+(never wave through the start of build or a PR). The **mid-build** per-unit gates (slice/phase merge + the
 Stop backstop) fail **open** so a transient filesystem/git error cannot wedge a
 mid-build run — the ship gate backstops them. If no `runId` resolves or `RUN_DIR` is
 absent, every gate is inert (`exit 0` silent — not a managed drive run).

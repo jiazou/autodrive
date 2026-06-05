@@ -1,41 +1,47 @@
 ---
-description: PLAN stage (Stage 1) of /drive — planner authors a design + Phases & Slices, autoplan reviews, dual-voice design review converges → Gate A. Usually invoked by /drive.
+description: PLAN stage (Stage 1) of /drive — planner authors a HIGH-LEVEL design (goal, approach, ordered phases; no slice/interface detail), autoplan reviews, dual-voice design review converges → Gate A. Usually invoked by /drive.
 argument-hint: <task> (or resume within an existing run)
 ---
 You are running the PLAN stage (Stage 1). Two steps: a planner subagent authors a
-rough design, then gstack `autoplan` reviews it (autoplan reviews, it can't author
-— so we author first).
+**high-level** design, then gstack `autoplan` reviews it (autoplan reviews, it can't
+author — so we author first).
+
+This whole-run design is deliberately **high-level** — it fixes the *shape* of the
+work (the goal, the approach, the ordered phases), NOT its details. Interface
+signatures, edge cases, and the per-slice breakdown are **not** authored here; each
+phase produces its own detailed design just-in-time, against the real code the prior
+phases produced (`/drive-design`). Keeping this design coarse is the point: it is what
+Gate A approves and what later phases refine.
 
 First, read $RUN_DIR/decisions.md to load prior decisions you must stay
 consistent with.
 
-## Step 1 — Author a rough design (planner subagent)
+## Step 1 — Author a high-level design (planner subagent)
 
 Spawn a generic planner subagent (the Agent tool) with the scope below.
 
 ----- BEGIN SUBAGENT SCOPE -----
-Produce a rough design document for the task. Do NOT implement anything.
+Produce a HIGH-LEVEL design document for the task. Do NOT implement anything, and do
+NOT drill into low-level detail — **no exact signatures, no exhaustive edge cases, no
+per-slice breakdown.** Those are deferred to each phase's own detailed design
+(`/drive-design`), authored later against the real code earlier phases produce.
 
 Steps:
 1. Read $RUN_DIR/task.md if it exists; otherwise use the task at the end of
    this prompt.
 2. Read $RUN_DIR/decisions.md to stay consistent with prior choices.
-3. Read the relevant parts of the codebase for context.
+3. Read enough of the codebase to fix the shape and the phase boundaries.
 4. Write $RUN_DIR/design.md covering:
    - Goal (one paragraph)
-   - Interfaces (exact signatures, types, endpoints)
-   - Data flow
-   - Edge cases and failure modes (at least 5, with intended behavior)
-   - Acceptance criteria (numbered, testable)
-   - **Phases & Slices** — break the work into ordered phases (each builds on the
-     last); within each phase, slices that are independent units. For each slice
-     give `acceptance:` (which criteria it satisfies), `owns:` (the files/dirs it
-     will write — slices intended to run in parallel MUST own DISJOINT files),
-     and `deps:` (other slice ids it needs first). Format:
-         ### Phase 1: <name>
-         - Slice 1.1 <name> — acceptance: <criteria>; owns: <files>; deps: none
-         - Slice 1.2 <name> — acceptance: ...; owns: <disjoint files>; deps: 1.1
-   - Decisions (choices made autonomously)
+   - Approach (the high-level strategy / architecture — the shape, not the signatures)
+   - **Phases** — break the work into ordered phases (each builds on the last). For
+     each phase give a one-to-three-line scope: what it delivers, its rough boundary,
+     and what it relies on from earlier phases. Format:
+         ### Phase 1: <name> — delivers <what>; boundary <rough scope>; relies on: none
+         ### Phase 2: <name> — delivers <what>; boundary <rough scope>; relies on: Phase 1
+     Do NOT enumerate slices, interfaces, or edge cases — that is each phase's own
+     detailed-design job.
+   - Decisions (high-level choices made autonomously)
    - Out of scope
    - Open questions (zero to two — genuine close calls only)
 5. Return the design path and a 3-line summary.
@@ -61,10 +67,11 @@ a) **autoplan** — run gstack `autoplan` on it (the rich CEO → Design → Eng
 
 b) **Dual-voice design-review convergence** — run `/drive-review` scoped `design`
    (`/drive-review` — `~/.claude/commands/drive-review.md`): a Claude reviewer subagent AND `codex exec`
-   both audit `$RUN_DIR/design.md` for P1s (BLOCKING/MAJOR — e.g. an unbuildable
-   interface, a slice dependency cycle, overlapping slice ownership). If either
-   flags a P1, the planner subagent revises design.md and you re-run — loop until
-   **converged** (neither voice has an open P1), capped at 8 rounds.
+   both audit `$RUN_DIR/design.md` for P1s **at the high-level altitude** (BLOCKING/MAJOR
+   — e.g. a phase dependency cycle, an unsound phase boundary, an approach that can't
+   deliver the goal). They do NOT demand slice/interface detail — that is each phase's
+   own design. If either flags a P1, the planner subagent revises design.md and you
+   re-run — loop until **converged** (neither voice has an open P1), capped at 8 rounds.
 
 ## Gate A (the single human checkpoint for direction)
 
@@ -95,9 +102,10 @@ across turns. After Gate B the push is immediate, so no further goal is needed.)
 ## After this stage
 
 - Approved → update $RUN_DIR/state.json (`stage=execute`, `lastGate="A"`,
-  `waiting=null`), parse the `## Phases & Slices` breakdown into `state.slices`/phase
-  list and record the ordered phase ids in `state.phaseList`, and begin the execute
-  half (per-phase, per-slice — see drive.md).
+  `waiting=null`), parse the `## Phases` breakdown into the ordered phase ids in
+  `state.phaseList`, and begin the execute half (see drive.md). **Slices are NOT defined
+  here** — `state.slices` stays empty; each phase's `/drive-design phase <P>` produces and
+  records its own slices just before that phase implements.
 - No approved/converged design (cancelled, or can't converge in 8 rounds) → STOP
   and report what's missing **via the Present human pause routine**: set
   `state.waiting="stop:<reason>"`, then emit the run graph — read

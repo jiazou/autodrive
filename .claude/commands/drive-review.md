@@ -8,9 +8,15 @@ combined). NOT gstack `/review` (fix-first, mutates). `/drive`
 (or `/drive-plan`) invokes it with a **scope** and passes `$RUN_DIR` + the scope's git
 refs:
 
-- `design` — review `$RUN_DIR/design.md` itself, before Gate A: buildable
-  interfaces, testable acceptance criteria, a sound `## Phases & Slices` breakdown
-  (no slice dependency cycle; parallel slices own disjoint files). No code diff.
+- `design` — review the **high-level** `$RUN_DIR/design.md` itself, before Gate A: a
+  sound goal/approach and a sound ordered `## Phases` breakdown (no phase dependency
+  cycle; phase boundaries that can deliver the goal). High-level altitude — it does NOT
+  demand slice/interface detail (that is each phase's own design). No code diff.
+- `phase <P> design` — review the per-phase detailed design `$RUN_DIR/design-phase<P>.md`
+  itself (invoked by `/drive-design`, before that phase implements): buildable interfaces,
+  testable acceptance criteria, a sound slice breakdown (no slice dependency cycle; parallel
+  slices own disjoint files; no slice contract that contradicts the real prior-phase code).
+  No code diff.
 - `slice <id>` — review the slice's diff `git diff <phaseBaseSha>..slice/<runId>/<id>`
   against that slice's acceptance criteria (owned files only).
 - `phase <P>` — review the assembled integration diff
@@ -21,12 +27,14 @@ refs:
   difference is the counter (below) — its bounding is owned by the harden loop, not the
   conformance cap.
 
-Let `<scope>` be `design`, `<id>` (e.g. `1.2`), or `phase<P>`.
+Let `<scope>` be `design`, `<id>` (e.g. `1.2`), `phase<P>`, or `phasedesign<P>` (the
+per-phase design review of `design-phase<P>.md`).
 
 **Loop counter:** `N = (this scope's counter) + 1` — `state.designReview` for
 `design`, `state.slices[<id>].reviewCount` for a slice, the `phaseReview[<P>]`
-round for a phase (fall back to counting `$RUN_DIR/review-<scope>-*.md` + 1 if
-state is absent). If N > 8, STOP — not converging; summarize each side.
+round for a `phase <P>` review, `state.phaseDesign[<P>].round` for a `phase <P> design`
+review (fall back to counting `$RUN_DIR/review-<scope>-*.md` + 1 if state is absent).
+If N > 8, STOP — not converging; summarize each side.
 **Exception — `harden-regress`:** do NOT read, increment, or cap against the
 conformance `phaseReview[<P>].round`. The harden loop already bounds the number of
 these passes (its 3-fix-round cap), so there is no N>8 STOP here; just run the review
@@ -40,14 +48,21 @@ prompt. Pass PATHS + git refs only. Spawn a generic reviewer subagent:
 
 ----- BEGIN SUBAGENT SCOPE -----
 Audit the <scope>:
-- `design`: audit `$RUN_DIR/design.md` ITSELF — interfaces buildable, acceptance
-  criteria testable, `## Phases & Slices` sound (no dependency cycle; parallel
-  slices own disjoint files). No code diff.
+- `design`: audit the HIGH-LEVEL `$RUN_DIR/design.md` ITSELF — a sound goal/approach and
+  a sound ordered `## Phases` breakdown (no phase dependency cycle; phase boundaries that
+  can deliver the goal). High-level altitude — do NOT demand slice/interface detail. No
+  code diff.
+- `phasedesign<P>`: audit the per-phase detailed design `$RUN_DIR/design-phase<P>.md` ITSELF
+  — interfaces buildable, acceptance criteria testable, the `Slices` breakdown sound (no
+  slice dependency cycle; parallel slices own disjoint files; no slice contract that
+  contradicts the real prior-phase code). No code diff.
 - a slice: audit `git diff <phaseBaseSha>..slice/<runId>/<id>` against THAT slice's
   acceptance criteria, restricted to its owned files.
 - a phase: audit `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration correctness.
-Spec + prior decisions: `$RUN_DIR/design.md`, `$RUN_DIR/decisions.md`. Derive the
-diff authoritatively from git (the refs above) — never an ephemeral implementer list.
+Spec + prior decisions: the phase's detailed design `$RUN_DIR/design-phase<P>.md` (for a
+slice/phase scope — the slice acceptance criteria live there; `$RUN_DIR/design.md` is the
+high-level context), and `$RUN_DIR/decisions.md`. Derive the diff authoritatively from git
+(the refs above) — never an ephemeral implementer list.
 
 Severity (P-levels) — pick one, don't ask:
 - BLOCKING (P1): prod incident risk, data loss, security hole, spec violation that
@@ -75,8 +90,10 @@ commits). Bind it by scope:
   to `phaseInt/<runId>/<P>`) MUST re-emit `reviewed-sha:` at the **post-fix**
   `git rev-parse phaseInt/<runId>/<P>` tip — otherwise the phase-merge gate sees a
   stale pre-harden sha and blocks the advance.
-- **design:** OMIT `reviewed-sha:` — design review audits `design.md`, not a git tip;
-  the plan-gate only requires `## Verdict: CONVERGED` + the codex file (no sha).
+- **design / phasedesign:** OMIT `reviewed-sha:` — these audit a design DOC
+  (`design.md` / `design-phase<P>.md`), not a git tip. (`design` feeds the plan-gate,
+  which requires only `## Verdict: CONVERGED` + the codex file; `phasedesign<P>` is
+  consumed by `/drive-design`, not a conformance gate.)
 ----- END SUBAGENT SCOPE -----
 
 ## Step 2 — Cross-model codex pass (direct CLI, per-scope log)
@@ -85,9 +102,11 @@ Run codex DIRECTLY from the main context — NEVER inside a subagent that waits 
 Use a **per-scope** log so parallel slice reviews don't collide:
 
 ```
-codex exec "Review <scope>. For 'design': audit $RUN_DIR/design.md (buildable
-interfaces, testable criteria, sound Phases & Slices). For a slice: git diff
-<phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owned files. For
+codex exec "Review <scope>. For 'design': audit $RUN_DIR/design.md — high-level only
+(sound goal/approach + ordered ## Phases, no phase cycle). For 'phasedesign<P>': audit
+$RUN_DIR/design-phase<P>.md (buildable interfaces, testable criteria, sound Slices — no
+slice cycle, disjoint owns, no contract contradicting real prior-phase code). For a slice:
+git diff <phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owned files. For
 a phase: git diff <phaseBaseSha>..phaseInt/<runId>/<P>, integration. Flag BLOCKING/MAJOR/
 MINOR with file:line. Prioritized." > $RUN_DIR/codex-raw-<scope>.log 2>&1
 ```
@@ -109,8 +128,9 @@ Claude missed); reviewer-only = claude-only. **Converged** when NEITHER voice ha
 open **P1** (BLOCKING/MAJOR); P2/P3 logged, not blocking. Record to
 `$RUN_DIR/state.json`: this scope's verdict + increment its counter — `state.designReview`
 for `design`, `state.slices[<id>].reviewCount` for a slice, `state.phaseReview[<P>].round`
-for a phase. **Exception — `harden-regress`:** increment nothing (the harden loop's
-3-fix-round cap bounds it).
+for a `phase <P>` review, `state.phaseDesign[<P>].round` for a `phase <P> design` review.
+**Exception — `harden-regress`:** increment nothing (the harden loop's 3-fix-round cap
+bounds it).
 
 After this stage:
 - **FINDINGS** → `/drive` loops `/drive-implement` on this scope (it owns the cap-8).

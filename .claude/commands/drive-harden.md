@@ -12,8 +12,8 @@ branch `featureBranch` will fast-forward to).
 
 `/drive` passes: `phase <P>`, `<runId>` (the run identifier), the absolute
 **`phaseInt/<runId>/<P>` worktree path** (the implementer subagent's cwd),
-`phaseBaseSha`, and `$RUN_DIR` (absolute). The phase's spec lives in
-`$RUN_DIR/design.md` under `## Phases & Slices`.
+`phaseBaseSha`, and `$RUN_DIR` (absolute). The phase's spec (acceptance criteria, slices)
+lives in `$RUN_DIR/design-phase<P>.md`; `$RUN_DIR/design.md` is the high-level context.
 
 The scope is the **assembled phase diff** `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` and
 the files it touches — the "relevant codebase" for this phase. Derive it
@@ -33,8 +33,8 @@ tree) if any fails:
 - That run's `state.json` shows phase `<P>` `phaseReview[<P>].status == "converged"` (or
   `"hardening"` on resume). Not converged / not yet assembled → STOP: "phase <P> hasn't
   passed its integration review yet — harden runs only after `/drive-review phase <P>` converges."
-- The `phaseInt/<runId>/<P>` worktree exists (`git worktree list`) and `$RUN_DIR/design.md` is
-  present. Missing → STOP naming what's absent (the run is mid-rebuild or corrupt; let
+- The `phaseInt/<runId>/<P>` worktree exists (`git worktree list`) and `$RUN_DIR/design-phase<P>.md`
+  is present. Missing → STOP naming what's absent (the run is mid-rebuild or corrupt; let
   `/drive` reconcile on resume).
 
 When `/drive` invokes this stage it passes all of the above directly, so these checks
@@ -119,7 +119,8 @@ THREE hardening lenses (NOT just acceptance-criterion conformance):
    test. Name the exact case to cover.
 3. Logic & bugs — off-by-one, wrong conditionals, unhandled null/empty, races, bad
    error handling, contract violations.
-Spec + prior decisions: `$RUN_DIR/design.md`, `$RUN_DIR/decisions.md`.
+Spec + prior decisions: `$RUN_DIR/design-phase<P>.md` (the phase's acceptance criteria +
+slices; `$RUN_DIR/design.md` is high-level context), `$RUN_DIR/decisions.md`.
 
 Severity — pick one, don't ask:
 - P1 (actionable this stage): a real bug (lens 3), or a missing test on an acceptance
@@ -182,7 +183,7 @@ file PATHS + the harden + codex finding paths, never contents.
 You are hardening phase <P>. Your cwd is its assembled integration worktree on branch
 `phaseInt/<runId>/<P>`. Code paths are relative to this worktree; artifact paths are the
 absolute `$RUN_DIR` (never edit code via absolute paths to the main repo). Read:
-- $RUN_DIR/design.md (acceptance criteria for the phase's slices)
+- $RUN_DIR/design-phase<P>.md (acceptance criteria for the phase's slices)
 - $RUN_DIR/decisions.md (stay consistent)
 - $RUN_DIR/harden-<P>-N.md + codex-harden-<P>.md (the fix set; codex-only items live
   only in the codex file, so read it)
