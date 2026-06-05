@@ -508,6 +508,132 @@ test_ship_git_dir_other_repo_inert() {
 }
 
 # ---------------------------------------------------------------------------------
+# Shell-accurate argv tokenization (round-2 BLOCKING): the four parsers must lex the
+# command the way git/bash would — NOT raw whitespace word-split. Each case below FAILS
+# against the old `set -f; set -- $CMD` tokenization (quotes kept literal, a quoted path
+# WITH A SPACE split into two words, `""` not preserved as an empty arg).
+# ---------------------------------------------------------------------------------
+
+# `git -C "" push` from an UNREVIEWED drive cwd → DENY. The empty -C is a git no-op
+# (identity stays $CWD = the unreviewed drive repo → its drive HEAD is seen). Pre-fix the
+# token was the literal `""`, so _compose joined REPO=$CWD/"" → HEAD lookup failed →
+# silent (a bypass: real git treats `-C ""` as a no-op and pushes the cwd).
+test_tok_git_C_empty_push_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'git -C "" push' "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "tok: git -C \"\" push from unreviewed drive cwd DENIES (empty -C is a no-op → identity = cwd)"
+  else
+    fail "tok: git -C \"\" push should DENY (empty -C no-op); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `git -C "/path with spaces" push` targeting an UNREVIEWED drive repo whose PATH CONTAINS
+# A SPACE, cwd OUTSIDE → DENY. Pre-fix the path split into `-C` `"/path` `with` `spaces"`,
+# so the subcommand was misread as `with` and ship detection never ran → silent bypass on
+# totally legitimate input.
+test_tok_git_C_spaced_path_deny() {
+  local runid info origrepo out spaced outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; origrepo="${info%% *}"
+  # Relocate the unreviewed drive repo under a path WITH A SPACE.
+  spaced="$TMPROOT/spaced dir-$runid/the repo"
+  mkdir -p "$(dirname "$spaced")"; mv "$origrepo" "$spaced"
+  outside="$TMPROOT/tok-spaced-out-$runid"; mkdir -p "$outside"   # NOT a git repo
+  run_gate "git -C \"$spaced\" push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "tok: git -C \"/path with spaces\" push targeting an unreviewed drive repo DENIES (quoted-span path)"
+  else
+    fail "tok: git -C \"/path with spaces\" push should DENY (path with space); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# Quoted --git-dir value with a SPACE in the path: `git --git-dir="<repo>/.git"` (=form,
+# whole value quoted) and `git --git-dir "<repo>/.git"` (space form, quoted arg) must both
+# resolve the spaced gitdir → DENY. Pre-fix a spaced path split the value off.
+test_tok_quoted_gitdir_spaced_deny() {
+  local runid info origrepo out spaced outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; origrepo="${info%% *}"
+  spaced="$TMPROOT/gd spaced-$runid/repo"
+  mkdir -p "$(dirname "$spaced")"; mv "$origrepo" "$spaced"
+  outside="$TMPROOT/tok-gd-out-$runid"; mkdir -p "$outside"
+  # =form: --git-dir="<spaced>/.git"
+  run_gate "git --git-dir=\"$spaced/.git\" push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    # space form: --git-dir "<spaced>/.git"
+    run_gate "git --git-dir \"$spaced/.git\" push" "$outside"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+      pass "tok: quoted --git-dir (= and space forms) with a spaced gitdir path resolve + DENY"
+    else
+      fail "tok: --git-dir \"<spaced>/.git\" (space form) should DENY; got: $out"
+    fi
+  else
+    fail "tok: --git-dir=\"<spaced>/.git\" (=form) should DENY; got: $out"
+  fi
+}
+
+# Quoted -C value with a space, SLICE merge: `git -C "<spaced>" merge slice/R/4a` from
+# OUTSIDE → DENY (unreviewed slice). Proves the quoted-span fix reaches the merge path,
+# not just push, and that the slice subcommand is detected past a quoted -C value.
+test_tok_quoted_C_slicemerge_deny() {
+  local runid info origrepo out spaced outside
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; origrepo="${info%% *}"
+  spaced="$TMPROOT/slice spaced-$runid/repo"
+  mkdir -p "$(dirname "$spaced")"; mv "$origrepo" "$spaced"
+  outside="$TMPROOT/tok-slice-out-$runid"; mkdir -p "$outside"
+  run_gate "git -C \"$spaced\" merge slice/$runid/4a" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review slice 4a'; then
+    pass "tok: git -C \"<spaced>\" merge slice/R/4a DENIES (quoted -C reaches the merge path)"
+  else
+    fail "tok: git -C \"<spaced>\" merge should DENY unreviewed slice; got: $out"
+  fi
+}
+
+# `git "push"` (quoted subcommand) on an unreviewed drive branch → still detected as ship
+# → DENY. Pre-fix the token was the literal `"push"` (with quotes), so `[ "$1" = push ]`
+# failed and ship detection silently missed it.
+test_tok_quoted_subcommand_push_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'git "push"' "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "tok: git \"push\" (quoted subcommand) still detected as ship → DENY"
+  else
+    fail "tok: git \"push\" should be detected as ship and DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `VAR="x y" git push` (env-prefix whose VALUE contains a space, quoted) → the env
+# assignment is skipped as ONE token, git is the binary, push the subcommand → DENY.
+# Pre-fix the value split (`VAR="x` and `y"`), so after skipping the first token the
+# binary was misread as `y"` → ship detection missed → silent bypass.
+test_tok_env_prefix_spaced_value_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'VAR="x y" git push' "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "tok: VAR=\"x y\" git push (quoted env value with space) → env skipped, push detected → DENY"
+  else
+    fail "tok: VAR=\"x y\" git push should DENY (env-prefix skipped, push detected); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# Fail-safe: an UNTERMINATED quote makes the command unparseable — the real shell would
+# reject it and git would NEVER run — so the gate goes INERT (no mis-split argv that could
+# desync the gate from git). Asserted on a would-be ship form: `git push "oops` (open
+# quote) from a drive cwd → silent/inert, NOT a spurious deny and NOT a mis-parsed allow.
+test_tok_unterminated_quote_inert() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'git push "oops' "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "tok: unterminated quote → inert (unparseable command can't run; no mis-split argv)"
+  else
+    fail "tok: unterminated quote should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 # Item A — composed git-path-option resolution (AC-A1..AC-A11)
 # ---------------------------------------------------------------------------------
 # These prove git_target_repo() composes -C/--git-dir the way real git resolves the
@@ -1139,6 +1265,14 @@ main() {
   test_ship_work_tree_eq_bypass_deny
   test_ship_work_tree_space_bypass_deny
   test_ship_git_dir_other_repo_inert
+  # shell-accurate argv tokenization (round-2 BLOCKING): quoted/spaced/empty args
+  test_tok_git_C_empty_push_deny
+  test_tok_git_C_spaced_path_deny
+  test_tok_quoted_gitdir_spaced_deny
+  test_tok_quoted_C_slicemerge_deny
+  test_tok_quoted_subcommand_push_deny
+  test_tok_env_prefix_spaced_value_deny
+  test_tok_unterminated_quote_inert
   # Item A: composed git-path-option resolution (AC-A1..AC-A11)
   test_acA1_C_compose_relative
   test_acA3_C_absolute_resets

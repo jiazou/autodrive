@@ -285,22 +285,6 @@ mk_audit() {
   echo "$repo $rd"
 }
 
-# Linked-worktree gitfile fixture (AC-A10). Build a repo whose HEAD is on an UNREVIEWED
-# drive/<runId> branch, then `git worktree add` a LINKED worktree on a separate branch so
-# that worktree's `.git` is a regular FILE (a gitfile), not a directory. The gate's
-# `--git-dir=<wt>/.git` resolution must reduce that gitfile to its parent (the worktree
-# root) via `dirname`, so the HEAD lookup + conformance run resolve against the real repo.
-# $1=repo dir (drive HEAD), $2=linked-worktree dir. Echoes the linked-worktree path.
-# (Uses the SAME drive/<runId> repo so reads resolve to the unreviewed branch → DENY.)
-mk_linked_worktree() {
-  local repo="$1" wt="$2"
-  # The linked worktree is added on its own branch from the drive repo; git stores its
-  # gitdir under repo/.git/worktrees/<name> and writes <wt>/.git as a gitfile pointer.
-  _gitc "$repo" worktree add -q "$wt" -b "linked-wt-$(basename "$wt")" >/dev/null 2>&1 || \
-    _gitc "$repo" worktree add -q -b "linked-wt-$(basename "$wt")" "$wt" >/dev/null 2>&1
-  printf '%s' "$wt"
-}
-
 # Delete the loose git object for sha $2 in repo $1 (hermetic object-store corruption).
 _corrupt_object() {
   local repo="$1" sha="$2"

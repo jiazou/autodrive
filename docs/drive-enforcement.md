@@ -163,6 +163,27 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
   reviewer can. That is **component D** (a deterministic external driver / out-of-band
   reviewer), recorded as a follow-up. SHA-binding raises the forgery cost incidentally
   but does not claim to defeat a determined forger.
+- **Gate matcher — shell-accurate command tokenization.** The four command parsers
+  (`subcommand_of`, `action_after`, `git_target_repo`, `push_ship_runid`) lex `$CMD`
+  through ONE shared `tokenize_cmd` (a bash-3.2 char state machine — no `eval`, no command
+  execution, no `$var` expansion) rather than raw `set -- $CMD` whitespace word-splitting.
+  This closes silent bypasses on **legitimate** input: a quoted path **with a space**
+  (`git -C "/tmp/unreviewed repo" push`) is now one `-C` value (not split into `"/tmp/unreviewed`
+  + `repo"`, which mis-read the subcommand and skipped ship detection), and `""`/`''`
+  preserve an **empty arg** (so `git -C "" push` is a git no-op → identity stays `$CWD` →
+  the drive HEAD is seen → DENY, instead of resolving `$CWD/""` and silently failing). The
+  tokenizer handles single/double quotes and backslash escapes. *Fail-safe:* an
+  **unterminated quote** is unparseable — the real shell would reject the command and git
+  would never run — so the tokenizer returns "no tokens" and the gate goes **inert** rather
+  than emit a mis-split argv that could desync the gate from git (safe because such a
+  command cannot execute). **Variable refs remain a documented limitation:** the gate sees
+  the PRE-expansion string by design (no `$var`/`$(…)` expansion), so a command that names
+  its repo/ref purely through a runtime variable — `git -C "$dir" push`, `git merge
+  "slice/$v/$id"` — is parsed with the literal token, not the runtime value; such mid-build
+  merges silently pass the per-unit gate and are backstopped by the HEAD-based ship gate
+  (whole-tip diff) plus the `/drive` literal-ref instruction. This is the same forgery/
+  evasion class as the `$GIT_DIR`/`$GIT_WORK_TREE` env residual below (→ Component D), not
+  an omission gap for the literal command forms `/drive` actually emits.
 - **Gate matcher — composed git global-option resolution.** `git_target_repo()` now
   models the way *real git* resolves the repo identity: `-C` is composed left-to-right
   (`-C a -C b` → `a/b`; an absolute `-C` resets the accumulator), `--git-dir` is the

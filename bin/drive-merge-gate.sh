@@ -47,6 +47,94 @@ CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
 [ -n "$CMD" ] || exit 0
 [ -n "$CWD" ] || CWD="$PWD"
 
+# tokenize_cmd <string> : shell-accurate argv tokenizer for the literal command string.
+# Populates the global array `_TOKENS` with the argv git/bash WOULD see, then the four
+# parsers below `set -- "${_TOKENS[@]}"` so they all read the SAME token stream. This
+# replaces the old `set -f; set -- $CMD` whitespace word-split, which (a) split a quoted
+# path WITH A SPACE into two words (`git -C "/a b" push` → `-C` `"/a` `b"` `push`, so the
+# subcommand was misread and ship detection never ran — a silent bypass on LEGITIMATE
+# input), and (b) kept quote characters literal so `""` produced the literal token `""`
+# (resolving REPO to `$CWD/""`) instead of an empty arg (a git -C no-op).
+#
+# Rules (no `eval`, no command execution, no $var expansion — the gate sees the
+# PRE-expansion string by design; runtime variable refs are a documented limitation):
+#   - split on UNQUOTED whitespace (space/tab/newline);
+#   - single-quoted '…' : literal, no escapes inside (POSIX); quotes removed;
+#   - double-quoted "…" : literal, but backslash escapes the next char; quotes removed;
+#   - backslash OUTSIDE quotes escapes the next char (`\ ` → a literal space in the arg);
+#   - a quote/escape STARTS a token even with no other chars, so `""`/`''` yield an
+#     EMPTY-STRING arg (preserved — the -C compose treats it as a no-op, per git).
+# Fail-safe: an UNTERMINATED quote (or a trailing bare backslash) is UNPARSEABLE — the
+# real shell would reject the command and git would NEVER run — so we return rc 1 and
+# leave _TOKENS empty. Callers treat that as "no recognizable command" → inert, which is
+# safe precisely because such a command cannot execute (it can't be a real bypass). This
+# is a deliberate fail-CLOSED-against-misparse: we never emit a mis-split argv that could
+# desync the gate from git. bash 3.2-safe (char state machine; no bash-4 features).
+tokenize_cmd() {
+  local s="$1" n=${#1} i=0 ch
+  local state=default          # default | single | double | escape | dquote_escape
+  local cur="" started=0       # `started` = the current token has begun (so "" emits empty)
+  _TOKENS=()
+  while [ "$i" -lt "$n" ]; do
+    ch="${s:$i:1}"
+    i=$((i+1))
+    case "$state" in
+      default)
+        case "$ch" in
+          ' '|$'\t'|$'\n')
+            if [ "$started" -eq 1 ]; then _TOKENS[${#_TOKENS[@]}]="$cur"; cur=""; started=0; fi ;;
+          \') state=single; started=1 ;;
+          \") state=double; started=1 ;;
+          \\) state=escape; started=1 ;;
+          *)  cur="$cur$ch"; started=1 ;;
+        esac ;;
+      single)
+        case "$ch" in
+          \') state=default ;;             # close single-quote
+          *)  cur="$cur$ch" ;;             # everything literal (incl. backslash) inside '…'
+        esac ;;
+      double)
+        case "$ch" in
+          \") state=default ;;             # close double-quote
+          \\) state=dquote_escape ;;       # backslash escapes the next char in "…"
+          *)  cur="$cur$ch" ;;
+        esac ;;
+      dquote_escape)
+        # In bash "…", backslash is literal EXCEPT before $ ` " \ (and newline). We keep
+        # the chars the gate cares about (quotes/backslash) correct; for any other char a
+        # literal backslash is preserved, matching shell semantics closely enough for the
+        # path/flag tokens this gate parses.
+        case "$ch" in
+          \"|\\|\$|\`) cur="$cur$ch" ;;
+          *) cur="$cur\\$ch" ;;
+        esac
+        state=double ;;
+      escape)
+        cur="$cur$ch"; state=default ;;    # \<char> → literal char outside quotes
+    esac
+  done
+  # Unterminated quote or a trailing bare backslash → unparseable. Fail rc 1, no tokens.
+  case "$state" in
+    default)
+      [ "$started" -eq 1 ] && _TOKENS[${#_TOKENS[@]}]="$cur"
+      return 0 ;;
+    *)
+      _TOKENS=()
+      return 1 ;;
+  esac
+}
+
+# set_argv_from_cmd : tokenize $CMD into _TOKENS once. rc 1 if the command is either
+# unparseable (unterminated quote) OR yields zero tokens (whitespace-only) — both cases
+# the callers treat as "no recognizable command" (inert / no subcommand). On rc 1 the
+# caller MUST NOT expand `"${_TOKENS[@]}"` (bash 3.2 errors on an empty array under
+# `set -u`); rc 1 guarantees the caller bails before that expansion.
+set_argv_from_cmd() {
+  tokenize_cmd "$CMD" || return 1
+  [ "${#_TOKENS[@]}" -gt 0 ] || return 1
+  return 0
+}
+
 # detect_subcommand <binary> <words...> : echo the real subcommand for a binary
 # invocation, i.e. the first NON-flag word AFTER the binary, skipping:
 #   - env `VAR=val` prefixes that precede the binary (handled by the caller, which
@@ -90,10 +178,8 @@ detect_subcommand() {
 # handled elsewhere. bash 3.2-safe.
 subcommand_of() {
   local bin="$1" w
-  set -f                                   # noglob: a literal `*` in $CMD must not expand.
-  # shellcheck disable=SC2086  # intentional word-split of the command string.
-  set -- $CMD
-  set +f
+  set_argv_from_cmd || { printf ''; return 0; }   # unparseable command → no subcommand
+  set -- "${_TOKENS[@]}"
   # Skip leading env VAR=val prefixes ONLY (POSIX assignment shape).
   while [ "$#" -gt 0 ]; do
     w="$1"
@@ -118,10 +204,8 @@ subcommand_of() {
 # subcommand_of + detect_subcommand).
 action_after() {
   local bin="$1" w
-  set -f
-  # shellcheck disable=SC2086
-  set -- $CMD
-  set +f
+  set_argv_from_cmd || { printf ''; return 0; }
+  set -- "${_TOKENS[@]}"
   # Skip leading env VAR=val prefixes; require START binary == <bin> (no rescan).
   while [ "$#" -gt 0 ]; do
     case "$1" in [A-Za-z_]*=*) shift; continue ;; *) break ;; esac
@@ -184,10 +268,8 @@ _compose() {
 # Only meaningful when the START binary is `git`. bash 3.2-safe.
 git_target_repo() {
   local c_base="" gitdir="" have_gitdir=0
-  set -f
-  # shellcheck disable=SC2086
-  set -- $CMD
-  set +f
+  set_argv_from_cmd || { printf ''; return 0; }
+  set -- "${_TOKENS[@]}"
   while [ "$#" -gt 0 ]; do
     case "$1" in [A-Za-z_]*=*) shift; continue ;; *) break ;; esac
   done
@@ -237,10 +319,8 @@ git_target_repo() {
 # Reads ONLY structural ref args + HEAD — never flag/body VALUE tokens — so a ref-shaped
 # token in --body/--push-option cannot fake or re-key a ship. bash 3.2-safe.
 push_ship_runid() {
-  set -f
-  # shellcheck disable=SC2086
-  set -- $CMD
-  set +f
+  set_argv_from_cmd || return 1            # unparseable command → not a ship
+  set -- "${_TOKENS[@]}"
   # Skip env VAR=val prefixes; require START binary == git.
   while [ "$#" -gt 0 ]; do
     case "$1" in [A-Za-z_]*=*) shift; continue ;; *) break ;; esac
