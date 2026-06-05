@@ -388,7 +388,7 @@ mk_audit_git_error() {
 #   pred_root       -- slice only touches root-level test_root.py (not under tests/) -> violation
 #   pred_docs       -- slice only touches docs/guide.test.md (no runner)         -> violation
 #   del_test        -- slice's ONLY test-path change is DELETING a runnable test  -> violation
-#                      (a deleted test is not test EVIDENCE: `--diff-filter=AM`)
+#                      (a deleted test is not test EVIDENCE: `--diff-filter=d` excludes D)
 #   dot_test_sh     -- slice only adds test/.noop.test.sh (dotfile basename; the
 #                      real bash runner glob skips dotfiles)                       -> violation
 #   dot_test_py     -- slice only adds tests/mc/.foo_test.py (dotfile basename that DOES
@@ -404,7 +404,7 @@ mk_impl_presence() {
   if [ "$variant" = "del_test" ]; then
     # A runnable test EXISTS on drive/<runId> base; the slice's only test-path change is to
     # DELETE it (plus an unrelated code edit). The deletion must NOT count as test evidence
-    # (--diff-filter=AM excludes D), so with no other test + no waiver -> violation (exit 1).
+    # (--diff-filter=d excludes D), so with no other test + no waiver -> violation (exit 1).
     _gitc "$repo" checkout -q -b "drive/$name"
     _commit "$repo" "tests/foo/test_existing.py" "def test_e(): pass" "drive base: seed a test" >/dev/null
     _gitc "$repo" checkout -q -b "slice/$name/3a"

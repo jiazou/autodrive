@@ -166,7 +166,7 @@ read -r repo rd < <(mk_impl_presence pred_root)
 run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b root test_root.py not under tests/ -> violation" 1 "$RC"
 read -r repo rd < <(mk_impl_presence pred_docs)
 run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b docs/*.test.md (no runner) -> violation" 1 "$RC"
-# Finding 1 (BLOCKING): a DELETED test path is NOT test evidence (--diff-filter=AM). A slice
+# Finding 1 (BLOCKING): a DELETED test path is NOT test evidence (--diff-filter=d excludes D). A slice
 # whose only test-path change is deleting tests/foo/test_existing.py (+ a code edit), with no
 # new test + no waiver -> violation. (Pre-fix the plain `git diff --name-only` listed the
 # deleted path and is_test_path matched it, falsely passing.)
