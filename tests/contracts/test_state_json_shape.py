@@ -39,6 +39,7 @@ CORE_KEYS = {
     "phaseBaseSha",
     "concurrencyCap",
     "budget",
+    "phaseDesign",
     "phaseReview",
 }
 

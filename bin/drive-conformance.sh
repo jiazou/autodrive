@@ -5,7 +5,7 @@
 # state.json's `step`/`phaseReview` for the verdict (D1: git-truth, not state-trust).
 #
 # Usage:
-#   drive-conformance.sh <RUN_DIR> --mode plan-gate | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit
+#   drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit
 #
 # Truth model:
 #   runId        = basename(RUN_DIR)
@@ -26,7 +26,7 @@ set -euo pipefail
 SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md")
 
 usage() {
-  echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|slice-merge:<id>|phase-merge:<P>|impl-presence:<id>|ship|audit" >&2
+  echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|phasedesign-gate:<P>|slice-merge:<id>|phase-merge:<P>|impl-presence:<id>|ship|audit" >&2
 }
 
 # Emit the JSON result and exit. $1=clean(true|false) $2=mode $3=tip $4=violations-json-array
@@ -95,8 +95,14 @@ reviewed_sha_of() {
 }
 
 # Does the highest-N review for scope have CONVERGED verdict? rc0 yes. $1=file
+# Decide on the FIRST `## Verdict:` line ONLY — the schema puts the real verdict first
+# (drive-review.md). A later standalone `## Verdict: CONVERGED` heading elsewhere in a
+# FINDINGS file (e.g. quoting a prior round) must NOT flip the verdict to converged.
 verdict_converged() {
-  grep -qE '^## Verdict:[[:space:]]*CONVERGED[[:space:]]*$' "$1" 2>/dev/null
+  local line
+  line="$(grep -m1 -E '^## Verdict:' "$1" 2>/dev/null || true)"
+  [ -n "$line" ] || return 1
+  printf '%s\n' "$line" | grep -qE '^## Verdict:[[:space:]]*CONVERGED[[:space:]]*$'
 }
 
 # Evaluate whether scope <id> has a COUNTING review for tip <sha>.
@@ -202,6 +208,24 @@ case "$MODE_ARG" in
       viols="$(violation "design" "no-codex")"
     fi
     if [ -z "$viols" ]; then emit true "plan-gate" "" "[]"; else emit false "plan-gate" "" "[$viols]"; fi
+    ;;
+
+  phasedesign-gate:*)
+    # Enforces the per-phase DESIGN review (Tier 2). Like plan-gate, no git tip — it audits
+    # the design DOC design-phase<P>.md. Clean iff highest-N review-phasedesign<P>-N.md is
+    # CONVERGED AND codex-review-phasedesign<P>.md exists.
+    P="${MODE_ARG#phasedesign-gate:}"
+    [ -n "$P" ] || { usage; exit 2; }
+    scope="phasedesign$P"
+    rf=""; viols=""
+    if ! rf="$(highest_review_file "$scope")"; then
+      viols="$(violation "$scope" "no-review")"
+    elif ! verdict_converged "$rf"; then
+      viols="$(violation "$scope" "verdict-not-converged")"
+    elif ! codex_present "$scope"; then
+      viols="$(violation "$scope" "no-codex")"
+    fi
+    if [ -z "$viols" ]; then emit true "phasedesign-gate:$P" "" "[]"; else emit false "phasedesign-gate:$P" "" "[$viols]"; fi
     ;;
 
   slice-merge:*)

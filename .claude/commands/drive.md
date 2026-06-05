@@ -38,17 +38,32 @@ Generate `runId = <branch>-<timestamp>` and `RUN_DIR = ~/.claude/harness-runs/<r
 from any worktree. Append a line to `$RUN_DIR/event-log.jsonl` at every dispatch /
 verdict / merge / gate.
 
-- **Resume:** if invoked with an existing runId (its `$RUN_DIR/state.json` exists),
-  load it, **reconcile worktrees** (`git worktree list` vs `state.slices[].worktree`
-  / `phaseReview[].integrationWorktree`; `git worktree remove` + `branch -D`
-  orphans; a phase left `integrating` is rebuilt from scratch — see Execute), and
-  continue each slice from its `step`. A phase left `hardening` is **NOT** rebuilt —
-  its harden commits live on `phaseInt/<runId>/<P>`; resume HARDEN on that branch (rebuilding
-  would discard the harden work). **Reconcile `hardenRound` from artifacts, not state
-  alone** (a crash can land a `harden-<P>-N.md` or a `phaseInt/<runId>/<P>` commit before the
-  state write): `hardenRound = max(state value, count of `harden-<P>-*.md` with
-  `AppliedEdits: yes`)`; the next round re-audits from the actual `phaseInt/<runId>/<P>` tree,
-  so a partially-applied round is simply re-audited and completed.
+- **Resume:** if invoked with an existing runId (its `$RUN_DIR/state.json` exists), load it
+  and reconcile from git — `git worktree list`, branch tips, and ancestry are authoritative;
+  state fields are hints. Never re-dispatch, advance, or clean up on a state value alone:
+  - **Current phase:** `state.phase` = the lowest phase in `state.phaseList` whose
+    `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch` (branch absent, or
+    `git merge-base --is-ancestor phaseInt/<runId>/<P> <featureBranch>` fails). All are
+    ancestors → `stage = verify`. If the current phase's `phaseDesign[<P>].status` is not
+    `converged`, (re)run its design (Execute step 1) before dispatching slices.
+  - **Worktrees:** classify each `$RUN_DIR/wt/` worktree by its checked-out branch and
+    remove stale ones with `git worktree remove` only — never `branch -D` (branch cleanup is
+    the guarded assemble/advance steps' job). A `slice/<runId>/<id>` worktree is live until
+    its slice is `converged`; a `phaseInt/<runId>/<P>` worktree is live only for the current
+    phase with `phaseReview[<P>].status` not yet `hardened`. A detached `wt/design<P>`
+    worktree (the per-phase design read worktree) is never live across a pause → always
+    `git worktree remove --force` it.
+  - **Each slice, by `step`:** `queued` → leave it for the phase-loop to dispatch.
+    `implementing` → if `git rev-list <phaseBaseSha>..slice/<runId>/<id>` is non-empty and
+    slice-local tests pass, promote to `awaiting_review`, else re-dispatch IMPLEMENT.
+    `awaiting_review` → run REVIEW. `needs_fix` → re-dispatch IMPLEMENT (if the worktree was
+    removed, RE-ATTACH to the existing branch — `git worktree add $RUN_DIR/wt/<id>
+    slice/<runId>/<id>`, no `-b`, no reset — to keep its committed work). `converged` → done
+    (branch kept for assembly). `blocked` → STOP.
+  - **Phase `hardening`:** resume HARDEN on `phaseInt/<runId>/<P>` (don't rebuild). If
+    `status == hardened` but `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch`,
+    complete its `git branch -f` advance (Execute step 6) instead. Set `hardenRound =
+    max(state, count of `harden-<P>-*.md` with `AppliedEdits: yes`)`.
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
   initialize and write `$RUN_DIR/state.json` in this shape (set `sessionId` from the
@@ -60,7 +75,7 @@ verdict / merge / gate.
   "baseRef": "main", "featureBranch": "drive/<id>",
   "phase": 1, "phaseList": [], "phaseBaseSha": null, "concurrencyCap": 4, "designReview": 0,
   "budget": { "ceilingCalls": null, "ceilingMin": null, "calls": 0, "startedAt": "<iso>" },
-  "slices": {}, "phaseReview": {}, "lastGate": null,
+  "slices": {}, "phaseDesign": {}, "phaseReview": {}, "lastGate": null,
   "verify": { "attempts": [] }, "ship": { "suite": null, "conformance": null, "prUrl": null },
   "sessionId": null, "autoContinue": true, "waiting": null,
   "designPath": "$RUN_DIR/design.md" }
@@ -122,7 +137,8 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
 
 1. **`state.json`** — the durable structured run-model. Fields the graph reads:
    `task` (→ Premises line — always written at run-setup), `stage`, `lastGate`, `waiting`,
-   `phase`, `phaseList`, `designReview`, `slices[<id>].{step,reviewCount,owns,deps}`,
+   `phase`, `phaseList`, `designReview`, `phaseDesign[<P>].{round,status}`,
+   `slices[<id>].{step,reviewCount,owns,deps}`,
    `phaseReview[<P>].{status,round,hardenRound}`, `verify`, `ship`.
 2. **Fixed-format markdown files** (scope-token naming):
    - `design.md` (Goal → root cause). (`task.md` may also exist, but the Premises line is
@@ -131,6 +147,8 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
      BLOCKING/MAJOR = P1) — the Claude reviewer file, **persisted per round** (the `-N`
      suffix) — and its codex sibling `codex-review-<scope>.md` (same tags, or bare
      first-line token `CODEX_UNAVAILABLE`).
+   - `design-phase<P>.md` (the per-phase detailed design) and its review
+     `review-phasedesign<P>-N.md` (`## Verdict: CONVERGED|FINDINGS`) + `codex-review-phasedesign<P>.md`.
    - `harden-<P>-N.md` (`## Verdict: HARDENED|FINDINGS`) and `codex-harden-<P>.md`.
    - **The slice scope token is the BARE id** — `review-<id>-*.md` /
      `codex-review-<id>*.md` (e.g. `review-1.2-3.md`, `codex-review-1.2.md`), per
@@ -161,16 +179,19 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
   `(pending)`); then the design-review rounds (combined verdict); then an explicit
   **`Gate A:` node line** — `APPROVED` when `state.lastGate=="A"` (or beyond), else
   `awaiting approval`. `waiting=="gateA"` anchors `← YOU ARE HERE` to this line.
-- **Execute:** each phase (from `state.phaseList`) → its slices (`state.slices` keyed by
+- **Execute:** each phase (from `state.phaseList`) → first a **`design:`** child line from
+  `phaseDesign[<P>]` (`✓ design: CONVERGED (k rounds)` when `status=="converged"`, else
+  `◐ design: designing` — rounds/verdict from `review-phasedesign<P>-*.md` + its codex
+  sibling, same dual-voice rule as any review) → then its slices (`state.slices` keyed by
   id-prefix == phase; `‖` between independent slices — see below). **Under each slice**
   (and each phase-integration), as child lines: one line per review round + combined
   dual-voice verdict, then `fix round k` child lines (or the numeric summary), then —
   at the phase level — an `assemble` line and an `advance` line (the latter iff
   `phaseReview[<P>].status=="hardened"`). Per-phase status from `phaseReview[<P>].status`
-  (absent/no-status ⇒ `◐` in-progress). `stage==execute` + empty `slices` ⇒
-  `◐ Phase N (dispatching…)`; `stage` past execute + empty `slices` ⇒
-  `(no slices recorded)`. (A change with no formal slice breakdown records its one unit
-  as a `state.slices` entry, so it renders through the normal slice path.) Harden from
+  (absent/no-status ⇒ `◐` in-progress). `stage==execute` + the current phase has empty
+  `slices` ⇒ it is still in Tier-2 design (`phaseDesign[<P>].status != converged`) → render
+  `◐ Phase N (designing…)` under the `design:` line; `stage` past execute + empty `slices` ⇒
+  `(no slices recorded)`. Harden from
   `harden-<P>-*.md` + `codex-harden-<P>*.md` + `phaseReview[<P>].hardenRound/status`.
   A `stop:<r>` while in Execute anchors `← YOU ARE HERE` to a `✗ STOP: <r>` leaf under
   the responsible slice/phase node.
@@ -329,25 +350,32 @@ key throughlines:
    → `stage = plan`
 
 ### Stage 1 — Plan (gstack brain)
-Run the PLAN stage (`/drive-plan` — `~/.claude/commands/drive-plan.md`): planner authors
-`$RUN_DIR/design.md` **with a `## Phases & Slices` breakdown**, autoplan reviews it,
-then the dual-voice **design-review** primitive converges it (no open P1). **Gate A**
-= autoplan approved AND design converged — the one human gate here. If no
-approved/converged design → STOP. → `lastGate = "A"`, `stage = execute`
+Run the PLAN stage (`/drive-plan` — `~/.claude/commands/drive-plan.md`): planner authors a
+**high-level** `$RUN_DIR/design.md` (goal · approach · an ordered **`## Phases`** breakdown
+— **no slice/interface detail**), autoplan reviews it, then the dual-voice **design-review**
+primitive converges it (no open P1). **Gate A** = autoplan approved AND design converged —
+the one human gate here. If no approved/converged design → STOP. → `lastGate = "A"`,
+`stage = execute`
 
-Parse the breakdown into `state.slices` (`{<id>: {step:"queued", reviewCount:0}}`
-with each slice's `owns`/`deps`) and the ordered phase list. Record the ordered phase ids in `state.phaseList`.
+Parse the `## Phases` breakdown into the ordered phase ids in `state.phaseList`. **Slices
+are NOT defined here** — `state.slices` stays empty; each phase's `/drive-design` (Execute
+step 1) produces and records its own slices, in detail, against the real prior-phase code.
 
 ### Stage 2–4.5 — Execute (per phase; refs + worktrees only)
 
-**Plan-gate (defense-in-depth, once per run).** Before dispatching the FIRST IMPLEMENT
-of the run (i.e. before the first `git worktree add … -b slice/<runId>/<id>`), run
-`bin/drive-conformance.sh $RUN_DIR --mode plan-gate` and proceed only if it reports
-clean — it requires the dual-voice **design** review to have CONVERGED (a
-`review-design-N.md` with `## Verdict: CONVERGED` + a `codex-review-design.md`). On a
-violation, run `/drive-review design` until it converges, then retry. The PreToolUse
-hook enforces this same gate on the first `git worktree add -b slice/…`; running it
-in-prose first makes enforcement degrade gracefully where the hooks aren't installed.
+**Plan-gate + phase-design gate (defense-in-depth).** A `git worktree add … -b
+slice/<runId>/<id>` is gated by BOTH the run-level **plan-gate** (whole-run design
+converged) AND the per-phase **phasedesign-gate** (that phase's detailed design
+converged). Before dispatching a phase's first IMPLEMENT, run
+`bin/drive-conformance.sh $RUN_DIR --mode plan-gate` and `… --mode phasedesign-gate:<P>`
+and proceed only if both report clean — plan-gate requires a `review-design-N.md`
+`## Verdict: CONVERGED` + `codex-review-design.md`; phasedesign-gate requires the same for
+`review-phasedesign<P>-N.md` + `codex-review-phasedesign<P>.md`. On a violation, run the
+named review (`/drive-review design` or `/drive-review phase <P> design`) until it
+converges, then retry. The PreToolUse hook enforces both on the `git worktree add -b
+slice/…` (deriving `<P>` from the slice id prefix); the in-prose check degrades gracefully
+where the hooks aren't installed. (`/drive-design` already converges the phase design in
+step 1, so this is a backstop in the normal flow.)
 
 **Literal refs in gated commands.** Every command the gate inspects (the `git worktree
 add -b slice/<runId>/<id>`, each per-slice `git merge slice/<runId>/<id>`, the
@@ -357,29 +385,57 @@ shell variables in the ref (e.g. `slice/$runId/$id`). The PreToolUse gate parses
 unexpanded command string, so a variable ref is invisible to it and silently bypasses
 the gate.
 
-For each PHASE in order (steps 1–4 build & review the phase; step 5 HARDENS it before
-it advances):
+For each PHASE in order (step 1 designs it, steps 2–5 build & review it, step 6 HARDENS
+it before it advances):
 
-1. **Freeze base:** `phaseBaseSha = git rev-parse <featureBranch>`.
-2. **Dispatch slices** whose `deps` are CONVERGED, ≤ `concurrencyCap` in flight.
-   Slices with **disjoint `owns`** run in PARALLEL; create a worktree per slice
-   `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>`, copy
+1. **Design the phase (detailed, against real code):** initialize
+   `state.phaseDesign[<P>] = { "round": 0, "redesigns": 0, "status": "designing" }` if absent,
+   then set `status = "designing"` (every entry — so a mid-design crash resumes as
+   `designing`, not skipped). Do NOT reset `round` here: on resume it must keep counting so
+   the design-review cap-8 holds; a fresh design pass (first entry, or a REDESIGN) gets its
+   `round = 0` from the init / the REDESIGN handler. Create a **detached** read
+   worktree at the featureBranch tip (force-clean any leftover:
+   `git worktree remove --force $RUN_DIR/wt/design<P> 2>/dev/null; git worktree prune`, then
+   `git worktree add --detach $RUN_DIR/wt/design<P> <featureBranch>` — detached so
+   `featureBranch` stays checked out in NO worktree, which the step-6 advance needs). Run the
+   DESIGN stage (`/drive-design phase <P>` — `~/.claude/commands/drive-design.md`) with that
+   worktree as the subagent's cwd: it authors + dual-voice-reviews `design-phase<P>.md`
+   against the real prior-phase code and populates `state.slices` for `<P>` (cap 8, no human
+   gate; can't converge → STOP). Then `git worktree remove --force $RUN_DIR/wt/design<P>`.
+2. **Freeze base:** `phaseBaseSha = git rev-parse <featureBranch>`; initialize
+   `state.phaseReview[<P>] = { "round": 0 }` if absent.
+3. **Dispatch slices** whose `deps` are CONVERGED, ≤ `concurrencyCap` in flight.
+   Slices with **disjoint `owns`** run in PARALLEL. A `queued` slice is a **fresh build**, so
+   FRESH-CREATE its worktree from base: branch absent → `git worktree add $RUN_DIR/wt/<id> -b
+   slice/<runId>/<id> <phaseBaseSha>`; branch already exists (a REDESIGN re-queued this id
+   from a prior build) → `git worktree remove --force` any stale `$RUN_DIR/wt/<id>`, reset the
+   branch (`git branch -f slice/<runId>/<id> <phaseBaseSha>`), then `git worktree add
+   $RUN_DIR/wt/<id> slice/<runId>/<id>` (no `-b`). Then copy
    the declared gitignored config allowlist (`.env`, …) in, and dispatch IMPLEMENT
    (`/drive-implement` — `~/.claude/commands/drive-implement.md`) with cwd = that worktree (`step=implementing`).
    Overlapping-`owns` ready slices are NOT parallelized — run by dep order; if the
    design left them unsequenced, STOP (planning bug). Excess past the cap queue.
-3. **Per-slice loop:** when a slice's IMPLEMENT returns:
+4. **Per-slice loop:** when a slice's IMPLEMENT returns:
    - `DONE` → `step=awaiting_review`; run REVIEW scoped `slice <id>` (slice-local
      tests). CONVERGED → `step=converged`, then **`git worktree remove` its worktree
      (keep the slice branch for assembly)** — frees a concurrency slot + disk, so
      worktree count stays ≤ cap regardless of slices-per-phase. FINDINGS →
-     `step=needs_fix`; if its `reviewCount < 8` re-run IMPLEMENT then REVIEW
-     (re-create the worktree first if it was removed); if `>=8` → STOP.
+     `step=needs_fix`; if its `reviewCount < 8` re-run IMPLEMENT then REVIEW; if `>=8` → STOP.
+     A `needs_fix` re-run is **addressing findings, not starting fresh** — its branch holds
+     committed work to keep. The worktree normally still exists (only CONVERGED removes it);
+     if it was removed (crash/resume), **RE-ATTACH** to the existing branch — `git worktree
+     add $RUN_DIR/wt/<id> slice/<runId>/<id>` (no `-b`, NO `branch -f` reset) — never reset to
+     `phaseBaseSha`, which would discard the commits the fix builds on.
+   - `REDESIGN` → the slice's assumption-check hit a big divergence (the phase design is
+     stale vs the real prior-slice code, or a slice needs files outside its ownership).
+     `phaseDesign[<P>].redesigns += 1`; at `>= 3` → STOP (a phase that keeps breaking its own
+     design needs a human). Else set `phaseDesign[<P>].round = 0` (this redesign is a fresh
+     design pass → fresh cap-8) and re-run step 1's design (it merge-updates `state.slices`);
+     `git worktree remove --force` the worktree of any slice id the redesign dropped (leave
+     its branch — assemble only merges ids still in `state.slices`). Re-dispatch from step 3.
    - `BLOCKED`/`NEEDS_CONTEXT` → `step=blocked`, STOP that slice + surface; other
-     in-flight slices continue; the phase can't integrate until it resolves. If the
-     blocker needs files outside ownership → **plan-amendment** (amend the design's
-     Phases & Slices, re-converge the design review, resume).
-4. **Assemble (idempotent)** once ALL slices in the phase are `converged`:
+     in-flight slices continue; the phase can't integrate until it resolves.
+5. **Assemble (idempotent)** once ALL slices in the phase are `converged`:
    first run `bin/drive-conformance.sh $RUN_DIR --mode audit` and proceed only if it
    reports clean (defense-in-depth — flags any slice merged into the live phase that
    lacks a counting review, so enforcement degrades gracefully where the PreToolUse
@@ -392,11 +448,11 @@ it advances):
    rebuild-from-base is the rollback; never `git merge --abort` to undo prior merges).
    Run the **FULL build + integration tests** + REVIEW scoped `phase <P>` in this
    worktree.
-   - CONVERGED → `phaseReview[<P>].status = converged`, then **HARDEN** (step 5).
-   - FINDINGS → route each P1 to the responsible slice (`step=needs_fix`,
-     re-dispatch — re-creating its worktree — loop its cap-8), then
-     **re-assemble from scratch**.
-5. **Harden (per phase, after the phase review converges)** — run the HARDEN stage
+   - CONVERGED → `phaseReview[<P>].status = converged`, then **HARDEN** (step 6).
+   - FINDINGS → route each P1 to the responsible slice (`step=needs_fix`, re-dispatch —
+     re-attaching its worktree to the existing branch per step 4, preserving its commits —
+     loop its cap-8), then **re-assemble from scratch**.
+6. **Harden (per phase, after the phase review converges)** — run the HARDEN stage
    (`/drive-harden phase <P>` — `~/.claude/commands/drive-harden.md`) IN the
    `phaseInt/<runId>/<P>` worktree (`phaseReview[<P>].status = hardening`). It is a mutating
    find→fix→verify pass over the assembled phase to **reduce AI slop, add missing
@@ -420,7 +476,9 @@ it advances):
      `featureBranch` (`git merge-base --is-ancestor <featureBranch> phaseInt/<runId>/<P>`
      succeeds — exit 0; a non-zero exit means NOT a descendant → STOP, a concurrent ref
      move broke the invariant). Then `git worktree remove` the integration worktree
-     (slice worktrees were already removed on convergence), delete slice branches; next phase.
+     (slice worktrees were already removed on convergence), delete slice branches, and
+     advance `state.phase` to the next id in `state.phaseList` (if this was the last phase,
+     `stage = verify`). Proceed to the next phase.
    - `STOP` (3 fix rounds exceeded / BLOCKED / NEEDS_CONTEXT) → STOP; the phase stays
      `hardening` and does **not** advance — its half-hardened state is preserved on
      `phaseInt/<runId>/<P>` for resume.

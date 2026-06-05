@@ -5,7 +5,7 @@ with **gstack for planning** and **harness-owned stages for execution**.
 
 - gstack `autoplan` + `plan-*-review` — autonomous planning/review brain
 - `codex` — cross-model second opinion (run via the codex CLI directly)
-- Slash commands: `/drive`, `/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`
+- Slash commands: `/drive`, `/drive-plan`, `/drive-design`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`
 - Decision policy: autoplan's 6 principles + Mechanical/Taste/User-Challenge
   classification (auto-decides; pauses only at the gates)
 
@@ -25,26 +25,34 @@ See `mission-control/README.md`.
 
     PLAN (gstack brain)
     0. Premises (human) + set the session goal (native /goal, you paste it)
-    1. /drive-plan: author design + a ## Phases & Slices breakdown
-       -> autoplan -> dual-voice design review converges -> [Gate A]
+    1. /drive-plan: author a HIGH-LEVEL design — goal, approach, ordered ## Phases
+       (no slices/interfaces) -> autoplan -> dual-voice review converges -> [Gate A]
 
     EXECUTE (harness-owned) - for each PHASE in order:
-    2. /drive-implement per slice   (independent slices run in PARALLEL)
-    3. /drive-review per slice + phase-integration  (Claude subagent + codex; cap 8)
-    4. /drive-harden phase          (after review converges: reduce AI slop, add
+    2. /drive-design phase: detailed design for THIS phase (interfaces, edge cases,
+                                     slices) against the real prior-phase code;
+                                     dual-voice review converges (cap 8); no gate
+    3. /drive-implement per slice   (independent slices run in PARALLEL; each first
+                                     checks its assumptions vs reality -> REDESIGN
+                                     re-runs step 2 on a big divergence)
+    4. /drive-review per slice + phase-integration  (Claude subagent + codex; cap 8)
+    5. /drive-harden phase          (after review converges: reduce AI slop, add
                                      missing tests, fix logic bugs; own cap 3)
-    5. verify (optional)      (qa-only / browse)
-    6. /drive-ship ONCE             -> [Gate B] -> push
+    6. verify (optional)      (qa-only / browse)
+    7. /drive-ship ONCE             -> [Gate B] -> push
 
 Two human gates (A: direction, B: diff before push); every review is dual-voice
-(Claude + codex), converging when neither flags a P1. Full annotated diagram +
+(Claude + codex), converging when neither flags a P1. Design is refined in three
+tiers — high-level whole-run plan (Gate A), a detailed per-phase design against the
+real prior-phase code, then a per-slice assumption check. Full annotated diagram +
 decision policy: **[`docs/flow.md`](docs/flow.md)** and `CLAUDE.md`.
 
 ### Review enforcement (a run cannot skip review by omission)
 
 A `/drive` run **cannot skip plan/design review or code review by omission**: a
-git-truth conformance checker plus a PreToolUse gate chain (`plan → slice → phase →
-ship`) blocks each transition until its scope has a SHA-bound CONVERGED review, with a
+git-truth conformance checker plus a PreToolUse gate chain (`plan → phasedesign → slice
+→ phase → ship`) blocks each transition until its scope has a CONVERGED review — including
+each phase's detailed-design review before that phase's slices can be built — with a
 Stop hook (`bin/drive-stop-guard.sh`) as backstop. It is omission-proof, not
 forgery-proof. Install once per machine:
 
@@ -115,7 +123,7 @@ git clone https://github.com/jiazou/autodrive ~/workspace/autodrive
 This is **idempotent and safe**. It:
 - backs up any existing `~/CLAUDE.md`, then writes a new one that `@import`s this repo's `OPERATING.md`;
 - symlinks bundled skills (e.g. `/decant`) into `~/.claude/skills/` so `OPERATING.md`'s references resolve;
-- symlinks the pipeline commands (`/drive`, `/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`) into `~/.claude/commands/` so they work from **any** directory;
+- symlinks the pipeline commands (`/drive`, `/drive-plan`, `/drive-design`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`) into `~/.claude/commands/` so they work from **any** directory;
 - registers the `/drive` **autonomous-continuation** Stop hook (`bin/drive-stop-hook.py`) in `~/.claude/settings.json` — it keeps a run driving across turns and is a no-op outside an active `/drive` run owned by the firing session. Disable it per-run with `autoContinue: false` in that run's `state.json`, or remove it globally by deleting the `drive-stop-hook.py` entry from `~/.claude/settings.json` under `hooks.Stop`.
 
 > This is a **separate** Stop hook from the review-enforcement backstop (`bin/drive-stop-guard.sh`) installed by `bin/install-drive-hooks.sh`; the two coexist. See [Review enforcement](#review-enforcement-a-run-cannot-skip-review-by-omission).
@@ -175,8 +183,8 @@ Full details, the expected vault layout, and `MC_VAULT_NAME` are in
 - `skills/decant/` -- bundled `/decant` skill (symlinked into ~/.claude/skills by the installer)
 - `CLAUDE.md` -- imports OPERATING.md, plus the coordinator pipeline + decision policy
 - `.claude/commands/drive.md` -- the autonomous lifecycle orchestrator
-- `.claude/commands/{drive-plan,drive-implement,drive-review,drive-harden,drive-ship}.md` -- single-sourced stage runners
-- `docs/flow.md` -- annotated execution-flow diagram (phases, slices, every command)
+- `.claude/commands/{drive-plan,drive-design,drive-implement,drive-review,drive-harden,drive-ship}.md` -- single-sourced stage runners
+- `docs/flow.md` -- annotated execution-flow diagram (design tiers, phases, slices, every command)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
 - `mission-control/` -- separate, optional personal operating harness (session tracking +

@@ -18,21 +18,29 @@ machine-global `~/CLAUDE.md`):
 ```
 PLAN (gstack brain)
 0. Premises (human; never auto-decided) + set the session goal (native /goal — see below)
-1. /drive-plan: planner authors design + a ## Phases & Slices breakdown
-   → autoplan reviews → dual-voice design review converges (no P1) → Gate A
+1. /drive-plan: planner authors a HIGH-LEVEL design (goal · approach · ordered ## Phases —
+   no slice/interface detail) → autoplan reviews → dual-voice design review converges
+   (no P1) → Gate A
 
-EXECUTE (harness-owned) — for each PHASE in order:
-2. /drive-implement per slice — independent slices run in PARALLEL (file-ownership scoped)
-3. /drive-review per slice — Claude subagent + codex; converged = no P1; cap 8
+EXECUTE (harness-owned) — for each PHASE in order (design is progressively refined: the
+high-level plan → a detailed per-phase design → a per-slice assumption check):
+2. /drive-design phase — author the phase's DETAILED design (interfaces, edge cases, slice
+   breakdown) against the REAL prior-phase code; dual-voice review converges (cap 8); no
+   human gate. Populates this phase's slices.
+3. /drive-implement per slice — independent slices run in PARALLEL (file-ownership scoped).
+   FIRST validates the slice's assumptions vs reality (deps' real code/comments, decisions,
+   logs): hold → implement; minor drift → adapt; BIG divergence → STATUS: REDESIGN, which
+   re-runs the phase design (step 2) with review and re-derives the affected slices.
+4. /drive-review per slice — Claude subagent + codex; converged = no P1; cap 8
    then a phase-integration /drive-review over the assembled phase
-4. /drive-harden phase — after the phase review converges: a mutating find→fix→verify
+5. /drive-harden phase — after the phase review converges: a mutating find→fix→verify
    pass over the assembled phase to reduce AI slop, add missing tests, fix logic bugs
    (own cap 3; re-runs the conformance review as a regression guard); then advance
-5. verify — qa-only / browse (optional), after all phases harden
-6. /drive-ship ONCE → Gate B → push
+6. verify — qa-only / browse (optional), after all phases harden
+7. /drive-ship ONCE → Gate B → push
 ```
 
-The stage commands (`/drive-plan`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`) are single-sourced
+The stage commands (`/drive-plan`, `/drive-design`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`) are single-sourced
 runners that `/drive` invokes in order; you can also step them manually within an
 existing run (a new task is a new run-id).
 
@@ -100,8 +108,9 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
 - **Every review — the design review and every code review — runs both a Claude
   reviewer subagent AND codex.** A review is **converged** only when neither voice
   has an open **P1** (BLOCKING or MAJOR); P2/P3 are logged, not blocking.
-- Each slice/phase implement→review loop caps at **8** rounds (own `reviewCount`).
-  Beyond that, surface the disagreement with what each side asserts.
+- Each slice/phase implement→review loop caps at **8** rounds (own counter — a slice's
+  `reviewCount`, a phase's `phaseReview[<P>].round`). Beyond that, surface the
+  disagreement with what each side asserts.
 - **Each phase ends with a HARDEN pass** (after its review converges, before
   `featureBranch` advances): a mutating find→fix→verify over the assembled phase for
   AI-slop removal, missing tests, and logic bugs — *beyond* acceptance criteria. It
@@ -134,16 +143,20 @@ Per-run state lives in **`$RUN_DIR` = `~/.claude/harness-runs/<run-id>/`** (exte
 so every worktree reaches it by absolute path; not committed, not portable):
 
 ```
-task.md / design.md          -- premise; planner design (+ ## Phases & Slices)
+task.md / design.md          -- premise; HIGH-LEVEL design (goal · approach · ## Phases)
+design-phase<P>.md           -- per-phase DETAILED design (interfaces, edge cases, Slices)
 state.json                   -- run model: runId, baseRef, featureBranch, stage, phase,
                                 phaseBaseSha, concurrencyCap, designReview, budget, per-slice
-                                {step,reviewCount,branch,worktree,baseSha},
+                                {step,reviewCount,owns,deps} (populated per-phase by /drive-design),
+                                phaseDesign{round,status,redesigns} per phase (status
+                                designing→converged; round = design-review cap-8 counter;
+                                redesigns = REDESIGN re-run count, cap 3),
                                 phaseReview{status,round,hardenRound} where status
                                 = converged→hardening→hardened (terminal);
                                 plus lastGate, designPath, and the Stop-hook keys the hooks
                                 read: sessionId, autoContinue, waiting
 event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
-review-<scope>-N.md          -- per-scope (design/slice/phase) review outputs
+review-<scope>-N.md          -- per-scope (design/phasedesign<P>/slice/phase) review outputs
 codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw
 harden-<P>-N.md              -- per-phase harden audit (3-lens) outputs
 codex-harden-<P>.md          -- codex harden findings; codex-harden-<P>.log raw

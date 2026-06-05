@@ -40,6 +40,30 @@ run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0 plan-gate no 
 read -r repo rd < <(mk_plan findings)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0 plan-gate highest-N FINDINGS" 1 "$RC"
 
+# AC0b: a FINDINGS review whose BODY contains a later standalone '## Verdict: CONVERGED'
+# heading line (e.g. quoting/echoing a prior round) must NOT count as converged — only the
+# FIRST verdict line decides. Pre-fix, verdict_converged grepped the whole file line-anchored
+# and the later heading flipped a FINDINGS file to "converged" (a real omission hole).
+read -r repo rd < <(mk_plan clean)
+{ echo "# Review design round 2"; echo; echo "## Verdict: FINDINGS"; echo;
+  echo "reviewed-sha: $(printf '0%.0s' {1..40})"; echo;
+  echo "### [BLOCKING] unresolved item"; echo;
+  echo "Round 1 had been:"; echo "## Verdict: CONVERGED"; } > "$rd/review-design-1.md"
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0b later standalone CONVERGED line in FINDINGS still blocked" 1 "$RC"
+
+echo "=== AC0c: phasedesign-gate (per-phase Tier-2 design review, omission-proof) ==="
+read -r repo rd < <(mk_phasedesign clean 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "AC0c phasedesign-gate clean" 0 "$RC"
+read -r repo rd < <(mk_phasedesign nodesign 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "AC0c phasedesign-gate no phase-design review" 1 "$RC"
+read -r repo rd < <(mk_phasedesign nocodex 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "AC0c phasedesign-gate no codex" 1 "$RC"
+read -r repo rd < <(mk_phasedesign findings 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "AC0c phasedesign-gate highest-N FINDINGS" 1 "$RC"
+# a clean phase-1 design does NOT satisfy a DIFFERENT phase's gate (scope is per-P)
+read -r repo rd < <(mk_phasedesign clean 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:2;   assert_rc "AC0c phasedesign-gate is per-phase (P1 review ≠ P2 gate)" 1 "$RC"
+
 echo "=== AC1: regression — run dir whose featureBranch ref is absent ship gate BLOCKS (exit 2) ==="
 # Hermetic reconstruction of the phase3-slice4 regression: a run dir whose
 # featureBranch (drive/<runId>) does NOT resolve in the repo. Under --mode ship that

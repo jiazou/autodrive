@@ -740,6 +740,10 @@ slice_ids=""
 # leaving the others un-test/-review-checked — so we DENY it fail-closed (see below).
 slice_runids=""
 
+# Distinct phase ids (P = a slice id's prefix before the first '.') whose per-phase design
+# review must be gated when their slices are first built (a worktree-add). bash 3.2-safe.
+phasedesign_Ps=""
+
 # Identify the REAL subcommand for each candidate binary (first non-flag word after
 # the binary, skipping env VAR=val prefixes + global options). This is what defeats
 # the contiguous-binary+subcommand bypass: `git -C repo push`, `git -c k=v push`,
@@ -842,8 +846,28 @@ if [ "$git_sub" = push ]; then
 fi
 
 # --- plan-gate detection: `git worktree add ... -b slice/<runId>/<id>` ---
+# A slice worktree-add starts a phase's implementation. It is gated by BOTH the run-level
+# plan-gate (whole-run design converged) AND the per-phase design gate (this phase's design
+# review converged). Derive each slice's phase P = the id prefix before the first '.'.
 if [ "$git_sub" = worktree ] && [ -n "$slice_tokens" ]; then
   is_plan_gate=true
+  while IFS= read -r st; do
+    [ -n "$st" ] || continue
+    case "$st" in slice/*) ;; *) st="${st#?}" ;; esac
+    r="${st#slice/}"             # <runId>/<id>
+    sid="${r#*/}"                # <id> = <P>.<k>
+    pdp="${sid%%.*}"             # phase P = prefix before the first '.'
+    # An empty pdp (id like `.1`, `2.`, `..x`) skips this phase's gate — but every such id
+    # is one `git check-ref-format` rejects, so `-b slice/<runId>/<id>` fails at git before
+    # any branch exists (no phase work can be built through the skip). Fail-closed downstream:
+    # a hand-built empty <P> reaching conformance exits 2 → deny.
+    [ -n "$pdp" ] && case " $phasedesign_Ps " in
+      *" $pdp "*) ;;                                  # already collected
+      *) phasedesign_Ps="$phasedesign_Ps$pdp " ;;
+    esac
+  done <<EOF
+$slice_tokens
+EOF
 fi
 
 # --- phase-merge detection ---
@@ -972,6 +996,16 @@ if [ "$is_plan_gate" = true ]; then
   if [ "$rc" -ne 0 ]; then
     emit_deny "Plan/design review not converged for run $runId. Run \`/drive-review design\` until it converges, then retry: implementation cannot begin until the design review is CONVERGED (with codex)."
   fi
+  # ALSO enforce the per-phase DESIGN review (Tier 2) for each phase whose slice is being
+  # built here — same fail-CLOSED run-boundary semantics. A phase's slices cannot be built
+  # until its detailed design review has CONVERGED.
+  for pdp in $phasedesign_Ps; do
+    [ -n "$pdp" ] || continue
+    run_conformance "phasedesign-gate:$pdp"; rc=$?
+    if [ "$rc" -ne 0 ]; then
+      emit_deny "Phase $pdp design review not converged for run $runId. Run \`/drive-review phase $pdp design\` until it converges (with codex), then retry: a phase's slices cannot be built until its detailed design review is CONVERGED."
+    fi
+  done
   exit 0
 fi
 

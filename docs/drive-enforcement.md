@@ -40,7 +40,7 @@ Three shifts make the check independent of coordinator-writable state:
 `bin/drive-conformance.sh` is a pure function over git + the run dir:
 
 ```
-drive-conformance.sh <RUN_DIR> --mode plan-gate | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit
+drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit
 ```
 
 A review artifact **counts** iff: the highest-N `review-<scope>-N.md` has
@@ -87,18 +87,19 @@ and the gate's `deny` must still win).
 
 | Gate | Fires on (command match) | Mode | Blocks until | Exit-2 |
 |------|--------------------------|------|--------------|--------|
-| **plan-gate** | `git worktree add … -b slice/<runId>/<id>` (the first slice worktree of the run) | `plan-gate` | `review-design-*` CONVERGED + `codex-review-design` present and non-empty — implementation cannot begin until the **design** review converged | **fail-CLOSED** (deny) |
+| **plan-gate** | `git worktree add … -b slice/<runId>/<id>` (any slice worktree) | `plan-gate` | `review-design-*` CONVERGED + `codex-review-design` present — implementation cannot begin until the whole-run **design** review converged | **fail-CLOSED** (deny) |
+| **phasedesign-gate** | the SAME `git worktree add … -b slice/<runId>/<id>` — for each slice's phase `P` (= the id prefix before the first `.`) | `phasedesign-gate:<P>` | `review-phasedesign<P>-*` CONVERGED + `codex-review-phasedesign<P>` present — a phase's slices cannot be built until its **detailed (Tier-2) design** review converged. Like plan-gate, audits a design DOC (no `reviewed-sha`) | **fail-CLOSED** (deny) |
 | **slice-merge** | `git merge … slice/<runId>/<id>` (each slice token in the command) | `slice-merge:<id>` | SHA-bound CONVERGED review for the slice tip | fail-OPEN (silent) |
 | **impl-presence** | same `git merge … slice/<runId>/<id>` boundary — runs *alongside* the review check, per slice token | `impl-presence:<id>` | the slice diff makes **any non-deletion change** (add, modify, rename-into, copy-into, type-change — `--diff-filter=d`, i.e. exclude deletions only) to a runnable test path **OR** a commit carries a real `Drive-Test-Waiver:` trailer (a DELETED test path does **not** count — and since `--name-only` prints only a rename's destination, a rename *away from* a test path also does not count while a rename *into* one does; a dotfile basename like `test/.x.test.sh` never counts — the real runners skip dotfiles) | **fail-CLOSED** (deny) |
 | **phase-merge** | `git branch -f drive/<runId> phaseInt/<runId>/<P>` or `git merge … phaseInt/<runId>/<P>` | `phase-merge:<P>` | SHA-bound CONVERGED review for the phase-integration tip (naturally requires the post-harden review, since HARDEN re-emits `reviewed-sha`) | fail-OPEN (silent) |
 | **ship** | `gh pr create`, `glab mr create`, or any `git push` whose head is the drive branch (incl. bare `git push`, `git push -u origin HEAD`) | `ship` | all shipped code covered by a counting review (ledger-only `R..tip` tolerated) | **fail-CLOSED** (deny) |
 
-**Asymmetric fail mode (D4):** the two **run-boundary** gates — `plan-gate` (start)
-and `ship` (end) — fail **closed** on a checker/git error (never wave through the
-start of build or a PR). The **mid-build REVIEW** gates (`slice-merge` review + `phase-merge`
-+ the Stop backstop) fail **open** so a transient filesystem/git error cannot wedge a
-mid-build run — the ship gate is their fail-closed backstop. If no `runId` resolves or
-`RUN_DIR` is absent, every gate is inert (`exit 0` silent — not a managed drive run).
+**Asymmetric fail mode (D4):** the **run-/phase-boundary** gates — `plan-gate` (run start),
+`phasedesign-gate` (phase start), and `ship` (end) — fail **closed** on a checker/git error
+(never wave through the start of build or a PR). The **mid-build REVIEW** gates (`slice-merge`
+review + `phase-merge` + the Stop backstop) fail **open** so a transient filesystem/git error
+cannot wedge a mid-build run — the ship gate is their fail-closed backstop. If no `runId`
+resolves or `RUN_DIR` is absent, every gate is inert (`exit 0` silent — not a managed drive run).
 
 **Posture asymmetry at the slice-merge boundary (Decision C3):** the slice-merge boundary
 runs **two** checks per slice token with *different* fail postures. The `slice-merge` REVIEW
