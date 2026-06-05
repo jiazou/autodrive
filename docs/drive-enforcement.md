@@ -212,7 +212,11 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
   - **Fail-closed on unresolvable shell EXPANSION (`managed_git_expansion_deny`).** The gate
     resolves the literal string + line-continuation + `~/`; it CANNOT reproduce expansions
     that need external context — `$var`, `$(…)`, backticks, `$'…'` (ANSI-C), `~user` (passwd
-    lookup), or a brace expansion `{…,…}`. When an **expansion-active** token (per `_TOK_EXP`)
+    lookup), or a brace expansion `{…,…}` (comma) / `{…..…}` (range — `pus{g..h}`→`push`).
+    *(Precision limit, fail-closed-safe: the range detector keys on two consecutive UNQUOTED
+    dots; a pathologically escaped/quoted dot pair like `{1\..2}` — which bash leaves literal —
+    may still be flagged and DENIED. This is an over-deny in the SAFE direction on a token
+    `/drive` never emits, not a bypass.)* When an **expansion-active** token (per `_TOK_EXP`)
     sits in a **decision-critical** position of a **would-be-managed operation**, the gate
     **FAILS CLOSED = DENY** ("cannot safely parse a managed command containing shell expansion
     … use a literal, fully-expanded form"). Two managed-binary branches:

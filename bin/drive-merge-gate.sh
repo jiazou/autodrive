@@ -497,7 +497,7 @@ is_drive_branch_ref() {
 #
 # QUOTE-AWARE: it reads the per-token expansion-active flags `_TOK_EXP[]` the lexer produces
 # (1 iff that token had a construct bash WOULD expand from the literal string — an unquoted or
-# double-quoted `$`/backtick, an unquoted brace-expansion `{…,…}`, or an unquoted leading
+# double-quoted `$`/backtick, an unquoted brace-expansion `{…,…}` (comma) or `{…..…}` (range), or an unquoted leading
 # `~user`). A SINGLE-QUOTED `'slice/$run/4a'` or `'~root/repo'` is LITERAL → its flag is 0 →
 # NOT treated as an expansion (fixes the strip-then-rescan false positive). Resolvable forms
 # (`~/…`, bare `~`, line-continuation) are NOT flagged either.
@@ -528,7 +528,7 @@ is_drive_branch_ref() {
 # `-m <msg>`, `--push-option`) does NOT trip this. bash 3.2-safe (index-walk; no assoc arrays).
 _MGED_REASON=""
 _mged_reason_set() {
-  _MGED_REASON="drive-merge-gate: cannot safely parse a managed command containing shell expansion (\`\$\`/backtick/\`~user\`/brace \`{…,…}\`); use a literal, fully-expanded form (the gate sees the pre-expansion command string by design — see docs/drive-enforcement.md)."
+  _MGED_REASON="drive-merge-gate: cannot safely parse a managed command containing shell expansion (\`\$\`/backtick/\`~user\`/brace \`{…,…}\`/\`{…..…}\`); use a literal, fully-expanded form (the gate sees the pre-expansion command string by design — see docs/drive-enforcement.md)."
 }
 managed_git_expansion_deny() {
   set_argv_from_cmd || return 1            # unparseable (unterminated quote) → handled elsewhere

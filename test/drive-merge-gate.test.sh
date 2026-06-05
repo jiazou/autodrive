@@ -1533,13 +1533,15 @@ test_codex_brace_range_expansion_deny() {
 }
 
 # F1d: a SINGLE dot inside a brace (`{1.1}`, not a `..` range) must NOT trip the expansion deny
-# — it is not a range; flagging it would over-deny. Confirms the `..`-precise range detection.
+# — it is not a range; flagging it would over-deny. Placed in a DECISION-CRITICAL slot the
+# expansion-deny actually inspects (a `-C` repo-path value on a managed merge), so the test
+# genuinely exercises the no-overflag path (a `-m` value would be skipped and prove nothing).
 test_codex_single_dot_brace_not_overflagged() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
-  run_gate "git merge -m {1.1} main" "$repo"; out="$GATE_OUT"
+  run_gate "git -C /repo{1.1} merge slice/$runid/4a" "$repo"; out="$GATE_OUT"
   if ! { is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; }; then
-    pass "codex-F1d: single-dot brace {1.1} (not a range) → no spurious expansion deny"
+    pass "codex-F1d: single-dot brace {1.1} in a -C value (not a range) → no spurious expansion deny"
   else
     fail "codex-F1d: single-dot brace {1.1} must NOT expansion-deny; got: $out"
   fi
