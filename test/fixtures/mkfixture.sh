@@ -372,7 +372,10 @@ mk_audit_git_error() {
 #
 # variant:
 #   test            -- slice adds tests/foo/test_x.py (a runnable pytest path)   -> clean
+#   test_suffix     -- slice adds tests/foo/x_test.py (the *_test.py suffix form) -> clean
 #   test_sh         -- slice adds test/foo.test.sh (a runnable bash path)        -> clean
+#   test_sh_nested  -- slice adds test/sub/x.test.sh (NESTED; the runner globs only
+#                      test/*.test.sh, so a nested path is NOT a runnable test)   -> violation
 #   notest          -- slice adds only src.sh (no test, no waiver)               -> violation
 #   waiver          -- slice adds only src.sh but a real Drive-Test-Waiver: TRAILER -> clean
 #   waiver_prose    -- slice adds only src.sh; the waiver string sits MID-BODY as
@@ -408,8 +411,12 @@ mk_impl_presence() {
   case "$variant" in
     test)
       _commit "$repo" "tests/foo/test_x.py" "def test_x(): pass" "slice 3a + test" >/dev/null ;;
+    test_suffix)
+      _commit "$repo" "tests/foo/x_test.py" "def test_x(): pass" "slice 3a + *_test.py" >/dev/null ;;
     test_sh)
       _commit "$repo" "test/foo.test.sh" "echo ok" "slice 3a + bash test" >/dev/null ;;
+    test_sh_nested)
+      _commit "$repo" "test/sub/x.test.sh" "echo ok" "slice 3a + nested bash test" >/dev/null ;;
     notest)
       _commit "$repo" "src.sh" "echo hi" "slice 3a code only" >/dev/null ;;
     waiver)

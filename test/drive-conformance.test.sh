@@ -130,6 +130,14 @@ read -r repo rd < <(mk_impl_presence test)
 run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C1 slice with pytest test -> clean" 0 "$RC"
 read -r repo rd < <(mk_impl_presence test_sh)
 run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C1 slice with bash test -> clean" 0 "$RC"
+# *_test.py suffix form (the other runnable pytest basename) -> clean.
+read -r repo rd < <(mk_impl_presence test_suffix)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C1 slice with *_test.py suffix form -> clean" 0 "$RC"
+# Nested test/sub/x.test.sh: the bash runner globs only test/*.test.sh, so a NESTED path
+# is NOT a runnable test -> violation (proves the predicate anchors to the runner glob,
+# not a bare `.test.sh` substring).
+read -r repo rd < <(mk_impl_presence test_sh_nested)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b nested test/sub/x.test.sh not runner-globbed -> violation" 1 "$RC"
 # AC-C2: no test path AND no waiver trailer -> exit 1 (violation).
 read -r repo rd < <(mk_impl_presence notest)
 run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C2 slice code-only no waiver -> violation" 1 "$RC"

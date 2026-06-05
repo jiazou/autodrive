@@ -40,7 +40,7 @@ Three shifts make the check independent of coordinator-writable state:
 `bin/drive-conformance.sh` is a pure function over git + the run dir:
 
 ```
-drive-conformance.sh <RUN_DIR> --mode plan-gate | slice-merge:<id> | phase-merge:<P> | ship | audit
+drive-conformance.sh <RUN_DIR> --mode plan-gate | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit
 ```
 
 A review artifact **counts** iff: the highest-N `review-<scope>-N.md` has
@@ -63,6 +63,18 @@ existential, not "highest-N" (N is a per-scope counter, so max-N can mis-select 
 early phase across phases). I.e. *all shipped code was reviewed; only the single
 ledger commit moved the tip.*
 
+The `impl-presence:<id>` mode enforces an **IMPLEMENT-stage invariant** that is independent
+of the review modes: before a slice `slice/<runId>/<id>` merges, its diff against its
+fork-point off `drive/<runId>` (`base = merge-base(slice, drive/<runId>)`) must **add or
+modify a runnable test path** — `test/*.test.sh` (the bash-suite root, one segment only — a
+nested `test/sub/x.test.sh` does NOT count) OR a path under `tests/` whose basename is
+`test_*.py` / `*_test.py` (excluding support files: `_helpers.py`, `conftest.py`, any
+`fixtures/` segment, `*.pyc`, any `__pycache__/` segment) — OR a commit in `base..tip` must
+carry a real `Drive-Test-Waiver: <reason>` git **trailer** (parsed as a trailer, not matched
+as a body substring, so quoted/example prose does not falsely waive). Pure git-truth (no
+`state.json`): `base` is derived via `merge-base`, so an unresolvable slice / `drive/<runId>`
+ref or genuinely-disjoint histories → exit 2 (abnormal), never a silent empty base.
+
 ## The gate chain
 
 `bin/drive-merge-gate.sh` is a **PreToolUse(Bash)** hook. It classifies the command
@@ -77,15 +89,31 @@ and the gate's `deny` must still win).
 |------|--------------------------|------|--------------|--------|
 | **plan-gate** | `git worktree add … -b slice/<runId>/<id>` (the first slice worktree of the run) | `plan-gate` | `review-design-*` CONVERGED + `codex-review-design` present and non-empty — implementation cannot begin until the **design** review converged | **fail-CLOSED** (deny) |
 | **slice-merge** | `git merge … slice/<runId>/<id>` (each slice token in the command) | `slice-merge:<id>` | SHA-bound CONVERGED review for the slice tip | fail-OPEN (silent) |
+| **impl-presence** | same `git merge … slice/<runId>/<id>` boundary — runs *alongside* the review check, per slice token | `impl-presence:<id>` | the slice diff adds/modifies a runnable test path **OR** a commit carries a real `Drive-Test-Waiver:` trailer | **fail-CLOSED** (deny) |
 | **phase-merge** | `git branch -f drive/<runId> phaseInt/<runId>/<P>` or `git merge … phaseInt/<runId>/<P>` | `phase-merge:<P>` | SHA-bound CONVERGED review for the phase-integration tip (naturally requires the post-harden review, since HARDEN re-emits `reviewed-sha`) | fail-OPEN (silent) |
 | **ship** | `gh pr create`, `glab mr create`, or any `git push` whose head is the drive branch (incl. bare `git push`, `git push -u origin HEAD`) | `ship` | all shipped code covered by a counting review (ledger-only `R..tip` tolerated) | **fail-CLOSED** (deny) |
 
 **Asymmetric fail mode (D4):** the two **run-boundary** gates — `plan-gate` (start)
 and `ship` (end) — fail **closed** on a checker/git error (never wave through the
-start of build or a PR). The **mid-build** per-unit gates (slice/phase merge + the
-Stop backstop) fail **open** so a transient filesystem/git error cannot wedge a
-mid-build run — the ship gate backstops them. If no `runId` resolves or `RUN_DIR` is
-absent, every gate is inert (`exit 0` silent — not a managed drive run).
+start of build or a PR). The **mid-build REVIEW** gates (`slice-merge` review + `phase-merge`
++ the Stop backstop) fail **open** so a transient filesystem/git error cannot wedge a
+mid-build run — the ship gate is their fail-closed backstop. If no `runId` resolves or
+`RUN_DIR` is absent, every gate is inert (`exit 0` silent — not a managed drive run).
+
+**Posture asymmetry at the slice-merge boundary (Decision C3):** the slice-merge boundary
+runs **two** checks per slice token with *different* fail postures. The `slice-merge` REVIEW
+check fails **open** (above) because ship backstops it. The `impl-presence` TEST-presence
+check fails **CLOSED** — both rc 1 (violation: no test, no waiver) AND rc 2/abnormal
+(missing/corrupt `drive/<runId>` or slice ref) → DENY. The reason is the missing backstop:
+`ship` mode re-checks review ancestry against the shipped tip but **never re-derives
+test-presence** (the merged `featureBranch` has lost per-slice identity), so a fail-OPEN
+impl-presence would let an abnormal result silently allow a no-test merge with nothing
+catching it later — defeating the invariant. Slice-merge is therefore the **irreversible
+boundary** for test-presence and must fail closed there (OPERATING: "place the hard gate at
+the irreversible boundary, failing closed"). The deny names the remediation: add a test for
+the slice, or mark it test-less with a `Drive-Test-Waiver: <reason>` commit trailer. In a real
+run `drive/<runId>` is the live featureBranch, so rc 2 is genuine corruption, not normal flow
+— fail-closed will not false-block legitimate merges.
 
 `bin/drive-hook-lib.sh` provides the pure ref→run resolution the gates source
 (`drive_runid_from_command`, `drive_runid_from_head`, `drive_run_dir`).
@@ -256,7 +284,8 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
     mis-resolution — non-exploitable in practice (the literal `~/repo` dir almost never exists,
     so git errors and nothing ships).
   - **Variable refs that pass the per-unit gates remain a documented limitation only where
-    fail-closed does NOT fire.** The mid-build per-unit gates (slice/phase) deliberately fail
+    fail-closed does NOT fire.** The mid-build per-unit REVIEW gates (slice-merge review /
+    phase-merge) deliberately fail
     **OPEN** (a transient error can't wedge a run); a runtime-variable ref in a *non-managed-
     verb* position that those gates would have read (e.g. `git merge "$ref"` where `$ref`
     holds a slice ref) is parsed with the literal token, not the runtime value — but a managed
@@ -286,6 +315,12 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
   the attacker-influenced *command string*; it does not honor `$GIT_DIR`/`$GIT_WORK_TREE`
   env vars (which `/drive` never sets). A command that retargets git purely via those env
   vars is a forgery-class residual (→ Component D), not an omission gap.
+- **`impl-presence` is omission-proof, not forgery-proof.** The IMPLEMENT-stage TEST-presence
+  check proves a slice's diff *touched* a runnable test path (or declared a `Drive-Test-Waiver`
+  trailer) — it does NOT prove the test is meaningful. A **forged trivial/empty test file**
+  (`tests/test_noop.py` with `def test_noop(): pass`) passes the gate, exactly like a forged
+  SHA-bound review. Test *quality* is harden's "add missing tests" lens + Component-D territory,
+  not this gate's. Same class as the other forgery residuals here.
 - **Attached short-option branch refs (`-b<branch>`) are out of scope.** The gate matches
   branch/ref operands in the SEPARATE (`-b slice/<id>`) and `=` (`-b=slice/<id>`) forms that
   `/drive` emits; git also accepts the ATTACHED form (`-bslice/<id>` as one token) for

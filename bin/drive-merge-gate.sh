@@ -13,9 +13,11 @@
 # relies on Claude Code's documented deny-beats-allow precedence for same-event hooks.
 #
 # Fail mode (D4, asymmetric): plan-gate + ship are RUN-BOUNDARY gates → on a
-# conformance exit 2 (git/IO error) they fail CLOSED (DENY). slice-merge + phase-merge
-# are mid-build per-unit gates → on exit 2 they fail OPEN (silent, exit 0) so a
-# transient git error cannot wedge a mid-build run; the ship gate backstops them.
+# conformance exit 2 (git/IO error) they fail CLOSED (DENY). The mid-build REVIEW gates
+# (slice-merge review + phase-merge) fail OPEN on exit 2 (silent, exit 0) so a transient
+# git error cannot wedge a mid-build run; the ship gate backstops them. EXCEPTION: the
+# mid-build impl-presence (TEST-presence) check fails CLOSED on exit 2 (Item C / Decision
+# C3) — it has NO ship backstop, so its irreversible boundary must block on abnormal.
 #
 # Locate sibling scripts robustly (works installed or in a worktree).
 set -u
@@ -908,9 +910,12 @@ fi
 #     wrongly DENY the mid-build gates).
 # Normalized rc contract:
 #   0 = clean | 1 = violation | 9 = abnormal (checker broken, cd-fail, or any other rc)
-# Callers map 9 per-mode: run-boundary gates (plan/ship) treat 9 as fail-CLOSED (deny);
-# mid-build gates (slice/phase) treat 9 as fail-OPEN (silent). 2 is folded into 9
-# (D4 treats exit-2 and the other abnormal rcs identically per gate class).
+# Callers map 9 per-mode (NOT a single blanket rule): the run-boundary gates (plan/ship)
+# treat 9 as fail-CLOSED (deny), and so does the mid-build impl-presence (TEST-presence)
+# check — it has no ship backstop, so its irreversible boundary must fail closed (Item C /
+# Decision C3). The mid-build REVIEW gates (slice-merge review + phase-merge) treat 9 as
+# fail-OPEN (silent), because the ship gate is their fail-closed backstop. 2 is folded into
+# 9 (D4 treats exit-2 and the other abnormal rcs identically within each gate's posture).
 # Run from $REPO (the git -C / --git-dir / --work-tree target, else $CWD) so
 # conformance's bare-`git` ref lookups resolve against the repo git actually operates on.
 run_conformance() {
