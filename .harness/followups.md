@@ -90,3 +90,54 @@ F6 (P3 harden phase1, deferred) Drifted `module.py:NN` source-line citations in 
 - [P3, phase2 harden] _mc_help_heredoc anchors to help|-h|--help) but is not bounded to that arm; bound extraction to the arm terminator (;; / next case label) so a future heredoc in a later arm cannot be mis-bound. Latent (help arm has the only heredoc today).
 - [P3, slice 3.1 -> phase-3 harden] README ## Testing `tests/` coverage cell understates scope ("Mission Control + the hooks"); tests/ also has contract (test_drive_command_refs, test_cli_flag_doc_refs) + installer tests. Broaden the cell.
 - [P2, Phase-1 test robustness] tests/hooks/test_drive_stop_hook.py multi-run masking regression tests (the waiting/disabled/nondict-before-active cases) rely on the DRIVE_STOP_HOOK_PATHS seam to order the hazard first; if the seam ever stops taking effect they false-pass (run-mine/run-active sort before run-nondict/waiting/disabled naturally). Rename the fixture dirs so the hazard sorts FIRST even without the seam (or add explicit seam-activation assertion), so the tests keep proving the Phase-1 masking fixes.
+
+## Next-level gate review (2026-06-05) — Tier-2 gate hardening, DEFERRED
+
+Found during the dual-voice (Claude + codex-adversarial) next-level review of the whole
+`/drive` system. The resume/crash-recovery P1s and the `verdict_converged` first-line fix
+(below) were FIXED in that session; these two gate-matcher items were deferred because they
+touch the load-bearing enforcement matcher and the canonical `/drive` flow does not trigger
+them — they want their own focused change with a reliable adversarial codex pass.
+
+- **FIXED (not a follow-up, noted for context):** `bin/drive-conformance.sh` `verdict_converged`
+  matched `## Verdict: CONVERGED` on ANY line, so a FINDINGS review whose body contained a later
+  standalone `## Verdict: CONVERGED` heading counted as converged. Fixed to decide on the FIRST
+  `## Verdict:` line only; regression test AC0b in test/drive-conformance.test.sh (proven to fail
+  pre-fix).
+
+- **[A — P2, gate matcher reads `-m`/message bodies as refs]** `bin/drive-merge-gate.sh:319,325`
+  (`slice_tokens` / `phaseint_token`) and `drive_runid_from_command` (drive-hook-lib.sh) extract
+  ref tokens by **raw grep over the whole command string**, so a `(drive|slice|phaseInt)/X/Y`-shaped
+  token inside `-m '…'` is read as a real ref. Effects: (1) **false-block** — `git merge -m '…slice/run/4a…' main`
+  (honest commit message mentioning a ref) gets the slice-merge gate wrongly applied → can DENY a
+  legitimate merge; (2) **wrong-runId inert / evasion** — `git merge -m 'slice/no-such-run/x' slice/REAL/4a`
+  keys runId off the first (fake) token → RUN_DIR absent → the real slice merge goes ungated.
+  The PUSH path was already hardened against this ("never read flag VALUES as refs", drive-merge-gate.sh:200);
+  the merge/branch path never got the same treatment. **Design:** build a filtered token stream — walk
+  the tokenized args like `push_ship_runid` does, skip the VALUES of free-text flags (`-m/--message`,
+  `-F/--file`, and `--message=`/`--file=` forms), and grep THAT for refs instead of the raw command.
+  Must KEEP `-b <slice>` values (worktree-add carries the slice ref as `-b`'s value) — only the
+  message/file flags get their value skipped. Closes both the false-block and the evasion. **Risk:**
+  re-architecting the core matcher; a slip could UNDER-gate (real review-skip bypass). Needs the
+  adversarial codex pass + tests: false-block case, evasion case, `-b` slice preservation, and all
+  existing drive-merge-gate.test.sh cases still green. Canonical `/drive` never emits `-m` on merges,
+  so not hit in normal operation. **Severity: medium.**
+
+- **[C — P2/P3, Stop-guard backstop blind outside `drive/<runId>` HEAD]** `bin/drive-stop-guard.sh:41`
+  resolves the run ONLY via `drive_runid_from_head` (drive-hook-lib.sh:88-104), which returns a runId
+  only when HEAD is `drive/<runId>`. The canonical phase assembly runs merges from a
+  `phaseInt/<runId>/<P>` worktree (and the main session may sit on `baseRef`), so the audit backstop
+  is **inert exactly during assembly** — when an unreviewed merged slice would be present. The PRIMARY
+  PreToolUse gate still covers this; only the best-effort Stop backstop is thinner than the docs imply.
+  **Design:** broaden run resolution to also derive runId from a `phaseInt/<runId>/<P>` (and/or
+  `slice/<runId>/<id>`) HEAD, or audit by scanning `~/.claude/harness-runs/*/` rundirs rather than
+  trusting `.cwd` HEAD. **Severity: medium (defense-in-depth, not an omission guarantee).**
+
+- **[Threat-model doc reframe — from the same review]** The codex adversarial pass showed the gate's
+  documented boundary ("omission-proof, not forgery-proof") understates the real limit: trivial
+  command-shape evasion (`bash -lc 'git merge …'`, `/usr/bin/git`, `git -c alias.x=…`, `git update-ref`,
+  `git push <sha>:refs/heads/main`) bypasses the literal-string matcher with ZERO artifact forging.
+  The honest framing is **"omission-proof, not evasion-proof,"** and raising the bar requires enforcement
+  BELOW the shell (a `reference-transaction`/`update-ref` git hook or server-side check) — the real
+  shape of the existing "component D" follow-up (see line 27). Update docs/drive-enforcement.md to say
+  this. **Severity: low (doc honesty), but it reframes component D.**

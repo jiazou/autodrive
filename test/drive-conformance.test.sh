@@ -40,6 +40,17 @@ run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0 plan-gate no 
 read -r repo rd < <(mk_plan findings)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0 plan-gate highest-N FINDINGS" 1 "$RC"
 
+# AC0b: a FINDINGS review whose BODY contains a later standalone '## Verdict: CONVERGED'
+# heading line (e.g. quoting/echoing a prior round) must NOT count as converged — only the
+# FIRST verdict line decides. Pre-fix, verdict_converged grepped the whole file line-anchored
+# and the later heading flipped a FINDINGS file to "converged" (a real omission hole).
+read -r repo rd < <(mk_plan clean)
+{ echo "# Review design round 2"; echo; echo "## Verdict: FINDINGS"; echo;
+  echo "reviewed-sha: $(printf '0%.0s' {1..40})"; echo;
+  echo "### [BLOCKING] unresolved item"; echo;
+  echo "Round 1 had been:"; echo "## Verdict: CONVERGED"; } > "$rd/review-design-1.md"
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0b later standalone CONVERGED line in FINDINGS still blocked" 1 "$RC"
+
 echo "=== AC1: regression — run dir whose featureBranch ref is absent ship gate BLOCKS (exit 2) ==="
 # Hermetic reconstruction of the phase3-slice4 regression: a run dir whose
 # featureBranch (drive/<runId>) does NOT resolve in the repo. Under --mode ship that

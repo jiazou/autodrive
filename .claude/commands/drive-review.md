@@ -107,7 +107,10 @@ a warning note on later lines; continue.
 Compare: both-flagged = high confidence; **codex-only = scrutinize hardest** (bugs
 Claude missed); reviewer-only = claude-only. **Converged** when NEITHER voice has an
 open **P1** (BLOCKING/MAJOR); P2/P3 logged, not blocking. Record to
-`$RUN_DIR/state.json`: this scope's verdict + increment its `reviewCount`.
+`$RUN_DIR/state.json`: this scope's verdict + increment its counter — `state.designReview`
+for `design`, `state.slices[<id>].reviewCount` for a slice, `state.phaseReview[<P>].round`
+for a phase. **Exception — `harden-regress`:** increment nothing (the harden loop's
+3-fix-round cap bounds it).
 
 After this stage:
 - **FINDINGS** → `/drive` loops `/drive-implement` on this scope (it owns the cap-8).

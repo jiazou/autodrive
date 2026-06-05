@@ -100,8 +100,9 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
 - **Every review — the design review and every code review — runs both a Claude
   reviewer subagent AND codex.** A review is **converged** only when neither voice
   has an open **P1** (BLOCKING or MAJOR); P2/P3 are logged, not blocking.
-- Each slice/phase implement→review loop caps at **8** rounds (own `reviewCount`).
-  Beyond that, surface the disagreement with what each side asserts.
+- Each slice/phase implement→review loop caps at **8** rounds (own counter — a slice's
+  `reviewCount`, a phase's `phaseReview[<P>].round`). Beyond that, surface the
+  disagreement with what each side asserts.
 - **Each phase ends with a HARDEN pass** (after its review converges, before
   `featureBranch` advances): a mutating find→fix→verify over the assembled phase for
   AI-slop removal, missing tests, and logic bugs — *beyond* acceptance criteria. It
@@ -137,7 +138,7 @@ so every worktree reaches it by absolute path; not committed, not portable):
 task.md / design.md          -- premise; planner design (+ ## Phases & Slices)
 state.json                   -- run model: runId, baseRef, featureBranch, stage, phase,
                                 phaseBaseSha, concurrencyCap, designReview, budget, per-slice
-                                {step,reviewCount,branch,worktree,baseSha},
+                                {step,reviewCount,owns,deps},
                                 phaseReview{status,round,hardenRound} where status
                                 = converged→hardening→hardened (terminal);
                                 plus lastGate, designPath, and the Stop-hook keys the hooks

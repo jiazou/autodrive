@@ -82,8 +82,9 @@ commands themselves.
 
 - **Human sees exactly 2 pauses** (Gate A, Gate B); everything between is
   auto-decided via the 6 Decision Principles and logged to `.harness/decisions.md`.
-- **`reviewCount` is per-loop** — each slice and each phase-integration carries its
-  own counter, so a stuck slice trips the cap-8 on its own without dragging others.
+- **The review-round counter is per-loop** — each slice (`reviewCount`) and each
+  phase-integration (`phaseReview[<P>].round`) carries its own counter, so a stuck slice
+  trips the cap-8 on its own without dragging others.
 - **HARDEN has its own `hardenRound` cap-3**, separate from the conformance cap-8, so
   a few legitimate harden rounds can't exhaust the review budget. De-slop edits that
   would drop an acceptance criterion's coverage are **vetoed** (logged to followups),
