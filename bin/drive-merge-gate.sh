@@ -47,6 +47,155 @@ CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
 [ -n "$CMD" ] || exit 0
 [ -n "$CWD" ] || CWD="$PWD"
 
+# tokenize_cmd <string> : shell-accurate argv tokenizer for the literal command string.
+# Populates the global array `_TOKENS` with the argv git/bash WOULD see, then the four
+# parsers below `set -- "${_TOKENS[@]}"` so they all read the SAME token stream. This
+# replaces the old `set -f; set -- $CMD` whitespace word-split, which (a) split a quoted
+# path WITH A SPACE into two words (`git -C "/a b" push` → `-C` `"/a` `b"` `push`, so the
+# subcommand was misread and ship detection never ran — a silent bypass on LEGITIMATE
+# input), and (b) kept quote characters literal so `""` produced the literal token `""`
+# (resolving REPO to `$CWD/""`) instead of an empty arg (a git -C no-op).
+#
+# Rules (no `eval`, no command execution, no $var expansion — the gate sees the
+# PRE-expansion string by design; runtime variable refs are a documented limitation):
+#   - split on UNQUOTED whitespace (space/tab/newline);
+#   - single-quoted '…' : literal, no escapes inside (POSIX); quotes removed;
+#   - double-quoted "…" : literal, but backslash escapes the next char; quotes removed;
+#   - backslash OUTSIDE quotes escapes the next char (`\ ` → a literal space in the arg);
+#   - LINE CONTINUATION: a backslash IMMEDIATELY followed by a newline is ELIDED (both
+#     chars removed, producing NO character) exactly as bash does — both in the default
+#     (unquoted) state AND inside double quotes. NOT elided inside single quotes (where a
+#     backslash is literal, per POSIX). Verified empirically against bash.
+#   - a quote/escape STARTS a token even with no other chars, so `""`/`''` yield an
+#     EMPTY-STRING arg (preserved — the -C compose treats it as a no-op, per git).
+# Fail-safe: an UNTERMINATED quote is UNPARSEABLE — the real shell would reject the
+# command and git would NEVER run — so we return rc 1 and leave _TOKENS empty. Callers
+# treat that as "no recognizable command" → inert, which is safe precisely because such a
+# command cannot execute (it can't be a real bypass). (A command ending in a bare trailing
+# backslash is NOT rejected by the shell — `git push \` runs as `git push` — so it does NOT
+# fail closed here; the escape just drops the final backslash, matching bash, and any
+# residual evasion is a forgery-class residual, not an omission gap.) This is a deliberate
+# fail-CLOSED-against-misparse for the unterminated-quote case: we never emit a mis-split
+# argv that could desync the gate from git. bash 3.2-safe (char state machine; no bash-4
+# features). NOTE: this lexer resolves the LITERAL string only — it does NOT perform shell
+# EXPANSIONS ($var/$(…)/backtick/$'…'/~user); those are caught fail-closed downstream
+# (see has_unresolved_expansion + expand_tilde).
+tokenize_cmd() {
+  local s="$1" n=${#1} i=0 ch
+  local state=default          # default | single | double | escape | dquote_escape
+  local cur="" started=0       # `started` = the current token has begun (so "" emits empty)
+  # Per-token EXPANSION-ACTIVE flag: 1 iff THIS token carries a shell-expansion construct
+  # that bash WOULD expand from the literal string but the gate cannot reproduce — set ONLY
+  # in expansion-active contexts (unquoted or double-quoted `$`/backtick; an unquoted leading
+  # `~user`; an unquoted brace-expansion `{…,…}`/`{…..…}`). NOT set inside SINGLE quotes,
+  # where `$`/backtick/`~`/`{` are all literal (so `'slice/$run/4a'` is a literal ref, not an
+  # expansion — quote context is preserved, fixing the strip-then-rescan false positive). The
+  # parallel _TOK_EXP array mirrors _TOKENS 1:1 so downstream can ask "did THIS lexed token
+  # have an unresolved expansion?" without re-scanning the quote-stripped value.
+  local cur_exp=0 cur_first=1 brace_depth=0 lead_tilde=0
+  _TOKENS=(); _TOK_EXP=()
+  while [ "$i" -lt "$n" ]; do
+    ch="${s:$i:1}"
+    i=$((i+1))
+    case "$state" in
+      default)
+        case "$ch" in
+          ' '|$'\t'|$'\n')
+            if [ "$started" -eq 1 ]; then
+              # ~user finalize (see end-of-string note): an UNQUOTED leading ~<non-slash> is
+              # the passwd form → expansion-active. Must run at EVERY flush, not just EOF.
+              if [ "$lead_tilde" -eq 1 ]; then
+                case "$cur" in '~'/*|'~') ;; '~'?*) cur_exp=1 ;; esac
+              fi
+              _TOKENS[${#_TOKENS[@]}]="$cur"; _TOK_EXP[${#_TOK_EXP[@]}]="$cur_exp"
+              cur=""; started=0; cur_exp=0; cur_first=1; brace_depth=0; lead_tilde=0
+            fi ;;
+          \') state=single; started=1; cur_first=0 ;;
+          \") state=double; started=1; cur_first=0 ;;
+          \\) state=escape ;;              # do NOT mark started yet: a bare `\<newline>`
+                                           # is a line continuation (elided) and must NOT
+                                           # begin a word; the escape handler sets started
+                                           # only for a non-newline escaped char.
+          \$|\`) cur="$cur$ch"; started=1; cur_exp=1; cur_first=0 ;;  # $… or backtick → expands
+          \~) cur="$cur$ch"; started=1
+              # An UNQUOTED LEADING ~ may be ~user (expansion-active) — decided at finalize.
+              # Record it as leading ONLY when it is genuinely the first char of the token
+              # (cur_first), so a quoted leading `'~root'` (literal) is NOT flagged.
+              [ "$cur_first" -eq 1 ] && lead_tilde=1; cur_first=0 ;;
+          \{) cur="$cur$ch"; started=1; cur_first=0; brace_depth=$((brace_depth+1)) ;;  # open brace
+          \}) cur="$cur$ch"; started=1; cur_first=0; [ "$brace_depth" -gt 0 ] && brace_depth=$((brace_depth-1)) ;;
+          ,)  cur="$cur$ch"; started=1; cur_first=0
+              [ "$brace_depth" -gt 0 ] && cur_exp=1 ;;   # `,` inside an open unquoted brace → brace expansion
+          *)  cur="$cur$ch"; started=1; cur_first=0 ;;
+        esac ;;
+      single)
+        case "$ch" in
+          \') state=default ;;             # close single-quote
+          *)  cur="$cur$ch" ;;             # everything literal (incl. $ ` ~ { ) inside '…'
+        esac ;;
+      double)
+        case "$ch" in
+          \") state=default ;;             # close double-quote
+          \\) state=dquote_escape ;;       # backslash escapes the next char in "…"
+          \$|\`) cur="$cur$ch"; cur_exp=1 ;;  # $… or backtick STILL expands inside "…"
+          *)  cur="$cur$ch" ;;
+        esac ;;
+      dquote_escape)
+        # In bash "…", backslash is literal EXCEPT before $ ` " \ (and newline). We keep
+        # the chars the gate cares about (quotes/backslash) correct; for any other char a
+        # literal backslash is preserved, matching shell semantics closely enough for the
+        # path/flag tokens this gate parses. A backslash-escaped $ or ` is LITERAL (not an
+        # expansion), so it does NOT set cur_exp.
+        case "$ch" in
+          $'\n') : ;;                       # \<newline> inside "…" → line continuation: ELIDE both
+          \"|\\|\$|\`) cur="$cur$ch" ;;
+          *) cur="$cur\\$ch" ;;
+        esac
+        state=double ;;
+      escape)
+        case "$ch" in
+          $'\n') : ;;                       # \<newline> outside quotes → line continuation:
+                                            # ELIDE both; does NOT begin a word (started left as-is).
+          *) cur="$cur$ch"; started=1; cur_first=0 ;;  # \<char> → literal char (begins a word)
+        esac
+        state=default ;;
+    esac
+  done
+  # Finalize. A trailing BARE backslash (state=escape, the `\` had no following char) is
+  # NOT a shell error — bash runs `git push \` as `git push`, just dropping the dangling
+  # backslash — so we finalize the token like the default state (started stays as set, so a
+  # token whose only content was an elided line-continuation does NOT emit an empty arg).
+  # An UNTERMINATED QUOTE (single/double/dquote_escape) IS a shell error → fail rc 1, no
+  # tokens (fail-closed-against-misparse; the command cannot run).
+  case "$state" in
+    default|escape)
+      if [ "$started" -eq 1 ]; then
+        # An UNQUOTED leading ~ followed by a non-slash char is the ~user passwd form (an
+        # unresolved expansion); `~/…` and bare `~` are resolvable, so they are NOT flagged.
+        # lead_tilde guarantees the ~ was unquoted+leading (a quoted `'~user'` is literal).
+        if [ "$lead_tilde" -eq 1 ]; then
+          case "$cur" in '~'/*|'~') ;; '~'?*) cur_exp=1 ;; esac
+        fi
+        _TOKENS[${#_TOKENS[@]}]="$cur"; _TOK_EXP[${#_TOK_EXP[@]}]="$cur_exp"
+      fi
+      return 0 ;;
+    *)
+      _TOKENS=(); _TOK_EXP=()
+      return 1 ;;
+  esac
+}
+
+# set_argv_from_cmd : tokenize $CMD into _TOKENS once. rc 1 if the command is either
+# unparseable (unterminated quote) OR yields zero tokens (whitespace-only) — both cases
+# the callers treat as "no recognizable command" (inert / no subcommand). On rc 1 the
+# caller MUST NOT expand `"${_TOKENS[@]}"` (bash 3.2 errors on an empty array under
+# `set -u`); rc 1 guarantees the caller bails before that expansion.
+set_argv_from_cmd() {
+  tokenize_cmd "$CMD" || return 1
+  [ "${#_TOKENS[@]}" -gt 0 ] || return 1
+  return 0
+}
+
 # detect_subcommand <binary> <words...> : echo the real subcommand for a binary
 # invocation, i.e. the first NON-flag word AFTER the binary, skipping:
 #   - env `VAR=val` prefixes that precede the binary (handled by the caller, which
@@ -90,10 +239,8 @@ detect_subcommand() {
 # handled elsewhere. bash 3.2-safe.
 subcommand_of() {
   local bin="$1" w
-  set -f                                   # noglob: a literal `*` in $CMD must not expand.
-  # shellcheck disable=SC2086  # intentional word-split of the command string.
-  set -- $CMD
-  set +f
+  set_argv_from_cmd || { printf ''; return 0; }   # unparseable command → no subcommand
+  set -- "${_TOKENS[@]}"
   # Skip leading env VAR=val prefixes ONLY (POSIX assignment shape).
   while [ "$#" -gt 0 ]; do
     w="$1"
@@ -118,10 +265,8 @@ subcommand_of() {
 # subcommand_of + detect_subcommand).
 action_after() {
   local bin="$1" w
-  set -f
-  # shellcheck disable=SC2086
-  set -- $CMD
-  set +f
+  set_argv_from_cmd || { printf ''; return 0; }
+  set -- "${_TOKENS[@]}"
   # Skip leading env VAR=val prefixes; require START binary == <bin> (no rescan).
   while [ "$#" -gt 0 ]; do
     case "$1" in [A-Za-z_]*=*) shift; continue ;; *) break ;; esac
@@ -151,19 +296,57 @@ action_after() {
   return 0
 }
 
-# git_target_repo : if the git invocation carries a repo-locating global option
-# (`-C <path>`, `--git-dir=<path>`/`--git-dir <path>`, `--work-tree=<path>`/
-# `--work-tree <path>`), echo that path; else echo empty. The LAST such option wins
-# (git's own semantics: a later -C/-git-dir overrides an earlier one). When present,
-# the caller uses this path as the repo for runId-from-HEAD AND as the conformance cd
-# target, instead of $CWD — so `git -C <repo> push` from outside resolves correctly.
+# _compose <base> <p> : compose a git `-C` path component onto an accumulated base,
+# matching git's "composed left to right, absolute resets" rule (git(1) -C). Echoes
+# the composed path. bash 3.2-safe (pure string ops, no fs access).
+#   - p absolute (/*)        → p           (an absolute -C REPLACES the accumulator)
+#   - base empty             → p           (first component; resolved vs $CWD by caller)
+#   - p empty                → base        (empty -C is a no-op chdir in git)
+#   - else                   → base/p      (string-join; caller anchors $CWD if base rel)
+_compose() {
+  local base="$1" p="$2"
+  case "$p" in
+    /*) printf '%s' "$p" ;;
+    "") printf '%s' "$base" ;;
+    *)  if [ -z "$base" ]; then printf '%s' "$p"; else printf '%s/%s' "$base" "$p"; fi ;;
+  esac
+}
+
+# expand_tilde <path> : resolve the CHEAP, deterministic tilde forms a repo-locating path
+# value may carry — a LEADING `~/` or a BARE `~` token — to $HOME, exactly as bash does for
+# an unquoted value (verified: `~/x`→$HOME/x, bare `~`→$HOME). The `~user` form is NOT
+# expanded here (it needs a passwd lookup the gate can't safely do) — it is caught
+# fail-closed downstream by has_unresolved_expansion, which treats a leading `~` followed by
+# a non-`/` char as unresolvable. Any non-leading `~` (e.g. `/a/~/b`) is literal in bash, so
+# it is left untouched. Echoes the resolved path. bash 3.2-safe (pure string ops).
+expand_tilde() {
+  local p="$1"
+  case "$p" in
+    "~")    printf '%s' "$HOME" ;;          # bare ~ → $HOME
+    "~/"*)  printf '%s%s' "$HOME" "${p#\~}" ;;  # ~/rest → $HOME/rest
+    *)      printf '%s' "$p" ;;             # ~user (caught downstream) or no leading ~ → as-is
+  esac
+}
+
+# git_target_repo : resolve the directory whose gitdir git itself would read HEAD/refs
+# from, modelling the REPO-IDENTITY axes of git's repo-locating global options:
+#   - `-C <path>` : composed LEFT-TO-RIGHT (git: `-C a -C b` == `-C a/b`; an absolute
+#     `-C` resets the accumulated base). SEPARATE-ARG value ONLY — `-C=<p>` is NOT real
+#     git syntax (git rejects `-C=/path` as an unknown option), so it is not special-cased.
+#   - `--git-dir <p>` / `--git-dir=<p>` : the gitdir override (the IDENTITY axis), resolved
+#     relative to the `-C`-established cwd. LAST `--git-dir` wins (same-axis override).
+#   - `--work-tree <p>` / `--work-tree=<p>` : PARSE-AND-DISCARD — its value is consumed so
+#     it is not mistaken for the subcommand, but it is NOT a repo-identity axis. git reads
+#     HEAD/refs from the gitdir, which `--work-tree` does NOT change (verified empirically);
+#     treating it as the target was a silent-allow bypass (codex BLOCKING R1).
+# Identity = `--git-dir` (if set, composed onto the -C cwd) else the composed `-C` cwd
+# else empty (→ caller falls back to $CWD). Echoes an ABSOLUTE or $CWD-relative path (it
+# does NOT itself prepend $CWD — the caller's existing `case` anchors the relative branch).
 # Only meaningful when the START binary is `git`. bash 3.2-safe.
 git_target_repo() {
-  local w path=""
-  set -f
-  # shellcheck disable=SC2086
-  set -- $CMD
-  set +f
+  local c_base="" gitdir="" have_gitdir=0
+  set_argv_from_cmd || { printf ''; return 0; }
+  set -- "${_TOKENS[@]}"
   while [ "$#" -gt 0 ]; do
     case "$1" in [A-Za-z_]*=*) shift; continue ;; *) break ;; esac
   done
@@ -172,12 +355,20 @@ git_target_repo() {
   # Scan the global-option region (stop at the first non-flag word = the subcommand).
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      -C|--git-dir|--work-tree)
-        # separate-argument form: value is the next word.
-        if [ "$#" -gt 1 ]; then path="$2"; shift 2; else shift; fi
+      -C)
+        # SEPARATE-ARG value only; compose left-to-right. Resolve a leading ~/ or bare ~.
+        if [ "$#" -gt 1 ]; then c_base="$(_compose "$c_base" "$(expand_tilde "$2")")"; shift 2; else shift; fi
         continue ;;
-      --git-dir=*) path="${1#--git-dir=}"; shift; continue ;;
-      --work-tree=*) path="${1#--work-tree=}"; shift; continue ;;
+      --git-dir)
+        if [ "$#" -gt 1 ]; then gitdir="$(expand_tilde "$2")"; have_gitdir=1; shift 2; else shift; fi
+        continue ;;
+      --git-dir=*) gitdir="$(expand_tilde "${1#--git-dir=}")"; have_gitdir=1; shift; continue ;;
+      --work-tree)
+        # PARSE-AND-DISCARD: consume the value (so it is not read as the subcommand);
+        # NEVER used as the target (not a repo-identity axis).
+        if [ "$#" -gt 1 ]; then shift 2; else shift; fi
+        continue ;;
+      --work-tree=*) shift; continue ;;
       # other global options that consume the next word:
       -c|-R|--repo) shift; [ "$#" -gt 0 ] && shift; continue ;;
       --*=*|--*) shift; continue ;;
@@ -185,7 +376,12 @@ git_target_repo() {
       *) break ;;                           # subcommand reached → stop scanning options
     esac
   done
-  printf '%s' "$path"
+  # RESOLUTION: identity = --git-dir (composed onto the -C cwd) else the composed -C cwd.
+  if [ "$have_gitdir" -eq 1 ]; then
+    printf '%s' "$(_compose "$c_base" "$gitdir")"
+  else
+    printf '%s' "$c_base"
+  fi
 }
 
 # push_ship_runid : for a `git push ...` invocation, decide whether it SHIPS the drive
@@ -200,10 +396,8 @@ git_target_repo() {
 # Reads ONLY structural ref args + HEAD — never flag/body VALUE tokens — so a ref-shaped
 # token in --body/--push-option cannot fake or re-key a ship. bash 3.2-safe.
 push_ship_runid() {
-  set -f
-  # shellcheck disable=SC2086
-  set -- $CMD
-  set +f
+  set_argv_from_cmd || return 1            # unparseable command → not a ship
+  set -- "${_TOKENS[@]}"
   # Skip env VAR=val prefixes; require START binary == git.
   while [ "$#" -gt 0 ]; do
     case "$1" in [A-Za-z_]*=*) shift; continue ;; *) break ;; esac
@@ -288,6 +482,230 @@ is_drive_branch_ref() {
   esac
 }
 
+# managed_git_expansion_deny : rc 0 (and sets _MGED_REASON) iff $CMD is a WOULD-BE-MANAGED
+# operation whose DECISION-CRITICAL argv carries an UNRESOLVED shell-expansion construct
+# — the structural fail-closed catch-all that ends the `$'push'` / `git -C ~user/repo` /
+# `git {push,}` / `gh {pr,} create` bypass class.
+#
+# QUOTE-AWARE: it reads the per-token expansion-active flags `_TOK_EXP[]` the lexer produces
+# (1 iff that token had a construct bash WOULD expand from the literal string — an unquoted or
+# double-quoted `$`/backtick, an unquoted brace-expansion `{…,…}`, or an unquoted leading
+# `~user`). A SINGLE-QUOTED `'slice/$run/4a'` or `'~root/repo'` is LITERAL → its flag is 0 →
+# NOT treated as an expansion (fixes the strip-then-rescan false positive). Resolvable forms
+# (`~/…`, bare `~`, line-continuation) are NOT flagged either.
+#
+# WOULD-BE-MANAGED:
+#   - START binary == git AND the subcommand is a managed verb (push|merge|branch|worktree) OR
+#     the subcommand token is ITSELF expansion-active (so a managed verb can't be ruled out —
+#     e.g. `git $'push'`, `git {push,}`); OR
+#   - START binary == gh/glab AND the subcommand (pr/mr) OR the action (create) token is
+#     expansion-active (so a managed ship verb can't be ruled out — e.g. `gh {pr,} create`,
+#     `gh pr {create,}`, `glab {mr,} create`).
+# This EXCLUDES non-managed commands (`echo $X`, `ls $HOME`) and non-managed git verbs
+# (`git commit -m "$msg"`, `git log --format=$x`, `git show slice/R/4a`) — they never qualify
+# → stay inert (a managed ref under a read-only verb is NOT a gated op, so it does not deny).
+#
+# DECISION-CRITICAL tokens (those the gate actually interprets for its verdict) are checked for
+# an active construct — and ONLY those, so an incidental `$`-path/value the gate IGNORES never
+# trips the net (this is what keeps /drive's OWN `git worktree add $RUN_DIR/wt/<id> -b
+# slice/<runId>/<id> <sha>` and `git merge -s $strategy slice/<runId>/4a` from being denied):
+#   - the subcommand/verb token (and, for gh/glab, the action token);
+#   - every -C/--git-dir/--work-tree repo-path VALUE (git only);
+#   - the per-verb REF/REFSPEC operand(s) ONLY — extracted exactly as the gate's own matchers
+#     read them: `push` → refspecs AFTER the remote (positional #2..); `merge` → the ref
+#     positionals (skipping `-s/-X/--strategy*/-m` VALUES); `branch` → the branch-name + start-
+#     point positionals (skipping `-u/--set-upstream-to` VALUE); `worktree add` → the `-b/-B`
+#     branch VALUE ONLY (NOT the worktree-PATH positional, NOT the start-point sha).
+# A `$` in any consumed/skipped non-critical value/path (`worktree add <path>`, `merge -s <val>`,
+# `-m <msg>`, `--push-option`) does NOT trip this. bash 3.2-safe (index-walk; no assoc arrays).
+_MGED_REASON=""
+_mged_reason_set() {
+  _MGED_REASON="drive-merge-gate: cannot safely parse a managed command containing shell expansion (\`\$\`/backtick/\`~user\`/brace \`{…,…}\`); use a literal, fully-expanded form (the gate sees the pre-expansion command string by design — see docs/drive-enforcement.md)."
+}
+managed_git_expansion_deny() {
+  set_argv_from_cmd || return 1            # unparseable (unterminated quote) → handled elsewhere
+  local ntok=${#_TOKENS[@]} idx=0
+  # Skip leading env VAR=val prefixes; identify the START binary.
+  while [ "$idx" -lt "$ntok" ]; do
+    case "${_TOKENS[$idx]}" in [A-Za-z_]*=*) idx=$((idx+1)); continue ;; *) break ;; esac
+  done
+  [ "$idx" -lt "$ntok" ] || return 1
+  local bin="${_TOKENS[$idx]}"
+  case "$bin" in
+    git)       managed_git_expansion_deny_git "$idx" "$ntok" ;;
+    gh|glab)   managed_cli_expansion_deny "$bin" "$idx" "$ntok" ;;
+    *) return 1 ;;                          # non-managed binary → not our concern
+  esac
+}
+
+# git branch of the net. $1=idx of the `git` token, $2=ntok. rc 0 (sets _MGED_REASON) iff a
+# would-be-managed git op carries an expansion in a DECISION-CRITICAL token.
+managed_git_expansion_deny_git() {
+  local idx="$1" ntok="$2"
+  idx=$((idx+1))                            # drop the `git` token
+  # Walk the global-option region to the subcommand, checking repo-path VALUES en route.
+  local tainted=0 sub="" sub_exp=0 cur
+  while [ "$idx" -lt "$ntok" ]; do
+    cur="${_TOKENS[$idx]}"
+    case "$cur" in
+      -C|--git-dir|--work-tree)
+        if [ "$((idx+1))" -lt "$ntok" ]; then
+          [ "${_TOK_EXP[$((idx+1))]}" = 1 ] && tainted=1
+          idx=$((idx+2))
+        else idx=$((idx+1)); fi
+        continue ;;
+      --git-dir=*|--work-tree=*)
+        # The VALUE side of an inline --opt=val: the lexer's flag covers the WHOLE token, which
+        # is what we want (a `$` anywhere in `--git-dir=$x` is expansion-active).
+        [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1; idx=$((idx+1)); continue ;;
+      -c|-R|--repo) idx=$((idx+2)); continue ;;
+      --*=*|--*) idx=$((idx+1)); continue ;;
+      -?*) idx=$((idx+1)); continue ;;
+      *) sub="$cur"; sub_exp="${_TOK_EXP[$idx]}"; break ;;   # first non-flag word = subcommand
+    esac
+  done
+  # The subcommand token is decision-critical (it picks the gate mode).
+  [ "$sub_exp" = 1 ] && tainted=1
+  # Managed iff a literal managed verb OR an expansion-active subcommand we can't rule out.
+  local managed_verb=0
+  case "$sub" in push|merge|branch|worktree) managed_verb=1 ;; esac
+  [ "$sub_exp" = 1 ] && managed_verb=1
+  [ "$managed_verb" -eq 1 ] || return 1     # not a would-be-managed op → inert (no over-deny)
+  # PRECISE per-verb operand scan. Taint-check ONLY the ref/refspec operand(s) the gate's own
+  # matchers read for this verb — never a blanket positional scan (which would deny /drive's own
+  # `$`-path worktree-add / `-s $strategy` merge). An expansion-active subcommand (`$sub`/brace)
+  # has no known verb shape → scan conservatively (every positional) so a smuggled managed verb
+  # with a tainted ref is still caught.
+  idx=$((idx+1))                            # drop the subcommand token
+  case "$sub" in
+    push)
+      # Refspecs are positional #2.. (positional #1 is the remote). A `$`-remote is NOT a
+      # decision ref; only the refspecs are. Skip value-consuming push flags.
+      local pos=0
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          -o|--push-option|--repo|--receive-pack|--exec) idx=$((idx+2)); continue ;;
+          --*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) pos=$((pos+1))
+             [ "$pos" -ge 2 ] && [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1
+             idx=$((idx+1)) ;;
+        esac
+      done ;;
+    merge)
+      # Ref positionals; skip strategy/message VALUES (the args /drive's `merge -s $strategy`
+      # parks the `$` in — NOT a decision ref). Inline `--strategy=…` forms are single flag words.
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          -s|-X|--strategy|--strategy-option|-m|--message|-F|--file) idx=$((idx+2)); continue ;;
+          --*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1; idx=$((idx+1)) ;;   # ref operand
+        esac
+      done ;;
+    branch)
+      # `git branch -f <name> [<start-point>]`: the name + start-point positionals are refs the
+      # gate reads (phase-advance: `git branch -f drive/<runId> phaseInt/<runId>/<P>`). Skip the
+      # upstream VALUE; -f/-d/-D etc are bare flags.
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          -u|--set-upstream-to|-t|--track) idx=$((idx+2)); continue ;;
+          --*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1; idx=$((idx+1)) ;;   # name / start-point
+        esac
+      done ;;
+    worktree)
+      # `git worktree add <path> -b <branch> [<commit-ish>]`: the ONLY decision ref is the
+      # `-b`/`-B` branch VALUE. The worktree PATH positional and the start-point commit-ish are
+      # NOT refs (this is exactly /drive's `git worktree add $RUN_DIR/wt/<id> -b slice/.. <sha>`,
+      # whose `$RUN_DIR` path must NOT taint). Taint-check ONLY the -b/-B value.
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          -b|-B)
+            if [ "$((idx+1))" -lt "$ntok" ]; then
+              [ "${_TOK_EXP[$((idx+1))]}" = 1 ] && tainted=1; idx=$((idx+2))
+            else idx=$((idx+1)); fi
+            continue ;;
+          -b=*|-B=*|--*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) idx=$((idx+1)) ;;              # path / commit-ish positionals → NOT decision refs
+        esac
+      done ;;
+    *)
+      # Expansion-active (unknown-shape) subcommand: conservatively scan every positional, since
+      # we can't know which is the ref. (`$sub`/brace already forced tainted=1 above, but a
+      # smuggled verb could carry a tainted ref too — keep catching it.)
+      while [ "$idx" -lt "$ntok" ]; do
+        cur="${_TOKENS[$idx]}"
+        case "$cur" in
+          --*=*|--*) idx=$((idx+1)); continue ;;
+          -?*) idx=$((idx+1)); continue ;;
+          *) [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1; idx=$((idx+1)) ;;
+        esac
+      done ;;
+  esac
+  [ "$tainted" -eq 1 ] || return 1
+  _mged_reason_set
+  return 0
+}
+
+# gh/glab branch of the net (finding #1). $1=bin (gh|glab), $2=idx of the bin token, $3=ntok.
+# Ship detection manages `gh pr create` and `glab mr create`. If the SUBCOMMAND token (pr/mr)
+# OR the ACTION token (create) is expansion-active, the gate can't confirm the subcommand/action
+# pair from the literal string → a would-be-managed ship op it can't safely parse → DENY. Mirrors
+# the git path. Walks the gh/glab global-option region the SAME way subcommand_of/action_after do
+# (env prefixes already skipped by the caller; the START binary is $bin).
+managed_cli_expansion_deny() {
+  local bin="$1" idx="$2" ntok="$3"
+  idx=$((idx+1))                            # drop the gh/glab token
+  local sub="" sub_exp=0 action="" action_exp=0 cur seen_sub=0
+  # Reach the subcommand (skip global options exactly as subcommand_of/action_after do).
+  while [ "$idx" -lt "$ntok" ]; do
+    cur="${_TOKENS[$idx]}"
+    case "$cur" in
+      -C|-c|-R|--repo|--git-dir|--work-tree) idx=$((idx+2)); continue ;;
+      --*=*|--*) idx=$((idx+1)); continue ;;
+      -?*) idx=$((idx+1)); continue ;;
+      *) sub="$cur"; sub_exp="${_TOK_EXP[$idx]}"; seen_sub=1; idx=$((idx+1)); break ;;
+    esac
+  done
+  [ "$seen_sub" -eq 1 ] || return 1         # no subcommand → not a managed op
+  # Reach the action (first non-flag word after the subcommand).
+  while [ "$idx" -lt "$ntok" ]; do
+    cur="${_TOKENS[$idx]}"
+    case "$cur" in
+      --*=*|--*) idx=$((idx+1)); continue ;;
+      -?*) idx=$((idx+1)); continue ;;
+      *) action="$cur"; action_exp="${_TOK_EXP[$idx]}"; break ;;
+    esac
+  done
+  # The managed gh/glab op is the `pr create` / `mr create` PAIR. If EITHER the subcommand or the
+  # action token is expansion-active, the pair can't be confirmed → fail closed. We further gate
+  # on the op being plausibly that pair: the subcommand is pr/mr (or tainted, so unknown), AND
+  # the action is create (or tainted/absent, so unknown). A clearly-different literal pair
+  # (`gh pr view --json $x`, `gh issue list`) is NOT force-denied (no over-deny on unrelated gh).
+  local sub_ok=0 action_ok=0
+  case "$bin" in
+    gh)   case "$sub" in pr) sub_ok=1 ;; esac ;;
+    glab) case "$sub" in mr) sub_ok=1 ;; esac ;;
+  esac
+  [ "$sub_exp" = 1 ] && sub_ok=1            # tainted subcommand → can't rule out pr/mr
+  case "$action" in create|"") action_ok=1 ;; esac
+  [ "$action_exp" = 1 ] && action_ok=1     # tainted action → can't rule out create
+  [ "$sub_ok" -eq 1 ] && [ "$action_ok" -eq 1 ] || return 1
+  # Only DENY when a decision-critical token is actually tainted.
+  if [ "$sub_exp" = 1 ] || [ "$action_exp" = 1 ]; then
+    _mged_reason_set
+    return 0
+  fi
+  return 1
+}
+
 # --- match the command to a gate mode ---------------------------------------------
 # We classify by structural git/ship intent. A command that matches no class →
 # exit 0 silent (inert; not a managed-run transition).
@@ -314,24 +732,53 @@ git_sub="$(subcommand_of git)"
 gh_sub="$(subcommand_of gh)"
 glab_sub="$(subcommand_of glab)"
 
+# --- structural fail-closed catch-all (ends the shell-expansion bypass class) -------
+# BEFORE any repo/ref resolution: if $CMD is a would-be-managed git op whose decision-
+# critical argv carries an UNRESOLVED shell-expansion construct (a `$` form, a backtick, or
+# a `~user`), the gate cannot faithfully interpret it from the literal string — so it FAILS
+# CLOSED = DENY rather than silently mis-resolve and bypass (e.g. `git $'push'` lexes to a
+# non-`push` subcommand → would-be-inert; `git -C ~user/repo push` mis-targets). This is
+# omission-safe: an unresolvable managed command DENIES. Non-git and non-managed commands
+# (`echo $X`, `ls $HOME`, `git commit -m "$msg"`) never qualify → unaffected (stay inert).
+if managed_git_expansion_deny; then
+  emit_deny "$_MGED_REASON"
+fi
+
+# CMD_LEX : the command re-serialized from the LEXED tokens (one per line). The ref-extraction
+# greps + drive_runid_from_command read THIS, not the raw $CMD, so they see the SAME string the
+# argv parsers do — line-continuations elided, quotes removed, each token isolated. Reading the
+# raw $CMD here would DESYNC the gate from git: a ref split by a `\`<newline> continuation
+# (`git merge sli\`↵`ce/R/4a`) is one token `slice/R/4a` to git AND to the lexer, but the raw
+# string still holds the backslash+newline → a raw grep would miss the ref and the gate would
+# go inert on a real managed merge. One-token-per-line keeps each ref atomic (refs carry no
+# newline) and preserves the per-token boundary the grep's `(^|[^…])` anchor needs.
+CMD_LEX="$CMD"
+if set_argv_from_cmd; then
+  CMD_LEX="$(printf '%s\n' "${_TOKENS[@]}")"
+fi
+
 # Extract every slice/<runId>/<id> token (3-segment) appearing in the command.
 # Used both for matching AND for gating EACH slice in a multi-slice merge.
-slice_tokens="$(printf '%s' "$CMD" | grep -oE '(^|[^A-Za-z0-9._-])slice/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+' 2>/dev/null || true)"
+slice_tokens="$(printf '%s' "$CMD_LEX" | grep -oE '(^|[^A-Za-z0-9._-])slice/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+' 2>/dev/null || true)"
 
 # Extract the FIRST phaseInt/... token as it appears in the command. We accept ANY
 # phaseInt/<...> arg form (not only the 3-segment phaseInt/<runId>/<P>) so the gate
 # stays correct regardless of phaseInt naming (Slice 3.1 ordering). The last path
 # segment is taken as P and passed to conformance, which keys phase-merge by P.
-phaseint_token="$(printf '%s' "$CMD" | grep -oE '(^|[^A-Za-z0-9._-])phaseInt/[A-Za-z0-9._/-]+' 2>/dev/null | head -n1 || true)"
+phaseint_token="$(printf '%s' "$CMD_LEX" | grep -oE '(^|[^A-Za-z0-9._-])phaseInt/[A-Za-z0-9._/-]+' 2>/dev/null | head -n1 || true)"
 
 # --- resolve the TARGET REPO (needed by ship/push classification below) -----------
-# A `git -C <path>` / `--git-dir=<path>` / `--work-tree=<path>` option names a repo
-# OTHER than $CWD; git operates on THAT repo, so the gate must too. When such an
-# option is present, REPO = that path; otherwise REPO = $CWD. REPO is the directory
-# used for runId-from-HEAD AND as the conformance cd target. Effect:
+# A `git -C <path>` / `--git-dir=<path>` option names a repo-IDENTITY OTHER than $CWD;
+# git reads HEAD/refs from THAT repo, so the gate must too. git_target_repo composes the
+# `-C` chain + `--git-dir` (last-wins) and echoes an absolute or $CWD-relative path;
+# `--work-tree` is EXCLUDED from identity (parsed only to consume its value — it does not
+# change which gitdir/HEAD git uses). When present, REPO = that path; else REPO = $CWD.
+# REPO is the directory used for runId-from-HEAD AND as the conformance cd target. Effect:
 #   git -C <drive_repo> push      (from outside)  → resolves the drive repo → deny if unreviewed
 #   git -C ../other     push      (from a drive cwd) → evaluates the OTHER repo → inert
 #                                                       if it's not a managed drive run (correct)
+#   git --work-tree=<reviewed> push (from an unreviewed drive cwd) → identity = $CWD (the
+#                                   unreviewed drive repo) → DENY (the old bypass is closed)
 REPO="$CWD"
 git_repo_opt="$(git_target_repo)"
 if [ -n "$git_repo_opt" ]; then
@@ -340,6 +787,14 @@ if [ -n "$git_repo_opt" ]; then
     *)  REPO="$CWD/$git_repo_opt" ;;       # relative path: resolve against $CWD (git's own base)
   esac
 fi
+# Gitfile reduction: a linked-worktree `.git` is a regular FILE (a gitfile), but the
+# callers use REPO as a DIRECTORY (`git -C "$REPO" rev-parse`, `cd "$REPO" && conformance`).
+# So if a `--git-dir=<wt>/.git` resolved REPO to a gitfile, reduce it to its parent — the
+# worktree root — which is the directory git reads HEAD/refs from for that gitfile. This
+# handles the CANONICAL `<worktree>/.git` case (the representation /drive's slice worktrees
+# use); a real `.git` DIRECTORY is unaffected (`-f` is false). A symlinked/non-canonical
+# gitfile wrapper is a ratified out-of-scope forgery residual (DR11; docs/drive-enforcement.md).
+[ -f "$REPO" ] && REPO="$(dirname "$REPO")"
 
 # --- ship detection ---
 # `gh pr create` / `glab mr create` / a `git push` that ships the DRIVE branch.
@@ -422,7 +877,7 @@ if [ "$is_ship" = true ]; then
   else
     runId="$(drive_runid_from_head "$REPO")" || runId=""
   fi
-elif runId="$(drive_runid_from_command "$CMD")"; then
+elif runId="$(drive_runid_from_command "$CMD_LEX")"; then
   :
 else
   runId=""

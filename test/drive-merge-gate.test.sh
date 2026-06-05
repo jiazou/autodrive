@@ -18,6 +18,11 @@ mkdir -p "$HARNESS_RUNS"
 
 TMPROOT="$(mktemp -d "${TMPDIR:-/tmp}/drive-gate-test.XXXXXX")"
 
+# A dedicated $HOME root so the round-3 `~/...` tests (bash expands ~ to $HOME) reach a real
+# fixture. Defined here so cleanup() sweeps it.
+HOME_FIXROOT="$HOME/.drive-gate-test-$$"
+mkdir -p "$HOME_FIXROOT"
+
 # All RUN_DIRs this process creates share the prefix gatetest-<PID>- (mk_rundir runs
 # inside command-substitution subshells, so tracking via a global var would be lost to
 # the subshell — glob-remove by the PID-scoped prefix instead, which is robust).
@@ -27,6 +32,7 @@ cleanup() {
     [ -d "$d" ] && rm -rf "$d"
   done
   [ -d "$TMPROOT" ] && rm -rf "$TMPROOT"
+  [ -d "$HOME_FIXROOT" ] && rm -rf "$HOME_FIXROOT"
 }
 trap cleanup EXIT
 
@@ -459,29 +465,37 @@ test_ship_git_dir_space_reviewed_silent() {
   fi
 }
 
-# `git --work-tree=<reviewed> push` (=form), cwd = unreviewed drive repo → silent.
-test_ship_work_tree_eq_reviewed_silent() {
+# AC-A8 BYPASS CLOSED (was test_ship_work_tree_eq_reviewed_silent — it ENCODED the
+# bypass). `git --work-tree=<reviewed> push` (=form) from an UNREVIEWED drive cwd must now
+# DENY: `--work-tree` is NOT a repo-identity axis (git reads HEAD/refs from the gitdir,
+# which --work-tree does not change — verified). With no --git-dir, identity = $CWD (the
+# unreviewed drive repo) → DENY. The old "silent" behavior shipped the unreviewed cwd
+# while the gate inspected /reviewed (silent-allow bypass).
+test_ship_work_tree_eq_bypass_deny() {
   local ra rb rinfo repo cwdrepo out
   ra="$(new_runid)"; rinfo="$(mk_ship_repo_reviewed "$ra")"; repo="${rinfo%% *}"
   rb="$(new_runid)"; cwdrepo="$(mk_ship_repo "$rb")"; cwdrepo="${cwdrepo%% *}"
   run_gate "git --work-tree=$repo push" "$cwdrepo"; out="$GATE_OUT"
-  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
-    pass "ship silent via git --work-tree=<reviewed> from an UNREVIEWED-drive cwd (non-vacuous, =form)"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase' \
+     && printf '%s' "$out" | grep -q "run $rb "; then
+    pass "AC-A8: git --work-tree=<reviewed> push from unreviewed drive cwd DENIES (bypass closed, =form)"
   else
-    fail "ship via --work-tree= should resolve to the reviewed repo (silent); got rc=$GATE_RC out='$out'"
+    fail "AC-A8: --work-tree= must NOT retarget identity (should DENY the unreviewed cwd); got: $out"
   fi
 }
 
-# `git --work-tree <reviewed> push` (SPACE form), cwd = unreviewed drive repo → silent.
-test_ship_work_tree_space_reviewed_silent() {
+# AC-A8 BYPASS CLOSED (was test_ship_work_tree_space_reviewed_silent). Same as above,
+# SPACE form: `git --work-tree <reviewed> push` from an unreviewed drive cwd → DENY.
+test_ship_work_tree_space_bypass_deny() {
   local ra rb rinfo repo cwdrepo out
   ra="$(new_runid)"; rinfo="$(mk_ship_repo_reviewed "$ra")"; repo="${rinfo%% *}"
   rb="$(new_runid)"; cwdrepo="$(mk_ship_repo "$rb")"; cwdrepo="${cwdrepo%% *}"
   run_gate "git --work-tree $repo push" "$cwdrepo"; out="$GATE_OUT"
-  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
-    pass "ship silent via git --work-tree <reviewed> from an UNREVIEWED-drive cwd (non-vacuous, space form)"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase' \
+     && printf '%s' "$out" | grep -q "run $rb "; then
+    pass "AC-A8: git --work-tree <reviewed> push from unreviewed drive cwd DENIES (bypass closed, space form)"
   else
-    fail "ship via --work-tree (space) should resolve to the reviewed repo (silent); got rc=$GATE_RC out='$out'"
+    fail "AC-A8: --work-tree (space) must NOT retarget identity (should DENY the unreviewed cwd); got: $out"
   fi
 }
 
@@ -496,6 +510,349 @@ test_ship_git_dir_other_repo_inert() {
     pass "ship inert for git --git-dir=<other_nonDrive>/.git push from a drive cwd"
   else
     fail "ship should be inert for git --git-dir=<other_repo> push; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Shell-accurate argv tokenization (round-2 BLOCKING): the four parsers must lex the
+# command the way git/bash would — NOT raw whitespace word-split. Each case below FAILS
+# against the old `set -f; set -- $CMD` tokenization (quotes kept literal, a quoted path
+# WITH A SPACE split into two words, `""` not preserved as an empty arg).
+# ---------------------------------------------------------------------------------
+
+# `git -C "" push` from an UNREVIEWED drive cwd → DENY. The empty -C is a git no-op
+# (identity stays $CWD = the unreviewed drive repo → its drive HEAD is seen). Pre-fix the
+# token was the literal `""`, so _compose joined REPO=$CWD/"" → HEAD lookup failed →
+# silent (a bypass: real git treats `-C ""` as a no-op and pushes the cwd).
+test_tok_git_C_empty_push_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'git -C "" push' "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "tok: git -C \"\" push from unreviewed drive cwd DENIES (empty -C is a no-op → identity = cwd)"
+  else
+    fail "tok: git -C \"\" push should DENY (empty -C no-op); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `git -C "/path with spaces" push` targeting an UNREVIEWED drive repo whose PATH CONTAINS
+# A SPACE, cwd OUTSIDE → DENY. Pre-fix the path split into `-C` `"/path` `with` `spaces"`,
+# so the subcommand was misread as `with` and ship detection never ran → silent bypass on
+# totally legitimate input.
+test_tok_git_C_spaced_path_deny() {
+  local runid info origrepo out spaced outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; origrepo="${info%% *}"
+  # Relocate the unreviewed drive repo under a path WITH A SPACE.
+  spaced="$TMPROOT/spaced dir-$runid/the repo"
+  mkdir -p "$(dirname "$spaced")"; mv "$origrepo" "$spaced"
+  outside="$TMPROOT/tok-spaced-out-$runid"; mkdir -p "$outside"   # NOT a git repo
+  run_gate "git -C \"$spaced\" push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "tok: git -C \"/path with spaces\" push targeting an unreviewed drive repo DENIES (quoted-span path)"
+  else
+    fail "tok: git -C \"/path with spaces\" push should DENY (path with space); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# Quoted --git-dir value with a SPACE in the path: `git --git-dir="<repo>/.git"` (=form,
+# whole value quoted) and `git --git-dir "<repo>/.git"` (space form, quoted arg) must both
+# resolve the spaced gitdir → DENY. Pre-fix a spaced path split the value off.
+test_tok_quoted_gitdir_spaced_deny() {
+  local runid info origrepo out spaced outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; origrepo="${info%% *}"
+  spaced="$TMPROOT/gd spaced-$runid/repo"
+  mkdir -p "$(dirname "$spaced")"; mv "$origrepo" "$spaced"
+  outside="$TMPROOT/tok-gd-out-$runid"; mkdir -p "$outside"
+  # =form: --git-dir="<spaced>/.git"
+  run_gate "git --git-dir=\"$spaced/.git\" push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    # space form: --git-dir "<spaced>/.git"
+    run_gate "git --git-dir \"$spaced/.git\" push" "$outside"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+      pass "tok: quoted --git-dir (= and space forms) with a spaced gitdir path resolve + DENY"
+    else
+      fail "tok: --git-dir \"<spaced>/.git\" (space form) should DENY; got: $out"
+    fi
+  else
+    fail "tok: --git-dir=\"<spaced>/.git\" (=form) should DENY; got: $out"
+  fi
+}
+
+# Quoted -C value with a space, SLICE merge: `git -C "<spaced>" merge slice/R/4a` from
+# OUTSIDE → DENY (unreviewed slice). Proves the quoted-span fix reaches the merge path,
+# not just push, and that the slice subcommand is detected past a quoted -C value.
+test_tok_quoted_C_slicemerge_deny() {
+  local runid info origrepo out spaced outside
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; origrepo="${info%% *}"
+  spaced="$TMPROOT/slice spaced-$runid/repo"
+  mkdir -p "$(dirname "$spaced")"; mv "$origrepo" "$spaced"
+  outside="$TMPROOT/tok-slice-out-$runid"; mkdir -p "$outside"
+  run_gate "git -C \"$spaced\" merge slice/$runid/4a" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review slice 4a'; then
+    pass "tok: git -C \"<spaced>\" merge slice/R/4a DENIES (quoted -C reaches the merge path)"
+  else
+    fail "tok: git -C \"<spaced>\" merge should DENY unreviewed slice; got: $out"
+  fi
+}
+
+# `git "push"` (quoted subcommand) on an unreviewed drive branch → still detected as ship
+# → DENY. Pre-fix the token was the literal `"push"` (with quotes), so `[ "$1" = push ]`
+# failed and ship detection silently missed it.
+test_tok_quoted_subcommand_push_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'git "push"' "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "tok: git \"push\" (quoted subcommand) still detected as ship → DENY"
+  else
+    fail "tok: git \"push\" should be detected as ship and DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# `VAR="x y" git push` (env-prefix whose VALUE contains a space, quoted) → the env
+# assignment is skipped as ONE token, git is the binary, push the subcommand → DENY.
+# Pre-fix the value split (`VAR="x` and `y"`), so after skipping the first token the
+# binary was misread as `y"` → ship detection missed → silent bypass.
+test_tok_env_prefix_spaced_value_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'VAR="x y" git push' "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "tok: VAR=\"x y\" git push (quoted env value with space) → env skipped, push detected → DENY"
+  else
+    fail "tok: VAR=\"x y\" git push should DENY (env-prefix skipped, push detected); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# Fail-safe: an UNTERMINATED quote makes the command unparseable — the real shell would
+# reject it and git would NEVER run — so the gate goes INERT (no mis-split argv that could
+# desync the gate from git). Asserted on a would-be ship form: `git push "oops` (open
+# quote) from a drive cwd → silent/inert, NOT a spurious deny and NOT a mis-parsed allow.
+test_tok_unterminated_quote_inert() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'git push "oops' "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "tok: unterminated quote → inert (unparseable command can't run; no mis-split argv)"
+  else
+    fail "tok: unterminated quote should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Item A — composed git-path-option resolution (AC-A1..AC-A11)
+# ---------------------------------------------------------------------------------
+# These prove git_target_repo() composes -C/--git-dir the way real git resolves the
+# repo identity (not the old last-path-wins), and that --work-tree is excluded from
+# identity. Each constructs a case where the OLD (last-wins) resolution would target a
+# DIFFERENT, clean/non-drive repo (→ silent/inert) while the CORRECT composed identity
+# targets the unreviewed drive repo (→ DENY), so the assertion is non-vacuous.
+
+# AC-A1: `git -C a -C b <sub>` composes to $CWD/a/b (NOT $CWD/b). cwd holds the
+# unreviewed drive repo at a/b; old last-wins would target $CWD/b (nonexistent → inert).
+test_acA1_C_compose_relative() {
+  local runid info repo out parent
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  # Lay out so $CWD/a/b == the unreviewed drive repo, but $CWD/b does NOT exist.
+  parent="$TMPROOT/acA1-$runid"; mkdir -p "$parent/a"
+  ln -s "$repo" "$parent/a/b"
+  run_gate "git -C a -C b push" "$parent"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A1: git -C a -C b composes to a/b (denies unreviewed drive repo at \$CWD/a/b)"
+  else
+    fail "AC-A1: git -C a -C b should compose to a/b and DENY; got: $out"
+  fi
+}
+
+# AC-A3: `git -C rel -C /abs <sub>` — an absolute -C RESETS the accumulator → identity
+# is /abs, NOT $CWD/rel/abs. cwd's `rel/abs` is a benign non-existent path; /abs is the
+# unreviewed drive repo. A naive base/p join would target $CWD/rel/abs (→ inert).
+test_acA3_C_absolute_resets() {
+  local runid info repo out parent
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  parent="$TMPROOT/acA3-$runid"; mkdir -p "$parent/rel"   # rel exists, rel/abs does not
+  run_gate "git -C rel -C $repo push" "$parent"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A3: git -C rel -C /abs resets to /abs (denies the absolute drive repo, not \$CWD/rel/abs)"
+  else
+    fail "AC-A3: absolute -C must reset the accumulator and DENY /abs; got: $out"
+  fi
+}
+
+# AC-A11: `git -C /abs -C rel <sub>` — a relative -C composes ONTO the absolute base →
+# identity is /abs/rel (distinct from AC-A3's reset). /abs is a benign dir; /abs/rel is
+# the unreviewed drive repo. Old last-wins would target $CWD/rel (nonexistent → inert).
+test_acA11_C_abs_then_rel_compose() {
+  local runid info repo out base
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  # Put the drive repo at <base>/rel; pass -C <base> -C rel.
+  base="$TMPROOT/acA11-$runid"; mkdir -p "$base"
+  ln -s "$repo" "$base/rel"
+  run_gate "git -C $base -C rel push" "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A11: git -C /abs -C rel composes to /abs/rel (denies the unreviewed drive repo there)"
+  else
+    fail "AC-A11: relative -C must compose onto the absolute base and DENY /abs/rel; got: $out"
+  fi
+}
+
+# AC-A2: `git -C /repo --git-dir=.git push` (absolute -C + RELATIVE gitdir, DIFFERENT
+# axes) → identity = /repo/.git, NOT $CWD/.git. /repo is the unreviewed drive repo; the
+# gitfile/dir reduction makes /repo/.git resolve to /repo. Old last-wins would target
+# $CWD/.git (→ inert). cwd is OUTSIDE so resolution MUST come from the options.
+test_acA2_C_abs_plus_relative_gitdir() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/acA2-out-$runid"; mkdir -p "$outside"   # NOT a git repo; no .git here
+  run_gate "git -C $repo --git-dir=.git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A2: git -C /repo --git-dir=.git resolves to /repo/.git (DENY; different axes, not last-wins .git)"
+  else
+    fail "AC-A2: -C /repo + --git-dir=.git should target /repo and DENY; got: $out"
+  fi
+}
+
+# AC-A4: both `--git-dir <p>` (space) and `--git-dir=<p>` (=) forms, WITH a preceding -C,
+# resolve to the same target. cwd is OUTSIDE the drive repo; -C names it and --git-dir
+# (relative .git) composes onto it → /repo → DENY. Both forms asserted.
+test_acA4_gitdir_both_forms_with_C() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/acA4-out-$runid"; mkdir -p "$outside"
+  run_gate "git -C $repo --git-dir .git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    run_gate "git -C $repo --git-dir=.git push" "$outside"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+      pass "AC-A4: --git-dir <p> (space) and --git-dir=<p> (=), both with -C, resolve identically (DENY)"
+    else
+      fail "AC-A4: --git-dir= form (with -C) should DENY; got: $out"
+    fi
+  else
+    fail "AC-A4: --git-dir <p> space form (with -C) should DENY; got: $out"
+  fi
+}
+
+# AC-A5: two `--git-dir` flags → LAST one wins (same-axis override). First names a benign
+# non-drive repo, second names the unreviewed drive repo → DENY (proves last-wins, not
+# first-wins or both). cwd OUTSIDE so identity is purely from the flags.
+test_acA5_two_gitdir_last_wins() {
+  local runid info repo out other outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  other="$TMPROOT/acA5-other-$runid-repo"; _init_repo "$other"
+  _commit "$other" README base base >/dev/null   # non-drive (main)
+  outside="$TMPROOT/acA5-out-$runid"; mkdir -p "$outside"
+  run_gate "git --git-dir=$other/.git --git-dir=$repo/.git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A5: two --git-dir flags → last wins (DENY the second, unreviewed drive repo)"
+  else
+    fail "AC-A5: last --git-dir should win and DENY; got: $out"
+  fi
+}
+
+# AC-A9: `git -C=/x <sub>` is NOT special-cased — real git rejects -C=/path. The token
+# `-C=$repo` falls through the generic `-?*` skip and does NOT become identity, so from a
+# NON-drive cwd this is inert (the unreviewed drive repo is referenced only via the
+# rejected -C= token, which is ignored). Proves we don't emulate a non-git syntax.
+test_acA9_C_eq_not_special_cased() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/acA9-out-$runid"; mkdir -p "$outside"   # non-drive, non-git cwd
+  run_gate "git -C=$repo push" "$outside"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "AC-A9: git -C=/x is NOT special-cased (token ignored → inert from non-drive cwd)"
+  else
+    fail "AC-A9: -C=/x must fall through generic skip (inert); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# AC-A9b: `--work-tree <p>` (space) and `--work-tree=<p>` (=) have their VALUE consumed
+# without being treated as the subcommand or as identity. Here the bare push subcommand
+# follows --work-tree <wt>; if the value were NOT consumed, the parser could mis-read the
+# value as the subcommand. From a drive cwd with no --git-dir, identity = $CWD → DENY,
+# AND the push subcommand must still be detected (so it classifies as ship at all).
+test_acA9b_work_tree_value_consumed() {
+  local runid info repo out wt
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  wt="$TMPROOT/acA9b-wt-$runid"; mkdir -p "$wt"
+  # space form: value consumed, push still recognized, identity = cwd (drive) → DENY.
+  run_gate "git --work-tree $wt push" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    # =form: same.
+    run_gate "git --work-tree=$wt push" "$repo"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+      pass "AC-A9b: --work-tree <p>/=<p> value consumed (push still detected; identity = cwd → DENY)"
+    else
+      fail "AC-A9b: --work-tree= value-consume should keep push detection + DENY cwd; got: $out"
+    fi
+  else
+    fail "AC-A9b: --work-tree <p> (space) value-consume should keep push detection + DENY cwd; got: $out"
+  fi
+}
+
+# AC-A10: CANONICAL linked-worktree gitfile reduction. `<linked-wt>/.git` is a FILE; the
+# callers need a DIRECTORY. The gate must reduce it via dirname to the worktree root so
+# the HEAD lookup + conformance resolve correctly. Two forms:
+#  (a) git -C <linked-wt> --git-dir=.git merge slice/<runId>/<id>  → DENY (unreviewed slice)
+#  (b) git --git-dir=<linked-wt>/.git push                          → DENY (unreviewed drive HEAD)
+# Without the reduction, REPO=<wt>/.git (a file) → cd fails → fail-open (bypass).
+
+# Build a slice repo, then add a LINKED worktree checked out on the slice branch so its
+# .git is a gitfile. (a) `git -C <wt> --git-dir=.git merge` from OUTSIDE the wt.
+test_acA10_gitfile_merge_C_plus_gitdir() {
+  local runid info repo out wt outside
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; repo="${info%% *}"
+  # Linked worktree on the (unreviewed) slice branch → its .git is a gitfile.
+  wt="$TMPROOT/acA10wt-$runid"
+  _gitc "$repo" worktree add -q "$wt" "slice/$runid/4a" >/dev/null 2>&1
+  [ -f "$wt/.git" ] || { fail "AC-A10(a): fixture .git is not a gitfile"; return; }
+  outside="$TMPROOT/acA10out-$runid"; mkdir -p "$outside"
+  run_gate "git -C $wt --git-dir=.git merge slice/$runid/4a" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review slice 4a'; then
+    pass "AC-A10(a): git -C <linked-wt> --git-dir=.git merge reduces gitfile→wt root (DENY, no cd-fail bypass)"
+  else
+    fail "AC-A10(a): gitfile -C+--git-dir merge should reduce + DENY; got: $out"
+  fi
+}
+
+# (b) `git --git-dir=<linked-wt>/.git push` where <linked-wt> HEAD is an unreviewed
+# drive/<runId> branch → reduce gitfile→wt root → HEAD read → DENY. cwd is OUTSIDE.
+# The MAIN repo stays on `main` so the linked worktree can check out drive/<runId>
+# (git refuses to add a worktree on a branch already checked out elsewhere).
+test_acA10_gitfile_push_gitdir() {
+  local runid rd repo out wt outside
+  runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
+  repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$runid"
+  _commit "$repo" feature.sh "echo hi" "unreviewed code" >/dev/null   # no phase review
+  _gitc "$repo" checkout -q main          # free drive/<runId> for the linked worktree
+  # Linked worktree on the unreviewed drive branch → gitfile .git, HEAD = drive/<runId>.
+  wt="$TMPROOT/acA10bwt-$runid"
+  _gitc "$repo" worktree add -q "$wt" "drive/$runid" >/dev/null 2>&1
+  [ -f "$wt/.git" ] || { fail "AC-A10(b): fixture .git is not a gitfile"; return; }
+  outside="$TMPROOT/acA10bout-$runid"; mkdir -p "$outside"
+  run_gate "git --git-dir=$wt/.git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A10(b): git --git-dir=<linked-wt>/.git push reduces gitfile→wt root (DENY unreviewed drive HEAD)"
+  else
+    fail "AC-A10(b): gitfile --git-dir push should reduce + DENY; got: $out"
+  fi
+}
+
+# AC-A10 (real .git DIRECTORY unaffected): a normal repo's `--git-dir=<repo>/.git` is a
+# DIRECTORY (`-f` false → no reduction). conformance does ref ops that resolve identically
+# from <repo>/.git → still DENY when unreviewed. Guards that the reduction doesn't fire on
+# a real gitdir directory.
+test_acA10_real_gitdir_directory_unaffected() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  [ -d "$repo/.git" ] || { fail "AC-A10(dir): fixture .git is not a directory"; return; }
+  outside="$TMPROOT/acA10dir-$runid"; mkdir -p "$outside"
+  run_gate "git --git-dir=$repo/.git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A10: real .git DIRECTORY is unaffected by gitfile reduction (still DENY unreviewed)"
+  else
+    fail "AC-A10: real .git directory --git-dir should DENY (no spurious reduction); got: $out"
   fi
 }
 
@@ -885,6 +1242,445 @@ test_push_mirror_nondrive_head_inert() {
 }
 
 # ---------------------------------------------------------------------------------
+# Round-3 BLOCKINGs: shell-expansion boundary (line-continuation + tilde resolution;
+# fail-closed on unresolvable $ / backtick / ~user in a would-be-managed git command).
+# ---------------------------------------------------------------------------------
+
+# Build an UNREVIEWED drive-branch repo UNDER $HOME (so `~/<rel>` targets it). Echoes
+# "repo rd rel" where rel is the repo path RELATIVE to $HOME (for the ~/ form).
+mk_ship_repo_in_home() {
+  local runid="$1" rd repo rel
+  rd="$(mk_rundir "$runid")"
+  repo="$HOME_FIXROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$runid"
+  _commit "$repo" feature.sh "echo hi" "unreviewed code" >/dev/null
+  rel="${repo#$HOME/}"
+  printf '%s %s %s\n' "$repo" "$rd" "$rel"
+}
+
+# (b) TILDE targeting: `git -C ~/<reldrive> push` from OUTSIDE → ~/ expands to $HOME →
+# resolves the unreviewed drive repo → DENY (conformance ship deny). Pre-fix the gate kept
+# the literal `~/<rel>` token → wrong target → ungated bypass.
+test_tilde_C_targets_home_drive_deny() {
+  local runid info repo rel out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo_in_home "$runid")"
+  repo="$(printf '%s' "$info" | cut -d' ' -f1)"; rel="$(printf '%s' "$info" | cut -d' ' -f3)"
+  outside="$TMPROOT/tilde-out-$runid"; mkdir -p "$outside"   # NOT a git repo
+  run_gate "git -C ~/$rel push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "tilde: git -C ~/<reldrive> push expands ~ to \$HOME → targets the drive repo → DENY"
+  else
+    fail "tilde: git -C ~/<reldrive> push should expand ~ and DENY; got: $out"
+  fi
+}
+
+# (b) bare `~` -C value composes with a following relative -C: `git -C ~ -C <rel> push`
+# → $HOME/<rel>. Targets the home drive repo → DENY. Proves bare ~ → $HOME.
+test_tilde_bare_C_compose_deny() {
+  local runid info repo rel out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo_in_home "$runid")"
+  repo="$(printf '%s' "$info" | cut -d' ' -f1)"; rel="$(printf '%s' "$info" | cut -d' ' -f3)"
+  outside="$TMPROOT/tilde-bare-out-$runid"; mkdir -p "$outside"
+  run_gate "git -C ~ -C $rel push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "tilde: bare ~ -C composes to \$HOME/<rel> → DENY (bare ~ → \$HOME)"
+  else
+    fail "tilde: bare ~ -C should resolve \$HOME and DENY; got: $out"
+  fi
+}
+
+# (b) `git -C ~/<nondrive> push` to a NON-drive target → inert (no over-deny). The tilde
+# resolves but the target is not a managed run.
+test_tilde_C_nondrive_inert() {
+  local out
+  run_gate "git -C ~/.no-such-drive-repo-xyz-$$ push" "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "tilde: git -C ~/<nondrive> push resolves ~ but stays inert (no managed run; no over-deny)"
+  else
+    fail "tilde: git -C ~/<nondrive> push should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (a) LINE CONTINUATION (unquoted): `git push \<newline>` on an unreviewed drive cwd → the
+# backslash-newline is elided exactly as bash does → `push` detected → ship DENY. Pre-fix
+# the lexer kept the `\` and newline → mis-split tokens → ship detection missed.
+test_linecont_unquoted_push_deny() {
+  local runid info repo out cmd
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  cmd="$(printf 'git push \\\n')"   # trailing backslash-newline (line continuation)
+  run_gate "$cmd" "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "line-cont (unquoted): git push \\<newline> elides the continuation → ship → DENY"
+  else
+    fail "line-cont (unquoted): git push \\<newline> should DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (a) LINE CONTINUATION splitting a -C flag from its value: `git -C \<newline><repo> push`
+# from OUTSIDE → the continuation is elided so -C and its value rejoin → targets the
+# unreviewed drive repo → DENY. Pre-fix the elision didn't happen → wrong target.
+test_linecont_splits_C_value_deny() {
+  local runid info repo out outside cmd
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/lc-C-out-$runid"; mkdir -p "$outside"
+  cmd="$(printf 'git -C \\\n%s push' "$repo")"   # -C, line-cont, then the value
+  run_gate "$cmd" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "line-cont: git -C \\<newline><repo> push rejoins -C+value → DENY"
+  else
+    fail "line-cont: -C \\<newline><repo> should rejoin and DENY; got: $out"
+  fi
+}
+
+# (a) LINE CONTINUATION inside DOUBLE QUOTES: `git -C "<re\<newline>po>" push` — bash elides
+# the backslash-newline INSIDE the double quotes too, so the path rejoins to <repo> →
+# targets the unreviewed drive repo → DENY. Proves the dquote-state elision.
+test_linecont_inside_dquote_deny() {
+  local runid info repo out outside cmd half1 half2
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/lc-dq-out-$runid"; mkdir -p "$outside"
+  # Split the repo path across a backslash-newline INSIDE the double-quoted -C value.
+  half1="${repo%??}"; half2="${repo#$half1}"   # split into two non-empty halves
+  cmd="$(printf 'git -C "%s\\\n%s" push' "$half1" "$half2")"
+  run_gate "$cmd" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "line-cont (in \"…\"): backslash-newline inside double quotes is elided → path rejoins → DENY"
+  else
+    fail "line-cont (in \"…\"): in-dquote continuation should rejoin + DENY; got: $out"
+  fi
+}
+
+# (a) Trailing BARE backslash is NOT a shell error (bash runs `git push \` as `git push`),
+# so it must NOT fail-closed-as-unparseable. From a non-drive cwd it stays INERT (push
+# detected, but HEAD is non-drive). Guards the round-2 MINOR (item d): the old comment
+# wrongly claimed the shell rejects a trailing backslash.
+test_trailing_bare_backslash_inert() {
+  local runid repo out
+  runid="$(new_runid)"
+  repo="$TMPROOT/$runid-trailbs"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null   # stays on main (non-drive HEAD)
+  run_gate 'git push \' "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "trailing bare backslash: git push \\ runs as git push (non-drive → inert, NOT fail-closed)"
+  else
+    fail "trailing bare backslash should be inert from non-drive cwd; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) FAIL-CLOSED on an unresolvable SUBCOMMAND: `git $'push'` (ANSI-C quoting) from an
+# unreviewed-drive cwd → the lexer keeps `$'push'` (a `$`) → can't confirm the subcommand →
+# would-be-managed git op with a tainted subcommand → DENY. Pre-fix it lexed to a non-push
+# subcommand → ship detection went inert (the BLOCKING bypass).
+test_failclosed_ansi_c_subcommand_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git \$'push'" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git \$'push' (ANSI-C subcommand) → DENY (cannot safely parse managed op)"
+  else
+    fail "fail-closed: git \$'push' should DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) FAIL-CLOSED on a tainted positional REF of a managed verb, where a LITERAL drive ref
+# also appears (establishes managed-ness): `git push origin drive/<id> $X` → DENY.
+test_failclosed_tainted_ref_with_drive_ref_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git push origin drive/$runid \$X" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git push origin drive/<id> \$X (tainted refspec on a managed push) → DENY"
+  else
+    fail "fail-closed: tainted refspec on a managed push should DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) FAIL-CLOSED on a tainted REPO-PATH value: `git -C \$REPO merge slice/<id>` → the -C
+# value carries a `$` → can't resolve the target repo → DENY (would-be-managed merge).
+test_failclosed_tainted_repo_path_deny() {
+  local runid out
+  runid="$(new_runid)"; mk_rundir "$runid" >/dev/null
+  run_gate "git -C \$REPO merge slice/$runid/4a" "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git -C \$REPO merge slice/<id> (tainted -C value) → DENY"
+  else
+    fail "fail-closed: tainted -C value on a managed merge should DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) FAIL-CLOSED on a ~user repo-path value (passwd-lookup form we don't emulate):
+# `git -C ~root/x push` → DENY.
+test_failclosed_tilde_user_repo_path_deny() {
+  local out
+  run_gate "git -C ~root/x push" "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git -C ~root/x push (~user repo path) → DENY"
+  else
+    fail "fail-closed: ~user repo path should DENY; got: $out"
+  fi
+}
+
+# (c) FAIL-CLOSED on a backtick command-substitution subcommand: git \`echo push\` → DENY.
+test_failclosed_backtick_subcommand_deny() {
+  local out
+  run_gate 'git `echo push`' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "fail-closed: git \`echo push\` (backtick subcommand) → DENY"
+  else
+    fail "fail-closed: backtick subcommand should DENY; got: $out"
+  fi
+}
+
+# (c) NON-over-deny: unrelated NON-GIT commands with a `$` stay INERT.
+test_failclosed_echo_dollar_inert() {
+  local out
+  run_gate 'echo $X' "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "no-over-deny: echo \$X (non-git) is inert"
+  else
+    fail "echo \$X should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+test_failclosed_ls_home_inert() {
+  local out
+  run_gate 'ls $HOME' "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "no-over-deny: ls \$HOME (non-git) is inert"
+  else
+    fail "ls \$HOME should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# (c) NON-over-deny: a NON-MANAGED git command with a `$` (not a managed verb, no managed
+# ref) stays INERT — `git commit -m "$msg"`, `git log --format=$x`.
+test_failclosed_nonmanaged_git_dollar_inert() {
+  local out
+  run_gate 'git commit -m "$msg"' "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    run_gate 'git log --format=$x' "$TMPROOT"; out="$GATE_OUT"
+    if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+      pass "no-over-deny: non-managed git command with \$ (commit -m / log --format=) is inert"
+    else
+      fail "git log --format=\$x should be inert; got rc=$GATE_RC out='$out'"
+    fi
+  else
+    fail "git commit -m \"\$msg\" should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Round-3 codex adversarial findings (regression guards). The argv lexer now emits a
+# per-token expansion-active flag (_TOK_EXP) so quote context is preserved, recognizes
+# brace expansion, and the ref-extraction reads the LEXED command (CMD_LEX) so it can't
+# desync from the tokenizer on a line-continuation.
+# ---------------------------------------------------------------------------------
+
+# F1: BRACE EXPANSION smuggles a managed verb. `git {push,}` / `git {merge,}` expand
+# deterministically to `git push` / `git merge` in bash. The subcommand token `{push,}` is
+# expansion-active (unquoted brace + comma) → would-be-managed + tainted → DENY. Pre-fix the
+# lexer saw the literal `{push,}` subcommand → not a managed verb → silent bypass.
+test_codex_brace_expansion_push_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate "git {push,} origin drive/$runid" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    run_gate "git {merge,} slice/$runid/4a" "$repo"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+      pass "codex-F1: brace expansion git {push,} / {merge,} (smuggled managed verb) → DENY"
+    else
+      fail "codex-F1: git {merge,} should DENY; got: $out"
+    fi
+  else
+    fail "codex-F1: git {push,} should DENY; got: $out"
+  fi
+}
+
+# F1b: a QUOTED brace `git "{push,}"` is LITERAL in bash (no expansion) — the subcommand is
+# the literal `{push,}`, which is NOT a managed verb and NOT expansion-active → inert (git
+# itself would error on it). Confirms the brace detection is scoped to UNQUOTED braces.
+test_codex_quoted_brace_inert() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'git "{push,}" origin main' "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "codex-F1b: quoted git \"{push,}\" is literal (no expansion) → inert (no over-deny)"
+  else
+    fail "codex-F1b: quoted brace should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# F2: LINE-CONTINUATION DESYNC. A managed ref split across a `\`<newline> continuation —
+# `git merge sli\`↵`ce/<runId>/4a` — lexes to ONE token `slice/<runId>/4a` (what git sees),
+# so the ref-extraction (reading CMD_LEX, the lexed command) must find it → slice-merge DENY.
+# Pre-fix the ref greps read the RAW $CMD (still holding the backslash+newline) → missed the
+# ref → the gate went inert on a real managed merge (a bypass introduced by line-cont support).
+test_codex_linecont_ref_split_merge_deny() {
+  local runid info repo out cmd
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; repo="${info%% *}"
+  cmd="$(printf 'git merge sli\\\nce/%s/4a' "$runid")"
+  run_gate "$cmd" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review slice 4a'; then
+    pass "codex-F2: merge of a ref SPLIT across a line-continuation → DENY (CMD_LEX, no desync)"
+  else
+    fail "codex-F2: line-continuation-split ref merge should DENY; got: $out"
+  fi
+}
+
+# F2: same desync for a phaseInt branch-advance whose ref is split across a continuation.
+test_codex_linecont_ref_split_phase_deny() {
+  local runid info repo out cmd
+  runid="$(new_runid)"; info="$(mk_phase_repo "$runid" unreviewed)"; repo="${info%% *}"
+  cmd="$(printf 'git branch -f drive/%s pha\\\nseInt/%s/1' "$runid" "$runid")"
+  run_gate "$cmd" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase 1'; then
+    pass "codex-F2: phase advance with a line-continuation-split phaseInt ref → DENY"
+  else
+    fail "codex-F2: line-continuation-split phaseInt advance should DENY; got: $out"
+  fi
+}
+
+# F3: NO over-deny of a READ-ONLY git verb that merely NAMES a managed ref while carrying an
+# unresolved `$` in an unrelated -C. `git -C "$HOME/repo" show slice/<id>` is not a gated op
+# (show is read-only) → inert. Pre-fix `ref_seen` made any slice-ref token would-be-managed,
+# so the `$`-tainted -C forced a wrong deny.
+test_codex_readonly_verb_with_ref_inert() {
+  local runid out
+  runid="$(new_runid)"; mk_rundir "$runid" >/dev/null
+  run_gate "git -C \"\$HOME/repo\" show slice/$runid/4a" "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "codex-F3: read-only git show with a slice ref + \$-tainted -C is inert (no over-deny)"
+  else
+    fail "codex-F3: read-only verb with a managed ref should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# F4: SINGLE-QUOTED literals are NOT expansions (bash does not expand inside '…'). A managed
+# merge of a single-quoted literal `'slice/$run/4a'` must NOT be force-denied as an expansion
+# (the token is the literal `slice/$run/4a`, which is not a resolvable managed runId, so the
+# command is genuinely inert — but critically it is NOT a spurious shell-expansion DENY).
+# Pre-fix the lexer stripped the quotes then rescanned, seeing the `$` → false DENY.
+test_codex_single_quoted_dollar_not_expansion() {
+  local runid out
+  runid="$(new_runid)"; mk_rundir "$runid" >/dev/null
+  run_gate "git merge 'slice/\$run/4a'" "$TMPROOT"; out="$GATE_OUT"
+  # Must NOT be the shell-expansion deny (the false positive). Inert is the correct outcome
+  # (literal 'slice/$run/4a' is not a valid managed runId match).
+  if ! printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "codex-F4: single-quoted 'slice/\$run/4a' is a LITERAL ref → not a spurious expansion DENY"
+  else
+    fail "codex-F4: single-quoted literal must NOT trip the expansion deny; got: $out"
+  fi
+}
+
+# F4: single-quoted '~root/repo' is a LITERAL path (bash does not tilde-expand inside '…'),
+# so a read-only `git -C '~root/repo' show slice/<id>` must NOT be force-denied → inert.
+test_codex_single_quoted_tilde_user_not_expansion() {
+  local runid out
+  runid="$(new_runid)"; mk_rundir "$runid" >/dev/null
+  run_gate "git -C '~root/repo' show slice/$runid/4a" "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "codex-F4: single-quoted '~root/repo' is literal (no ~user expansion) → inert"
+  else
+    fail "codex-F4: single-quoted ~user path must not deny; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Round-4 findings: (1) gh/glab managed ship verbs must NOT bypass the expansion net via a
+# tainted subcommand/action token; (2) the net must NOT over-deny incidental $-paths/values
+# that are NOT the decision ref — most critically /drive's OWN command shapes.
+# ---------------------------------------------------------------------------------
+
+# F2 (MAJOR over-deny — /drive's OWN worktree-add). `git worktree add "$TMP/wt" -b
+# slice/run1/4a` is EXACTLY what /drive emits (`git worktree add $RUN_DIR/wt/<id> -b
+# slice/<runId>/<id> <sha>`): the `$`-token is the worktree PATH (NOT a ref), the LITERAL
+# `-b slice/...` is the real ref. The net must taint-check ONLY the -b value → NOT a shell-
+# expansion DENY. Round-3 blanket-scanned every positional → wrongly denied this → would wedge
+# every /drive run. (We assert NOT-shell-expansion-deny; run1 is unmanaged → inert is correct.)
+test_r4_overdeny_worktree_add_dollar_path() {
+  local out
+  run_gate 'git worktree add "$TMP/wt" -b slice/run1/4a' "$TMPROOT"; out="$GATE_OUT"
+  if ! printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4: git worktree add \"\$TMP/wt\" -b slice/run1/4a (\$-PATH, literal -b ref) → NOT a spurious expansion DENY (/drive's own shape)"
+  else
+    fail "r4: /drive's own \$-path worktree-add must NOT shell-expansion-DENY; got: $out"
+  fi
+}
+
+# F2 (MAJOR over-deny — merge strategy VALUE). `git merge -s "$strategy" slice/run1/4a`: the
+# `$strategy` is a STRATEGY value the gate ignores, the LITERAL `slice/...` is the real ref. The
+# net must skip the -s value → NOT a shell-expansion DENY. Round-3 scanned `$strategy` as a ref.
+test_r4_overdeny_merge_strategy_value() {
+  local out
+  run_gate 'git merge -s "$strategy" slice/run1/4a' "$TMPROOT"; out="$GATE_OUT"
+  if ! printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4: git merge -s \"\$strategy\" slice/run1/4a (\$-strategy VALUE, literal ref) → NOT a spurious expansion DENY"
+  else
+    fail "r4: merge -s \$strategy <literal-ref> must NOT shell-expansion-DENY; got: $out"
+  fi
+}
+
+# F2 NON-VACUOUS guard: a TAINTED -b worktree branch VALUE (`git worktree add /p -b $branch`)
+# IS the decision ref → STILL DENY. Distinguishes "skip the path" from "ignore the -b ref".
+test_r4_worktree_add_tainted_b_ref_deny() {
+  local out
+  run_gate 'git worktree add /tmp/wt -b $branch' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4: git worktree add /p -b \$branch (tainted -b ref VALUE) → DENY (the -b value IS the decision ref)"
+  else
+    fail "r4: tainted -b branch value must DENY; got: $out"
+  fi
+}
+
+# F1 (BLOCKING — gh/glab ship verbs bypass). `gh {pr,} create` / `gh pr {create,}` / `glab
+# {mr,} create` expand to managed ship commands, but the gate sees `{pr,}`/`{create,}` as
+# expansion-active tokens. The net must taint-check the gh/glab subcommand + action tokens →
+# DENY. Round-3 bailed unless start binary == git → these silently bypassed (INERT).
+test_r4_gh_brace_subcommand_deny() {
+  local out
+  run_gate 'gh {pr,} create --fill' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4-F1: gh {pr,} create --fill (tainted subcommand) → DENY (gh ship verb no longer bypasses)"
+  else
+    fail "r4-F1: gh {pr,} create must DENY; got: $out"
+  fi
+}
+
+test_r4_gh_brace_action_deny() {
+  local out
+  run_gate 'gh pr {create,} --fill' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4-F1: gh pr {create,} --fill (tainted action) → DENY"
+  else
+    fail "r4-F1: gh pr {create,} must DENY; got: $out"
+  fi
+}
+
+test_r4_glab_brace_subcommand_deny() {
+  local out
+  run_gate 'glab {mr,} create' "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'shell expansion'; then
+    pass "r4-F1: glab {mr,} create (tainted subcommand) → DENY"
+  else
+    fail "r4-F1: glab {mr,} create must DENY; got: $out"
+  fi
+}
+
+# F1 NON-OVER-DENY: a literal NON-ship gh pair with an unrelated `$` stays INERT (no over-deny
+# on unrelated gh). `gh pr view --json $x` → action `view` (not create) → not a managed pair.
+test_r4_gh_nonship_dollar_inert() {
+  local out
+  run_gate 'gh pr view --json $x' "$TMPROOT"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "r4-F1: gh pr view --json \$x (non-ship pair, action view) → inert (no over-deny on unrelated gh)"
+  else
+    fail "r4-F1: gh pr view with a \$ should be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
   test_plangate_deny
@@ -910,9 +1706,30 @@ main() {
   test_ship_git_C_other_repo_inert
   test_ship_git_dir_eq_outside_cwd_deny
   test_ship_git_dir_space_reviewed_silent
-  test_ship_work_tree_eq_reviewed_silent
-  test_ship_work_tree_space_reviewed_silent
+  # AC-A8: --work-tree bypass closed (these two were flipped from *_reviewed_silent)
+  test_ship_work_tree_eq_bypass_deny
+  test_ship_work_tree_space_bypass_deny
   test_ship_git_dir_other_repo_inert
+  # shell-accurate argv tokenization (round-2 BLOCKING): quoted/spaced/empty args
+  test_tok_git_C_empty_push_deny
+  test_tok_git_C_spaced_path_deny
+  test_tok_quoted_gitdir_spaced_deny
+  test_tok_quoted_C_slicemerge_deny
+  test_tok_quoted_subcommand_push_deny
+  test_tok_env_prefix_spaced_value_deny
+  test_tok_unterminated_quote_inert
+  # Item A: composed git-path-option resolution (AC-A1..AC-A11)
+  test_acA1_C_compose_relative
+  test_acA3_C_absolute_resets
+  test_acA11_C_abs_then_rel_compose
+  test_acA2_C_abs_plus_relative_gitdir
+  test_acA4_gitdir_both_forms_with_C
+  test_acA5_two_gitdir_last_wins
+  test_acA9_C_eq_not_special_cased
+  test_acA9b_work_tree_value_consumed
+  test_acA10_gitfile_merge_C_plus_gitdir
+  test_acA10_gitfile_push_gitdir
+  test_acA10_real_gitdir_directory_unaffected
   # tightened matching false-positive guards (finding 2)
   test_echo_git_push_inert
   test_gh_pr_view_createdAt_inert
@@ -945,6 +1762,41 @@ main() {
   test_push_mirror_aggregate_is_ship
   test_push_mirror_reviewed_silent
   test_push_mirror_nondrive_head_inert
+  # round-3: shell-expansion boundary — tilde resolution
+  test_tilde_C_targets_home_drive_deny
+  test_tilde_bare_C_compose_deny
+  test_tilde_C_nondrive_inert
+  # round-3: line continuation (unquoted / split flag / inside double quotes) + trailing bs
+  test_linecont_unquoted_push_deny
+  test_linecont_splits_C_value_deny
+  test_linecont_inside_dquote_deny
+  test_trailing_bare_backslash_inert
+  # round-3: fail-closed on unresolvable expansion in a would-be-managed git op
+  test_failclosed_ansi_c_subcommand_deny
+  test_failclosed_tainted_ref_with_drive_ref_deny
+  test_failclosed_tainted_repo_path_deny
+  test_failclosed_tilde_user_repo_path_deny
+  test_failclosed_backtick_subcommand_deny
+  # round-3: no-over-deny (non-git / non-managed commands with a $ stay inert)
+  test_failclosed_echo_dollar_inert
+  test_failclosed_ls_home_inert
+  test_failclosed_nonmanaged_git_dollar_inert
+  # round-3 codex adversarial findings (regression guards)
+  test_codex_brace_expansion_push_deny
+  test_codex_quoted_brace_inert
+  test_codex_linecont_ref_split_merge_deny
+  test_codex_linecont_ref_split_phase_deny
+  test_codex_readonly_verb_with_ref_inert
+  test_codex_single_quoted_dollar_not_expansion
+  test_codex_single_quoted_tilde_user_not_expansion
+  # round-4: precise taint scan (no over-deny of /drive's own $-paths/values) + gh/glab net
+  test_r4_overdeny_worktree_add_dollar_path
+  test_r4_overdeny_merge_strategy_value
+  test_r4_worktree_add_tainted_b_ref_deny
+  test_r4_gh_brace_subcommand_deny
+  test_r4_gh_brace_action_deny
+  test_r4_glab_brace_subcommand_deny
+  test_r4_gh_nonship_dollar_inert
 
   echo
   echo "----------------------------------------"
