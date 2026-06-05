@@ -166,6 +166,18 @@ read -r repo rd < <(mk_impl_presence pred_root)
 run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b root test_root.py not under tests/ -> violation" 1 "$RC"
 read -r repo rd < <(mk_impl_presence pred_docs)
 run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b docs/*.test.md (no runner) -> violation" 1 "$RC"
+# Finding 1 (BLOCKING): a DELETED test path is NOT test evidence (--diff-filter=AM). A slice
+# whose only test-path change is deleting tests/foo/test_existing.py (+ a code edit), with no
+# new test + no waiver -> violation. (Pre-fix the plain `git diff --name-only` listed the
+# deleted path and is_test_path matched it, falsely passing.)
+read -r repo rd < <(mk_impl_presence del_test)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(del) deleted test path is NOT evidence -> violation" 1 "$RC"
+# Finding 2 (BLOCKING): a dotfile-basename test path is NOT runnable (the real runners skip
+# dotfiles), so it must NOT count even though bash 3.2 `case test/*.test.sh` matches it.
+read -r repo rd < <(mk_impl_presence dot_test_sh)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(dot) test/.noop.test.sh dotfile not runnable -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence dot_test_py)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(dot) tests/mc/.foo_test.py dotfile not runnable -> violation" 1 "$RC"
 # usage guard: empty id after impl-presence: -> exit 2
 read -r repo rd < <(mk_impl_presence test impl-empty-id)
 OUT="$(cd "$repo" && "$CONF" "$rd" --mode "impl-presence:" 2>/dev/null)"; RC=$?

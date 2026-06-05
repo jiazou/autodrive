@@ -387,6 +387,12 @@ mk_audit_git_error() {
 #   pred_pyc        -- slice only touches tests/foo/test_x.pyc (excluded)        -> violation
 #   pred_root       -- slice only touches root-level test_root.py (not under tests/) -> violation
 #   pred_docs       -- slice only touches docs/guide.test.md (no runner)         -> violation
+#   del_test        -- slice's ONLY test-path change is DELETING a runnable test  -> violation
+#                      (a deleted test is not test EVIDENCE: `--diff-filter=AM`)
+#   dot_test_sh     -- slice only adds test/.noop.test.sh (dotfile basename; the
+#                      real bash runner glob skips dotfiles)                       -> violation
+#   dot_test_py     -- slice only adds tests/mc/.foo_test.py (dotfile basename that DOES
+#                      match `*_test.py`; CI pytest collection skips dotfiles)      -> violation
 #   no_drive        -- slice exists but NO drive/<runId> branch (merge-base fails) -> exit 2
 mk_impl_presence() {
   local variant="$1" name="${2:-impl-$1}"
@@ -394,6 +400,21 @@ mk_impl_presence() {
   _init_repo "$repo"
   _commit "$repo" "README" "base" "base" >/dev/null
   mkdir -p "$rd"   # runId = basename(rd); needed even though no review artifacts here
+
+  if [ "$variant" = "del_test" ]; then
+    # A runnable test EXISTS on drive/<runId> base; the slice's only test-path change is to
+    # DELETE it (plus an unrelated code edit). The deletion must NOT count as test evidence
+    # (--diff-filter=AM excludes D), so with no other test + no waiver -> violation (exit 1).
+    _gitc "$repo" checkout -q -b "drive/$name"
+    _commit "$repo" "tests/foo/test_existing.py" "def test_e(): pass" "drive base: seed a test" >/dev/null
+    _gitc "$repo" checkout -q -b "slice/$name/3a"
+    _gitc "$repo" rm -q "tests/foo/test_existing.py"
+    printf 'echo changed\n' > "$repo/src.sh"
+    _gitc "$repo" add -A
+    _gitc "$repo" commit -q -m "slice 3a: delete the test + edit code"
+    echo "$repo $rd"
+    return 0
+  fi
 
   if [ "$variant" = "no_drive" ]; then
     # slice branch off main, but NEVER create drive/<runId> -> merge-base unresolvable -> exit 2
@@ -441,6 +462,16 @@ mk_impl_presence() {
       _commit "$repo" "test_root.py" "def test_root(): pass" "slice 3a root test only" >/dev/null ;;
     pred_docs)
       _commit "$repo" "docs/guide.test.md" "# guide" "slice 3a docs only" >/dev/null ;;
+    dot_test_sh)
+      # dotfile basename under test/: the bash runner globs test/*.test.sh which SKIPS
+      # dotfiles, so this is not a runnable test -> violation.
+      _commit "$repo" "test/.noop.test.sh" "echo ok" "slice 3a dotfile bash test only" >/dev/null ;;
+    dot_test_py)
+      # dotfile basename under tests/ whose name WOULD match the `*_test.py` pytest pattern
+      # (the leading-`.` is absorbed by the `*`), but pytest collection SKIPS dotfiles, so it
+      # is not runnable -> violation. NON-VACUOUS: `.foo_test.py` matches `*_test.py` on
+      # bash 3.2, so only the dotfile-basename guard rejects it.
+      _commit "$repo" "tests/mc/.foo_test.py" "def test_x(): pass" "slice 3a dotfile pytest only" >/dev/null ;;
   esac
   echo "$repo $rd"
 }

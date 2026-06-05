@@ -1860,6 +1860,78 @@ test_implpresence_waiver_body_not_trailer_deny() {
   fi
 }
 
+# Finding 3 (MAJOR): a MULTI-runId octopus merge (`git merge slice/runA/4a slice/runB/4a`)
+# must DENY fail-closed. Pre-fix the gate resolved only the FIRST runId and reconstituted
+# every slice id as slice/$firstRunId/<id>, so slice/runB/4a (a DIFFERENT run) was NEVER
+# review-/test-checked — a silent pass. Build ONE repo containing both runs' slice branches:
+# runA's slice IS reviewed+test (so the single-runId path would pass it), runB's slice has NO
+# test + NO review (the run that would silently slip through). The merge must DENY because the
+# command names two distinct runIds, regardless of either slice's individual state.
+mk_two_runid_octopus_repo() {
+  local runA="$1" runB="$2" rdA rdB repo tipA
+  rdA="$(mk_rundir "$runA")"; rdB="$(mk_rundir "$runB")"
+  repo="$TMPROOT/$runA-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  # runA: a real drive base + a reviewed, test-carrying slice/runA/4a.
+  _gitc "$repo" checkout -q -b "drive/$runA"
+  _gitc "$repo" checkout -q -b "slice/$runA/4a"
+  tipA="$(_commit "$repo" test/feat.test.sh "echo test" "runA slice 4a: add test")"
+  _write_review "$rdA" 4a 1 "$tipA"
+  _write_codex "$rdA" 4a
+  # runB: a separate drive base + an UNREVIEWED, NO-test slice/runB/4a.
+  _gitc "$repo" checkout -q main
+  _gitc "$repo" checkout -q -b "drive/$runB"
+  _gitc "$repo" checkout -q -b "slice/$runB/4a"
+  _commit "$repo" feature.sh "echo hi" "runB slice 4a: no test, no review" >/dev/null
+  _gitc "$repo" checkout -q "drive/$runA"
+  printf '%s\n' "$repo"
+}
+
+test_slicemerge_multi_runid_octopus_deny() {
+  local runA runB repo out
+  runA="$(new_runid)"; runB="$(new_runid)"
+  repo="$(mk_two_runid_octopus_repo "$runA" "$runB")"
+  run_gate "git merge slice/$runA/4a slice/$runB/4a" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -qi 'more than one' \
+     && printf '%s' "$out" | grep -qi 'octopus'; then
+    pass "finding3: multi-runId octopus merge (slice/runA/4a slice/runB/4a) DENIES (runB not silently passed)"
+  else
+    fail "finding3: multi-runId octopus merge must DENY fail-closed; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# Negative guard: a single-runId MULTI-SLICE merge (`git merge slice/R/4a slice/R/4b`) is a
+# normal /drive op and must NOT be over-denied by the multi-runId net. Here both slices are
+# reviewed+test-carrying so the per-slice checks pass → silent allow (proves the runId-set
+# net counts DISTINCT runIds, not slice tokens).
+mk_one_runid_two_slice_repo() {
+  local runid="$1" rd repo tip4a tip4b
+  rd="$(mk_rundir "$runid")"
+  repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$runid"
+  _gitc "$repo" checkout -q -b "slice/$runid/4a"
+  tip4a="$(_commit "$repo" test/a.test.sh "echo a" "slice 4a: test")"
+  _gitc "$repo" checkout -q "drive/$runid"
+  _gitc "$repo" checkout -q -b "slice/$runid/4b"
+  tip4b="$(_commit "$repo" test/b.test.sh "echo b" "slice 4b: test")"
+  _gitc "$repo" checkout -q "drive/$runid"
+  _write_review "$rd" 4a 1 "$tip4a"; _write_codex "$rd" 4a
+  _write_review "$rd" 4b 1 "$tip4b"; _write_codex "$rd" 4b
+  printf '%s\n' "$repo"
+}
+
+test_slicemerge_single_runid_multislice_not_overdenied() {
+  local runid repo out
+  runid="$(new_runid)"; repo="$(mk_one_runid_two_slice_repo "$runid")"
+  run_gate "git merge slice/$runid/4a slice/$runid/4b" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
+    pass "finding3: single-runId two-slice merge NOT over-denied (distinct-runId count = 1) → silent"
+  else
+    fail "finding3: single-runId multi-slice merge should NOT be denied by the multi-runId net; got rc=$GATE_RC out='$out'"
+  fi
+}
+
 # ---------------------------------------------------------------------------------
 main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
@@ -1985,6 +2057,9 @@ main() {
   test_implpresence_withtest_silent
   test_implpresence_waiver_trailer_silent
   test_implpresence_waiver_body_not_trailer_deny
+  # finding 3: multi-runId octopus merge fail-closed + single-runId multi-slice not over-denied
+  test_slicemerge_multi_runid_octopus_deny
+  test_slicemerge_single_runid_multislice_not_overdenied
 
   echo
   echo "----------------------------------------"

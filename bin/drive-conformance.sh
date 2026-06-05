@@ -156,6 +156,14 @@ is_test_path() {
   local p="$1" b
   b="${p##*/}"   # basename
 
+  # A DOTFILE basename is NEVER a runnable test: the real bash runner glob
+  # (`for f in test/*.test.sh`) and CI's pytest collection both SKIP dotfiles (a leading
+  # `.` is not matched by `*` without `dotglob`). So `test/.noop.test.sh` /
+  # `tests/mc/.test_x.py` would pass the patterns below on bash 3.2's `case` (which DOES
+  # match a leading dot) yet never actually run — reject them up front. (Applies to both
+  # the test/*.test.sh and tests/** branches.)
+  case "$b" in .*) return 1;; esac
+
   # --- bash suite: exactly test/<name>.test.sh (one segment under test/) ---
   case "$p" in
     test/*.test.sh)
@@ -240,8 +248,11 @@ case "$MODE_ARG" in
     base="$(git_or_die merge-base "$ref" "$featureBranch")"   # rc>=1 → exit 2 (no silent empty)
     [ -n "$base" ] || { echo "error: empty merge-base for $ref..$featureBranch" >&2; exit 2; }
 
-    # test? — ANY changed path in base..tip matches the runner-anchored predicate.
-    changed="$(git_or_die diff --name-only "$base..$tip")"
+    # test? — ANY ADDED-or-MODIFIED path in base..tip matches the runner-anchored predicate.
+    # `--diff-filter=AM` so a DELETED test path (D) or a rename-away source (R's old name)
+    # does NOT count as test evidence: deleting tests/test_auth.py must NOT satisfy the
+    # invariant (the doc says "add or modify"). Only paths the slice ADDS or MODIFIES count.
+    changed="$(git_or_die diff --diff-filter=AM --name-only "$base..$tip")"
     has_test=false
     while IFS= read -r path; do
       [ -n "$path" ] || continue
