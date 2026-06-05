@@ -4,10 +4,10 @@ Asserts the REAL behavior of vault_tasks.bucket():
 - classify open tasks into overdue / due_today / due_week(<=7d) / waiting / backlog
   relative to date.today(); backlog is the CATCH-ALL — every open non-waiting task
   not overdue/due_today/due_week lands there (due >7d, or no due date), so
-  open_count == sum of all bucket lengths (vault_tasks.py:170)
+  open_count == sum of all bucket lengths (vault_tasks.bucket — backlog catch-all)
 - open_count (over open statuses) + needs_review_count (over ALL tasks)
 - ordering by (priority, due or "9999") for overdue/due_today/due_week/backlog;
-  the `waiting` bucket preserves discovery order and is NOT sorted (vault_tasks.py:177)
+  the `waiting` bucket preserves discovery order and is NOT sorted (vault_tasks.bucket — waiting is unsorted)
 
 All date-relative inputs are computed off datetime.date.today() so they never go
 stale. Tasks are built through the `vault` fixture and read back via load_tasks(),
@@ -45,7 +45,7 @@ def test_bucket_due_week_boundary_inclusive_and_exclusive(mc_env, vault):
     vault.add_task("edge-7", due=_iso(7))    # exactly 7 days -> due_week (inclusive)
     vault.add_task("edge-8", due=_iso(8))    # 8 days -> falls past due_week into the
                                              # backlog catch-all (every open task lands
-                                             # in some bucket; vault_tasks.py:170)
+                                             # in some bucket; vault_tasks.bucket — backlog catch-all)
     b = vt.bucket(vt.load_tasks())
     assert _by_slug(b["due_week"]) == ["edge-7"]
     assert "edge-8" not in _by_slug(b["due_week"])
@@ -65,7 +65,7 @@ def test_bucket_waiting_status_goes_to_waiting_regardless_of_date(mc_env, vault)
 def test_bucket_scheduled_no_due_goes_to_backlog(mc_env, vault):
     vt = mc_env.vault_tasks
     # No due date (scheduled is ignored by bucket()) -> lands in the backlog catch-all
-    # so no open task silently vanishes (vault_tasks.py:170).
+    # so no open task silently vanishes (vault_tasks.bucket — backlog catch-all).
     vault.add_task("scheduled-only", due=None, scheduled=_iso(2))
     b = vt.bucket(vt.load_tasks())
     assert "scheduled-only" in _by_slug(b["backlog"])
@@ -167,7 +167,7 @@ def test_bucket_waiting_is_unsorted_preserves_input_order(mc_env):
     # Feed bucket() a hand-ordered list (bypassing glob, whose order is
     # filesystem-dependent) so the input order is DETERMINISTIC and deliberately
     # NOT in priority order. bucket() must leave `waiting` in this exact order —
-    # it does not sort it (vault_tasks.py:177), unlike the other buckets.
+    # it does not sort it (vault_tasks.bucket — waiting is unsorted), unlike the other buckets.
     def _wt(slug, priority):
         return {
             "slug": slug, "title": slug, "project": "P", "area": "",

@@ -184,7 +184,7 @@ def test_mark_returns_3_when_frontmatter_vanishes_between_resolve_and_write(mc_e
 
 
 def test_mark_strips_md_suffix(mc_env, vault):
-    """slug accepted with or without .md (done.py:45-46)."""
+    """slug accepted with or without .md (done._resolve — .md suffix strip)."""
     path = vault.add_task("trailing-md", status="todo", needs_review=False)
     rc = mc_env.done.mark("trailing-md.md")
     assert rc == 0
