@@ -172,6 +172,13 @@ run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b docs/*.tes
 # deleted path and is_test_path matched it, falsely passing.)
 read -r repo rd < <(mk_impl_presence del_test)
 run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(del) deleted test path is NOT evidence -> violation" 1 "$RC"
+# Harden round-3 (MAJOR): a slice that adds coverage by RENAMING a runnable test INTO another
+# runnable test path (test/foo.test.sh -> test/bar.test.sh, with a real edit so git classes it R)
+# + a code change must be CLEAN. The old --diff-filter=AM EXCLUDED R/C/T and false-DENIED this;
+# --diff-filter=d (exclude deletions only) keeps the rename DESTINATION -> counted. NON-VACUOUS:
+# this fails under the old AM filter (the R rename's dest is dropped, leaving only the code file).
+read -r repo rd < <(mk_impl_presence rename_test)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(rename) rename runnable test INTO test path (R) is evidence -> clean" 0 "$RC"
 # Finding 2 (BLOCKING): a dotfile-basename test path is NOT runnable (the real runners skip
 # dotfiles), so it must NOT count even though bash 3.2 `case test/*.test.sh` matches it.
 read -r repo rd < <(mk_impl_presence dot_test_sh)

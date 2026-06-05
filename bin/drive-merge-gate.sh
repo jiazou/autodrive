@@ -877,6 +877,27 @@ $slice_tokens
 EOF
 fi
 
+# --- FAIL-CLOSED on a MULTI-runId octopus merge — checked BEFORE single-runId resolution.
+# The single-runId resolution below keys RUN_DIR + conformance to ONE runId (the first slice
+# token's). If the command merges slice branches from DIFFERENT runIds in one `git merge` (e.g.
+# `git merge slice/runA/4a slice/runB/4a`), the per-slice loop would reconstitute EVERY id as
+# `slice/$runId/<id>` against that single runId — so the other runs' review + test-presence are
+# NEVER checked. This DENY must fire FIRST: if it ran after the single-runId resolution / RUN_DIR
+# lookup, a stale FIRST runId whose RUN_DIR is absent would `exit 0` (inert) at the lookup below
+# and bypass the octopus net entirely, leaving the OTHER (live) run's slice unchecked. A
+# multi-runId octopus merge is never a normal /drive operation (/drive emits one
+# `git merge slice/<runId>/<id>` per slice), so DENY it regardless of token order or whether any
+# run's RUN_DIR exists. Counts DISTINCT runIds from the slice tokens (space-delimited set).
+if [ "$is_slice_merge" = true ]; then
+  _nrunids=0
+  for _rid in $slice_runids; do
+    [ -n "$_rid" ] && _nrunids=$((_nrunids+1))
+  done
+  if [ "$_nrunids" -gt 1 ]; then
+    emit_deny "This merge references slice branches from MORE THAN ONE /drive run ($slice_runids). A multi-run octopus merge is not a /drive operation and cannot be conformance-checked as one unit — merge each run's slices with a separate \`git merge slice/<runId>/<id>\`, one run at a time, so each slice's review + test-presence is enforced."
+  fi
+fi
+
 # If nothing matched, inert.
 if [ "$is_plan_gate" = false ] && [ "$is_slice_merge" = false ] \
    && [ "$is_phase_merge" = false ] && [ "$is_ship" = false ]; then
@@ -955,22 +976,9 @@ if [ "$is_plan_gate" = true ]; then
 fi
 
 if [ "$is_slice_merge" = true ]; then
-  # FAIL-CLOSED on a MULTI-runId octopus merge. The single-runId resolution above keys
-  # RUN_DIR + conformance to ONE runId (the first slice token's). If the command merges
-  # slice branches from DIFFERENT runIds in one `git merge` (e.g.
-  # `git merge slice/runA/4a slice/runB/4a`), the per-slice loop below would reconstitute
-  # EVERY id as `slice/$runId/<id>` against that single runId — so slice/runB/4a's review
-  # and test-presence are NEVER checked (it binds to runA's RUN_DIR + refs). A multi-runId
-  # octopus merge is never a normal /drive operation (/drive emits one
-  # `git merge slice/<runId>/<id>` per slice), so we DENY it rather than silently pass the
-  # unchecked runs. Counts DISTINCT runIds from the slice tokens (space-delimited set).
-  _nrunids=0
-  for _rid in $slice_runids; do
-    [ -n "$_rid" ] && _nrunids=$((_nrunids+1))
-  done
-  if [ "$_nrunids" -gt 1 ]; then
-    emit_deny "This merge references slice branches from MORE THAN ONE /drive run ($slice_runids). A multi-run octopus merge is not a /drive operation and cannot be conformance-checked as one unit — merge each run's slices with a separate \`git merge slice/<runId>/<id>\`, one run at a time, so each slice's review + test-presence is enforced."
-  fi
+  # NOTE: the MULTI-runId octopus fail-closed DENY is handled EARLIER (before single-runId
+  # resolution / RUN_DIR lookup) so a stale first-runId with an absent RUN_DIR can't `exit 0`
+  # inert and bypass it. By here the slice tokens are guaranteed single-runId.
   # The slice-merge boundary runs TWO conformance checks per slice id, with a DELIBERATE,
   # DOCUMENTED POSTURE ASYMMETRY (design Item C / Decision C3) justified by their different
   # backstops:

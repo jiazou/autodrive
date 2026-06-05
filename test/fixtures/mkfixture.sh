@@ -416,6 +416,29 @@ mk_impl_presence() {
     return 0
   fi
 
+  if [ "$variant" = "rename_test" ]; then
+    # A runnable bash test EXISTS on the drive/<runId> base; the slice RENAMES it to ANOTHER
+    # runnable test path (test/foo.test.sh -> test/bar.test.sh) WITH a real content edit (so git
+    # classes it R, not A+D) PLUS an unrelated code edit. The renamed test still EXISTS at a
+    # runnable path, so this must be CLEAN (exit 0). NON-VACUOUS: under the old --diff-filter=AM
+    # filter the R-classified rename is EXCLUDED and only the code file shows -> false violation;
+    # --diff-filter=d (exclude-deletions) keeps the rename DESTINATION -> clean.
+    # Seed a multi-line file so a one-line append stays >50% similar and git detects a rename.
+    _gitc "$repo" checkout -q -b "drive/$name"
+    mkdir -p "$repo/test"
+    for _i in 1 2 3 4 5 6 7 8 9 10; do printf 'echo line%d\n' "$_i"; done > "$repo/test/foo.test.sh"
+    _gitc "$repo" add -A
+    _gitc "$repo" commit -q -m "drive base: seed a runnable bash test"
+    _gitc "$repo" checkout -q -b "slice/$name/3a"
+    _gitc "$repo" mv "test/foo.test.sh" "test/bar.test.sh"
+    printf 'echo line11\n' >> "$repo/test/bar.test.sh"   # small edit -> high similarity -> R
+    printf 'echo changed\n' > "$repo/src.sh"             # unrelated code change
+    _gitc "$repo" add -A
+    _gitc "$repo" commit -q -m "slice 3a: rename+edit the bash test + edit code"
+    echo "$repo $rd"
+    return 0
+  fi
+
   if [ "$variant" = "no_drive" ]; then
     # slice branch off main, but NEVER create drive/<runId> -> merge-base unresolvable -> exit 2
     _gitc "$repo" checkout -q -b "slice/$name/3a"

@@ -1900,6 +1900,45 @@ test_slicemerge_multi_runid_octopus_deny() {
   fi
 }
 
+# Harden round-3 (MAJOR): the multi-runId octopus DENY must fire BEFORE single-runId resolution
+# / RUN_DIR lookup, so it is NOT order-dependent. If the FIRST slice token's runId has an ABSENT
+# RUN_DIR, the pre-fix gate `exit 0`-inert at the RUN_DIR lookup (which ran first) and bypassed
+# the octopus net entirely — leaving the SECOND (live) run's slice unchecked. Build a repo with
+# both runs' slice branches but create ONLY the SECOND run's RUN_DIR; name the stale (no-RUN_DIR)
+# run FIRST in the merge. Post-fix this DENIES; pre-fix it exited inert (silent allow).
+mk_octopus_stale_first_repo() {
+  local staleRun="$1" liveRun="$2" rdLive repo
+  # Deliberately do NOT create staleRun's RUN_DIR (mk_rundir) — only liveRun's.
+  rdLive="$(mk_rundir "$liveRun")"
+  repo="$TMPROOT/$staleRun-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  # staleRun: a drive base + a slice branch, but NO RUN_DIR on disk.
+  _gitc "$repo" checkout -q -b "drive/$staleRun"
+  _gitc "$repo" checkout -q -b "slice/$staleRun/4a"
+  _commit "$repo" stale.sh "echo stale" "staleRun slice 4a" >/dev/null
+  # liveRun: a separate drive base + an UNREVIEWED, NO-test slice (the one that would slip).
+  _gitc "$repo" checkout -q main
+  _gitc "$repo" checkout -q -b "drive/$liveRun"
+  _gitc "$repo" checkout -q -b "slice/$liveRun/4a"
+  _commit "$repo" feature.sh "echo hi" "liveRun slice 4a: no test, no review" >/dev/null
+  _gitc "$repo" checkout -q "drive/$staleRun"
+  printf '%s\n' "$repo"
+}
+
+test_slicemerge_octopus_stale_first_deny() {
+  local staleRun liveRun repo out
+  staleRun="$(new_runid)"; liveRun="$(new_runid)"
+  repo="$(mk_octopus_stale_first_repo "$staleRun" "$liveRun")"
+  # FIRST token is the stale run (no RUN_DIR); SECOND is the live run. Pre-fix: inert exit 0.
+  run_gate "git merge slice/$staleRun/4a slice/$liveRun/4a" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -qi 'more than one' \
+     && printf '%s' "$out" | grep -qi 'octopus'; then
+    pass "finding3+ (round3): octopus with FIRST runId RUN_DIR absent still DENIES (order-independent)"
+  else
+    fail "finding3+ (round3): order-dependent octopus bypass must DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
 # Negative guard: a single-runId MULTI-SLICE merge (`git merge slice/R/4a slice/R/4b`) is a
 # normal /drive op and must NOT be over-denied by the multi-runId net. Here both slices are
 # reviewed+test-carrying so the per-slice checks pass → silent allow (proves the runId-set
@@ -2059,6 +2098,7 @@ main() {
   test_implpresence_waiver_body_not_trailer_deny
   # finding 3: multi-runId octopus merge fail-closed + single-runId multi-slice not over-denied
   test_slicemerge_multi_runid_octopus_deny
+  test_slicemerge_octopus_stale_first_deny   # round3: order-independent (first RUN_DIR absent)
   test_slicemerge_single_runid_multislice_not_overdenied
 
   echo

@@ -89,7 +89,7 @@ and the gate's `deny` must still win).
 |------|--------------------------|------|--------------|--------|
 | **plan-gate** | `git worktree add … -b slice/<runId>/<id>` (the first slice worktree of the run) | `plan-gate` | `review-design-*` CONVERGED + `codex-review-design` present and non-empty — implementation cannot begin until the **design** review converged | **fail-CLOSED** (deny) |
 | **slice-merge** | `git merge … slice/<runId>/<id>` (each slice token in the command) | `slice-merge:<id>` | SHA-bound CONVERGED review for the slice tip | fail-OPEN (silent) |
-| **impl-presence** | same `git merge … slice/<runId>/<id>` boundary — runs *alongside* the review check, per slice token | `impl-presence:<id>` | the slice diff **ADDS or MODIFIES** (`--diff-filter=AM`) a runnable test path **OR** a commit carries a real `Drive-Test-Waiver:` trailer (a DELETED test path does **not** count, and a dotfile basename like `test/.x.test.sh` never counts — the real runners skip dotfiles) | **fail-CLOSED** (deny) |
+| **impl-presence** | same `git merge … slice/<runId>/<id>` boundary — runs *alongside* the review check, per slice token | `impl-presence:<id>` | the slice diff makes **any non-deletion change** (add, modify, rename-into, copy-into, type-change — `--diff-filter=d`, i.e. exclude deletions only) to a runnable test path **OR** a commit carries a real `Drive-Test-Waiver:` trailer (a DELETED test path does **not** count — and since `--name-only` prints only a rename's destination, a rename *away from* a test path also does not count while a rename *into* one does; a dotfile basename like `test/.x.test.sh` never counts — the real runners skip dotfiles) | **fail-CLOSED** (deny) |
 | **phase-merge** | `git branch -f drive/<runId> phaseInt/<runId>/<P>` or `git merge … phaseInt/<runId>/<P>` | `phase-merge:<P>` | SHA-bound CONVERGED review for the phase-integration tip (naturally requires the post-harden review, since HARDEN re-emits `reviewed-sha`) | fail-OPEN (silent) |
 | **ship** | `gh pr create`, `glab mr create`, or any `git push` whose head is the drive branch (incl. bare `git push`, `git push -u origin HEAD`) | `ship` | all shipped code covered by a counting review (ledger-only `R..tip` tolerated) | **fail-CLOSED** (deny) |
 
@@ -121,8 +121,12 @@ shares one runId. A merge that references slice branches from **more than one di
 in one `git merge` (e.g. `git merge slice/runA/4a slice/runB/4a`) is **not** a `/drive`
 operation: the gate keys `RUN_DIR` + conformance to a single runId, so it cannot check the
 other runs' slices as one unit. Such a multi-runId octopus merge therefore **fails CLOSED
-(deny)** up front — the remediation is to merge each run's slices separately, one run at a
-time, so each slice's review + test-presence is enforced against its real run.
+(deny)** up front. The distinct-runId check runs **before** the single-runId resolution and
+`RUN_DIR` lookup, so the deny is **order-independent**: it fires even when the first slice
+token's runId has no `RUN_DIR` on disk (otherwise that first runId would `exit 0`-inert at the
+lookup and silently bypass the net, leaving the other runs' slices unchecked). The remediation
+is to merge each run's slices separately, one run at a time, so each slice's review +
+test-presence is enforced against its real run.
 
 `bin/drive-hook-lib.sh` provides the pure ref→run resolution the gates source
 (`drive_runid_from_command`, `drive_runid_from_head`, `drive_run_dir`).
