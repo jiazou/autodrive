@@ -939,18 +939,38 @@ if [ "$is_plan_gate" = true ]; then
 fi
 
 if [ "$is_slice_merge" = true ]; then
-  # Mid-build per-unit gate, fail-OPEN: gate EACH slice id; DENY only on rc 1 (true
-  # violation). rc 9 (abnormal: error / broken checker / cd-fail) → silent allow
-  # (the ship gate backstops). NOTE: runtime-variable slice refs in $CMD (e.g.
-  # `git merge "slice/$v/$id"`) cannot be expanded by the hook from the literal
-  # command, so such merges silently pass here — they are backstopped by the ship
-  # gate (HEAD-based, whole-tip diff) plus the drive.md literal-ref instruction
-  # (Slice 3.1 owns that doc note).
+  # The slice-merge boundary runs TWO conformance checks per slice id, with a DELIBERATE,
+  # DOCUMENTED POSTURE ASYMMETRY (design Item C / Decision C3) justified by their different
+  # backstops:
+  #   1. slice-merge:<id>  (REVIEW presence)       — fail-OPEN. The ship gate is its
+  #      fail-closed backstop (ship re-checks review ancestry against the shipped tip), so an
+  #      abnormal rc 9 here can silently allow now and still be caught at ship. DENY only on
+  #      rc 1 (true violation); rc 9 (error / broken checker / cd-fail) → silent allow.
+  #   2. impl-presence:<id> (TEST presence)         — fail-CLOSED. There is NO ship backstop
+  #      for test-presence (ship mode never re-derives per-slice test presence — the merged
+  #      featureBranch has lost per-slice identity). The slice-merge is therefore the
+  #      IRREVERSIBLE boundary for this invariant and must fail closed here (OPERATING: "place
+  #      the hard gate at the irreversible boundary, failing closed"): BOTH rc 1 (violation:
+  #      no test + no waiver) AND rc 9 (abnormal: missing/corrupt drive/<runId> or slice ref)
+  #      → DENY. A fail-OPEN impl-presence would let an rc-2/abnormal silently allow a no-test
+  #      merge with nothing catching it later, defeating the very invariant.
+  # NOTE: runtime-variable slice refs in $CMD (e.g. `git merge "slice/$v/$id"`) cannot be
+  # expanded by the hook from the literal command, so such merges don't reach this gate at all
+  # (no parseable slice token) — backstopped by the ship gate + the drive.md literal-ref note.
   for sid in $slice_ids; do
     [ -n "$sid" ] || continue
+    # (1) REVIEW presence — fail-OPEN (rc 1 → DENY; rc 9 → silent).
     run_conformance "slice-merge:$sid"; rc=$?
     if [ "$rc" -eq 1 ]; then
       emit_deny "Slice $sid is not reviewed for its current tip. Run \`/drive-review slice $sid\` until it converges, then retry the merge."
+    fi
+    # (2) TEST presence — fail-CLOSED (rc 1 OR rc 9 → DENY). The remediation names BOTH the
+    # violation fix (add a test / waiver trailer) and the abnormal fix (resolve the missing
+    # drive/<runId> / slice ref); a real run always has drive/<runId> (the live featureBranch)
+    # at slice-merge, so rc 9 here is genuine corruption, not normal flow.
+    run_conformance "impl-presence:$sid"; rc=$?
+    if [ "$rc" -ne 0 ]; then
+      emit_deny "Slice $sid adds no test file. Add a test for this slice, or mark it test-less with a \`Drive-Test-Waiver: <reason>\` commit trailer on the slice branch, before merging. (If this is an abnormal git result — e.g. a missing/corrupt drive/$runId or slice/$runId/$sid ref — resolve the missing ref or retry; this test-presence check fails CLOSED because it has no ship backstop, unlike the review check above.)"
     fi
   done
   exit 0
