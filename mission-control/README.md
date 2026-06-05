@@ -28,7 +28,7 @@ Two entities, joined by **session id**:
    `agent-name` event wins) — they match the TUI exactly.
 2. **Binding** (Mission Control overlay: `~/mission-control/bindings.jsonl`, append-only event
    log) — binds a session to `project` · `task` · `tab_name` · `iterm_session`
-   (auto from `$ITERM_SESSION_ID`). Latest event per session wins; `--unbind` removes it.
+   (auto from `$ITERM_SESSION_ID`). Latest event per session wins; `mc bind --unbind` removes it.
 
 A **task → sessions** relationship is 1:n and derived: all bindings pointing at the same task.
 Task status should **roll up** from its sessions (blocked if any bound session is `waiting`) —
@@ -92,7 +92,7 @@ Three things run on their own after install, with nothing open:
 | Always-on (automatic) | What it does | You do |
 |---|---|---|
 | **SwiftBar menu bar** | Shows `☀N` + today's tasks + live sessions; refreshes every 5 min; auto-launches at login. | Glance at it. This is your always-visible surface — no terminal required. |
-| **6:45am launchd job** | Writes today's plan (`standup --draft`) + session digest (`harvest --log`) into the daily note before you wake. | Wake up, open the daily note, read the plan. |
+| **6:45am launchd job** | Writes today's plan (`mc standup --draft`) + session digest (`mc harvest --log --summarize`) into the daily note before you wake. | Wake up, open the daily note, read the plan. |
 | **Passive hooks** | Every Claude session reports its status; a session flips to ⏸ "waiting on you" the moment it pings you. | Nothing. It just keeps the menu bar honest. |
 
 The 6:45am job runs whether or not a terminal or Claude session is open; it reads the
@@ -132,13 +132,13 @@ commands are there for when you want more than a glance.
 | Command | What it does |
 |---|---|
 | `mc harvest [--summarize] [--log]` | Per-session digest, each headed by its **goal** (the iTerm tab name, auto). `--summarize` adds an LLM **Progress** + **Next** per session (one `claude` call each, run in parallel). `--log` appends to today's daily note. |
-| `mc standup [--draft\|--json]` | Plan the day for parallelism; `--draft` writes a self-contained `Today's Focus` + `Parallel Plan` into the daily note. |
+| `mc standup [--draft\|--json]` | Plan the day for parallelism; `--draft` writes a self-contained `Today's Focus` + `Parallel Plan` into the daily note, while `--json` prints machine-readable output and takes precedence over `--draft` (suppresses the draft write). |
 | `mc today [--swiftbar]` | Today's tasks in one glance — terminal or SwiftBar menu-bar format. |
-| `mc weekly` | Weekly review agenda (clear Needs Review, sweep By Project, reset the week). |
+| `mc weekly [--json]` | Weekly review agenda (clear Needs Review, sweep By Project, reset the week). `--json` prints machine-readable output. |
 | `mc tasks` | Vault task buckets (overdue / due / waiting). |
 | `mc bind <id> --project "<P>" [--task <slug>] [--tab <name>]` | Bind a session ↔ task. |
 
-Automated: SwiftBar menu bar (auto-launch at login) · 6:45am `standup --draft` + `harvest
+Automated: SwiftBar menu bar (auto-launch at login) · 6:45am `mc standup --draft` + `mc harvest
 --log --summarize` (launchd) so you wake to a per-session Goal/Progress/Next brief · passive
 `waiting` capture via Claude Code hooks. Skills: `harvest`, `standup`, `weekly`.
 
@@ -158,8 +158,10 @@ reading the recent transcript tail through headless `claude`. The 6:45am job and
 - **Identity:** ID, iTerm tab, color, name all auto-resolved. Only the task binding is manual.
 - **Capture:** manual `mc bind` now; passive notification-hooks layer on later.
 - **Vault log:** harvests append to `Daily/<date>.md` (the operations cockpit) — no separate folder.
-- **Scheduling:** `harvest` read-only now; 7am run is `harvest --log` (digest only). The
-  `--prep` standup that *drafts* the day lands everything as `needs_review`.
+- **Scheduling:** `harvest` read-only now; the 6:45am run is `mc standup --draft` + `mc harvest
+  --log --summarize`. The `mc standup --draft` *drafts* the day by writing the `Today's Focus` +
+  `Parallel Plan` sections into the daily note (non-destructive to other sections); it does not
+  touch task frontmatter or set any `needs_review` status.
 
 ## Future polish (not core)
 

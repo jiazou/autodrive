@@ -27,14 +27,18 @@ import _helpers  # noqa: E402  (tests/ on sys.path via conftest)
 STOP_HOOK = _helpers.REPO_ROOT / "bin" / "drive-stop-hook.py"
 
 
-def run_hook(payload, *, home):
+def run_hook(payload, *, home, env=None):
     """Invoke drive-stop-hook.py with `payload` (dict or str) on stdin, HOME=home.
 
     Mirrors test_mc_hook.run_hook's child-env (os.environ overlaid, HOME forced
-    last) and pipes stdin. Returns the CompletedProcess.
+    last) and pipes stdin. `env`, if given, is overlaid onto the child env (used to
+    pin DRIVE_STOP_HOOK_PATHS — the hook's test-only scan-order seam). Returns the
+    CompletedProcess.
     """
     payload_str = payload if isinstance(payload, str) else json.dumps(payload)
     child_env = dict(os.environ)
+    if env:
+        child_env.update(env)
     child_env["HOME"] = str(home)
     return subprocess.run(
         [sys.executable, str(STOP_HOOK)],
@@ -168,6 +172,23 @@ def test_malformed_stdin_allows(fake_home):
     assert decision(cp) is None
 
 
+def test_nondict_stdin_payload_hits_outer_failopen_backstop(fake_home):
+    """STDIN is VALID JSON but not a dict (e.g. `[]`), so json.load succeeds (past the
+    inner stdin try/except) and the very first `payload.get(...)` in main() raises
+    AttributeError. That escapes to the OUTER `except Exception: sys.exit(0)` backstop
+    in __main__ -> the hook must still exit 0, emit no stderr/traceback, and ALLOW.
+
+    This directly exercises the outer fail-open backstop on a path the inner handlers
+    do NOT catch (unlike test_malformed_stdin_allows, which is caught by the inner
+    json.load except). Removing the outer `except Exception: sys.exit(0)` wrapper makes
+    this AttributeError propagate -> non-zero rc + traceback on stderr (proven red)."""
+    write_run(fake_home, "run-42", _block_state())  # a blockable run exists; never reached
+    cp = run_hook("[]", home=fake_home)
+    assert cp.returncode == 0          # outer backstop swallowed the AttributeError
+    assert cp.stderr == ""             # no traceback leaked
+    assert decision(cp) is None        # allow == no block emitted
+
+
 def test_no_runs_directory_allows(fake_home):
     """No harness-runs dir at all -> glob finds nothing -> allow (this is the
     common case for a non-/drive session)."""
@@ -189,6 +210,49 @@ def test_unreadable_run_file_is_skipped_and_allows(fake_home):
     assert decision(cp) is None
 
 
+def test_nondict_run_file_allows_when_no_owned_run(fake_home):
+    """A state.json that is VALID JSON but not an object (e.g. a list) is skipped like
+    any other bad file; with no owned, not-done run present the hook allows with no
+    traceback. Pins the allow contract for the non-dict-only scan."""
+    path = fake_home / ".claude" / "harness-runs" / "run-nondict" / "state.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[1, 2, 3]", encoding="utf-8")  # valid JSON, not a dict
+    cp = run_hook({"session_id": SID}, home=fake_home)
+    assert cp.returncode == 0          # clean exit (allow)
+    assert cp.stderr == ""             # no traceback leaked
+    assert decision(cp) is None        # allow == no block emitted
+
+
+def test_nondict_foreign_file_before_owned_run_still_blocks(fake_home):
+    """A foreign run-dir whose state.json is VALID JSON but not an object (e.g. [1,2,3])
+    is scanned BEFORE an owned, not-done run that should block. The non-dict file must be
+    skipped like any other bad file so the scan CONTINUES to the owned run and BLOCKS.
+
+    Regression guard for the fail-open bug: before the fix, the non-dict file parsed past
+    the per-file `json.load` try, then `st.get(...)` raised AttributeError outside that
+    try, aborting the WHOLE scan into the outer fail-open backstop -> the hook ALLOWED
+    instead of blocking the owned not-done run.
+
+    Order is pinned deterministically via DRIVE_STOP_HOOK_PATHS (the hook's test-only
+    scan-order seam) rather than dir-name sort, so the non-dict file is provably reached
+    FIRST regardless of filesystem glob order OR whether production happens to sort."""
+    nondict = fake_home / ".claude" / "harness-runs" / "run-nondict" / "state.json"
+    nondict.parent.mkdir(parents=True, exist_ok=True)
+    nondict.write_text("[1, 2, 3]", encoding="utf-8")  # valid JSON, not a dict
+    owned = write_run(fake_home, "run-mine", _block_state(runId="run-mine"))
+
+    cp = run_hook(
+        {"session_id": SID},
+        home=fake_home,
+        env={"DRIVE_STOP_HOOK_PATHS": json.dumps([str(nondict), str(owned)])},
+    )
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block", \
+        "scan must continue past the non-dict foreign file and block the owned run"
+    assert "run-mine" in d["reason"]
+
+
 def test_owned_run_among_unreadable_and_foreign_still_blocks(fake_home):
     """With a corrupt run AND a foreign-session run present, the hook still finds the
     one owned, not-done, not-waiting run and BLOCKS — proving the loop doesn't bail
@@ -204,3 +268,60 @@ def test_owned_run_among_unreadable_and_foreign_still_blocks(fake_home):
     d = decision(cp)
     assert d is not None and d["decision"] == "block"
     assert "run-mine" in d["reason"]
+
+
+def test_nonblockable_owned_run_before_active_owned_run_still_blocks(fake_home):
+    """TWO not-done runs owned by THIS session: a NON-blockable one (waiting set)
+    scanned FIRST, and a blockable one (not-done, not-waiting, autoContinue truthy)
+    scanned LATER. The hook must scan PAST the waiting run and BLOCK on the active one.
+
+    Regression guard for the same-session multi-run masking fail-open: before the fix,
+    the loop broke on the FIRST owned not-done run and only THEN checked
+    autoContinue/waiting — so the waiting run enumerated first masked the active run
+    behind it and the hook ALLOWED instead of blocking real autonomous work.
+
+    Order is pinned via DRIVE_STOP_HOOK_PATHS (the test-only scan-order seam) so the
+    non-blockable run is provably reached first, independent of FS order."""
+    waiting = write_run(
+        fake_home, "run-waiting", _block_state(runId="run-waiting", waiting=True)
+    )
+    active = write_run(fake_home, "run-active", _block_state(runId="run-active"))
+
+    cp = run_hook(
+        {"session_id": SID},
+        home=fake_home,
+        env={"DRIVE_STOP_HOOK_PATHS": json.dumps([str(waiting), str(active)])},
+    )
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block", \
+        "scan must continue past the waiting owned run and block the active owned run"
+    assert "run-active" in d["reason"]
+
+
+def test_disabled_owned_run_before_active_owned_run_still_blocks(fake_home):
+    """Sibling of the waiting-first masking test for the OTHER non-blockable owned
+    state: a kill-switched run (autoContinue: False) owned by THIS session scanned
+    FIRST, and a blockable owned run (not-done, not-waiting, autoContinue truthy)
+    scanned LATER. The hook must scan PAST the disabled run and BLOCK on the active one.
+
+    Regression guard for the same-session multi-run masking fail-open via the
+    autoContinue:False branch: a kill-switched run enumerated ahead of an active one
+    must not mask it. Order is pinned via DRIVE_STOP_HOOK_PATHS (the test-only
+    scan-order seam) so the disabled run is provably reached first, independent of FS
+    order."""
+    disabled = write_run(
+        fake_home, "run-disabled", _block_state(runId="run-disabled", autoContinue=False)
+    )
+    active = write_run(fake_home, "run-active", _block_state(runId="run-active"))
+
+    cp = run_hook(
+        {"session_id": SID},
+        home=fake_home,
+        env={"DRIVE_STOP_HOOK_PATHS": json.dumps([str(disabled), str(active)])},
+    )
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block", \
+        "scan must continue past the disabled owned run and block the active owned run"
+    assert "run-active" in d["reason"]

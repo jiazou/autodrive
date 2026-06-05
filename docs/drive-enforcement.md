@@ -45,9 +45,11 @@ drive-conformance.sh <RUN_DIR> --mode plan-gate | slice-merge:<id> | phase-merge
 
 A review artifact **counts** iff: the highest-N `review-<scope>-N.md` has
 `## Verdict: CONVERGED` **and** a `reviewed-sha:` line equal to the git tip the mode
-checks, **and** `codex-review-<scope>.md` exists (its degradation marker must be the
-anchored first-line token `CODEX_UNAVAILABLE` — a substring anywhere else does not
-count). Output is JSON on stdout
+checks, **and** `codex-review-<scope>.md` exists and is **non-empty**. The codex file's
+content is **not** inspected — *any* non-empty `codex-review-<scope>.md` satisfies the
+codex requirement, whether it is a real codex review OR a `CODEX_UNAVAILABLE`
+degradation note (the explicit token written when the codex CLI is absent). Only a
+missing file or an empty one (a bare `touch`) fails. Output is JSON on stdout
 (`{"clean":bool,"mode":...,"tip":...,"violations":[...]}`). **Exit codes:** `0` clean,
 `1` violations, `2` usage/IO/git error. The fail-open vs fail-closed policy for exit 2
 lives in the **hooks**, not the checker.
@@ -73,7 +75,7 @@ and the gate's `deny` must still win).
 
 | Gate | Fires on (command match) | Mode | Blocks until | Exit-2 |
 |------|--------------------------|------|--------------|--------|
-| **plan-gate** | `git worktree add … -b slice/<runId>/<id>` (the first slice worktree of the run) | `plan-gate` | `review-design-*` CONVERGED + `codex-review-design` present — implementation cannot begin until the **design** review converged | **fail-CLOSED** (deny) |
+| **plan-gate** | `git worktree add … -b slice/<runId>/<id>` (the first slice worktree of the run) | `plan-gate` | `review-design-*` CONVERGED + `codex-review-design` present and non-empty — implementation cannot begin until the **design** review converged | **fail-CLOSED** (deny) |
 | **slice-merge** | `git merge … slice/<runId>/<id>` (each slice token in the command) | `slice-merge:<id>` | SHA-bound CONVERGED review for the slice tip | fail-OPEN (silent) |
 | **phase-merge** | `git branch -f drive/<runId> phaseInt/<runId>/<P>` or `git merge … phaseInt/<runId>/<P>` | `phase-merge:<P>` | SHA-bound CONVERGED review for the phase-integration tip (naturally requires the post-harden review, since HARDEN re-emits `reviewed-sha`) | fail-OPEN (silent) |
 | **ship** | `gh pr create`, `glab mr create`, or any `git push` whose head is the drive branch (incl. bare `git push`, `git push -u origin HEAD`) | `ship` | all shipped code covered by a counting review (ledger-only `R..tip` tolerated) | **fail-CLOSED** (deny) |
@@ -141,11 +143,22 @@ Defense-in-depth: `/drive` and `/drive-ship` also run `drive-conformance.sh` in-
 assembly, `--mode ship` before push), so enforcement degrades gracefully on a machine
 where the hooks were never installed.
 
+## Regression guard
+
+The `test/*.test.sh` bash suites are the regression guard for the gates described here
+(`drive-conformance.sh`, `drive-merge-gate.sh`, `drive-hook-lib.sh`,
+`drive-stop-guard.sh`, plus the installer and the end-to-end enforcement test). Run them
+with a per-file loop (and they also run in CI as the `bash-suite` job):
+
+```
+for f in test/*.test.sh; do bash "$f" || exit 1; done
+```
+
 ## Limitations
 
 - **Forgery is out of scope.** This system is **omission-proof, not forgery-proof**. A
-  coordinator that *deliberately* forges a SHA-bound `review-N.md`, spoofs the
-  `CODEX_UNAVAILABLE` marker, or pushes under a disguised branch cannot be fully
+  coordinator that *deliberately* forges a SHA-bound `review-N.md`, writes a sham
+  non-empty `codex-review-<scope>.md`, or pushes under a disguised branch cannot be fully
   stopped while the coordinator is itself the executor — only an external trusted
   reviewer can. That is **component D** (a deterministic external driver / out-of-band
   reviewer), recorded as a follow-up. SHA-binding raises the forgery cost incidentally

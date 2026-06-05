@@ -16,13 +16,14 @@ case "$cmd" in
     cat <<'EOF'
 mc — Mission Control (a personal operating harness)
 
-  mc harvest [--log]     live Claude session digest (+ log to today's daily note)
-  mc standup [--draft]   plan the day for max parallelism (+ write the daily note)
-  mc today [--swiftbar]  today's tasks in one glance
-  mc weekly              weekly review agenda
-  mc tasks               vault task buckets (overdue/due/waiting)
-  mc done <slug> [--status <s>]   mark a task done (or set any status)
-  mc bind <id> --project "<P>" [--task <slug>]   bind a session to a task/project
+  mc harvest [--summarize] [--log]   live Claude session digest (+ per-session summaries, + log to today's daily note)
+  mc standup [--draft|--json]        plan the day for max parallelism (--draft writes the daily note; --json prints machine-readable output and takes precedence over --draft)
+  mc today [--swiftbar]              today's tasks in one glance (+ SwiftBar menu-bar format)
+  mc weekly [--json]                 weekly review agenda (+ machine-readable output)
+  mc tasks                           vault task buckets (overdue/due/waiting)
+  mc done <slug> [--status <s>]      mark a task done (or set any status)
+  mc bind <id> --project "<P>" [--task <slug>] [--tab <name>]   bind a session to a task/project
+  mc bind --unbind [<id>]            unbind a session
 EOF
     ;;
   *) echo "mc: unknown command '$cmd' (try: mc help)" >&2; exit 1 ;;

@@ -40,16 +40,14 @@ run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0 plan-gate no 
 read -r repo rd < <(mk_plan findings)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0 plan-gate highest-N FINDINGS" 1 "$RC"
 
-echo "=== AC1: regression — real phase3-slice4 run dir ship gate BLOCKS (exit 2) ==="
-P34="/Users/jiazou/.claude/harness-runs/phase3-slice4-20260603-075205"
-if [ -d "$P34" ]; then
-  # Its featureBranch ref does not resolve in this repo -> rev-parse fails -> exit 2
-  # (fail-closed-for-ship = block). Run from inside our worktree repo (any git repo).
-  OUT="$(cd "$ROOT" && "$CONF" "$P34" --mode ship 2>/dev/null)"; RC=$?
-  assert_rc "AC1 phase3-slice4 ship fail-closed (exit 2)" 2 "$RC"
-else
-  echo "FAIL: AC1 real run dir absent: $P34"; FAIL=$((FAIL+1))
-fi
+echo "=== AC1: regression — run dir whose featureBranch ref is absent ship gate BLOCKS (exit 2) ==="
+# Hermetic reconstruction of the phase3-slice4 regression: a run dir whose
+# featureBranch (drive/<runId>) does NOT resolve in the repo. Under --mode ship that
+# unresolvable ref MUST fail closed (exit 2 = block), never silently pass. The fixture
+# repo built by mk_slice_clean only has slice/<runId>/4a — no drive/<runId> branch —
+# so `rev featureBranch` errors. Zero dependence on any machine-local leftover dir.
+read -r repo rd < <(mk_slice_clean ac1ship)
+run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC1 absent featureBranch ship fail-closed (exit 2)" 2 "$RC"
 
 echo "=== AC2: slice-merge sha-binding ==="
 read -r repo rd < <(mk_slice_clean)

@@ -4,14 +4,16 @@ mc-hook.py is a Claude Code hook: it reads a JSON payload on STDIN, takes a
 `status` argv, and appends ONE {ts, session_id, status} line to
 ~/mission-control/status.jsonl keyed by the payload's session_id (falling back
 to the CLAUDE_CODE_SESSION_ID env var). It prints NOTHING to stdout and exits 0
-unconditionally — even on malformed stdin or an unwritable ledger path
-(followup F2: it wraps the append in try/except and never mkdir's the dir, so a
-missing ~/mission-control is a silent no-op).
+unconditionally — even on malformed stdin or an unwritable ledger path (it wraps
+the append in try/except so a hook never blocks). It creates ~/mission-control
+(os.makedirs(..., exist_ok=True)) before opening the ledger so the status line
+lands even when the dir does not pre-exist (hook fires before install.sh / a
+relocated HOME).
 
 These run the REAL script via subprocess (piping JSON to stdin) into a fake HOME.
-seed_mc_home(home) is called FIRST in the happy-path tests so ~/mission-control
-exists and the appended line is observable; the silent-failure test deliberately
-SKIPS seeding to pin the "exit 0 even when it can't write" contract.
+seed_mc_home(home) is called FIRST in most tests so the appended line is
+observable; the no-seed test deliberately SKIPS seeding to prove the hook
+creates the dir itself and the write still lands (the dir-creation fix).
 
 run_script (tests/_helpers.py) can't pipe stdin, so we call subprocess.run
 directly here with HOME forced to the fake home and cwd at the repo root — same
@@ -158,26 +160,29 @@ def test_malformed_stdin_with_env_sid_still_writes(fake_home):
     assert recs[0]["status"] == "idle"
 
 
-def test_absent_dir_silent_no_op_without_seed(fake_home):
-    """WITHOUT seed_mc_home: ~/mission-control does not exist. The script never
-    mkdir's it and wraps the append in try/except, so it exits 0 silently and
-    writes NOTHING even though a valid sid was supplied (followup F2's
-    silent-failure contract)."""
+def test_absent_dir_is_created_and_line_written_without_seed(fake_home):
+    """WITHOUT seed_mc_home: ~/mission-control does not exist. The hook may fire
+    before install.sh ran (or under a relocated HOME), so the script must create
+    the dir (os.makedirs(..., exist_ok=True)) before opening the ledger and the
+    "waiting on YOU" line must land — NOT be silently dropped. (acceptance 2 /
+    edge case 1: regression guard for the dir-creation fix; this FAILS against
+    the pre-fix code, which never mkdir'd and lost the write.)"""
     # Deliberately NOT calling seed_mc_home(fake_home).
     assert not (fake_home / "mission-control").exists()
 
     cp = run_hook("waiting", json.dumps({"session_id": "s-x"}), home=fake_home)
 
     assert cp.returncode == 0
-    assert cp.stdout == ""
-    assert cp.stderr == ""  # the OSError is swallowed, no traceback
-    # No dir was created and no line was written. Pin the DIRECTORY absent too:
-    # mc-hook never mkdir's its dir (it opens the ledger path directly and
-    # swallows the OSError), so a regression that started mkdir-p'ing would
-    # leave ~/mission-control behind and trip this.
-    assert not (fake_home / "mission-control").exists()
-    assert not (fake_home / "mission-control" / "status.jsonl").exists()
-    assert read_ledger_lines(fake_home) == []
+    assert cp.stdout == ""  # hook contract: NOTHING to stdout
+    assert cp.stderr == ""  # no traceback
+
+    # The dir was created and the line WAS written.
+    assert (fake_home / "mission-control").is_dir()
+    assert (fake_home / "mission-control" / "status.jsonl").exists()
+    recs = read_ledger_lines(fake_home)
+    assert len(recs) == 1
+    assert recs[0]["session_id"] == "s-x"
+    assert recs[0]["status"] == "waiting"
 
 
 def test_multiple_invocations_append(fake_home):

@@ -256,3 +256,27 @@ D12 (Mechanical, incident) RUN_DIR + branches under the old run-id were deleted 
 - Budget ladder given unconditional rung 6 (spine-only, depth-bounded) → always ≤~45.
 - Dropped state.mode (read-but-never-written); empty-slices disambiguated via stage.
 - Missing-artifact "?" rule enumerates all families incl. harden-<P>-*.md / codex-harden-<P>*.md.
+
+## Run main-20260604-223428 (autodrive quality sweep) — 2026-06-04/05
+
+# Decisions — hardening-sweep planning (main-20260604-223428)
+
+- D1: Fix the CI bash-suite gap first (Phase 1) before any de-slop, so later edits run under real coverage. Classification: Mechanical
+- D2: Treat mc-hook.py's missing-dir write as a real bug (add os.makedirs), not slop. Classification: Mechanical
+- D3: Keep all documented fail-closed/fail-open guards in the shell gates; de-slop only high-confidence dead code. Classification: Taste
+- D4: Group slices by subsystem for disjoint file ownership; serialize phases after the CI fix. Classification: Mechanical
+- D5: Document the test/ vs tests/ split rather than merging the directories (intentional bash-vs-pytest split). Classification: Taste
+
+- D6: For this hardening-sweep design, run the dual-voice design review (Claude reviewer + codex) as the load-bearing Gate-A check and fold autoplan's completeness/scope lens into the reviewer, rather than invoking the full gstack autoplan CEO/Design/Eng/DX stack. Rationale: 6-principle pragmatic/bias-to-action — the design has no product/architecture tradeoffs autoplan adds value on; the P1 gate (ownership disjointness, dep cycles, buildability, coverage) is what matters. Classification: Taste. Surfaced at Gate A.
+
+- D7: AC3 CLI-flag↔doc contract targets shell + Python entrypoints, not *.py only — flags like `mc bind --project/--task/--tab/--unbind` live in mc-bind.sh and the `mc` shell router. Classification: Mechanical
+- D8: The mission-control/README.md `--prep` drift is owned by doc-fix Slice 2.3; new contract test (2.5) deps on it so it goes green on a corrected doc. Ownership disjoint from docs Slice 3.1 (top-level README + drive-enforcement.md). Classification: Mechanical
+- D9: Dropped the drive-conformance.sh de-slop slice — full audit found no dead code (codex_present `return 0` is the load-bearing success path; all branches load-bearing). Classification: Taste
+- D10: Included the `mc` router help-text sync (Slice 2.4) rather than deferring — cheap, file-disjoint, on-thesis. Classification: Taste
+
+- D11 (plan-amendment): Slice 1.1 ownership expanded to include `test/drive-conformance.test.sh`. codex's slice-1.1 P1 (the new CI bash-suite job runs a non-hermetic test that hard-codes a machine-local leftover run-dir at line 44 and fails when absent) is rooted outside the original 1.1 ownership. The CI-green goal and the suite it runs are inseparable, so the cohesive fix folds the hermeticity repair into 1.1 rather than a separate slice (a per-slice re-review of 1.1's isolated branch could never converge while the test is non-hermetic on that branch). Re-convergence is delegated to the Phase-1 integration review (full suite + dual-voice), not a separate design re-converge, since the amendment is additive and ownership-disjoint (no other slice owns that file). Classification: Mechanical. Surfaced in the run log.
+- Dual-voice value note: codex caught this; the Claude reviewer passed slice 1.1 because the leftover fixture exists locally — a "green for the wrong reason" the adversarial voice exposed.
+
+- D12 (harden scope-widen): Phase-1 harden edits bin/drive-stop-hook.py (just OUTSIDE the phase diff) — it is the root cause of a flagged P1: `st.get` outside the per-file try lets a non-dict foreign state.json abort the scan and fail-OPEN past an owned not-done run (should BLOCK). Slice 1.2's testing work surfaced it; deferring would knowingly ship a fail-open bug in a security-relevant Stop hook. Fix = skip non-dict state.json in the per-file loop (same resilience as unreadable/unparseable) + regression test. Classification: Mechanical. Surface at Gate B.
+
+- D13 (harden round 2, within D12's stop-hook scope): fix a same-session multi-run masking fail-open in bin/drive-stop-hook.py (loop breaks on first not-done run before checking blockability, so a waiting/disabled run masks a later active one). codex-only P1, verified against source. Move blockability checks into the scan loop; allow only if no blockable owned run. Also harden the prior regression test to be strictly red/green via the DRIVE_STOP_HOOK_PATHS scan-order env seam (the hook runs as a subprocess, so the child glob can not be monkeypatched). Classification: Mechanical (real fail-open correctness bug, on-thesis). Surface at Gate B.
