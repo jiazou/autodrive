@@ -44,6 +44,7 @@ real information exists:
 │  │       → design-phase1.md = interfaces · edge cases · SLICES                          │
 │  │         (authored against the REAL code earlier phases produced)                     │
 │  │       design-review convergence [C+X] ↺(cap 8) → ✓CONV       (NO human gate)         │
+│  │       ⊘ phasedesign-gate (fail-closed): slices below CANNOT build until ✓CONV         │
 │  │  ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈            │
 │  │  ② BUILD SLICES — 1.1 & 1.2 own DISJOINT files → run IN PARALLEL                     │
 │  │      (each /drive-implement FIRST runs a Tier-3 assumption check vs reality;         │
@@ -62,6 +63,7 @@ real information exists:
 │  │  ① ARCH DESIGN ───────────────────────────────────  runs  /drive-design · phase 2   │
 │  │       → design-phase2.md (interfaces · edge cases · SLICES, vs Phase-1's REAL code)  │
 │  │       design-review [C+X] ↺(cap 8) → ✓CONV                   (NO human gate)         │
+│  │       ⊘ phasedesign-gate (fail-closed): slices below CANNOT build until ✓CONV         │
 │  │  ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈            │
 │  │  ② BUILD SLICES 2.1 ‖ 2.2  (Tier-3 check each; REDESIGN ↺ → ① if big divergence)     │
 │  │      R1…R3  /drive-implement 2.x → /drive-review 2.x[C+X]  → ✓CONV                    │
@@ -90,6 +92,10 @@ real information exists:
 - `‖` — slices that run in parallel (disjoint file ownership)
 - `◆` — a human gate. The only two **approval** gates in the run (non-decision STOPs also
   pause — red tests, BLOCKED, a cap exceeded — but those are halts, not approvals; see Notes)
+- `⊘ phasedesign-gate` — an **omission-proof** gate (not a human pause): a phase's slices
+  cannot be built (the slice worktree-add is denied) until its Tier-2 design review is
+  ✓CONV. One link in the enforcement gate chain `plan → phasedesign → slice → phase → ship`
+  (full mechanics: `docs/drive-enforcement.md`)
 - **design tiers:** ① per-phase ARCH DESIGN (`/drive-design`, Tier 2) is **distinct** from the
   Stage-1 whole-run design (`/drive-plan`, Tier 1) — different command, file, and scope
 - phases are **sequential**; slices within a phase run **in parallel**
