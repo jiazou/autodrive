@@ -163,13 +163,27 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
   reviewer can. That is **component D** (a deterministic external driver / out-of-band
   reviewer), recorded as a follow-up. SHA-binding raises the forgery cost incidentally
   but does not claim to defeat a determined forger.
-- **Gate matcher hardening (exotic git global-option forms).** The gate's
-  `git_target_repo()` treats `-C` / `--git-dir` / `--work-tree` as last-path-wins, but
-  git actually *composes* stacked forms (`-C a -C b`, `-C /repo --git-dir=.git`), so a
-  command using them can wrong-target. `/drive` never emits `-C` forms (it `cd`s into
-  worktrees) and the ship gate (HEAD / whole-tree) backstops any merge-gate miss, so
-  this is hardening against adversarial/pathological input, not an omission-threat gap.
-  See `followups.md`. Fix: model composed git path options properly.
+- **Gate matcher — composed git global-option resolution.** `git_target_repo()` now
+  models the way *real git* resolves the repo identity: `-C` is composed left-to-right
+  (`-C a -C b` → `a/b`; an absolute `-C` resets the accumulator), `--git-dir` is the
+  identity axis (last-wins, resolved relative to the `-C` cwd, both `--git-dir <p>` and
+  `--git-dir=<p>` forms), and `--work-tree` is **parsed-and-discarded** — it is *not* a
+  repo-identity axis (git reads HEAD/refs from the gitdir, which `--work-tree` does not
+  change), closing the prior silent-allow bypass where `git --work-tree=<reviewed> push`
+  from an unreviewed drive cwd shipped the cwd while the gate inspected `<reviewed>`. A
+  linked-worktree `.git` **gitfile** is reduced to its parent worktree root so the callers
+  (`git -C`/`cd`) get a directory. *Residual (forgery-class, out of scope → Component D):*
+  a **symlinked / non-canonical `--git-dir` gitfile wrapper** (`ln -s <wt>/.git /tmp/gd;
+  git --git-dir=/tmp/gd …`) mis-targets the `dirname` reduction while real git follows the
+  symlink, and the `-f` gitfile test itself follows symlinks (TOCTOU-unsafe). A
+  deliberately-crafted symlink at a non-canonical path is a forgery/evasion construct, the
+  same class as the `$GIT_DIR`/`$GIT_WORK_TREE` env residual below; the canonical
+  `<worktree>/.git` case IS handled (a strict improvement — the symlink case was already
+  cd-fail-fail-open pre-change).
+- **`$GIT_DIR` / `$GIT_WORK_TREE` env repo-targeting is out of scope.** The gate parses
+  the attacker-influenced *command string*; it does not honor `$GIT_DIR`/`$GIT_WORK_TREE`
+  env vars (which `/drive` never sets). A command that retargets git purely via those env
+  vars is a forgery-class residual (→ Component D), not an omission gap.
 - **`git push` classification is best-effort over arbitrary push syntax.** The ship
   gate errs *toward* gating — it gates a push if any refspec source is the drive branch,
   an aggregate flag (`--all`/`--mirror`) is present, or HEAD is the drive branch — so the

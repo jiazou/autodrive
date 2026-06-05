@@ -151,15 +151,39 @@ action_after() {
   return 0
 }
 
-# git_target_repo : if the git invocation carries a repo-locating global option
-# (`-C <path>`, `--git-dir=<path>`/`--git-dir <path>`, `--work-tree=<path>`/
-# `--work-tree <path>`), echo that path; else echo empty. The LAST such option wins
-# (git's own semantics: a later -C/-git-dir overrides an earlier one). When present,
-# the caller uses this path as the repo for runId-from-HEAD AND as the conformance cd
-# target, instead of $CWD — so `git -C <repo> push` from outside resolves correctly.
+# _compose <base> <p> : compose a git `-C` path component onto an accumulated base,
+# matching git's "composed left to right, absolute resets" rule (git(1) -C). Echoes
+# the composed path. bash 3.2-safe (pure string ops, no fs access).
+#   - p absolute (/*)        → p           (an absolute -C REPLACES the accumulator)
+#   - base empty             → p           (first component; resolved vs $CWD by caller)
+#   - p empty                → base        (empty -C is a no-op chdir in git)
+#   - else                   → base/p      (string-join; caller anchors $CWD if base rel)
+_compose() {
+  local base="$1" p="$2"
+  case "$p" in
+    /*) printf '%s' "$p" ;;
+    "") printf '%s' "$base" ;;
+    *)  if [ -z "$base" ]; then printf '%s' "$p"; else printf '%s/%s' "$base" "$p"; fi ;;
+  esac
+}
+
+# git_target_repo : resolve the directory whose gitdir git itself would read HEAD/refs
+# from, modelling the REPO-IDENTITY axes of git's repo-locating global options:
+#   - `-C <path>` : composed LEFT-TO-RIGHT (git: `-C a -C b` == `-C a/b`; an absolute
+#     `-C` resets the accumulated base). SEPARATE-ARG value ONLY — `-C=<p>` is NOT real
+#     git syntax (git rejects `-C=/path` as an unknown option), so it is not special-cased.
+#   - `--git-dir <p>` / `--git-dir=<p>` : the gitdir override (the IDENTITY axis), resolved
+#     relative to the `-C`-established cwd. LAST `--git-dir` wins (same-axis override).
+#   - `--work-tree <p>` / `--work-tree=<p>` : PARSE-AND-DISCARD — its value is consumed so
+#     it is not mistaken for the subcommand, but it is NOT a repo-identity axis. git reads
+#     HEAD/refs from the gitdir, which `--work-tree` does NOT change (verified empirically);
+#     treating it as the target was a silent-allow bypass (codex BLOCKING R1).
+# Identity = `--git-dir` (if set, composed onto the -C cwd) else the composed `-C` cwd
+# else empty (→ caller falls back to $CWD). Echoes an ABSOLUTE or $CWD-relative path (it
+# does NOT itself prepend $CWD — the caller's existing `case` anchors the relative branch).
 # Only meaningful when the START binary is `git`. bash 3.2-safe.
 git_target_repo() {
-  local w path=""
+  local c_base="" gitdir="" have_gitdir=0
   set -f
   # shellcheck disable=SC2086
   set -- $CMD
@@ -172,12 +196,20 @@ git_target_repo() {
   # Scan the global-option region (stop at the first non-flag word = the subcommand).
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      -C|--git-dir|--work-tree)
-        # separate-argument form: value is the next word.
-        if [ "$#" -gt 1 ]; then path="$2"; shift 2; else shift; fi
+      -C)
+        # SEPARATE-ARG value only; compose left-to-right.
+        if [ "$#" -gt 1 ]; then c_base="$(_compose "$c_base" "$2")"; shift 2; else shift; fi
         continue ;;
-      --git-dir=*) path="${1#--git-dir=}"; shift; continue ;;
-      --work-tree=*) path="${1#--work-tree=}"; shift; continue ;;
+      --git-dir)
+        if [ "$#" -gt 1 ]; then gitdir="$2"; have_gitdir=1; shift 2; else shift; fi
+        continue ;;
+      --git-dir=*) gitdir="${1#--git-dir=}"; have_gitdir=1; shift; continue ;;
+      --work-tree)
+        # PARSE-AND-DISCARD: consume the value (so it is not read as the subcommand);
+        # NEVER used as the target (not a repo-identity axis).
+        if [ "$#" -gt 1 ]; then shift 2; else shift; fi
+        continue ;;
+      --work-tree=*) shift; continue ;;
       # other global options that consume the next word:
       -c|-R|--repo) shift; [ "$#" -gt 0 ] && shift; continue ;;
       --*=*|--*) shift; continue ;;
@@ -185,7 +217,12 @@ git_target_repo() {
       *) break ;;                           # subcommand reached → stop scanning options
     esac
   done
-  printf '%s' "$path"
+  # RESOLUTION: identity = --git-dir (composed onto the -C cwd) else the composed -C cwd.
+  if [ "$have_gitdir" -eq 1 ]; then
+    printf '%s' "$(_compose "$c_base" "$gitdir")"
+  else
+    printf '%s' "$c_base"
+  fi
 }
 
 # push_ship_runid : for a `git push ...` invocation, decide whether it SHIPS the drive
@@ -325,13 +362,17 @@ slice_tokens="$(printf '%s' "$CMD" | grep -oE '(^|[^A-Za-z0-9._-])slice/[A-Za-z0
 phaseint_token="$(printf '%s' "$CMD" | grep -oE '(^|[^A-Za-z0-9._-])phaseInt/[A-Za-z0-9._/-]+' 2>/dev/null | head -n1 || true)"
 
 # --- resolve the TARGET REPO (needed by ship/push classification below) -----------
-# A `git -C <path>` / `--git-dir=<path>` / `--work-tree=<path>` option names a repo
-# OTHER than $CWD; git operates on THAT repo, so the gate must too. When such an
-# option is present, REPO = that path; otherwise REPO = $CWD. REPO is the directory
-# used for runId-from-HEAD AND as the conformance cd target. Effect:
+# A `git -C <path>` / `--git-dir=<path>` option names a repo-IDENTITY OTHER than $CWD;
+# git reads HEAD/refs from THAT repo, so the gate must too. git_target_repo composes the
+# `-C` chain + `--git-dir` (last-wins) and echoes an absolute or $CWD-relative path;
+# `--work-tree` is EXCLUDED from identity (parsed only to consume its value — it does not
+# change which gitdir/HEAD git uses). When present, REPO = that path; else REPO = $CWD.
+# REPO is the directory used for runId-from-HEAD AND as the conformance cd target. Effect:
 #   git -C <drive_repo> push      (from outside)  → resolves the drive repo → deny if unreviewed
 #   git -C ../other     push      (from a drive cwd) → evaluates the OTHER repo → inert
 #                                                       if it's not a managed drive run (correct)
+#   git --work-tree=<reviewed> push (from an unreviewed drive cwd) → identity = $CWD (the
+#                                   unreviewed drive repo) → DENY (the old bypass is closed)
 REPO="$CWD"
 git_repo_opt="$(git_target_repo)"
 if [ -n "$git_repo_opt" ]; then
@@ -340,6 +381,14 @@ if [ -n "$git_repo_opt" ]; then
     *)  REPO="$CWD/$git_repo_opt" ;;       # relative path: resolve against $CWD (git's own base)
   esac
 fi
+# Gitfile reduction: a linked-worktree `.git` is a regular FILE (a gitfile), but the
+# callers use REPO as a DIRECTORY (`git -C "$REPO" rev-parse`, `cd "$REPO" && conformance`).
+# So if a `--git-dir=<wt>/.git` resolved REPO to a gitfile, reduce it to its parent — the
+# worktree root — which is the directory git reads HEAD/refs from for that gitfile. This
+# handles the CANONICAL `<worktree>/.git` case (the representation /drive's slice worktrees
+# use); a real `.git` DIRECTORY is unaffected (`-f` is false). A symlinked/non-canonical
+# gitfile wrapper is a ratified out-of-scope forgery residual (DR11; docs/drive-enforcement.md).
+[ -f "$REPO" ] && REPO="$(dirname "$REPO")"
 
 # --- ship detection ---
 # `gh pr create` / `glab mr create` / a `git push` that ships the DRIVE branch.

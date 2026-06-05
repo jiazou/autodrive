@@ -459,29 +459,37 @@ test_ship_git_dir_space_reviewed_silent() {
   fi
 }
 
-# `git --work-tree=<reviewed> push` (=form), cwd = unreviewed drive repo → silent.
-test_ship_work_tree_eq_reviewed_silent() {
+# AC-A8 BYPASS CLOSED (was test_ship_work_tree_eq_reviewed_silent — it ENCODED the
+# bypass). `git --work-tree=<reviewed> push` (=form) from an UNREVIEWED drive cwd must now
+# DENY: `--work-tree` is NOT a repo-identity axis (git reads HEAD/refs from the gitdir,
+# which --work-tree does not change — verified). With no --git-dir, identity = $CWD (the
+# unreviewed drive repo) → DENY. The old "silent" behavior shipped the unreviewed cwd
+# while the gate inspected /reviewed (silent-allow bypass).
+test_ship_work_tree_eq_bypass_deny() {
   local ra rb rinfo repo cwdrepo out
   ra="$(new_runid)"; rinfo="$(mk_ship_repo_reviewed "$ra")"; repo="${rinfo%% *}"
   rb="$(new_runid)"; cwdrepo="$(mk_ship_repo "$rb")"; cwdrepo="${cwdrepo%% *}"
   run_gate "git --work-tree=$repo push" "$cwdrepo"; out="$GATE_OUT"
-  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
-    pass "ship silent via git --work-tree=<reviewed> from an UNREVIEWED-drive cwd (non-vacuous, =form)"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase' \
+     && printf '%s' "$out" | grep -q "run $rb "; then
+    pass "AC-A8: git --work-tree=<reviewed> push from unreviewed drive cwd DENIES (bypass closed, =form)"
   else
-    fail "ship via --work-tree= should resolve to the reviewed repo (silent); got rc=$GATE_RC out='$out'"
+    fail "AC-A8: --work-tree= must NOT retarget identity (should DENY the unreviewed cwd); got: $out"
   fi
 }
 
-# `git --work-tree <reviewed> push` (SPACE form), cwd = unreviewed drive repo → silent.
-test_ship_work_tree_space_reviewed_silent() {
+# AC-A8 BYPASS CLOSED (was test_ship_work_tree_space_reviewed_silent). Same as above,
+# SPACE form: `git --work-tree <reviewed> push` from an unreviewed drive cwd → DENY.
+test_ship_work_tree_space_bypass_deny() {
   local ra rb rinfo repo cwdrepo out
   ra="$(new_runid)"; rinfo="$(mk_ship_repo_reviewed "$ra")"; repo="${rinfo%% *}"
   rb="$(new_runid)"; cwdrepo="$(mk_ship_repo "$rb")"; cwdrepo="${cwdrepo%% *}"
   run_gate "git --work-tree $repo push" "$cwdrepo"; out="$GATE_OUT"
-  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
-    pass "ship silent via git --work-tree <reviewed> from an UNREVIEWED-drive cwd (non-vacuous, space form)"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase' \
+     && printf '%s' "$out" | grep -q "run $rb "; then
+    pass "AC-A8: git --work-tree <reviewed> push from unreviewed drive cwd DENIES (bypass closed, space form)"
   else
-    fail "ship via --work-tree (space) should resolve to the reviewed repo (silent); got rc=$GATE_RC out='$out'"
+    fail "AC-A8: --work-tree (space) must NOT retarget identity (should DENY the unreviewed cwd); got: $out"
   fi
 }
 
@@ -496,6 +504,223 @@ test_ship_git_dir_other_repo_inert() {
     pass "ship inert for git --git-dir=<other_nonDrive>/.git push from a drive cwd"
   else
     fail "ship should be inert for git --git-dir=<other_repo> push; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
+# Item A — composed git-path-option resolution (AC-A1..AC-A11)
+# ---------------------------------------------------------------------------------
+# These prove git_target_repo() composes -C/--git-dir the way real git resolves the
+# repo identity (not the old last-path-wins), and that --work-tree is excluded from
+# identity. Each constructs a case where the OLD (last-wins) resolution would target a
+# DIFFERENT, clean/non-drive repo (→ silent/inert) while the CORRECT composed identity
+# targets the unreviewed drive repo (→ DENY), so the assertion is non-vacuous.
+
+# AC-A1: `git -C a -C b <sub>` composes to $CWD/a/b (NOT $CWD/b). cwd holds the
+# unreviewed drive repo at a/b; old last-wins would target $CWD/b (nonexistent → inert).
+test_acA1_C_compose_relative() {
+  local runid info repo out parent
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  # Lay out so $CWD/a/b == the unreviewed drive repo, but $CWD/b does NOT exist.
+  parent="$TMPROOT/acA1-$runid"; mkdir -p "$parent/a"
+  ln -s "$repo" "$parent/a/b"
+  run_gate "git -C a -C b push" "$parent"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A1: git -C a -C b composes to a/b (denies unreviewed drive repo at \$CWD/a/b)"
+  else
+    fail "AC-A1: git -C a -C b should compose to a/b and DENY; got: $out"
+  fi
+}
+
+# AC-A3: `git -C rel -C /abs <sub>` — an absolute -C RESETS the accumulator → identity
+# is /abs, NOT $CWD/rel/abs. cwd's `rel/abs` is a benign non-existent path; /abs is the
+# unreviewed drive repo. A naive base/p join would target $CWD/rel/abs (→ inert).
+test_acA3_C_absolute_resets() {
+  local runid info repo out parent
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  parent="$TMPROOT/acA3-$runid"; mkdir -p "$parent/rel"   # rel exists, rel/abs does not
+  run_gate "git -C rel -C $repo push" "$parent"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A3: git -C rel -C /abs resets to /abs (denies the absolute drive repo, not \$CWD/rel/abs)"
+  else
+    fail "AC-A3: absolute -C must reset the accumulator and DENY /abs; got: $out"
+  fi
+}
+
+# AC-A11: `git -C /abs -C rel <sub>` — a relative -C composes ONTO the absolute base →
+# identity is /abs/rel (distinct from AC-A3's reset). /abs is a benign dir; /abs/rel is
+# the unreviewed drive repo. Old last-wins would target $CWD/rel (nonexistent → inert).
+test_acA11_C_abs_then_rel_compose() {
+  local runid info repo out base
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  # Put the drive repo at <base>/rel; pass -C <base> -C rel.
+  base="$TMPROOT/acA11-$runid"; mkdir -p "$base"
+  ln -s "$repo" "$base/rel"
+  run_gate "git -C $base -C rel push" "$TMPROOT"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A11: git -C /abs -C rel composes to /abs/rel (denies the unreviewed drive repo there)"
+  else
+    fail "AC-A11: relative -C must compose onto the absolute base and DENY /abs/rel; got: $out"
+  fi
+}
+
+# AC-A2: `git -C /repo --git-dir=.git push` (absolute -C + RELATIVE gitdir, DIFFERENT
+# axes) → identity = /repo/.git, NOT $CWD/.git. /repo is the unreviewed drive repo; the
+# gitfile/dir reduction makes /repo/.git resolve to /repo. Old last-wins would target
+# $CWD/.git (→ inert). cwd is OUTSIDE so resolution MUST come from the options.
+test_acA2_C_abs_plus_relative_gitdir() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/acA2-out-$runid"; mkdir -p "$outside"   # NOT a git repo; no .git here
+  run_gate "git -C $repo --git-dir=.git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A2: git -C /repo --git-dir=.git resolves to /repo/.git (DENY; different axes, not last-wins .git)"
+  else
+    fail "AC-A2: -C /repo + --git-dir=.git should target /repo and DENY; got: $out"
+  fi
+}
+
+# AC-A4: both `--git-dir <p>` (space) and `--git-dir=<p>` (=) forms, WITH a preceding -C,
+# resolve to the same target. cwd is OUTSIDE the drive repo; -C names it and --git-dir
+# (relative .git) composes onto it → /repo → DENY. Both forms asserted.
+test_acA4_gitdir_both_forms_with_C() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/acA4-out-$runid"; mkdir -p "$outside"
+  run_gate "git -C $repo --git-dir .git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    run_gate "git -C $repo --git-dir=.git push" "$outside"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+      pass "AC-A4: --git-dir <p> (space) and --git-dir=<p> (=), both with -C, resolve identically (DENY)"
+    else
+      fail "AC-A4: --git-dir= form (with -C) should DENY; got: $out"
+    fi
+  else
+    fail "AC-A4: --git-dir <p> space form (with -C) should DENY; got: $out"
+  fi
+}
+
+# AC-A5: two `--git-dir` flags → LAST one wins (same-axis override). First names a benign
+# non-drive repo, second names the unreviewed drive repo → DENY (proves last-wins, not
+# first-wins or both). cwd OUTSIDE so identity is purely from the flags.
+test_acA5_two_gitdir_last_wins() {
+  local runid info repo out other outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  other="$TMPROOT/acA5-other-$runid-repo"; _init_repo "$other"
+  _commit "$other" README base base >/dev/null   # non-drive (main)
+  outside="$TMPROOT/acA5-out-$runid"; mkdir -p "$outside"
+  run_gate "git --git-dir=$other/.git --git-dir=$repo/.git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A5: two --git-dir flags → last wins (DENY the second, unreviewed drive repo)"
+  else
+    fail "AC-A5: last --git-dir should win and DENY; got: $out"
+  fi
+}
+
+# AC-A9: `git -C=/x <sub>` is NOT special-cased — real git rejects -C=/path. The token
+# `-C=$repo` falls through the generic `-?*` skip and does NOT become identity, so from a
+# NON-drive cwd this is inert (the unreviewed drive repo is referenced only via the
+# rejected -C= token, which is ignored). Proves we don't emulate a non-git syntax.
+test_acA9_C_eq_not_special_cased() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  outside="$TMPROOT/acA9-out-$runid"; mkdir -p "$outside"   # non-drive, non-git cwd
+  run_gate "git -C=$repo push" "$outside"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "AC-A9: git -C=/x is NOT special-cased (token ignored → inert from non-drive cwd)"
+  else
+    fail "AC-A9: -C=/x must fall through generic skip (inert); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# AC-A9b: `--work-tree <p>` (space) and `--work-tree=<p>` (=) have their VALUE consumed
+# without being treated as the subcommand or as identity. Here the bare push subcommand
+# follows --work-tree <wt>; if the value were NOT consumed, the parser could mis-read the
+# value as the subcommand. From a drive cwd with no --git-dir, identity = $CWD → DENY,
+# AND the push subcommand must still be detected (so it classifies as ship at all).
+test_acA9b_work_tree_value_consumed() {
+  local runid info repo out wt
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  wt="$TMPROOT/acA9b-wt-$runid"; mkdir -p "$wt"
+  # space form: value consumed, push still recognized, identity = cwd (drive) → DENY.
+  run_gate "git --work-tree $wt push" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    # =form: same.
+    run_gate "git --work-tree=$wt push" "$repo"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+      pass "AC-A9b: --work-tree <p>/=<p> value consumed (push still detected; identity = cwd → DENY)"
+    else
+      fail "AC-A9b: --work-tree= value-consume should keep push detection + DENY cwd; got: $out"
+    fi
+  else
+    fail "AC-A9b: --work-tree <p> (space) value-consume should keep push detection + DENY cwd; got: $out"
+  fi
+}
+
+# AC-A10: CANONICAL linked-worktree gitfile reduction. `<linked-wt>/.git` is a FILE; the
+# callers need a DIRECTORY. The gate must reduce it via dirname to the worktree root so
+# the HEAD lookup + conformance resolve correctly. Two forms:
+#  (a) git -C <linked-wt> --git-dir=.git merge slice/<runId>/<id>  → DENY (unreviewed slice)
+#  (b) git --git-dir=<linked-wt>/.git push                          → DENY (unreviewed drive HEAD)
+# Without the reduction, REPO=<wt>/.git (a file) → cd fails → fail-open (bypass).
+
+# Build a slice repo, then add a LINKED worktree checked out on the slice branch so its
+# .git is a gitfile. (a) `git -C <wt> --git-dir=.git merge` from OUTSIDE the wt.
+test_acA10_gitfile_merge_C_plus_gitdir() {
+  local runid info repo out wt outside
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; repo="${info%% *}"
+  # Linked worktree on the (unreviewed) slice branch → its .git is a gitfile.
+  wt="$TMPROOT/acA10wt-$runid"
+  _gitc "$repo" worktree add -q "$wt" "slice/$runid/4a" >/dev/null 2>&1
+  [ -f "$wt/.git" ] || { fail "AC-A10(a): fixture .git is not a gitfile"; return; }
+  outside="$TMPROOT/acA10out-$runid"; mkdir -p "$outside"
+  run_gate "git -C $wt --git-dir=.git merge slice/$runid/4a" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review slice 4a'; then
+    pass "AC-A10(a): git -C <linked-wt> --git-dir=.git merge reduces gitfile→wt root (DENY, no cd-fail bypass)"
+  else
+    fail "AC-A10(a): gitfile -C+--git-dir merge should reduce + DENY; got: $out"
+  fi
+}
+
+# (b) `git --git-dir=<linked-wt>/.git push` where <linked-wt> HEAD is an unreviewed
+# drive/<runId> branch → reduce gitfile→wt root → HEAD read → DENY. cwd is OUTSIDE.
+# The MAIN repo stays on `main` so the linked worktree can check out drive/<runId>
+# (git refuses to add a worktree on a branch already checked out elsewhere).
+test_acA10_gitfile_push_gitdir() {
+  local runid rd repo out wt outside
+  runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
+  repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$runid"
+  _commit "$repo" feature.sh "echo hi" "unreviewed code" >/dev/null   # no phase review
+  _gitc "$repo" checkout -q main          # free drive/<runId> for the linked worktree
+  # Linked worktree on the unreviewed drive branch → gitfile .git, HEAD = drive/<runId>.
+  wt="$TMPROOT/acA10bwt-$runid"
+  _gitc "$repo" worktree add -q "$wt" "drive/$runid" >/dev/null 2>&1
+  [ -f "$wt/.git" ] || { fail "AC-A10(b): fixture .git is not a gitfile"; return; }
+  outside="$TMPROOT/acA10bout-$runid"; mkdir -p "$outside"
+  run_gate "git --git-dir=$wt/.git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A10(b): git --git-dir=<linked-wt>/.git push reduces gitfile→wt root (DENY unreviewed drive HEAD)"
+  else
+    fail "AC-A10(b): gitfile --git-dir push should reduce + DENY; got: $out"
+  fi
+}
+
+# AC-A10 (real .git DIRECTORY unaffected): a normal repo's `--git-dir=<repo>/.git` is a
+# DIRECTORY (`-f` false → no reduction). conformance does ref ops that resolve identically
+# from <repo>/.git → still DENY when unreviewed. Guards that the reduction doesn't fire on
+# a real gitdir directory.
+test_acA10_real_gitdir_directory_unaffected() {
+  local runid info repo out outside
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  [ -d "$repo/.git" ] || { fail "AC-A10(dir): fixture .git is not a directory"; return; }
+  outside="$TMPROOT/acA10dir-$runid"; mkdir -p "$outside"
+  run_gate "git --git-dir=$repo/.git push" "$outside"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    pass "AC-A10: real .git DIRECTORY is unaffected by gitfile reduction (still DENY unreviewed)"
+  else
+    fail "AC-A10: real .git directory --git-dir should DENY (no spurious reduction); got: $out"
   fi
 }
 
@@ -910,9 +1135,22 @@ main() {
   test_ship_git_C_other_repo_inert
   test_ship_git_dir_eq_outside_cwd_deny
   test_ship_git_dir_space_reviewed_silent
-  test_ship_work_tree_eq_reviewed_silent
-  test_ship_work_tree_space_reviewed_silent
+  # AC-A8: --work-tree bypass closed (these two were flipped from *_reviewed_silent)
+  test_ship_work_tree_eq_bypass_deny
+  test_ship_work_tree_space_bypass_deny
   test_ship_git_dir_other_repo_inert
+  # Item A: composed git-path-option resolution (AC-A1..AC-A11)
+  test_acA1_C_compose_relative
+  test_acA3_C_absolute_resets
+  test_acA11_C_abs_then_rel_compose
+  test_acA2_C_abs_plus_relative_gitdir
+  test_acA4_gitdir_both_forms_with_C
+  test_acA5_two_gitdir_last_wins
+  test_acA9_C_eq_not_special_cased
+  test_acA9b_work_tree_value_consumed
+  test_acA10_gitfile_merge_C_plus_gitdir
+  test_acA10_gitfile_push_gitdir
+  test_acA10_real_gitdir_directory_unaffected
   # tightened matching false-positive guards (finding 2)
   test_echo_git_push_inert
   test_gh_pr_view_createdAt_inert
