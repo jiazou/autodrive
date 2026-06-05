@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Plain-bash test runner for bin/drive-conformance.sh.
-# Asserts acceptance criteria 0,1,2,3,4,4b,4c,5,10. Prints PASS/FAIL per case and
+# Asserts acceptance criteria 0,1,2,3,4,4b,4c,5,10 and Item-C C1..C4b. Prints PASS/FAIL per case and
 # exits nonzero if any fail. Builds hermetic throwaway repos via test/fixtures/mkfixture.sh.
 set -uo pipefail
 
@@ -123,6 +123,45 @@ echo "=== AC10: concurrency — run-keyed phaseInt isolation ==="
 read -r repo rd1 rd2 < <(mk_two_concurrent)
 run_conf "$repo" "$rd1" --mode phase-merge:1;       assert_rc "AC10 R1 phase-merge clean (own ref)" 0 "$RC"
 run_conf "$repo" "$rd2" --mode phase-merge:1;       assert_rc "AC10 R2 phase-merge blocked (own ref)" 1 "$RC"
+
+echo "=== AC-C: impl-presence (test-presence invariant) ==="
+# AC-C1: slice diff adds a runnable test path -> exit 0 (clean).
+read -r repo rd < <(mk_impl_presence test)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C1 slice with pytest test -> clean" 0 "$RC"
+read -r repo rd < <(mk_impl_presence test_sh)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C1 slice with bash test -> clean" 0 "$RC"
+# AC-C2: no test path AND no waiver trailer -> exit 1 (violation).
+read -r repo rd < <(mk_impl_presence notest)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C2 slice code-only no waiver -> violation" 1 "$RC"
+# AC-C3: no test path but a real Drive-Test-Waiver: commit TRAILER -> exit 0.
+read -r repo rd < <(mk_impl_presence waiver)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C3 real waiver trailer -> clean" 0 "$RC"
+# AC-C3b: waiver string in body PROSE (not a trailer block) -> exit 1 (NOT waived).
+read -r repo rd < <(mk_impl_presence waiver_prose)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C3b waiver in body prose (not trailer) -> violation" 1 "$RC"
+# AC-C4: unresolvable ref / missing drive/<runId> -> exit 2 (abnormal, explicit rc-2 case).
+read -r repo rd < <(mk_impl_presence no_drive)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4 missing drive/<runId> merge-base -> exit 2" 2 "$RC"
+# AC-C4 (unresolvable slice ref): a slice id that does not exist -> exit 2.
+read -r repo rd < <(mk_impl_presence test impl-absent-ref)
+run_conf "$repo" "$rd" --mode impl-presence:nope;   assert_rc "AC-C4 absent slice ref -> exit 2" 2 "$RC"
+# AC-C4b (predicate anchored to runners): support/non-runnable paths do NOT count -> exit 1.
+read -r repo rd < <(mk_impl_presence pred_helpers)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b tests/_helpers.py excluded -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_conftest)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b tests/conftest.py excluded -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_fixtures)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b tests/fixtures/* excluded -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_pyc)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b *.pyc excluded -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_root)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b root test_root.py not under tests/ -> violation" 1 "$RC"
+read -r repo rd < <(mk_impl_presence pred_docs)
+run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C4b docs/*.test.md (no runner) -> violation" 1 "$RC"
+# usage guard: empty id after impl-presence: -> exit 2
+read -r repo rd < <(mk_impl_presence test impl-empty-id)
+OUT="$(cd "$repo" && "$CONF" "$rd" --mode "impl-presence:" 2>/dev/null)"; RC=$?
+assert_rc "AC-C empty impl-presence id -> exit 2" 2 "$RC"
 
 echo
 echo "=== usage/error guards ==="
