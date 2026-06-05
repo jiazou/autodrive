@@ -4,7 +4,8 @@
 # The path is computed from where THIS repo lives — no manual editing needed.
 # Also registers the /drive pipeline commands globally (symlinked into
 # ~/.claude/commands/) so /drive — and its stage runners — are discoverable from
-# any directory, not only inside this repo.
+# any directory, not only inside this repo. Symlinks the global status line too,
+# so usage/limits render in every session.
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -73,6 +74,26 @@ if [ -d "$CMDS_SRC" ]; then
   done
 fi
 
+# Symlink the global status line into ~/.claude (shows dir/git/model/context% +
+# $/day·$/hr + block%/week% toward plan limits). settings.json keeps its own
+# statusLine entry; we only point it at the symlink, hinting if it's not set yet.
+STATUSLINE_SRC="$REPO_DIR/bin/statusline.sh"
+STATUSLINE_DST="$HOME/.claude/statusline.sh"
+if [ -f "$STATUSLINE_SRC" ]; then
+  mkdir -p "$HOME/.claude"
+  if [ -e "$STATUSLINE_DST" ] && [ ! -L "$STATUSLINE_DST" ]; then
+    BKS="$HOME/.claude/statusline-backups"
+    mkdir -p "$BKS"; mv "$STATUSLINE_DST" "$BKS/statusline.sh.$(date +%Y%m%d-%H%M%S)"
+    echo "Backed up existing statusline.sh -> $BKS"
+  fi
+  ln -sfn "$STATUSLINE_SRC" "$STATUSLINE_DST"
+  echo "Linked status line -> repo"
+  if ! grep -q '"statusLine"' "$HOME/.claude/settings.json" 2>/dev/null; then
+    echo "  to enable it, add to ~/.claude/settings.json:"
+    echo "    \"statusLine\": { \"type\": \"command\", \"command\": \"$STATUSLINE_DST\" }"
+  fi
+fi
+
 # Register the /drive autonomous-continuation Stop hook in ~/.claude/settings.json.
 # It only ever acts during an active /drive run owned by the firing session, fails
 # open on every error, and self-disarms at stage=done — safe for all other sessions.
@@ -109,7 +130,7 @@ PY
 fi
 
 echo
-echo "Operating rules + bundled skills + /drive commands are active machine-wide."
+echo "Operating rules + bundled skills + /drive commands + status line are active machine-wide."
 echo "The /drive autonomous-continuation Stop hook is registered (no-op outside an"
 echo "active /drive run). Disable per-run: set autoContinue:false in the run's"
 echo "state.json. Remove globally: delete the drive-stop-hook.py entry from"
