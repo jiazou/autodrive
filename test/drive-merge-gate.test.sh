@@ -171,15 +171,18 @@ test_slicemerge_deny() {
   fi
 }
 
+# Silent allow requires BOTH checks to pass: a reviewed slice (review check) that ALSO
+# carries a test (impl-presence check). Uses mk_impl_slice_repo (a real drive/<runId> base +
+# a test-carrying slice) so it stays valid under the two-check slice-merge boundary.
 test_slicemerge_allow_silent() {
   local runid info repo
-  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" reviewed)"; repo="${info%% *}"
+  runid="$(new_runid)"; info="$(mk_impl_slice_repo "$runid" reviewed test)"; repo="${info%% *}"
   local out
   run_gate "git merge --no-ff slice/$runid/4a" "$repo"; out="$GATE_OUT"
   if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
-    pass "slice-merge silent when reviewed"
+    pass "slice-merge silent when reviewed AND carries a test (both checks pass)"
   else
-    fail "slice-merge should be silent when reviewed; got rc=$GATE_RC out='$out'"
+    fail "slice-merge should be silent when reviewed+test; got rc=$GATE_RC out='$out'"
   fi
 }
 
@@ -968,14 +971,18 @@ test_rcnorm_brokenconf_ship_deny() {
   fi
 }
 
-test_rcnorm_brokenconf_slice_silent() {
+# Broken conformance (rc 9) at slice-merge: the REVIEW check is fail-OPEN (silent on rc 9),
+# but the impl-presence TEST check is fail-CLOSED (rc 9 → DENY). So a broken checker now DENYs
+# at the slice-merge boundary via impl-presence — the deliberate posture asymmetry (Item C /
+# Decision C3): test-presence has no ship backstop, so its abnormal path must fail closed.
+test_rcnorm_brokenconf_slice_failclosed_deny() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_slice_repo "$runid" reviewed)"; repo="${info%% *}"
   run_gate_brokenconf "git merge --no-ff slice/$runid/4a" "$repo"; out="$GATE_OUT"
-  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
-    pass "rc-norm: broken conformance → slice-merge SILENT (fail-open)"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'adds no test file'; then
+    pass "rc-norm: broken conformance → slice-merge DENY via impl-presence (fail-CLOSED; review check stays fail-open)"
   else
-    fail "rc-norm: broken conformance should be SILENT for slice-merge; got rc=$GATE_RC out='$out'"
+    fail "rc-norm: broken conformance should fail-closed DENY at slice-merge (impl-presence); got rc=$GATE_RC out='$out'"
   fi
 }
 
@@ -1020,15 +1027,18 @@ test_cdfail_ship_deny() {
   fi
 }
 
-test_cdfail_slice_silent() {
+# cd-fail (rc 9) at slice-merge: the REVIEW check fail-opens (no false deny on a transient cd
+# error), but the impl-presence TEST check fail-CLOSES (rc 9 → DENY). The cd-fail can't be read
+# as a review verdict, yet test-presence has no backstop so its abnormal path must block.
+test_cdfail_slice_failclosed_deny() {
   local runid rd out badcwd
   runid="$(new_runid)"; rd="$(mk_rundir "$runid")"
   badcwd="$TMPROOT/does-not-exist-slice-$runid"
   run_gate "git merge slice/$runid/4a" "$badcwd"; out="$GATE_OUT"
-  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
-    pass "cd-fail: nonexistent cwd → slice-merge SILENT (fail-open, no false deny)"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'adds no test file'; then
+    pass "cd-fail: nonexistent cwd → slice-merge DENY via impl-presence (fail-CLOSED; review check stays fail-open)"
   else
-    fail "cd-fail should be SILENT for slice-merge; got rc=$GATE_RC out='$out'"
+    fail "cd-fail should fail-closed DENY at slice-merge (impl-presence); got rc=$GATE_RC out='$out'"
   fi
 }
 
@@ -1717,6 +1727,140 @@ test_r4_gh_nonship_dollar_inert() {
 }
 
 # ---------------------------------------------------------------------------------
+# Item C — IMPLEMENT-stage test-presence wiring at the slice-merge boundary
+# (AC-C5, AC-C6). The slice-merge gate now runs BOTH slice-merge:<id> (review, fail-OPEN)
+# AND impl-presence:<id> (test-presence, fail-CLOSED). These exercise the REAL impl-presence
+# conformance mode (slice 3.1's code is present), so they are non-vacuous: they fail if the
+# wiring were missing OR fail-open.
+# ---------------------------------------------------------------------------------
+
+# Build a repo with a real drive/<runId> base + a slice branch cut from it. Knobs:
+#   $2 reviewed|unreviewed : write the slice review (so the REVIEW check passes/fails)
+#   $3 test|notest|waiver|waiver-body : the slice branch's commit content —
+#        test         → adds a runnable test path (test/feat.test.sh) → impl-presence clean
+#        notest       → adds a non-test file (feature.sh) → impl-presence violation (rc 1)
+#        waiver       → non-test file + a real `Drive-Test-Waiver:` commit TRAILER → clean
+#        waiver-body  → non-test file + the literal text in the MIDDLE of the body (NOT a
+#                       trailer) → still a violation (rc 1) — guards the substring trap
+# Echoes "repo rd tip".
+mk_impl_slice_repo() {
+  local runid="$1" reviewed="$2" content="$3" rd repo tip
+  rd="$(mk_rundir "$runid")"
+  repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  # Real drive/<runId> base branch (the featureBranch impl-presence merge-bases against).
+  _gitc "$repo" checkout -q -b "drive/$runid"
+  # Slice branch cut from drive/<runId> (so merge-base(slice, drive) is this fork point).
+  _gitc "$repo" checkout -q -b "slice/$runid/4a"
+  case "$content" in
+    test)
+      tip="$(_commit "$repo" test/feat.test.sh "echo test" "slice 4a: add test")"
+      ;;
+    notest)
+      tip="$(_commit "$repo" feature.sh "echo hi" "slice 4a: feature, no test")"
+      ;;
+    waiver)
+      mkdir -p "$repo"
+      printf '%s\n' "docs only" > "$repo/feature.sh"
+      _gitc "$repo" add -A
+      _gitc "$repo" commit -q -m "$(printf 'slice 4a: pure doc slice\n\nDrive-Test-Waiver: doc-only slice, no testable surface')"
+      tip="$(_gitc "$repo" rev-parse HEAD)"
+      ;;
+    waiver-body)
+      # The waiver line sits in the MIDDLE of the body with non-Key:val prose AFTER it, so git
+      # does NOT parse it as a trailer (a trailing Key: val block would be a real trailer).
+      printf '%s\n' "docs only" > "$repo/feature.sh"
+      _gitc "$repo" add -A
+      _gitc "$repo" commit -q -m "$(printf 'slice 4a: explain the waiver mechanism\n\nDrive-Test-Waiver: this line is quoted PROSE, not a trailer.\nSee the design doc for how a real waiver trailer works.')"
+      tip="$(_gitc "$repo" rev-parse HEAD)"
+      ;;
+  esac
+  _gitc "$repo" checkout -q "drive/$runid"
+  if [ "$reviewed" = reviewed ]; then
+    _write_review "$rd" 4a 1 "$tip"
+    _write_codex "$rd" 4a
+  fi
+  printf '%s %s %s\n' "$repo" "$rd" "$tip"
+}
+
+# AC-C5: a REVIEWED slice with NO test and NO waiver → DENY with the test-presence
+# remediation text (the review check passes, so the DENY MUST come from impl-presence —
+# non-vacuous: proves impl-presence is actually wired and fail-closed on rc 1).
+test_implpresence_notest_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_impl_slice_repo "$runid" reviewed notest)"; repo="${info%% *}"
+  run_gate "git merge --no-ff slice/$runid/4a" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" \
+     && printf '%s' "$out" | grep -q 'adds no test file' \
+     && printf '%s' "$out" | grep -q 'Drive-Test-Waiver'; then
+    pass "AC-C5: reviewed slice with no test + no waiver → DENY (test-presence remediation text)"
+  else
+    fail "AC-C5: no-test slice should DENY with test-presence remediation; got: $out"
+  fi
+}
+
+# AC-C5 (fail-CLOSED on abnormal): an impl-presence rc-2 (abnormal) MUST DENY, not silently
+# allow. We force rc 2 by REMOVING the drive/<runId> base branch so merge-base is unresolvable
+# (rc>=1 → conformance exit 2 → run_conformance rc 9 → fail-CLOSED DENY). The slice IS reviewed
+# AND DOES carry a test, so the ONLY thing that can deny is the fail-closed impl-presence abnormal
+# path — making this non-vacuous (it would SILENTLY ALLOW if impl-presence were fail-open).
+test_implpresence_abnormal_failclosed_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_impl_slice_repo "$runid" reviewed test)"; repo="${info%% *}"
+  # Checkout OFF drive/<runId> (the fixture leaves HEAD there) so we can delete it, then delete
+  # the drive/<runId> base → merge-base(slice, drive) unresolvable → conformance exit 2.
+  _gitc "$repo" checkout -q main
+  _gitc "$repo" branch -D "drive/$runid" >/dev/null 2>&1
+  run_gate "git merge --no-ff slice/$runid/4a" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'adds no test file'; then
+    pass "AC-C5: impl-presence abnormal (missing drive/<runId> → rc 2) → DENY (fail-CLOSED, NOT silent)"
+  else
+    fail "AC-C5: impl-presence abnormal MUST fail-closed DENY (no ship backstop); got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# AC-C6: a REVIEWED slice that DOES carry a test → silent allow through BOTH checks (review
+# passes AND impl-presence clean → no output, exit 0, never allow).
+test_implpresence_withtest_silent() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_impl_slice_repo "$runid" reviewed test)"; repo="${info%% *}"
+  run_gate "git merge --no-ff slice/$runid/4a" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
+    pass "AC-C6: reviewed slice WITH a test → silent allow through both checks"
+  else
+    fail "AC-C6: reviewed+test slice should be silent; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# A reviewed slice with NO test but a real `Drive-Test-Waiver:` commit TRAILER → allowed by
+# impl-presence (waiver opts out of test-presence). Still subject to the review check (which
+# passes here) → silent allow.
+test_implpresence_waiver_trailer_silent() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_impl_slice_repo "$runid" reviewed waiver)"; repo="${info%% *}"
+  run_gate "git merge --no-ff slice/$runid/4a" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ] && ! is_allow "$out"; then
+    pass "impl-presence: no test but a real Drive-Test-Waiver trailer → silent allow (waiver opts out)"
+  else
+    fail "impl-presence: waiver-trailer slice should be silent; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# Negative guard: the waiver string in the BODY PROSE (not a real trailer) does NOT waive →
+# impl-presence still violates → DENY. Proves the gate uses real trailer parsing, not a
+# substring match (a `docs: explain the waiver` commit must not falsely pass).
+test_implpresence_waiver_body_not_trailer_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_impl_slice_repo "$runid" reviewed waiver-body)"; repo="${info%% *}"
+  run_gate "git merge --no-ff slice/$runid/4a" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q 'adds no test file'; then
+    pass "impl-presence: Drive-Test-Waiver in body PROSE (not a trailer) does NOT waive → DENY"
+  else
+    fail "impl-presence: body-prose waiver must NOT waive (should DENY); got: $out"
+  fi
+}
+
+# ---------------------------------------------------------------------------------
 main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
   test_plangate_deny
@@ -1774,12 +1918,12 @@ main() {
   # rc normalization (D4): broken checker
   test_rcnorm_brokenconf_plan_deny
   test_rcnorm_brokenconf_ship_deny
-  test_rcnorm_brokenconf_slice_silent
+  test_rcnorm_brokenconf_slice_failclosed_deny
   test_rcnorm_brokenconf_phase_silent
   # rc normalization (D4): cd-fail
   test_cdfail_plan_deny
   test_cdfail_ship_deny
-  test_cdfail_slice_silent
+  test_cdfail_slice_failclosed_deny
   test_cdfail_phase_silent
   test_nonmatching_inert
   test_unmanaged_run_inert
@@ -1835,6 +1979,12 @@ main() {
   test_r4_gh_brace_action_deny
   test_r4_glab_brace_subcommand_deny
   test_r4_gh_nonship_dollar_inert
+  # Item C: IMPLEMENT-stage test-presence wiring at the slice-merge boundary (AC-C5, AC-C6)
+  test_implpresence_notest_deny
+  test_implpresence_abnormal_failclosed_deny
+  test_implpresence_withtest_silent
+  test_implpresence_waiver_trailer_silent
+  test_implpresence_waiver_body_not_trailer_deny
 
   echo
   echo "----------------------------------------"
