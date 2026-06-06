@@ -30,6 +30,15 @@ assert_rc() {
   fi
 }
 
+# Assert OUT (the JSON verdict) contains a substring. $1=desc $2=needle
+assert_out() {
+  if printf '%s' "${OUT:-}" | grep -q "$2"; then
+    echo "PASS: $1"; PASS=$((PASS+1))
+  else
+    echo "FAIL: $1 (output missing '$2') :: ${OUT:-}"; FAIL=$((FAIL+1))
+  fi
+}
+
 echo "=== AC0: plan-gate (design review omission-proof) ==="
 read -r repo rd < <(mk_plan clean)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0 plan-gate clean" 0 "$RC"
@@ -117,6 +126,31 @@ read -r repo rd < <(mk_phase_harden post_harden_ok 1)
 run_conf "$repo" "$rd" --mode phase-merge:1;        assert_rc "AC4c phase-merge post-harden review matches tip" 0 "$RC"
 read -r repo rd < <(mk_phase_harden stale_only 1)
 run_conf "$repo" "$rd" --mode phase-merge:1;        assert_rc "AC4c phase-merge stale-only review blocked" 1 "$RC"
+
+echo "=== AC-findings: a sha-matching FINDINGS review is NOT converged (slice/phase/audit) ==="
+# A review whose reviewed-sha MATCHES the tip but whose verdict is FINDINGS must block with
+# reason verdict-not-converged — never pass on the sha match alone (the not-converged branch of
+# check_scope_counts, previously untested for slice-merge / phase-merge / audit).
+read -r repo rd < <(mk_slice_findings)
+run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc  "AC-findings slice-merge FINDINGS blocked" 1 "$RC"
+                                                    assert_out "AC-findings slice-merge reason is verdict-not-converged" "verdict-not-converged"
+read -r repo rd < <(mk_phase_harden findings 1)
+run_conf "$repo" "$rd" --mode phase-merge:1;        assert_rc  "AC-findings phase-merge FINDINGS blocked" 1 "$RC"
+                                                    assert_out "AC-findings phase-merge reason is verdict-not-converged" "verdict-not-converged"
+read -r repo rd < <(mk_audit findings)
+run_conf "$repo" "$rd" --mode audit;                assert_rc  "AC-findings audit flags merged slice with FINDINGS review" 1 "$RC"
+
+echo "=== AC-audit-skip: an unreviewed slice NOT merged into the live phase is NOT flagged ==="
+# audit reports ONLY slices merged into the live phaseInt; an unreviewed sibling that the phase
+# never integrated must be SKIPPED (the 'not an ancestor' branch, previously unexercised).
+read -r repo rd < <(mk_audit not_merged)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "AC-audit-skip unmerged unreviewed slice not flagged (clean)" 0 "$RC"
+
+echo "=== AC-ship-skip: ship skips a FINDINGS phase review as a candidate R ==="
+# The only phase whose R would cover the tip with ledger-only past it is FINDINGS (skipped); the
+# CONVERGED phase's R has real code past it -> no counting review -> ship blocks.
+read -r repo rd < <(mk_ship_findings_only)
+run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC-ship-skip ship blocks when only candidate is FINDINGS" 1 "$RC"
 
 echo "=== AC5: exit-2 behavior (absent ref => git error) ==="
 read -r repo rd < <(mk_slice_clean ac5)
