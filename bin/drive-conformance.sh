@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # --- Ship-ledger allowlist: the EXACT two files SHIP commits AFTER the last review.
-#     Kept in sync with drive-ship.md (NOT the whole .harness/ dir — D12 / round-3). ---
+#     Kept in sync with drive-ship.md (NOT the whole .harness/ dir — D12). ---
 SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md")
 
 usage() {

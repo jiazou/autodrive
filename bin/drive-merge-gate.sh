@@ -51,12 +51,12 @@ CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
 
 # tokenize_cmd <string> : shell-accurate argv tokenizer for the literal command string.
 # Populates the global array `_TOKENS` with the argv git/bash WOULD see, then the four
-# parsers below `set -- "${_TOKENS[@]}"` so they all read the SAME token stream. This
-# replaces the old `set -f; set -- $CMD` whitespace word-split, which (a) split a quoted
-# path WITH A SPACE into two words (`git -C "/a b" push` → `-C` `"/a` `b"` `push`, so the
-# subcommand was misread and ship detection never ran — a silent bypass on LEGITIMATE
-# input), and (b) kept quote characters literal so `""` produced the literal token `""`
-# (resolving REPO to `$CWD/""`) instead of an empty arg (a git -C no-op).
+# parsers below `set -- "${_TOKENS[@]}"` so they all read the SAME token stream. A naive
+# whitespace word-split would be wrong two ways: (a) it splits a quoted path WITH A SPACE
+# into two words (`git -C "/a b" push` → `-C` `"/a` `b"` `push`, so the subcommand is misread
+# and ship detection never runs — a silent bypass on LEGITIMATE input), and (b) it keeps quote
+# characters literal so `""` becomes the literal token `""` (resolving REPO to `$CWD/""`)
+# instead of an empty arg (a git -C no-op). The tokenizer handles both.
 #
 # Rules (no `eval`, no command execution, no $var expansion — the gate sees the
 # PRE-expansion string by design; runtime variable refs are a documented limitation):
@@ -350,8 +350,8 @@ expand_tilde() {
 #     relative to the `-C`-established cwd. LAST `--git-dir` wins (same-axis override).
 #   - `--work-tree <p>` / `--work-tree=<p>` : PARSE-AND-DISCARD — its value is consumed so
 #     it is not mistaken for the subcommand, but it is NOT a repo-identity axis. git reads
-#     HEAD/refs from the gitdir, which `--work-tree` does NOT change (verified empirically);
-#     treating it as the target was a silent-allow bypass (codex BLOCKING R1).
+#     HEAD/refs from the gitdir, which `--work-tree` does NOT change; treating it as the repo
+#     identity would be a silent-allow bypass.
 # Identity = `--git-dir` (if set, composed onto the -C cwd) else the composed `-C` cwd
 # else empty (→ caller falls back to $CWD). Echoes an ABSOLUTE or $CWD-relative path (it
 # does NOT itself prepend $CWD — the caller's existing `case` anchors the relative branch).
@@ -668,7 +668,7 @@ managed_git_expansion_deny_git() {
   return 0
 }
 
-# gh/glab branch of the net (finding #1). $1=bin (gh|glab), $2=idx of the bin token, $3=ntok.
+# gh/glab branch of the net. $1=bin (gh|glab), $2=idx of the bin token, $3=ntok.
 # Ship detection manages `gh pr create` and `glab mr create`. If the SUBCOMMAND token (pr/mr)
 # OR the ACTION token (create) is expansion-active, the gate can't confirm the subcommand/action
 # pair from the literal string → a would-be-managed ship op it can't safely parse → DENY. Mirrors
@@ -734,7 +734,7 @@ phase_runids=""   # DISTINCT runId set across all phaseInt tokens (phase octopus
 # For an explicit `git push <remote> drive/<runId>` the source ref IS a real positional
 # argument (NOT body text), so the runId is authoritative from it. Captured here and
 # preferred over HEAD in the resolve step. Empty for gh/glab + bare/HEAD-source pushes,
-# which key from HEAD (finding #1: never from command/body tokens).
+# which key from HEAD — never from command/body tokens.
 ship_runid=""
 
 # Collect slice ids (multi-slice merge support) into a plain string (bash 3.2-safe).
@@ -829,7 +829,7 @@ phaseint_token="$(printf '%s' "$phaseint_tokens" | head -n1)"
 #   git -C ../other     push      (from a drive cwd) → evaluates the OTHER repo → inert
 #                                                       if it's not a managed drive run (correct)
 #   git --work-tree=<reviewed> push (from an unreviewed drive cwd) → identity = $CWD (the
-#                                   unreviewed drive repo) → DENY (the old bypass is closed)
+#                                   unreviewed drive repo) → DENY (--work-tree is not identity)
 REPO="$CWD"
 git_repo_opt="$(git_target_repo)"
 if [ -n "$git_repo_opt" ]; then
@@ -856,7 +856,7 @@ fi
 if [ "$gh_sub" = pr ] && [ "$(action_after gh pr)" = create ]; then is_ship=true; fi
 if [ "$glab_sub" = mr ] && [ "$(action_after glab mr)" = create ]; then is_ship=true; fi
 # A `git push` is ship when it ships the drive feature branch — decided by
-# push_ship_runid, which ERRS TOWARD GATING over arbitrary push syntax (finding #3 + #4):
+# push_ship_runid, which ERRS TOWARD GATING over arbitrary push syntax:
 #   - ANY positional refspec whose SOURCE side is drive/<runId> (scans ALL refspecs, so
 #     `git push origin main drive/<id>` is still gated — not just the 2nd word), OR
 #   - an aggregate push (`--all`/`--mirror`, which include the drive branch), OR
@@ -999,7 +999,7 @@ fi
 
 # --- resolve runId + RUN_DIR ------------------------------------------------------
 # SHIP commands (gh pr create / glab mr create / git push of the drive branch) key the
-# runId from the TARGET REPO's HEAD ONLY (finding #1) — NEVER from command/body tokens.
+# runId from the TARGET REPO's HEAD ONLY — NEVER from command/body tokens.
 # A SHIP command's only structural ref is whatever HEAD points at; a ref-shaped token in
 # the PR title/body (e.g. `--body "...slice/otherrun/4a..."`) is NOT a real positional
 # ref and must not re-key conformance to a DIFFERENT run. drive-ship runs from the ship
