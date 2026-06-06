@@ -211,7 +211,10 @@ set_argv_from_cmd() {
 #   - env `VAR=val` prefixes that precede the binary (handled by the caller, which
 #     scans for the binary first; this fn is called with the binary as $1),
 #   - global options that take a separate argument: `-C <path>`, `-c <kv>`,
-#     `-R <x>`, `--repo <x>` (consume the following word),
+#     `-R <x>`, `--repo <x>`, `--git-dir <x>`, `--work-tree <x>`, and the other
+#     separate-arg git globals `--namespace`, `--attr-source`, `--config-env`,
+#     `--super-prefix` (each consumes the FOLLOWING word in real git, so the gate must
+#     too — else the value is misread as the subcommand and every gate is bypassed),
 #   - inline global options: `--git-dir=…`, `--work-tree=…`, `--repo=…`,
 #   - generic short `-x` and long `--x` / `--x=y` flags.
 # Returns the subcommand on stdout (empty if none). bash 3.2-safe (positional args).
@@ -220,7 +223,7 @@ detect_subcommand() {
   while [ "$#" -gt 0 ]; do
     case "$1" in
       # global options that consume the NEXT word as their value:
-      -C|-c|-R|--repo|--git-dir|--work-tree)
+      -C|-c|-R|--repo|--git-dir|--work-tree|--namespace|--attr-source|--config-env|--super-prefix)
         shift; [ "$#" -gt 0 ] && shift; continue ;;
       # inline `--opt=value` (and `--opt` with no value): a single flag word.
       --*=*|--*) shift; continue ;;
@@ -379,8 +382,9 @@ git_target_repo() {
         if [ "$#" -gt 1 ]; then shift 2; else shift; fi
         continue ;;
       --work-tree=*) shift; continue ;;
-      # other global options that consume the next word:
-      -c|-R|--repo) shift; [ "$#" -gt 0 ] && shift; continue ;;
+      # other separate-arg global options that consume the next word (NOT repo-identity
+      # axes — parse-and-discard so the value is never misread as the subcommand):
+      -c|-R|--repo|--namespace|--attr-source|--config-env|--super-prefix) shift; [ "$#" -gt 0 ] && shift; continue ;;
       --*=*|--*) shift; continue ;;
       -?*) shift; continue ;;
       *) break ;;                           # subcommand reached → stop scanning options
@@ -417,7 +421,7 @@ push_ship_runid() {
   # Skip the git global-option region to reach the subcommand.
   while [ "$#" -gt 0 ]; do
     case "$1" in
-      -C|-c|-R|--repo|--git-dir|--work-tree) shift; [ "$#" -gt 0 ] && shift; continue ;;
+      -C|-c|-R|--repo|--git-dir|--work-tree|--namespace|--attr-source|--config-env|--super-prefix) shift; [ "$#" -gt 0 ] && shift; continue ;;
       --*=*|--*) shift; continue ;;
       -?*) shift; continue ;;
       *) break ;;
@@ -568,7 +572,7 @@ managed_git_expansion_deny_git() {
         # The VALUE side of an inline --opt=val: the lexer's flag covers the WHOLE token, which
         # is what we want (a `$` anywhere in `--git-dir=$x` is expansion-active).
         [ "${_TOK_EXP[$idx]}" = 1 ] && tainted=1; idx=$((idx+1)); continue ;;
-      -c|-R|--repo) idx=$((idx+2)); continue ;;
+      -c|-R|--repo|--namespace|--attr-source|--config-env|--super-prefix) idx=$((idx+2)); continue ;;
       --*=*|--*) idx=$((idx+1)); continue ;;
       -?*) idx=$((idx+1)); continue ;;
       *) sub="$cur"; sub_exp="${_TOK_EXP[$idx]}"; break ;;   # first non-flag word = subcommand
@@ -725,6 +729,8 @@ is_slice_merge=false
 is_phase_merge=false
 is_ship=false
 phase_P=""
+phase_runid=""    # structural runId from a 3-segment phaseInt/<runId>/<P> ref (body-safe)
+phase_runids=""   # DISTINCT runId set across all phaseInt tokens (phase octopus deny)
 # For an explicit `git push <remote> drive/<runId>` the source ref IS a real positional
 # argument (NOT body text), so the runId is authoritative from it. Captured here and
 # preferred over HEAD in the resolve step. Empty for gh/glab + bare/HEAD-source pushes,
@@ -778,15 +784,39 @@ if set_argv_from_cmd; then
   CMD_LEX="$(printf '%s\n' "${_TOKENS[@]}")"
 fi
 
-# Extract every slice/<runId>/<id> token (3-segment) appearing in the command.
-# Used both for matching AND for gating EACH slice in a multi-slice merge.
-slice_tokens="$(printf '%s' "$CMD_LEX" | grep -oE '(^|[^A-Za-z0-9._-])slice/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+' 2>/dev/null || true)"
+# CMD_REFS : a ref-scan view of the command that EXCLUDES the VALUE of any message/file flag
+# (`-m`/`-F`/`--message`/`--file <VALUE>` and inline `--message=`/`--file=`). A ref-shaped
+# token inside a commit/merge MESSAGE body is NOT a real ref operand git acts on, but a raw
+# grep would read it as one — letting `git merge -m "...phaseInt/bogus/1..." phaseInt/real/1`
+# re-key runId to a bogus run and silently inert the gate (and symmetrically false-trigger a
+# mode). git only ever takes the ref it integrates from a POSITIONAL, never from a -m/-F value,
+# so dropping those values can never hide a real managed ref. The slice/phaseInt greps read
+# CMD_REFS; everything else still reads CMD_LEX. bash 3.2-safe.
+CMD_REFS="$CMD_LEX"
+if [ "${#_TOKENS[@]}" -gt 0 ]; then
+  _refs="" _skipnext=0 _t=
+  for _t in "${_TOKENS[@]}"; do
+    if [ "$_skipnext" = 1 ]; then _skipnext=0; continue; fi
+    case "$_t" in
+      -m|-F|--message|--file) _skipnext=1; continue ;;   # drop this flag AND its value
+      --message=*|--file=*) continue ;;                  # inline form: drop the whole token
+      *) _refs="$_refs$_t
+" ;;
+    esac
+  done
+  CMD_REFS="$_refs"
+fi
 
-# Extract the FIRST phaseInt/... token as it appears in the command. We accept ANY
-# phaseInt/<...> arg form (not only the 3-segment phaseInt/<runId>/<P>) so the gate
-# stays correct regardless of phaseInt naming (Slice 3.1 ordering). The last path
-# segment is taken as P and passed to conformance, which keys phase-merge by P.
-phaseint_token="$(printf '%s' "$CMD_LEX" | grep -oE '(^|[^A-Za-z0-9._-])phaseInt/[A-Za-z0-9._/-]+' 2>/dev/null | head -n1 || true)"
+# Extract every slice/<runId>/<id> token (3-segment) appearing in the command (body-safe view).
+# Used both for matching AND for gating EACH slice in a multi-slice merge.
+slice_tokens="$(printf '%s' "$CMD_REFS" | grep -oE '(^|[^A-Za-z0-9._-])slice/[A-Za-z0-9._-]+/[A-Za-z0-9._-]+' 2>/dev/null || true)"
+
+# Extract phaseInt/... tokens (body-safe view). We accept ANY phaseInt/<...> arg form (not only
+# the 3-segment phaseInt/<runId>/<P>) so the gate stays correct regardless of phaseInt naming
+# (Slice 3.1 ordering). phaseint_token (the FIRST) drives P + runId derivation; phaseint_tokens
+# (ALL) feeds the multi-runId octopus deny below — symmetric with slice.
+phaseint_tokens="$(printf '%s' "$CMD_REFS" | grep -oE '(^|[^A-Za-z0-9._-])phaseInt/[A-Za-z0-9._/-]+' 2>/dev/null || true)"
+phaseint_token="$(printf '%s' "$phaseint_tokens" | head -n1)"
 
 # --- resolve the TARGET REPO (needed by ship/push classification below) -----------
 # A `git -C <path>` / `--git-dir=<path>` option names a repo-IDENTITY OTHER than $CWD;
@@ -855,8 +885,14 @@ if [ "$git_sub" = worktree ] && [ -n "$slice_tokens" ]; then
     [ -n "$st" ] || continue
     case "$st" in slice/*) ;; *) st="${st#?}" ;; esac
     r="${st#slice/}"             # <runId>/<id>
+    prid="${r%%/*}"              # <runId> (this slice token's OWN runId — structural, body-safe)
     sid="${r#*/}"                # <id> = <P>.<k>
     pdp="${sid%%.*}"             # phase P = prefix before the first '.'
+    # Track the DISTINCT runId set so runId resolution keys off the slice REF (never a
+    # whole-command scan a `-m`/`-F` message body could poison).
+    if [ -n "$prid" ]; then
+      case " $slice_runids " in (*" $prid "*) ;; (*) slice_runids="$slice_runids$prid " ;; esac
+    fi
     # An empty pdp (id like `.1`, `2.`, `..x`) skips this phase's gate — but every such id
     # is one `git check-ref-format` rejects, so `-b slice/<runId>/<id>` fails at git before
     # any branch exists (no phase work can be built through the skip). Fail-closed downstream:
@@ -879,6 +915,27 @@ if [ -n "$phaseint_token" ] && { [ "$git_sub" = branch ] || [ "$git_sub" = merge
   pt="$phaseint_token"
   case "$pt" in phaseInt/*) ;; *) pt="${pt#?}" ;; esac   # strip leading boundary char
   phase_P="${pt##*/}"            # P = final path segment of the phaseInt ref
+  # Structural runId from a 3-segment phaseInt/<runId>/<P> ref (the form /drive emits), so
+  # runId resolution keys off the phaseInt REF, not a whole-command scan a message body
+  # could poison. A 2-segment phaseInt/<P> carries no runId here (falls back below).
+  pt_rest="${pt#phaseInt/}"
+  case "$pt_rest" in */*) phase_runid="${pt_rest%%/*}" ;; esac
+  # Collect the DISTINCT runId set across ALL 3-segment phaseInt tokens, so a phaseInt-shaped
+  # decoy carrying a DIFFERENT runId (e.g. an option value `--into-name phaseInt/bogus/1`) that
+  # the body-strip does not remove cannot silently re-key runId to a non-existent run and inert
+  # the gate — it trips the multi-runId octopus DENY below, exactly as a multi-run slice merge
+  # does. /drive emits exactly one phaseInt ref, so >1 distinct runId is never a /drive op.
+  while IFS= read -r _ptok; do
+    [ -n "$_ptok" ] || continue
+    case "$_ptok" in phaseInt/*) ;; *) _ptok="${_ptok#?}" ;; esac
+    _prest="${_ptok#phaseInt/}"
+    case "$_prest" in
+      */*) _prid="${_prest%%/*}"
+           [ -n "$_prid" ] && case " $phase_runids " in (*" $_prid "*) ;; (*) phase_runids="$phase_runids$_prid " ;; esac ;;
+    esac
+  done <<EOF
+$phaseint_tokens
+EOF
 fi
 
 # --- slice-merge detection: `git merge ... slice/<runId>/<id>` (and NOT a worktree add).
@@ -922,6 +979,18 @@ if [ "$is_slice_merge" = true ]; then
   fi
 fi
 
+# Symmetric phase octopus: >1 DISTINCT phaseInt runId in one command is never a /drive op and
+# would let a decoy phaseInt ref (carrying a non-existent runId) silently inert the gate — DENY.
+if [ "$is_phase_merge" = true ]; then
+  _npr=0
+  for _rid in $phase_runids; do
+    [ -n "$_rid" ] && _npr=$((_npr+1))
+  done
+  if [ "$_npr" -gt 1 ]; then
+    emit_deny "This command references phaseInt branches from MORE THAN ONE /drive run ($phase_runids). That is not a /drive phase advance and cannot be conformance-checked as one unit — advance one run's phase at a time."
+  fi
+fi
+
 # If nothing matched, inert.
 if [ "$is_plan_gate" = false ] && [ "$is_slice_merge" = false ] \
    && [ "$is_phase_merge" = false ] && [ "$is_ship" = false ]; then
@@ -944,7 +1013,19 @@ if [ "$is_ship" = true ]; then
   else
     runId="$(drive_runid_from_head "$REPO")" || runId=""
   fi
-elif runId="$(drive_runid_from_command "$CMD_LEX")"; then
+elif [ -n "$slice_runids" ]; then
+  # plan-gate / slice-merge: key runId off the slice REF's OWN runId (a real positional
+  # the matcher already extracted), NOT a whole-command scan — so a ref-shaped token in a
+  # `-m`/`-F`/`--message` BODY (`git merge -m "...drive/x..." slice/<run>/4a`) cannot
+  # poison resolution and silently inert the gate. A multi-runId slice-merge already DENYed
+  # above; here the set is a single runId, so take the first.
+  runId="${slice_runids%% *}"
+elif [ -n "$phase_runid" ]; then
+  # phase-merge with a 3-segment phaseInt/<runId>/<P> ref → its structural runId.
+  runId="$phase_runid"
+elif runId="$(drive_runid_from_command "$CMD_REFS")"; then
+  # Fallback for forms carrying no structural runId in the matched ref (e.g. a 2-segment
+  # phaseInt/<P>). Reads the body-safe CMD_REFS so a message-body ref cannot poison it either.
   :
 else
   runId=""

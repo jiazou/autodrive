@@ -250,6 +250,28 @@ check "stock merge gate still added alongside wrapped ones" "$wrap_canon_merge" 
 wrap_canon_stop=$(jq --arg p "$STOP_GUARD" '[.hooks.Stop[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
 check "stock stop guard still added alongside substitution one" "$wrap_canon_stop" "1"
 
+# --- Idempotency for a repo path CONTAINING A SPACE (finding #4) -----------------
+# The managed-hook metachar guard treated ANY command with whitespace as NOT managed, so a
+# legitimate spaced install path (`/Users/My Name/...`, common on macOS) was never stripped
+# on re-run → each run APPENDED another gate. is_managed now also matches the EXACT current
+# path, so an exact re-run is idempotent regardless of spaces. Run the installer FROM a
+# spaced directory so its computed MERGE_GATE/STOP_GUARD paths contain a space.
+SPACED_ROOT="$WORK/sp ace root/bin"
+mkdir -p "$SPACED_ROOT"
+cp "$REPO_DIR/bin/install-drive-hooks.sh" "$REPO_DIR/bin/drive-merge-gate.sh" \
+   "$REPO_DIR/bin/drive-stop-guard.sh" "$SPACED_ROOT/" 2>/dev/null
+SPACED_SETTINGS="$WORK/spaced-settings.json"
+bash "$SPACED_ROOT/install-drive-hooks.sh" "$SPACED_SETTINGS" >/dev/null 2>&1
+sp_merge1=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-merge-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_stop1=$(jq '[.hooks.Stop[].hooks[]? | select((.command//"")|test("drive-stop-guard.sh$"))] | length' "$SPACED_SETTINGS")
+check "spaced-path install: one merge gate after run 1" "$sp_merge1" "1"
+check "spaced-path install: one stop guard after run 1" "$sp_stop1" "1"
+bash "$SPACED_ROOT/install-drive-hooks.sh" "$SPACED_SETTINGS" >/dev/null 2>&1
+sp_merge2=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-merge-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_stop2=$(jq '[.hooks.Stop[].hooks[]? | select((.command//"")|test("drive-stop-guard.sh$"))] | length' "$SPACED_SETTINGS")
+check "spaced-path install is IDEMPOTENT: still one merge gate after run 2 (no duplicate)" "$sp_merge2" "1"
+check "spaced-path install is IDEMPOTENT: still one stop guard after run 2 (no duplicate)" "$sp_stop2" "1"
+
 # --- Summary --------------------------------------------------------------
 echo "----------------------------------------"
 echo "PASS: $PASS  FAIL: $FAIL"

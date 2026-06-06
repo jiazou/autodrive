@@ -2014,6 +2014,96 @@ test_slicemerge_single_runid_multislice_not_overdenied() {
   fi
 }
 
+# --- predist-audit P1 regressions -------------------------------------------------
+# W2: git separate-arg global options (--namespace/--attr-source/--config-env/--super-prefix)
+# consume the FOLLOWING word in real git. Pre-fix, the gate misread that value as the
+# subcommand → every gate bypassed. Each form below must still DENY an unreviewed slice-merge.
+test_audit_w2_separate_arg_global_options_deny() {
+  local runid info repo out opt
+  for opt in "--namespace foo" "--attr-source HEAD" "--config-env x=Y" "--super-prefix p/"; do
+    runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; repo="${info%% *}"
+    run_gate "git $opt merge --no-ff slice/$runid/4a" "$repo"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review slice 4a'; then
+      pass "W2: 'git $opt merge slice/R/4a' still DENIES (separate-arg option not misread as subcommand)"
+    else
+      fail "W2: 'git $opt merge slice/R/4a' must DENY; got rc=$GATE_RC out='$out'"
+    fi
+  done
+}
+
+# W2 negative guard: a separate-arg global option before a NON-managed verb must stay inert
+# (no over-deny from over-consuming a word).
+test_audit_w2_nonmanaged_verb_inert() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; repo="${info%% *}"
+  run_gate "git --namespace foo status" "$repo"; out="$GATE_OUT"
+  if is_empty "$out" && [ "$GATE_RC" -eq 0 ]; then
+    pass "W2: '--namespace foo status' stays inert (no over-deny on a non-managed verb)"
+  else
+    fail "W2: separate-arg option before a non-managed verb must be inert; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# C3: slice/phase runId must come from the slice REF, never a whole-command scan. A
+# ref-shaped token in a -m/-F message BODY (`-m "...drive/<bogus>..."`) pre-fix re-keyed
+# runId to the bogus run → RUN_DIR absent → gate inert (bypass). Must still DENY.
+test_audit_c3_message_body_runid_poison_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_slice_repo "$runid" unreviewed)"; repo="${info%% *}"
+  run_gate "git merge --no-ff -m \"see drive/nonexistent-run-xyz for context\" slice/$runid/4a" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review slice 4a'; then
+    pass "C3: slice-merge with a poisoned -m message body still DENIES (runId keyed off the slice ref)"
+  else
+    fail "C3: -m body must not re-key/inert the gate; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# NOTE: `git pull <repo> slice/<id>` integration is intentionally NOT gated — see SECURITY.md
+# "alternate-verb residuals". Adding `pull` to the matchers caused codex-confirmed over-deny and
+# repo-positional misclassification (the grep-based classifier can't tell pull's repository
+# positional from a refspec), a net-negative trade reverted per OPERATING. /drive emits `git
+# merge`, never `git pull`.
+
+# codex re-review #1: phaseInt body-poison. A ref-shaped token in a -m/-F MESSAGE body
+# (`git merge -m "...phaseInt/<bogus>/1..." phaseInt/<run>/1`) must NOT re-key runId to the
+# bogus run and inert the phase-merge gate. The body-stripped ref-scan view (CMD_REFS) keeps
+# message bodies out of ref extraction, so the real (unreviewed) phaseInt still DENIES.
+mk_phaseint_repo() {
+  local runid="$1" rd repo
+  rd="$(mk_rundir "$runid")"
+  repo="$TMPROOT/$runid-repo"; _init_repo "$repo"
+  _commit "$repo" README base base >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$runid"
+  _gitc "$repo" checkout -q -b "phaseInt/$runid/1"
+  _commit "$repo" pfeat.sh "echo p" "phase 1 integration: unreviewed" >/dev/null
+  _gitc "$repo" checkout -q "drive/$runid"
+  printf '%s\n' "$repo"   # NO review-phase1 written → unreviewed
+}
+test_audit_c3_phaseint_message_body_poison_deny() {
+  local runid repo out
+  runid="$(new_runid)"; repo="$(mk_phaseint_repo "$runid")"
+  run_gate "git merge --no-ff -m \"phaseInt/bogus-run-zzz/1\" phaseInt/$runid/1" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase 1'; then
+    pass "C3(phase): phaseInt-shaped token in a -m body does not poison/inert the phase-merge gate"
+  else
+    fail "C3(phase): poisoned -m body must not inert phase-merge; got rc=$GATE_RC out='$out'"
+  fi
+}
+
+# codex re-review #2: a phaseInt decoy carrying a DIFFERENT runId in a non-message option value
+# (e.g. `--into-name phaseInt/<bogus>/1`) that the body-strip does NOT remove must not silently
+# re-key runId and inert the gate — it trips the symmetric phase multi-runId octopus DENY.
+test_audit_phaseint_multi_runid_octopus_deny() {
+  local runid repo out
+  runid="$(new_runid)"; repo="$(mk_phaseint_repo "$runid")"
+  run_gate "git merge --no-ff --into-name phaseInt/bogus-run-zzz/1 phaseInt/$runid/1" "$repo"; out="$GATE_OUT"
+  if is_deny "$out" && printf '%s' "$out" | grep -qi 'more than one'; then
+    pass "phase-octopus: a cross-run phaseInt decoy (--into-name) DENIES (not silently inert)"
+  else
+    fail "phase-octopus: cross-run phaseInt decoy must DENY; got rc=$GATE_RC out='$out'"
+  fi
+}
+
 # ---------------------------------------------------------------------------------
 main() {
   command -v jq >/dev/null 2>&1 || { echo "FAIL: jq not found"; exit 1; }
@@ -2145,6 +2235,12 @@ main() {
   test_slicemerge_multi_runid_octopus_deny
   test_slicemerge_octopus_stale_first_deny   # round3: order-independent (first RUN_DIR absent)
   test_slicemerge_single_runid_multislice_not_overdenied
+  # predist-audit P1 regressions (W2 separate-arg options, C3 -m runId poison, W3 pull)
+  test_audit_w2_separate_arg_global_options_deny
+  test_audit_w2_nonmanaged_verb_inert
+  test_audit_c3_message_body_runid_poison_deny
+  test_audit_c3_phaseint_message_body_poison_deny
+  test_audit_phaseint_multi_runid_octopus_deny
 
   echo
   echo "----------------------------------------"

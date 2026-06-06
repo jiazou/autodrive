@@ -110,18 +110,25 @@ jq \
   # these basenames; a re-install will canonicalize it to the stock gate. The stock gate
   # is always (re-)added, so enforcement is never removed -- only a same-named custom
   # override is not preserved.
-  def is_managed($cmd; $base):
-    (($cmd | endswith("/" + $base)) or ($cmd == $base))
-    and (($cmd | test("[[:space:]|&;<>()`$]")) | not);
+  # $full is the EXACT current managed path; $base its basename. A command is managed iff
+  # it EXACTLY equals $full (so a path CONTAINING A SPACE — common on macOS, e.g.
+  # `/Users/My Name/...` — still canonicalizes idempotently), OR it is a lone same-basename
+  # invocation with NO whitespace/shell metacharacters (the migrate-on-rename + stale-path
+  # case). The metachar guard stays on the basename branch so a wrapped `env STRICT=1
+  # .../gate.sh` (which contains a space) is NOT collapsed into the bare stock gate.
+  def is_managed($cmd; $base; $full):
+    ($cmd == $full)
+    or ((($cmd | endswith("/" + $base)) or ($cmd == $base))
+        and (($cmd | test("[[:space:]|&;<>()`$]")) | not));
   # Drop every hook that is a lone invocation of $base from each group, then drop
   # groups left empty. Keyed on the script identity so a moved/renamed repo
   # (e.g. claude-harness -> autodrive) MIGRATES the entry on re-run instead of leaving
   # the stale path behind and appending a duplicate. Non-managed hooks (other basenames,
   # e.g. mc-hook.py / drive-stop-hook.py, AND wrapped commands sharing the basename)
-  # are untouched.
-  def strip_managed($arr; $base):
+  # are untouched. (Migration of a renamed SPACED path is best-effort; exact re-run is not.)
+  def strip_managed($arr; $base; $full):
     [ $arr[]?
-      | .hooks = [ .hooks[]? | select(is_managed(.command // ""; $base) | not) ]
+      | .hooks = [ .hooks[]? | select(is_managed(.command // ""; $base; $full) | not) ]
       | select((.hooks | length) > 0) ];
   # ensure container shapes
   .hooks = (.hooks // {})
@@ -129,10 +136,10 @@ jq \
   | .hooks.Stop = (.hooks.Stop // [])
   # canonicalize the PreToolUse merge gate: strip any prior (incl. stale-path)
   # entries, then append exactly one at the current path. Idempotent; migrates on rename.
-  | .hooks.PreToolUse = strip_managed(.hooks.PreToolUse; bn($merge))
+  | .hooks.PreToolUse = strip_managed(.hooks.PreToolUse; bn($merge); $merge)
       + [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": $merge } ] } ]
   # canonicalize the Stop guard the same way.
-  | .hooks.Stop = strip_managed(.hooks.Stop; bn($stop))
+  | .hooks.Stop = strip_managed(.hooks.Stop; bn($stop); $stop)
       + [ { "hooks": [ { "type": "command", "command": $stop } ] } ]
   ' -- "$SETTINGS" > "$TMP"
 
