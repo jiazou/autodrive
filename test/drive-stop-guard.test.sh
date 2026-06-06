@@ -223,9 +223,8 @@ SHIM="$WORK/shim"; mkdir -p "$SHIM"
 } > "$SHIM/git"
 chmod +x "$SHIM/git"
 mkdir -p "$RUNS_ROOT/cdfailrun"   # RUN_DIR exists so drive_run_dir resolves
-# Conformance stub that would BLOCK (rc 1) if it ever ran from a good cwd — proving any
-# block in this case comes from cd failure, not a real audit verdict.
-CDFAIL_CONF_MARK="$WORK/conf-ran.mark"; rm -f "$CDFAIL_CONF_MARK"
+# `cd "$cwd"` fails (cwd is a FILE, not a dir): the guard must treat a cd failure as inert
+# (exit 0, no block), never as an audit "violation" — asserted by assert_noblock below.
 notadir="$WORK/cdfail-notadir"; printf 'x' > "$notadir"   # a file: `cd` into it fails
 
 json="$(jq -nc --arg cwd "$notadir" --argjson a false '{cwd:$cwd, stop_hook_active:$a}')"

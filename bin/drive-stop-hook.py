@@ -126,9 +126,12 @@ def main():
 
     # Positive evidence of autonomous work remaining -> block and steer the next turn.
     # The reason explicitly defers to gates/STOPs so the agent never barrels past one.
+    # `phase` is only meaningful once execution begins, so omit it for early stages rather
+    # than print a bare `phase=?` next to a real stage.
+    phase = run.get("phase")
+    loc = f"stage={run.get('stage', '?')}" + (f", phase={phase}" if phase else "")
     reason = (
-        f"/drive run {run.get('runId', '?')}: autonomous work remains "
-        f"(stage={run.get('stage', '?')}, phase={run.get('phase', '?')}). "
+        f"/drive run {run.get('runId', '?')}: autonomous work remains ({loc}). "
         "Continue the pipeline. Do NOT stop until you reach Gate A, Gate B, a "
         "non-decision STOP, an AskUserQuestion, or the PR is open (stage=done) — "
         "and set state.waiting before pausing at any of those so this turn can end."
