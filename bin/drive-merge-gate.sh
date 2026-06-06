@@ -70,33 +70,23 @@ CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // empty' 2>/dev/null || true)"
 #     backslash is literal, per POSIX). Verified empirically against bash.
 #   - a quote/escape STARTS a token even with no other chars, so `""`/`''` yield an
 #     EMPTY-STRING arg (preserved — the -C compose treats it as a no-op, per git).
-# Fail-safe: an UNTERMINATED quote is UNPARSEABLE — the real shell would reject the
-# command and git would NEVER run — so we return rc 1 and leave _TOKENS empty. Callers
-# treat that as "no recognizable command" → inert, which is safe precisely because such a
-# command cannot execute (it can't be a real bypass). (A command ending in a bare trailing
-# backslash is NOT rejected by the shell — `git push \` runs as `git push` — so it does NOT
-# fail closed here; the escape just drops the final backslash, matching bash, and any
-# residual evasion is a forgery-class residual, not an omission gap.) This is a deliberate
-# fail-CLOSED-against-misparse for the unterminated-quote case: we never emit a mis-split
-# argv that could desync the gate from git. bash 3.2-safe (char state machine; no bash-4
-# features). NOTE: this lexer resolves the LITERAL string only — it does NOT perform shell
-# EXPANSIONS ($var/$(…)/backtick/$'…'/~user/brace `{…,…}`/`{…..…}`); those are caught fail-closed downstream
-# (see has_unresolved_expansion + expand_tilde).
+# Fail-safe: an UNTERMINATED quote is unparseable — the real shell would reject the command and
+# git would never run — so we return rc 1 with _TOKENS empty; callers treat that as "no command"
+# → inert (safe: an unexecutable command can't be a bypass). A bare trailing backslash is NOT a
+# shell error (`git push \` runs as `git push`), so it does not fail closed — the escape just
+# drops the final backslash, matching bash. bash 3.2-safe (char state machine). The lexer resolves
+# the LITERAL string only; shell EXPANSIONS ($var/$(…)/backtick/$'…'/~user/brace) are caught fail-
+# closed downstream (managed_git_expansion_deny + expand_tilde).
 tokenize_cmd() {
   local s="$1" n=${#1} i=0 ch
   local state=default          # default | single | double | escape | dquote_escape
   local cur="" started=0       # `started` = the current token has begun (so "" emits empty)
-  # Per-token EXPANSION-ACTIVE flag: 1 iff THIS token carries a shell-expansion construct
-  # that bash WOULD expand from the literal string but the gate cannot reproduce — set ONLY
-  # in expansion-active contexts (unquoted or double-quoted `$`/backtick; an unquoted leading
-  # `~user`; an unquoted brace-expansion — BOTH the comma form `{…,…}` (a `,` inside an open
-  # brace) AND the range form `{…..…}` (a `..` inside an open brace; an embedded range like
-  # `pus{g..h}` / `slic{e..f}/R/4a` CAN synthesize a managed verb or ref, so it is flagged too)).
-  # NOT set inside SINGLE quotes,
-  # where `$`/backtick/`~`/`{` are all literal (so `'slice/$run/4a'` is a literal ref, not an
-  # expansion — quote context is preserved, fixing the strip-then-rescan false positive). The
-  # parallel _TOK_EXP array mirrors _TOKENS 1:1 so downstream can ask "did THIS lexed token
-  # have an unresolved expansion?" without re-scanning the quote-stripped value.
+  # Per-token EXPANSION-ACTIVE flag (parallel _TOK_EXP array, 1:1 with _TOKENS): 1 iff THIS token
+  # carries a construct bash WOULD expand but the gate can't reproduce — an unquoted/double-quoted
+  # `$`/backtick, an unquoted leading `~user`, or an unquoted brace `{,}`/`{..}` (a range like
+  # `slic{e..f}/R/4a` can synthesize a managed ref, so it is flagged too). NOT set inside single
+  # quotes, where those chars are literal (`'slice/$run/4a'` is a literal ref). Lets downstream ask
+  # "did THIS token have an unresolved expansion?" without re-scanning the quote-stripped value.
   local cur_exp=0 cur_first=1 brace_depth=0 lead_tilde=0
   _TOKENS=(); _TOK_EXP=()
   while [ "$i" -lt "$n" ]; do
@@ -496,42 +486,26 @@ is_drive_branch_ref() {
   esac
 }
 
-# managed_git_expansion_deny : rc 0 (and sets _MGED_REASON) iff $CMD is a WOULD-BE-MANAGED
-# operation whose DECISION-CRITICAL argv carries an UNRESOLVED shell-expansion construct
-# — the structural fail-closed catch-all that ends the `$'push'` / `git -C ~user/repo` /
-# `git {push,}` / `gh {pr,} create` bypass class.
+# managed_git_expansion_deny : rc 0 (sets _MGED_REASON) iff $CMD is a WOULD-BE-MANAGED op whose
+# DECISION-CRITICAL argv carries an UNRESOLVED shell-expansion construct — the structural fail-
+# closed catch-all for the `$'push'` / `git -C ~user/repo` / `git {push,}` / `gh {pr,} create`
+# bypass class. bash 3.2-safe (index-walk; no assoc arrays).
 #
-# QUOTE-AWARE: it reads the per-token expansion-active flags `_TOK_EXP[]` the lexer produces
-# (1 iff that token had a construct bash WOULD expand from the literal string — an unquoted or
-# double-quoted `$`/backtick, an unquoted brace-expansion `{…,…}` (comma) or `{…..…}` (range), or an unquoted leading
-# `~user`). A SINGLE-QUOTED `'slice/$run/4a'` or `'~root/repo'` is LITERAL → its flag is 0 →
-# NOT treated as an expansion (fixes the strip-then-rescan false positive). Resolvable forms
-# (`~/…`, bare `~`, line-continuation) are NOT flagged either.
+# Quote-aware: reads the lexer's per-token `_TOK_EXP[]` flag (1 iff the token carries a construct
+# bash WOULD expand — an unquoted/double-quoted `$`/backtick, an unquoted brace `{,}`/`{..}`, or
+# an unquoted leading `~user`). A single-quoted `'slice/$run/4a'` is literal → flag 0. Resolvable
+# forms (`~/…`, bare `~`, line-continuation) are not flagged.
 #
-# WOULD-BE-MANAGED:
-#   - START binary == git AND the subcommand is a managed verb (push|merge|branch|worktree) OR
-#     the subcommand token is ITSELF expansion-active (so a managed verb can't be ruled out —
-#     e.g. `git $'push'`, `git {push,}`); OR
-#   - START binary == gh/glab AND the subcommand (pr/mr) OR the action (create) token is
-#     expansion-active (so a managed ship verb can't be ruled out — e.g. `gh {pr,} create`,
-#     `gh pr {create,}`, `glab {mr,} create`).
-# This EXCLUDES non-managed commands (`echo $X`, `ls $HOME`) and non-managed git verbs
-# (`git commit -m "$msg"`, `git log --format=$x`, `git show slice/R/4a`) — they never qualify
-# → stay inert (a managed ref under a read-only verb is NOT a gated op, so it does not deny).
+# WOULD-BE-MANAGED: START binary git with a managed verb (push|merge|branch|worktree) OR an
+# expansion-active subcommand (the verb can't be ruled out); OR gh/glab with an expansion-active
+# subcommand (pr/mr) or action (create). Non-managed commands and read-only git verbs never
+# qualify (a managed ref under `git show` is not a gated op) → stay inert.
 #
-# DECISION-CRITICAL tokens (those the gate actually interprets for its verdict) are checked for
-# an active construct — and ONLY those, so an incidental `$`-path/value the gate IGNORES never
-# trips the net (this is what keeps /drive's OWN `git worktree add $RUN_DIR/wt/<id> -b
-# slice/<runId>/<id> <sha>` and `git merge -s $strategy slice/<runId>/4a` from being denied):
-#   - the subcommand/verb token (and, for gh/glab, the action token);
-#   - every -C/--git-dir/--work-tree repo-path VALUE (git only);
-#   - the per-verb REF/REFSPEC operand(s) ONLY — extracted exactly as the gate's own matchers
-#     read them: `push` → refspecs AFTER the remote (positional #2..); `merge` → the ref
-#     positionals (skipping `-s/-X/--strategy*/-m` VALUES); `branch` → the branch-name + start-
-#     point positionals (skipping `-u/--set-upstream-to` VALUE); `worktree add` → the `-b/-B`
-#     branch VALUE ONLY (NOT the worktree-PATH positional, NOT the start-point sha).
-# A `$` in any consumed/skipped non-critical value/path (`worktree add <path>`, `merge -s <val>`,
-# `-m <msg>`, `--push-option`) does NOT trip this. bash 3.2-safe (index-walk; no assoc arrays).
+# Only DECISION-CRITICAL tokens are checked: the verb/action, each -C/--git-dir/--work-tree value,
+# and the per-verb REF operand(s) the matchers read (see the per-verb scan below). An incidental
+# `$` the gate ignores (`worktree add <path>`, `merge -s <val>`, `-m <msg>`, `--push-option`) does
+# NOT trip the net — this keeps /drive's own `worktree add $RUN_DIR/.. -b slice/.. <sha>` and
+# `merge -s $strategy slice/..` allowed.
 _MGED_REASON=""
 _mged_reason_set() {
   _MGED_REASON="drive-merge-gate: cannot safely parse a managed command containing shell expansion (\`\$\`/backtick/\`~user\`/brace \`{…,…}\`/\`{…..…}\`); use a literal, fully-expanded form (the gate sees the pre-expansion command string by design — see docs/drive-enforcement.md)."
@@ -819,17 +793,11 @@ phaseint_tokens="$(printf '%s' "$CMD_REFS" | grep -oE '(^|[^A-Za-z0-9._-])phaseI
 phaseint_token="$(printf '%s' "$phaseint_tokens" | head -n1)"
 
 # --- resolve the TARGET REPO (needed by ship/push classification below) -----------
-# A `git -C <path>` / `--git-dir=<path>` option names a repo-IDENTITY OTHER than $CWD;
-# git reads HEAD/refs from THAT repo, so the gate must too. git_target_repo composes the
-# `-C` chain + `--git-dir` (last-wins) and echoes an absolute or $CWD-relative path;
-# `--work-tree` is EXCLUDED from identity (parsed only to consume its value — it does not
-# change which gitdir/HEAD git uses). When present, REPO = that path; else REPO = $CWD.
-# REPO is the directory used for runId-from-HEAD AND as the conformance cd target. Effect:
-#   git -C <drive_repo> push      (from outside)  → resolves the drive repo → deny if unreviewed
-#   git -C ../other     push      (from a drive cwd) → evaluates the OTHER repo → inert
-#                                                       if it's not a managed drive run (correct)
-#   git --work-tree=<reviewed> push (from an unreviewed drive cwd) → identity = $CWD (the
-#                                   unreviewed drive repo) → DENY (--work-tree is not identity)
+# A `git -C`/`--git-dir` names a repo identity OTHER than $CWD; git reads HEAD/refs from THERE, so
+# the gate must too (git_target_repo composes the -C chain + --git-dir, excluding --work-tree).
+# REPO = that path when present, else $CWD — used for runId-from-HEAD and as the conformance cd
+# target. So `git -C <drive_repo> push` from outside resolves the drive repo (deny if unreviewed);
+# `git --work-tree=<reviewed> push` from an unreviewed drive cwd keeps identity = $CWD → DENY.
 REPO="$CWD"
 git_repo_opt="$(git_target_repo)"
 if [ -n "$git_repo_opt" ]; then
@@ -855,19 +823,12 @@ fi
 # like `gh pr view --json createdAt` (action `view` → NOT ship → inert).
 if [ "$gh_sub" = pr ] && [ "$(action_after gh pr)" = create ]; then is_ship=true; fi
 if [ "$glab_sub" = mr ] && [ "$(action_after glab mr)" = create ]; then is_ship=true; fi
-# A `git push` is ship when it ships the drive feature branch — decided by
-# push_ship_runid, which ERRS TOWARD GATING over arbitrary push syntax:
-#   - ANY positional refspec whose SOURCE side is drive/<runId> (scans ALL refspecs, so
-#     `git push origin main drive/<id>` is still gated — not just the 2nd word), OR
-#   - an aggregate push (`--all`/`--mirror`, which include the drive branch), OR
-#   - a source==HEAD / bare / remote-only push while REPO's HEAD is drive/<runId>.
-# `git push origin main` (explicit non-drive target, non-drive HEAD) → inert. The
-# decision reads ONLY structural ref args + HEAD — never body/option VALUE tokens — so a
-# ref-shaped token in --body/--push-option can't re-key or fake a ship.
-# RESIDUAL (documented, see docs/drive-enforcement.md): truly exotic push forms
-# (e.g. --mirror from a non-drive HEAD, server-side refspec expansion) may slip the
-# matcher; the AUTHORITATIVE ship guarantee is the in-prose `--mode ship` conformance
-# in drive-ship.md + the single canonical push /drive actually emits.
+# A `git push` is ship when push_ship_runid says it ships the drive branch (it ERRS TOWARD GATING
+# over arbitrary push syntax — see that function; reads only structural ref args + HEAD, never
+# body/option values). `git push origin main` (non-drive target + HEAD) stays inert. RESIDUAL
+# (docs/drive-enforcement.md): exotic forms (--mirror from a non-drive HEAD, server-side refspec
+# expansion) may slip the matcher; the authoritative guarantee is drive-ship.md's in-prose
+# `--mode ship` check + the single canonical push /drive emits.
 if [ "$git_sub" = push ]; then
   if psr="$(push_ship_runid)"; then
     is_ship=true
@@ -1038,23 +999,15 @@ if ! RUN_DIR="$(drive_run_dir "$runId")"; then
 fi
 
 # --- run conformance for the matched mode -----------------------------------------
-# run_conformance <mode-arg> : runs the checker from $REPO and returns a NORMALIZED rc
-# (D4). We must distinguish three things the raw exit code conflates:
-#   - a real conformance verdict (0 clean / 1 violation / 2 git-IO error),
-#   - a broken checker (missing/non-exec → 126/127),
-#   - a `cd "$REPO"` failure (e.g. repo dir was deleted), which must NOT masquerade as
-#     a conformance verdict (a bare `cd` failure yields rc 1 ≡ "violation", which would
-#     wrongly DENY the mid-build gates).
-# Normalized rc contract:
-#   0 = clean | 1 = violation | 9 = abnormal (checker broken, cd-fail, or any other rc)
-# Callers map 9 per-mode (NOT a single blanket rule): the run-boundary gates (plan/ship)
-# treat 9 as fail-CLOSED (deny), and so does the mid-build impl-presence (TEST-presence)
-# check — it has no ship backstop, so its irreversible boundary must fail closed (Item C /
-# Decision C3). The mid-build REVIEW gates (slice-merge review + phase-merge) treat 9 as
-# fail-OPEN (silent), because the ship gate is their fail-closed backstop. 2 is folded into
-# 9 (D4 treats exit-2 and the other abnormal rcs identically within each gate's posture).
-# Run from $REPO (the git -C / --git-dir / --work-tree target, else $CWD) so
-# conformance's bare-`git` ref lookups resolve against the repo git actually operates on.
+# run_conformance <mode-arg> : run the checker from $REPO and return a NORMALIZED rc (D4),
+# disentangling three things the raw exit code conflates: a real verdict (0 clean / 1 violation /
+# 2 git-IO error), a broken checker (126/127), and a `cd "$REPO"` failure (which yields rc 1 ≡
+# "violation" and would wrongly DENY the mid-build gates).
+# Normalized contract: 0 = clean | 1 = violation | 9 = abnormal (broken checker, cd-fail, exit 2,
+# or any other rc). Callers map 9 per-mode (per-gate posture in the file header): run-boundary
+# gates (plan/ship) and impl-presence fail CLOSED on 9; the mid-build REVIEW gates fail OPEN (the
+# ship gate backstops them). Run from $REPO so conformance's bare-`git` lookups resolve against
+# the repo git actually operates on.
 run_conformance() {
   # Verify the checker is present + executable up front; otherwise it's "abnormal".
   [ -x "$CONFORMANCE" ] || return 9
@@ -1091,27 +1044,16 @@ if [ "$is_plan_gate" = true ]; then
 fi
 
 if [ "$is_slice_merge" = true ]; then
-  # NOTE: the MULTI-runId octopus fail-closed DENY is handled EARLIER (before single-runId
-  # resolution / RUN_DIR lookup) so a stale first-runId with an absent RUN_DIR can't `exit 0`
-  # inert and bypass it. By here the slice tokens are guaranteed single-runId.
-  # The slice-merge boundary runs TWO conformance checks per slice id, with a DELIBERATE,
-  # DOCUMENTED POSTURE ASYMMETRY (design Item C / Decision C3) justified by their different
-  # backstops:
-  #   1. slice-merge:<id>  (REVIEW presence)       — fail-OPEN. The ship gate is its
-  #      fail-closed backstop (ship re-checks review ancestry against the shipped tip), so an
-  #      abnormal rc 9 here can silently allow now and still be caught at ship. DENY only on
-  #      rc 1 (true violation); rc 9 (error / broken checker / cd-fail) → silent allow.
-  #   2. impl-presence:<id> (TEST presence)         — fail-CLOSED. There is NO ship backstop
-  #      for test-presence (ship mode never re-derives per-slice test presence — the merged
-  #      featureBranch has lost per-slice identity). The slice-merge is therefore the
-  #      IRREVERSIBLE boundary for this invariant and must fail closed here (OPERATING: "place
-  #      the hard gate at the irreversible boundary, failing closed"): BOTH rc 1 (violation:
-  #      no test + no waiver) AND rc 9 (abnormal: missing/corrupt drive/<runId> or slice ref)
-  #      → DENY. A fail-OPEN impl-presence would let an rc-2/abnormal silently allow a no-test
-  #      merge with nothing catching it later, defeating the very invariant.
-  # NOTE: runtime-variable slice refs in $CMD (e.g. `git merge "slice/$v/$id"`) cannot be
-  # expanded by the hook from the literal command, so such merges don't reach this gate at all
-  # (no parseable slice token) — backstopped by the ship gate + the drive.md literal-ref note.
+  # The MULTI-runId octopus DENY already fired earlier (before RUN_DIR lookup), so the slice
+  # tokens here are single-runId. The slice-merge boundary runs TWO conformance checks per slice
+  # id with a deliberate posture asymmetry (Item C / Decision C3), justified by their backstops:
+  #   1. slice-merge:<id> (REVIEW presence)  — fail-OPEN: DENY on rc 1 only; rc 9 → silent allow,
+  #      because the ship gate re-checks review ancestry against the shipped tip and catches it.
+  #   2. impl-presence:<id> (TEST presence)  — fail-CLOSED: DENY on rc 1 AND rc 9. Ship NEVER
+  #      re-derives per-slice test presence (the merged featureBranch lost per-slice identity), so
+  #      this is the irreversible boundary for the invariant and must block on abnormal too.
+  # A runtime-variable slice ref (`git merge "slice/$v/$id"`) leaves no parseable token, so such
+  # merges don't reach this gate — backstopped by the ship gate + drive.md's literal-ref note.
   for sid in $slice_ids; do
     [ -n "$sid" ] || continue
     # (1) REVIEW presence — fail-OPEN (rc 1 → DENY; rc 9 → silent).

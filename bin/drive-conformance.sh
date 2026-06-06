@@ -275,16 +275,12 @@ case "$MODE_ARG" in
     base="$(git_or_die merge-base "$ref" "$featureBranch")"   # rc>=1 → exit 2 (no silent empty)
     [ -n "$base" ] || { echo "error: empty merge-base for $ref..$featureBranch" >&2; exit 2; }
 
-    # test? — ANY NON-DELETION change to a runnable test path in base..tip matches the
-    # runner-anchored predicate. `--diff-filter=d` (lowercase d = EXCLUDE deletions) so a
-    # DELETED test path (D) does NOT count as test evidence — deleting tests/test_auth.py
-    # must NOT satisfy the invariant — while ADD (A), MODIFY (M), RENAME (R), COPY (C), and
-    # TYPE-CHANGE (T) all DO count. Uppercase `AM` would over-block: git classes a renamed or
-    # copied test as R/C (and a type-change as T), so `AM` false-DENIES a slice that adds
-    # coverage by renaming/copying a file INTO a runnable test path. With `--name-only`, a
-    # rename prints only the DESTINATION path, so a rename AWAY from a test path (test → docs)
-    # prints the non-runnable dest and is correctly NOT counted (the test was removed); a
-    # rename INTO a test path prints the runnable dest and IS counted.
+    # test? — ANY NON-DELETION change to a runnable test path in base..tip. `--diff-filter=d`
+    # (lowercase = EXCLUDE deletions) so a DELETED test path does NOT count (deleting
+    # tests/test_auth.py must not satisfy the invariant), while A/M/R/C/T all do. Uppercase `AM`
+    # would over-block: git classes a renamed/copied test as R/C, so it would false-DENY a slice
+    # that adds coverage by renaming a file INTO a test path. With `--name-only` a rename prints
+    # only the DESTINATION, so a rename AWAY from a test path is not counted, a rename INTO one is.
     changed="$(git_or_die diff --diff-filter=d --name-only "$base..$tip")"
     has_test=false
     while IFS= read -r path; do
