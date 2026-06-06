@@ -222,6 +222,24 @@ mk_phasedesign() {
 }
 
 # Ship fixtures. featureBranch = drive/<runId>. A phase review with reviewed-sha=R, then
+# W1 regression fixture: featureBranch at tip R, but the RUN_DIR holds ONLY a per-phase
+# DESIGN review (review-phasedesign1-1.md) carrying a reviewed-sha + its codex sibling, and
+# NO phase-INTEGRATION review (review-phase1-N.md). Pre-fix the ship glob `review-phase*-*.md`
+# matched the phasedesign file and trusted its reviewed-sha → clean ship with zero integration
+# review. Post-fix the ship loop excludes phasedesign* → exit 1 (no counting review).
+mk_ship_phasedesign_only() {
+  local name="${1:-ship-phasedesignonly}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$name"
+  local R; R="$(_commit "$repo" "feature.sh" "echo phase1" "phase 1 code")"
+  _write_review "$rd" phasedesign1 1 "$R"   # design review (against convention) carrying a sha
+  _write_codex "$rd" phasedesign1
+  # Deliberately NO review-phase1-*.md integration review.
+  echo "$repo $rd"
+}
+
 # one ledger-only commit advances tip.
 # variant: clean | code_past_r | other_harness_past_r | two_ledger_commits
 mk_ship() {

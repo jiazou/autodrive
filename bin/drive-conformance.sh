@@ -77,9 +77,9 @@ highest_review_file() {
 codex_present() {
   local scope="$1"
   local f="$RUN_DIR/codex-review-$scope.md"
-  [ -f "$f" ] || return 1
-  [ -s "$f" ] || return 1           # empty file does NOT satisfy
-  # Any non-empty content satisfies (real review OR CODEX_UNAVAILABLE note); not inspected.
+  # Must exist and be non-empty; content is not inspected (real review OR a CODEX_UNAVAILABLE
+  # note both satisfy). `-s` already implies existence, so no separate `-f` test is needed.
+  [ -s "$f" ] || return 1
   return 0
 }
 
@@ -91,6 +91,9 @@ reviewed_sha_of() {
   line="${line#reviewed-sha:}"
   # trim whitespace
   line="${line//[[:space:]]/}"
+  # Lowercase: the regex tolerates uppercase hex but git tips are always lowercase, so an
+  # otherwise-correct review written with an uppercase sha would spuriously sha-mismatch.
+  line="$(printf '%s' "$line" | tr 'A-F' 'a-f')"
   printf '%s\n' "$line"
 }
 
@@ -328,6 +331,11 @@ EOF
       base="${f##*/}"                       # review-phase<P>-<N>.md
       rest="${base#review-}"                # phase<P>-<N>.md
       scope="${rest%-*.md}"                 # phase<P>
+      # The `review-phase*-*.md` glob ALSO matches `review-phasedesign<P>-N.md` (a per-phase
+      # DESIGN-DOC review). A design review must NEVER count as the phase-INTEGRATION code
+      # review at ship — exclude it explicitly so the ship gate does not silently depend on
+      # the convention that phasedesign reviews omit `reviewed-sha`.
+      case "$scope" in phasedesign*) continue;; esac
       case "$seen_phase" in (*" $scope "*) continue;; esac
       seen_phase="$seen_phase$scope "
       rf="$(highest_review_file "$scope")" || continue
@@ -403,17 +411,18 @@ EOF
     # --is-ancestor` nonzero=1 stays a legitimate "not merged in" verdict (skip);
     # only rc>1 is a true error → exit 2.
     #
-    # Find the highest live phaseInt/<runId>/<P>.
+    # Find the highest live phaseInt/<runId>/<P>. P may be non-integer (e.g. a slice id like
+    # `4a` whose phase prefix is `4a`), so select by VERSION sort of the last ref segment
+    # rather than an integer `-gt` that a numeric-only filter would silently drop.
     live_P=""; live_ref=""
     phase_refs="$(git_or_die for-each-ref --format='%(refname:short)' "refs/heads/phaseInt/$runId/")"
-    while IFS= read -r ref; do
-      [ -n "$ref" ] || continue
-      p="${ref##*/}"
-      case "$p" in (*[!0-9]*|'') continue;; esac
-      if [ -z "$live_P" ] || [ "$p" -gt "$live_P" ]; then live_P="$p"; live_ref="$ref"; fi
-    done <<EOF
-$phase_refs
-EOF
+    # Guard the empty case explicitly (no live phaseInt → clean): piping empty through `grep`
+    # would return 1 and trip `set -o pipefail`/`set -e`. for-each-ref output carries no blank
+    # lines, so a plain version-sort of the non-empty list suffices.
+    if [ -n "$phase_refs" ]; then
+      live_ref="$(printf '%s\n' "$phase_refs" | sort -t/ -k3 -V | tail -n1)"
+      live_P="${live_ref##*/}"
+    fi
 
     if [ -z "$live_ref" ]; then
       emit true "audit" "" "[]"

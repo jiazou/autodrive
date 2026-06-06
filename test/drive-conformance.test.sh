@@ -108,6 +108,10 @@ echo "=== AC4b: multi-phase existential R (no highest-N false-block) ==="
 read -r repo rd < <(mk_ship_multiphase)
 run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4b multi-phase existential picks phase2 R (clean)" 0 "$RC"
 
+echo "=== W1(audit): ship must NOT count a phasedesign DESIGN review as the integration review ==="
+read -r repo rd < <(mk_ship_phasedesign_only)
+run_conf "$repo" "$rd" --mode ship;                 assert_rc "W1 ship blocks when only a review-phasedesign<P> (with sha) exists, no integration review" 1 "$RC"
+
 echo "=== AC4c: HARDEN->advance consumes post-harden review ==="
 read -r repo rd < <(mk_phase_harden post_harden_ok 1)
 run_conf "$repo" "$rd" --mode phase-merge:1;        assert_rc "AC4c phase-merge post-harden review matches tip" 0 "$RC"
