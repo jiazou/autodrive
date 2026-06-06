@@ -241,7 +241,15 @@ def short(sid):
 
 
 def home_rel(path):
-    return path.replace(HOME, "~") if path else "?"
+    if not path:
+        return "?"
+    # Replace ONLY a leading $HOME prefix (str.replace would mangle a path that contains
+    # $HOME more than once, e.g. a worktree path nested under another home-rooted dir).
+    if path == HOME:
+        return "~"
+    if path.startswith(HOME + "/"):
+        return "~/" + path[len(HOME) + 1:]
+    return path
 
 
 # status -> a glyph that reads at a glance; "waiting on me" is what matters most

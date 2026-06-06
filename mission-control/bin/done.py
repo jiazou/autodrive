@@ -36,7 +36,9 @@ import vault_tasks
 # as "no frontmatter".
 FM_RE = re.compile(r"^(\ufeff?---\r?\n)(.*?)(\r?\n---\r?\n?)", re.DOTALL)
 # Bounded '## Log' section: heading line + body up to the next '## ' heading or EOF.
-LOG_SECTION_RE = re.compile(r"(^##\s+Log\s*\n)(.*?)(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
+# The trailing newline is OPTIONAL so a `## Log` heading on the file's FINAL line (no
+# trailing newline — common for editor-saved notes) is still matched, not duplicated.
+LOG_SECTION_RE = re.compile(r"(^##\s+Log[ \t]*\r?\n?)(.*?)(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
 
 
 def _resolve(slug):
@@ -83,8 +85,12 @@ def _append_log(text, line):
     bullet = f"- {date.today().isoformat()} — {line}"
     m = LOG_SECTION_RE.search(text)
     if m:
+        # Normalize the heading to end with a newline: when `## Log` was the file's final
+        # line with no trailing newline, group(1) has none, and concatenating the bullet
+        # would yield `## Log- …` on one line.
+        head = m.group(1) if m.group(1).endswith("\n") else m.group(1) + "\n"
         body = m.group(2).rstrip("\n")
-        new_section = m.group(1) + (body + "\n" if body else "") + bullet + "\n"
+        new_section = head + (body + "\n" if body else "") + bullet + "\n"
         return text[:m.start()] + new_section + text[m.end():]
     sep = "" if text.endswith("\n") else "\n"
     return f"{text}{sep}\n## Log\n{bullet}\n"

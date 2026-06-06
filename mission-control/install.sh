@@ -23,9 +23,17 @@ rm -rf "$DATA/bin/__pycache__"
 # runtime; this file is the fallback vault_tasks.py reads.)
 CFG="$DATA/config"
 if [ -n "${MC_VAULT:-}" ] || [ -n "${MC_VAULT_NAME:-}" ]; then
+  # Carry forward a previously-persisted value when its env var is UNSET this run, so a
+  # re-run with only one of the two vars set does not silently drop the other.
+  old_vault="" old_vault_name=""
+  if [ -f "$CFG" ]; then
+    old_vault="$(sed -n 's/^MC_VAULT=//p' "$CFG" | head -n1)"
+    old_vault_name="$(sed -n 's/^MC_VAULT_NAME=//p' "$CFG" | head -n1)"
+  fi
+  v="${MC_VAULT:-$old_vault}"; vn="${MC_VAULT_NAME:-$old_vault_name}"
   : > "$CFG"
-  [ -n "${MC_VAULT:-}" ]      && printf 'MC_VAULT=%s\n'      "$MC_VAULT"      >> "$CFG"
-  [ -n "${MC_VAULT_NAME:-}" ] && printf 'MC_VAULT_NAME=%s\n' "$MC_VAULT_NAME" >> "$CFG"
+  [ -n "$v" ]  && printf 'MC_VAULT=%s\n'      "$v"  >> "$CFG"
+  [ -n "$vn" ] && printf 'MC_VAULT_NAME=%s\n' "$vn" >> "$CFG"
   echo "  wrote vault config → $CFG"
 elif [ -f "$CFG" ]; then
   echo "  kept existing vault config → $CFG"
