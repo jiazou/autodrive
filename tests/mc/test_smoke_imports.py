@@ -15,10 +15,13 @@ def test_all_modules_import(mc_env):
     is a Phase-3 subprocess target, not a reload-able logic module.
     """
     for attr in MODULE_ATTRS:
-        assert getattr(mc_env, attr) is not None, f"{attr} reloaded to None"
-    # 7 distinct module objects expected.
-    mods = {getattr(mc_env, a) for a in MODULE_ATTRS}
-    assert len(mods) == len(MODULE_ATTRS)
+        mod = getattr(mc_env, attr)
+        assert mod is not None, f"{attr} reloaded to None"
+        # Bite harder than a bare distinctness count: each slot must hold the module it
+        # NAMES (mc_env.harvest.__name__ == 'harvest'), so a mis-wired reload that points
+        # `done` at, say, the `weekly` module is caught — a count of 7 distinct objects
+        # would stay green for the wrong reason.
+        assert mod.__name__ == attr, f"mc_env.{attr} holds module {mod.__name__!r}"
 
 
 def _reload_chain_under(home, monkeypatch):

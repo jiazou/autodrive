@@ -52,6 +52,13 @@ criterion and **run the slice-local tests** until green. If a review exists, fix
 every P1 (BLOCKING/MAJOR) from BOTH the review and codex files. **Commit your work
 to the slice branch** (`git add -A && git commit`) before returning.
 
+**Test-presence is ENFORCED (fail-closed) at the slice merge.** The slice's diff MUST
+add/modify a runnable test path — `test/<name>.test.sh` (bash-suite root, one segment) OR a
+path under `tests/` whose basename is `test_*.py` / `*_test.py` (NOT under `fixtures/`, NOT
+`conftest.py`/`_helpers.py`, NOT a dotfile). If this slice legitimately cannot add a runnable
+test, add a real `Drive-Test-Waiver: <reason>` git trailer to a slice-branch commit. A slice
+with neither is DENIED at merge — the gate cannot be skipped by omission.
+
 Decision protocol (overrides "ask the human") — apply the 6 Decision Principles
 (see the harness `CLAUDE.md`). Decide implementation details per conventions; don't return
 questions for normal choices. Flag spec deviations in your return note + append to

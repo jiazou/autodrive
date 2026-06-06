@@ -77,6 +77,12 @@ actually produces. They are documented in full in `docs/drive-enforcement.md`.
 - **`$GIT_DIR` / `$GIT_WORK_TREE` env repo-targeting.** The gate parses the command
   string and does not honor these env vars (which `/drive` never sets). A command that
   retargets git purely via them is out of scope.
+- **Ref-retargeting global options (`--namespace` / `--config-env`).** The gate now parses
+  these separate-arg git globals so they no longer mis-shift the subcommand (closing that
+  bypass), but it does not model their *semantic* effect on which refs git resolves (a
+  namespace / config-injected ref view). Local HEAD and branch resolution — what the gate
+  actually keys on — are unaffected by them, so no live bypass reproduces; deeper
+  namespace-retargeting is the same out-of-scope class as the env vars above.
 - **Runtime-variable refs in mid-build review gates.** The mid-build per-unit review gates
   (slice-merge / phase-merge) fail **open** by design, so a runtime-variable ref
   (`git merge "$ref"`) in a non-managed-verb position is parsed with the literal token,
@@ -86,6 +92,28 @@ actually produces. They are documented in full in `docs/drive-enforcement.md`.
   (`-b slice/<id>`) and `=` (`-b=slice/<id>`) forms `/drive` emits, not the attached form
   (`-bslice/<id>` as one token). A precise parser was omitted because it introduced
   wrong-review and over-deny regressions.
+- **Wrapper-command prefixes (`command` / `env`).** The gate keys off the START binary
+  being literally `git`/`gh`/`glab` (after skipping `NAME=val` env-assignment prefixes), so
+  `command git push` or `env GIT_TRACE=1 git push` runs git but the gate sees the binary as
+  `command`/`env` and goes inert. `/drive` always emits a bare `git …`; resolving arbitrary
+  wrapper indirection (`env` has its own option grammar) is the same indirection-resolution
+  class as `$var` → component D.
+- **Inline git aliases (`git -c alias.X=<verb> X`).** `git -c alias.p=push p` defines and
+  runs a push, but the gate sees the subcommand token `p`, not a managed verb. Recognising it
+  requires resolving the alias the command itself defines — arbitrary config/alias resolution,
+  out of scope (→ component D). `/drive` never defines inline aliases.
+- **Alternate integration verbs (`git pull` / `git rebase` / `git cherry-pick`).** The gate
+  manages `git merge` / `git branch -f` (the forms `/drive` emits) but not other ways to
+  integrate a ref. `git pull <repo> slice/<run>/<id>` merges a slice without a gate. Adding
+  `pull` was tried and reverted: its `<repository>` positional is indistinguishable from a
+  refspec to the gate's classifier, which produced both a new bypass and an over-deny on normal
+  `git pull "$remote" main` — a net-negative trade. `/drive` always integrates via `git merge`.
+- **Decoy refs in non-message option values.** Ref extraction is a lexical scan of the command;
+  it strips the values of message flags (`-m`/`-F`/`--message`/`--file`), where a ref-shaped
+  token can appear *incidentally*, but not the values of every option. A *deliberate* decoy in a
+  rare structured option value (e.g. `git merge --into-name phaseInt/<bogus>/1 …`) is forgery-
+  class. The multi-runId **octopus deny** still fail-closes a decoy that names a *different* run
+  (slice and phaseInt alike); a same-run decoy with a wrong phase id is an over-gate at worst.
 - **Pathologically escaped/quoted brace-range dot pair.** The range detector keys on two
   consecutive unquoted dots; an escaped pair like `{1\..2}` (which bash leaves literal)
   may be over-DENIED. This is an over-deny in the *safe* direction on a token `/drive`

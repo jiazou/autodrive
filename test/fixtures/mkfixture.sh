@@ -156,6 +156,20 @@ mk_slice_no_codex() {
   echo "$repo $rd"
 }
 
+# slice with a FINDINGS (NOT converged) review whose reviewed-sha MATCHES the tip + codex
+# present: must return verdict-not-converged, never pass on the sha match alone.
+mk_slice_findings() {
+  local name="${1:-slice-findings}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "slice/$name/4a"
+  local tip; tip="$(_commit "$repo" "feature.sh" "echo hi" "slice 4a work")"
+  _write_review_findings "$rd" "4a" 1 "$tip"
+  _write_codex "$rd" "4a"
+  echo "$repo $rd"
+}
+
 # plan-gate fixtures. RUN_DIR holds review-design-N.md + codex-review-design.md.
 # variant: clean | findings | nodesign | nocodex | codex_unavailable | codex_buried | codex_empty
 mk_plan() {
@@ -222,6 +236,24 @@ mk_phasedesign() {
 }
 
 # Ship fixtures. featureBranch = drive/<runId>. A phase review with reviewed-sha=R, then
+# W1 regression fixture: featureBranch at tip R, but the RUN_DIR holds ONLY a per-phase
+# DESIGN review (review-phasedesign1-1.md) carrying a reviewed-sha + its codex sibling, and
+# NO phase-INTEGRATION review (review-phase1-N.md). Pre-fix the ship glob `review-phase*-*.md`
+# matched the phasedesign file and trusted its reviewed-sha → clean ship with zero integration
+# review. Post-fix the ship loop excludes phasedesign* → exit 1 (no counting review).
+mk_ship_phasedesign_only() {
+  local name="${1:-ship-phasedesignonly}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$name"
+  local R; R="$(_commit "$repo" "feature.sh" "echo phase1" "phase 1 code")"
+  _write_review "$rd" phasedesign1 1 "$R"   # design review (against convention) carrying a sha
+  _write_codex "$rd" phasedesign1
+  # Deliberately NO review-phase1-*.md integration review.
+  echo "$repo $rd"
+}
+
 # one ledger-only commit advances tip.
 # variant: clean | code_past_r | other_harness_past_r | two_ledger_commits
 mk_ship() {
@@ -282,6 +314,28 @@ mk_ship_multiphase() {
   echo "$repo $rd"
 }
 
+# ship where the only phase review whose R would satisfy (a)(b)(c) is FINDINGS (skipped as a
+# candidate): phase1 is CONVERGED at R1 but R1..tip carries phase-2 CODE (not ledger-only), and
+# phase2 is FINDINGS (not a candidate). So no counting review covers the tip -> ship exit 1.
+mk_ship_findings_only() {
+  local name="${1:-ship-findings-only}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$name"
+  local R1; R1="$(_commit "$repo" "p1.sh" "echo p1" "phase 1 code")"
+  local R2; R2="$(_commit "$repo" "p2.sh" "echo p2" "phase 2 code")"
+  _write_review "$rd" phase1 1 "$R1"            # CONVERGED, but R1..tip has phase-2 code
+  _write_codex "$rd" phase1
+  _write_review_findings "$rd" phase2 1 "$R2"   # FINDINGS -> skipped, never a candidate
+  _write_codex "$rd" phase2
+  mkdir -p "$repo/.harness"
+  printf 'd\n' > "$repo/.harness/decisions.md"
+  printf 'f\n' > "$repo/.harness/followups.md"
+  _gitc "$repo" add -A; _gitc "$repo" commit -q -m "ledger"
+  echo "$repo $rd"
+}
+
 # HARDEN->advance (AC4c). phaseInt/<runId>/<P> advanced by a harden commit AFTER the
 # integration review. The post-harden review-phase<P> (higher N) is bound to the
 # post-harden tip; the pre-harden one is stale.
@@ -301,6 +355,8 @@ mk_phase_harden() {
       _write_review "$rd" "phase$P" 2 "$post" ;; # post-harden regress review (highest-N, matches tip)
     stale_only)
       _write_review "$rd" "phase$P" 1 "$pre" ;;  # only the stale review; tip is post
+    findings)
+      _write_review_findings "$rd" "phase$P" 1 "$post" ;;  # sha matches tip but FINDINGS -> not converged
   esac
   echo "$repo $rd"
 }
@@ -321,6 +377,14 @@ mk_audit() {
   case "$variant" in
     reviewed)   _write_review "$rd" "4a" 1 "$stip" ;;
     unreviewed) : ;;   # no review-4a-*.md -> audit must flag it
+    findings)   _write_review_findings "$rd" "4a" 1 "$stip" ;;   # merged slice, FINDINGS review -> flag
+    not_merged)
+      # 4a is reviewed+merged (won't flag); add an unreviewed slice/4b cut from base that is
+      # NOT an ancestor of phaseInt -> audit must SKIP it (only flags merged-but-unreviewed).
+      _write_review "$rd" "4a" 1 "$stip"
+      _gitc "$repo" checkout -q -b "slice/$name/4b" main
+      _commit "$repo" "f4b.sh" "echo 4b" "slice 4b unreviewed, NOT merged into phaseInt" >/dev/null
+      _gitc "$repo" checkout -q "phaseInt/$name/$P" ;;
   esac
   echo "$repo $rd"
 }

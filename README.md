@@ -205,7 +205,7 @@ Python, so each is tested by its native runner; they are **not** merged.
 
 | Suite | Dir | Language / runner | Covers |
 | --- | --- | --- | --- |
-| Bash | `test/` (singular) | `bash` per `*.test.sh` | The `/drive` coordinator gates (`drive-conformance.sh`, `drive-merge-gate.sh`, `drive-hook-lib.sh`, `drive-stop-guard.sh`, the installers, and the e2e enforcement test) |
+| Bash | `test/` (singular) | `bash` per `*.test.sh` | The `/drive` coordinator gates (`drive-conformance.sh`, `drive-merge-gate.sh`, `drive-hook-lib.sh`, `drive-stop-guard.sh`, the hooks installer `install-drive-hooks.sh`, and the e2e enforcement test) |
 | Pytest | `tests/` (plural) | `python3 -m pytest` (`testpaths = ["tests"]` in `pyproject.toml`) | Mission Control, Python hooks, installers, and contract tests |
 
 **Run the pytest suite:**

@@ -79,6 +79,7 @@ if [ -d "$SKILLS_SRC" ]; then
   mkdir -p "$SKILLS_DST"
   BK="$HOME/.claude/skill-backups"   # OUTSIDE skills/, so a backup is never re-registered as a skill
   for s in "$SKILLS_SRC"/*/; do
+    [ -d "$s" ] || continue          # empty skills/ → glob stays literal; skip (no dangling `*` link)
     s="${s%/}"; name="$(basename "$s")"; target="$SKILLS_DST/$name"
     if [ -e "$target" ] && [ ! -L "$target" ]; then
       mkdir -p "$BK"; mv "$target" "$BK/$name.$(date +%Y%m%d-%H%M%S)"

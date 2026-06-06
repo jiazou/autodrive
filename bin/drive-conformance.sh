@@ -22,7 +22,7 @@
 set -euo pipefail
 
 # --- Ship-ledger allowlist: the EXACT two files SHIP commits AFTER the last review.
-#     Kept in sync with drive-ship.md (NOT the whole .harness/ dir — D12 / round-3). ---
+#     Kept in sync with drive-ship.md (NOT the whole .harness/ dir — D12). ---
 SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md")
 
 usage() {
@@ -77,9 +77,9 @@ highest_review_file() {
 codex_present() {
   local scope="$1"
   local f="$RUN_DIR/codex-review-$scope.md"
-  [ -f "$f" ] || return 1
-  [ -s "$f" ] || return 1           # empty file does NOT satisfy
-  # Any non-empty content satisfies (real review OR CODEX_UNAVAILABLE note); not inspected.
+  # Must exist and be non-empty; content is not inspected (real review OR a CODEX_UNAVAILABLE
+  # note both satisfy). `-s` already implies existence, so no separate `-f` test is needed.
+  [ -s "$f" ] || return 1
   return 0
 }
 
@@ -91,6 +91,9 @@ reviewed_sha_of() {
   line="${line#reviewed-sha:}"
   # trim whitespace
   line="${line//[[:space:]]/}"
+  # Lowercase: the regex tolerates uppercase hex but git tips are always lowercase, so an
+  # otherwise-correct review written with an uppercase sha would spuriously sha-mismatch.
+  line="$(printf '%s' "$line" | tr 'A-F' 'a-f')"
   printf '%s\n' "$line"
 }
 
@@ -272,16 +275,12 @@ case "$MODE_ARG" in
     base="$(git_or_die merge-base "$ref" "$featureBranch")"   # rc>=1 → exit 2 (no silent empty)
     [ -n "$base" ] || { echo "error: empty merge-base for $ref..$featureBranch" >&2; exit 2; }
 
-    # test? — ANY NON-DELETION change to a runnable test path in base..tip matches the
-    # runner-anchored predicate. `--diff-filter=d` (lowercase d = EXCLUDE deletions) so a
-    # DELETED test path (D) does NOT count as test evidence — deleting tests/test_auth.py
-    # must NOT satisfy the invariant — while ADD (A), MODIFY (M), RENAME (R), COPY (C), and
-    # TYPE-CHANGE (T) all DO count. Uppercase `AM` would over-block: git classes a renamed or
-    # copied test as R/C (and a type-change as T), so `AM` false-DENIES a slice that adds
-    # coverage by renaming/copying a file INTO a runnable test path. With `--name-only`, a
-    # rename prints only the DESTINATION path, so a rename AWAY from a test path (test → docs)
-    # prints the non-runnable dest and is correctly NOT counted (the test was removed); a
-    # rename INTO a test path prints the runnable dest and IS counted.
+    # test? — ANY NON-DELETION change to a runnable test path in base..tip. `--diff-filter=d`
+    # (lowercase = EXCLUDE deletions) so a DELETED test path does NOT count (deleting
+    # tests/test_auth.py must not satisfy the invariant), while A/M/R/C/T all do. Uppercase `AM`
+    # would over-block: git classes a renamed/copied test as R/C, so it would false-DENY a slice
+    # that adds coverage by renaming a file INTO a test path. With `--name-only` a rename prints
+    # only the DESTINATION, so a rename AWAY from a test path is not counted, a rename INTO one is.
     changed="$(git_or_die diff --diff-filter=d --name-only "$base..$tip")"
     has_test=false
     while IFS= read -r path; do
@@ -328,6 +327,11 @@ EOF
       base="${f##*/}"                       # review-phase<P>-<N>.md
       rest="${base#review-}"                # phase<P>-<N>.md
       scope="${rest%-*.md}"                 # phase<P>
+      # The `review-phase*-*.md` glob ALSO matches `review-phasedesign<P>-N.md` (a per-phase
+      # DESIGN-DOC review). A design review must NEVER count as the phase-INTEGRATION code
+      # review at ship — exclude it explicitly so the ship gate does not silently depend on
+      # the convention that phasedesign reviews omit `reviewed-sha`.
+      case "$scope" in phasedesign*) continue;; esac
       case "$seen_phase" in (*" $scope "*) continue;; esac
       seen_phase="$seen_phase$scope "
       rf="$(highest_review_file "$scope")" || continue
@@ -403,17 +407,18 @@ EOF
     # --is-ancestor` nonzero=1 stays a legitimate "not merged in" verdict (skip);
     # only rc>1 is a true error → exit 2.
     #
-    # Find the highest live phaseInt/<runId>/<P>.
+    # Find the highest live phaseInt/<runId>/<P>. P may be non-integer (e.g. a slice id like
+    # `4a` whose phase prefix is `4a`), so select by VERSION sort of the last ref segment
+    # rather than an integer `-gt` that a numeric-only filter would silently drop.
     live_P=""; live_ref=""
     phase_refs="$(git_or_die for-each-ref --format='%(refname:short)' "refs/heads/phaseInt/$runId/")"
-    while IFS= read -r ref; do
-      [ -n "$ref" ] || continue
-      p="${ref##*/}"
-      case "$p" in (*[!0-9]*|'') continue;; esac
-      if [ -z "$live_P" ] || [ "$p" -gt "$live_P" ]; then live_P="$p"; live_ref="$ref"; fi
-    done <<EOF
-$phase_refs
-EOF
+    # Guard the empty case explicitly (no live phaseInt → clean): piping empty through `grep`
+    # would return 1 and trip `set -o pipefail`/`set -e`. for-each-ref output carries no blank
+    # lines, so a plain version-sort of the non-empty list suffices.
+    if [ -n "$phase_refs" ]; then
+      live_ref="$(printf '%s\n' "$phase_refs" | sort -t/ -k3 -V | tail -n1)"
+      live_P="${live_ref##*/}"
+    fi
 
     if [ -z "$live_ref" ]; then
       emit true "audit" "" "[]"

@@ -154,7 +154,10 @@ run_in_background; wait for completion; then a bounded post-process subagent: "R
 `$RUN_DIR/codex-harden-<P>.md` (same severity/lens tags, <150 words)."
 
 Degradation (do NOT hard-fail): codex missing OR hangs/times out → write
-`codex-harden-<P>.md` = "codex unavailable — Claude-only harden" + warning; continue.
+`codex-harden-<P>.md` with the **anchored first-line token `CODEX_UNAVAILABLE`** (exactly
+that bare token as the file's FIRST line — the same form drive-review.md emits, so the
+run-graph's codex-n/a detection is uniform across review and harden), optionally followed
+by an explanatory note; continue.
 
 ## Step 2 — Triage
 
