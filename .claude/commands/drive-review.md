@@ -27,8 +27,13 @@ refs:
   difference is the counter (below) — its bounding is owned by the harden loop, not the
   conformance cap.
 
-Let `<scope>` be `design`, `<id>` (e.g. `1.2`), `phase<P>`, or `phasedesign<P>` (the
-per-phase design review of `design-phase<P>.md`).
+Let `<scope>` be `design`, `<id>` (e.g. `1.2`), `phase<P>`, or the phasedesign token (the
+per-phase design review of `design-phase<P>.md`). **Resolve the phasedesign token's
+redesign epoch YOURSELF** — invokers pass `phase <P> design` unchanged: set `R` = the
+highest epoch among `$RUN_DIR/redesign-<P>-r*.marker` (0 if none); `R == 0` → the bare
+`phasedesign<P>`, `R >= 1` → `phasedesign<P>-r<R>`. Use the resolved token everywhere
+`<scope>` appears — the review file, the codex sibling, the `codex-raw-<scope>.log`, the
+in-flight marker, and the file-count counter fallback.
 
 **Loop counter:** `N = (this scope's counter) + 1` — `state.designReview` for
 `design`, `state.slices[<id>].reviewCount` for a slice, the `phaseReview[<P>]`
@@ -110,6 +115,10 @@ git diff <phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owne
 a phase: git diff <phaseBaseSha>..phaseInt/<runId>/<P>, integration. Flag BLOCKING/MAJOR/
 MINOR with file:line. Prioritized." > $RUN_DIR/codex-raw-<scope>.log 2>&1
 ```
+
+On a re-dispatch after a stranded `inflight-review-<scope>.marker`, first `mv` the
+existing `codex-raw-<scope>.log` aside (e.g. `codex-raw-<scope>.log.stranded`) — an
+orphaned background codex may still be appending to it.
 
 run_in_background; wait for completion; then a bounded post-process subagent: "Read
 `$RUN_DIR/codex-raw-<scope>.log`, extract codex's final findings, write
