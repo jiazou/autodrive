@@ -223,9 +223,14 @@ mk_plan() {
 # codex-review-phasedesign<P>.md. Mirrors mk_plan, scoped to phasedesign<P>. Like plan-gate,
 # no git tip (it audits a design DOC). Epoch variants exercise the redesign-epoch scope
 # token (phasedesign<P>-r<R>, R = highest redesign-<P>-r*.marker):
-#   epoch1_clean -- r1 marker + CONVERGED review-phasedesign<P>-r1-1.md + codex sibling
-#   epoch1_stale -- r1 marker + ONLY a stale epoch-0 CONVERGED pair (must NOT satisfy)
-# $1=variant (clean|nodesign|nocodex|findings|epoch1_clean|epoch1_stale) $2=P.
+#   epoch1_clean    -- r1 marker + CONVERGED review-phasedesign<P>-r1-1.md + codex sibling
+#   epoch1_stale    -- r1 marker + ONLY a stale epoch-0 CONVERGED pair (must NOT satisfy)
+#   epoch1_unmarked -- r1 CONVERGED review + codex sibling but the redesign-<P>-r1.marker
+#                      is MISSING (corruption / deleted marker). highest_epoch() would
+#                      fall back to bare phasedesign<P> and PASS on the stale epoch-0 pair;
+#                      the gate must instead fail closed with epoch-unmarked. An epoch-0
+#                      CONVERGED pair is seeded too, so a marker-only check would PASS.
+# $1=variant (clean|nodesign|nocodex|findings|epoch1_clean|epoch1_stale|epoch1_unmarked) $2=P.
 mk_phasedesign() {
   local variant="$1"
   local P="${2:-1}"
@@ -255,6 +260,13 @@ mk_phasedesign() {
       _write_redesign_marker "$rd" "$P" 1
       _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})"   # stale epoch-0 pair
       _write_codex "$rd" "$scope" ;;
+    epoch1_unmarked)
+      # r1 artifacts present, marker MISSING — plus a CONVERGED epoch-0 pair so a
+      # marker-only gate would resolve epoch 0 and PASS. Must fail closed (epoch-unmarked).
+      _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})"   # stale epoch-0 pair
+      _write_codex "$rd" "$scope"
+      _write_review "$rd" "$scope-r1" 1 "$(printf '0%.0s' {1..40})"
+      _write_codex "$rd" "$scope-r1" ;;
   esac
   echo "$repo $rd"
 }
@@ -418,6 +430,27 @@ mk_audit_equal_tip() {
   echo "$repo $rd"
 }
 
+# Audit dedup fixture: ONE unreviewed slice s1 merged into TWO live phaseInt refs — an
+# equal-tip just-advanced phaseInt/<runId>/1 (live per D20) AND a later live
+# phaseInt/<runId>/2 descending from drive. The slice must be flagged ONCE, not twice
+# (the raw violations JSON is the human-facing STOP evidence). Pre-dedup emits two
+# identical slice:s1 objects. Echoes "REPO RUN_DIR".
+mk_audit_multi_live() {
+  local name="${1:-audit-multi-live}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
+  _gitc "$repo" checkout -q -b "slice/$name/s1"
+  _commit "$repo" "feature.sh" "echo hi" "slice s1" >/dev/null
+  _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+  _gitc "$repo" branch -f "drive/$name" "phaseInt/$name/1"   # equal tip -> live
+  _gitc "$repo" checkout -q -b "phaseInt/$name/2"
+  _commit "$repo" "more.sh" "echo more" "phase 2 extra" >/dev/null   # descends drive -> live
+  mkdir -p "$rd"   # no review for s1 -> flagged (once)
+  echo "$repo $rd"
+}
+
 # ---------------------------------------------------------------------------------
 # --mode checkpoint fixtures (I4). All have a real drive/<runId> branch; artifacts per
 # variant. Echoes "REPO RUN_DIR".
@@ -445,6 +478,12 @@ mk_audit_equal_tip() {
 #                        drive -> accepted by the ancestry rule (clean)
 #   epoch_files       -- r1 marker + 1 epoch-0 round file + 2 epoch-r1 round files
 #                        -> phaseDesignRound {"1":2} (current epoch only), redesigns {"1":1}
+#   epoch_unmarked    -- epoch-r1 review + codex sibling but NO redesign-1-r1.marker
+#                        (corruption / deleted marker) -> epoch-unmarked, exit 1. Without
+#                        the check highest_epoch() falls back to 0 and the run reads clean.
+#   inflight_symlink  -- clean-shaped + a DANGLING symlink named inflight-*.marker: the
+#                        `-e` glob guard follows the link and fails, so a marker-only
+#                        glob would read clean; `-L` must fail it closed -> inflight-open.
 mk_checkpoint() {
   local variant="$1" name="${2:-ckpt-$1}"
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -504,6 +543,19 @@ mk_checkpoint() {
       _write_review "$rd" phasedesign1 1 "$zeros"        # epoch 0: must NOT count
       _write_review "$rd" "phasedesign1-r1" 1 "$zeros"
       _write_review "$rd" "phasedesign1-r1" 2 "$zeros"
+      ;;
+    epoch_unmarked)
+      # r1 review + codex artifacts, marker MISSING. A marker-only check falls back to
+      # epoch 0 and reads clean; must fail closed with epoch-unmarked.
+      _write_review "$rd" phasedesign1 1 "$zeros"        # epoch-0 pair (looks complete)
+      _write_review "$rd" "phasedesign1-r1" 1 "$zeros"
+      _write_codex "$rd" "phasedesign1-r1"
+      ;;
+    inflight_symlink)
+      _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+      _commit "$repo" "phase.sh" "echo p1" "phase 1 integration" >/dev/null
+      _write_review "$rd" phase1 1 "$zeros"
+      ln -s /nonexistent/target "$rd/inflight-review-phase1.marker"   # dangling symlink
       ;;
   esac
   echo "$repo $rd"

@@ -2,7 +2,8 @@
 # Plain-bash test runner for bin/drive-conformance.sh.
 # Asserts acceptance criteria 0,1,2,3,4,4b,4c,5,10, Item-C C1..C4b, and the Phase-1
 # checkpoint criteria (CK1..CK6: --mode checkpoint, epoch-aware phasedesign-gate, audit
-# ancestry). Prints PASS/FAIL per case and exits nonzero if any fail. Builds hermetic
+# ancestry, the epoch-unmarked fail-closed check, the dangling-symlink inflight marker,
+# and audit cross-live-ref dedup). Prints PASS/FAIL per case and exits nonzero if any fail. Builds hermetic
 # throwaway repos via test/fixtures/mkfixture.sh.
 set -uo pipefail
 
@@ -46,6 +47,16 @@ assert_eq() {
     echo "PASS: $1"; PASS=$((PASS+1))
   else
     echo "FAIL: $1 (expected '$2', got '$3')"; FAIL=$((FAIL+1))
+  fi
+}
+
+# Assert $OUT contains needle EXACTLY $3 times. $1=desc $2=needle $3=expected-count
+assert_out_count() {
+  local n; n="$(printf '%s' "$OUT" | grep -o -- "$2" | wc -l | tr -d ' ')"
+  if [ "$n" = "$3" ]; then
+    echo "PASS: $1"; PASS=$((PASS+1))
+  else
+    echo "FAIL: $1 (expected $3 '$2', got $n) :: ${OUT:-}"; FAIL=$((FAIL+1))
   fi
 }
 
@@ -251,6 +262,13 @@ assert_out_contains "CK1 counters per I3" \
 read -r repo rd < <(mk_checkpoint inflight)
 run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 open in-flight marker -> exit 1" 1 "$RC"
 assert_out_contains "CK1 inflight-open violation" '"reason":"inflight-open"'
+# (a) a DANGLING symlink named inflight-*.marker still reads as open (fail closed). The
+# `-e` glob guard follows the link and fails, so the marker-only glob would skip it and
+# read clean; the `-L` guard fails it closed. Regression validity: pre-change had only
+# `-e`, so this exits 0 (false clean); the assertion below flips to rc 1.
+read -r repo rd < <(mk_checkpoint inflight_symlink)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 dangling-symlink inflight marker -> exit 1 (not clean)" 1 "$RC"
+assert_out_contains "CK1 dangling-symlink reads as inflight-open" '"reason":"inflight-open"'
 
 # (c) artifact well-formedness violations
 read -r repo rd < <(mk_checkpoint unparseable_review)
@@ -285,6 +303,13 @@ read -r repo rd < <(mk_checkpoint epoch_files)
 run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 epoch_files fixture clean" 0 "$RC"
 assert_out_contains "CK2 epoch-0 round file does not count under r1" '"phaseDesignRound":{"1":2}'
 assert_out_contains "CK2 redesigns from marker" '"redesigns":{"1":1}'
+# Markerless epoch artifact: epoch-r1 review+codex present, redesign-1-r1.marker MISSING.
+# highest_epoch() falls back to 0 and the run reads clean — the proof must fail closed.
+# Regression validity: pre-change has no epoch-unmarked check, resolves epoch 0, and the
+# fixture is otherwise quiescent/well-formed -> exit 0 (false clean); this flips to rc 1.
+read -r repo rd < <(mk_checkpoint epoch_unmarked)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 markerless epoch artifact -> exit 1 (fail closed, not clean)" 1 "$RC"
+assert_out_contains "CK2 epoch-unmarked violation" '"reason":"epoch-unmarked"'
 
 echo "=== CK3/CK4: epoch-gap + dropped-increment recovery; state.json never read ==="
 # Markers r1+r3 with state.json claiming redesigns:2 — the dropped 3rd increment is
@@ -309,6 +334,14 @@ run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 current-epoch
 read -r repo rd < <(mk_phasedesign epoch1_stale 1)
 run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 stale epoch-0 pair does NOT satisfy after a redesign" 1 "$RC"
 assert_out_contains "CK5 stale epoch reports no-review for the current epoch" '"reason":"no-review"'
+# Markerless epoch artifact (corruption / deleted marker): r1 review+codex present but
+# redesign-1-r1.marker MISSING. highest_epoch() falls back to bare phasedesign1 and the
+# seeded CONVERGED epoch-0 pair would PASS — the gate must instead fail closed. Regression
+# validity: pre-change the gate has no markerless-epoch check, resolves epoch 0, and PASSES
+# (rc 0); the assertion below flips to rc 1.
+read -r repo rd < <(mk_phasedesign epoch1_unmarked 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 markerless r1 artifact fails the gate closed (not a stale epoch-0 PASS)" 1 "$RC"
+assert_out_contains "CK5 markerless epoch reports epoch-unmarked" '"reason":"epoch-unmarked"'
 
 echo "=== CK6: audit live-phase selection by ancestry (criterion 11) ==="
 # Regression-guard validity: pre-change audit picked the live phase by highest
@@ -322,6 +355,12 @@ run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 completed pha
 # the pre-retrofit behavior for a just-advanced phase and what the stop-guard relies on.
 read -r repo rd < <(mk_audit_equal_tip)
 run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 equal-tip phaseInt audits as live" 1 "$RC"
+# Dedup: one unreviewed slice merged into TWO live refs is flagged ONCE, not twice (the
+# raw violations JSON is the human-facing STOP evidence). Pre-dedup emits two identical
+# slice:s1 objects; the count assertion below flips (2 -> 1).
+read -r repo rd < <(mk_audit_multi_live)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 slice merged into two live refs -> exit 1" 1 "$RC"
+assert_out_count "CK6 shared slice flagged once (deduped across live refs)" 'slice:s1' 1
 
 echo
 echo "=== usage/error guards ==="

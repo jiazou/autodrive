@@ -96,6 +96,30 @@ highest_epoch() {
   printf '%s\n' "$best"
 }
 
+# Epoch numbers R that have a phasedesign<P>-r<R> ARTIFACT (review-phasedesign<P>-r<R>-N.md
+# or codex-review-phasedesign<P>-r<R>.md) but NO matching redesign-<P>-r<R>.marker. A
+# markerless epoch artifact is corruption / partial sweep / deleted marker — trusting only
+# the marker would let highest_epoch() fall back to a LOWER epoch and pass the gate /
+# count epoch 0 on stale artifacts (fail-OPEN in the exact mechanism this phase makes
+# fail-closed). Echoes the sorted-unique unmarked R values, one per line (empty if none).
+# $1=P
+unmarked_epochs() {
+  local P="$1" f core r out=""
+  for f in "$RUN_DIR"/review-phasedesign"$P"-r*-*.md "$RUN_DIR"/codex-review-phasedesign"$P"-r*.md; do
+    [ -e "$f" ] || continue
+    core="${f##*/}"
+    # strip the leading prefix down to "r<R>..."; both families share the -r<R> token.
+    core="${core#review-phasedesign"$P"-r}"
+    core="${core#codex-review-phasedesign"$P"-r}"
+    r="${core%%-*}"          # codex sibling has no -N; review has -N — both leave R here
+    r="${r%.md}"             # codex sibling: r<R>.md -> R
+    case "$r" in (*[!0-9]*|'') continue;; esac
+    [ -e "$RUN_DIR/redesign-$P-r$r.marker" ] && continue
+    out="$out$r"$'\n'
+  done
+  printf '%s' "$out" | sort -un
+}
+
 # Count exact-match lines of key $2 in newline-list $1. Echoes the count (0 if none).
 count_in_list() {
   local c
@@ -254,7 +278,14 @@ case "$MODE_ARG" in
     scope="phasedesign$P"
     if [ "$R" -gt 0 ]; then scope="phasedesign$P-r$R"; fi
     rf=""; viols=""
-    if ! rf="$(highest_review_file "$scope")"; then
+    # Fail closed on a markerless epoch artifact (corruption / deleted marker): an
+    # epoch-suffixed review/codex file with no redesign-<P>-r<R>.marker would otherwise
+    # let highest_epoch() resolve a LOWER epoch and pass on stale artifacts. Take
+    # precedence over the per-scope checks — the resolved scope itself is untrustworthy.
+    unmarked="$(unmarked_epochs "$P")"
+    if [ -n "$unmarked" ]; then
+      viols="$(violation "phasedesign$P" "epoch-unmarked")"
+    elif ! rf="$(highest_review_file "$scope")"; then
       viols="$(violation "$scope" "no-review")"
     elif ! verdict_converged "$rf"; then
       viols="$(violation "$scope" "verdict-not-converged")"
@@ -439,9 +470,11 @@ EOF
     viol_arr=()
 
     # (a) No open in-flight marker. An open marker is "not safe", full stop — the proof
-    # never probes liveness and never waits.
+    # never probes liveness and never waits. `-e || -L` so a DANGLING symlink dirent
+    # (the `-e` test follows the link and fails) still reads as an open marker, not clean:
+    # the `-L` keeps the literal-glob guard while failing closed on any actual dirent.
     for f in "$RUN_DIR"/inflight-*.marker; do
-      [ -e "$f" ] || continue
+      [ -e "$f" ] || [ -L "$f" ] || continue
       viol_arr+=("$(violation "${f##*/}" "inflight-open")")
     done
 
@@ -485,7 +518,9 @@ $phase_refs
 EOF
 
     # (c) Counter artifacts well-formed + per-counter reconstruction (the I3 rules,
-    # artifact side only — no max(state,…) here).
+    # artifact side only — no max(state,…) here). Violations here: unparseable-review,
+    # unparseable-harden, epoch-gap, regress-mismatch, and epoch-unmarked (an
+    # epoch-suffixed phasedesign artifact with no redesign-<P>-r<R>.marker — fail closed).
     # Round files are review-<scope>-N.md with pure-integer N; classify the scope:
     # design (not a counter) | phasedesign<P>[-r<R>] | phase<P> | else a slice id.
     slice_keys=""; phase_keys=""; pd_keys=""
@@ -577,6 +612,27 @@ EOF
     done
     prrj="$(printf '%s' "$prr_pairs" | json_from_pairs)"
 
+    # epoch-unmarked: an epoch-suffixed phasedesign artifact (review or codex sibling)
+    # with NO matching redesign-<P>-r<R>.marker (corruption / partial sweep / deleted
+    # marker). Without this, highest_epoch() would fall back to a LOWER epoch and the
+    # round counts on stale artifacts — the same fail-OPEN this phase closes for the
+    # gate. Derive the phase set from BOTH artifact families (a markerless codex-only
+    # sibling is still corruption to flag).
+    pdr_phases=""
+    for f in "$RUN_DIR"/review-phasedesign*-r*-*.md "$RUN_DIR"/codex-review-phasedesign*-r*.md; do
+      [ -e "$f" ] || continue
+      core="${f##*/}"
+      core="${core#review-phasedesign}"
+      core="${core#codex-review-phasedesign}"
+      P="${core%%-r*}"
+      [ -n "$P" ] && pdr_phases="$pdr_phases$P"$'\n'
+    done
+    for P in $(printf '%s' "$pdr_phases" | sort -u); do
+      if [ -n "$(unmarked_epochs "$P")" ]; then
+        viol_arr+=("$(violation "phasedesign$P" "epoch-unmarked")")
+      fi
+    done
+
     # phaseDesignRound[<P>] = round files of the CURRENT epoch only (I3 rule 5): scope
     # phasedesign<P> when redesigns == 0, else phasedesign<P>-r<R> for the highest R —
     # a redesign legitimately resets the round to 0 with a fresh cap-8.
@@ -639,6 +695,11 @@ EOF
 
     viol_arr=()
     audit_tip=""
+    # Dedup audited slice ids ACROSS the live-ref loop: a just-advanced phase (equal tip
+    # = live per D20) plus the next live phase can share a merged slice, which would
+    # otherwise emit duplicate violation objects (the raw JSON is the human-facing
+    # evidence at a STOP). Same space-delimited-string dedup as ship mode's seen_phase.
+    seen_slice=" "
     slice_refs="$(git_or_die for-each-ref --format='%(refname:short)' "refs/heads/slice/$runId/")"
     while IFS= read -r pref; do
       [ -n "$pref" ] || continue
@@ -670,6 +731,9 @@ EOF
           echo "error: git merge-base --is-ancestor failed (rc=$anc_rc)" >&2; exit 2
         fi
         [ "$anc_rc" -eq 0 ] || continue   # not merged into this live phase → skip
+        # already audited via another live ref? slice ids are unique → audit once.
+        case "$seen_slice" in (*" $id "*) continue;; esac
+        seen_slice="$seen_slice$id "
         if ! v="$(check_scope_counts "slice:$id" "$id" "$stip")"; then
           viol_arr+=("$v")
         fi
