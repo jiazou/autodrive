@@ -92,6 +92,14 @@ def _git(repo, *args):
     )
 
 
+def _rev(repo, ref):
+    """Resolve a ref to its full 40-char sha (for asserting expected/found_sha exactly)."""
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", ref],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
 def _commit(repo, path, content, msg):
     (repo / path).parent.mkdir(parents=True, exist_ok=True)
     (repo / path).write_text(content + "\n", encoding="utf-8")
@@ -161,6 +169,15 @@ def _reasons(obj):
     return {v["reason"] for v in obj["violations"]}
 
 
+def _viol(scope, reason, exp="", found=""):
+    """The exact violation-object shape the script's `violation()` helper emits — all four
+    keys always present (expected/found default to empty strings). Asserting the FULL
+    `violations` list against these catches a right-reason/wrong-scope, an extra, OR a
+    duplicate violation that a `reason in _reasons()` membership check would pass."""
+    return {"scope": scope, "reason": reason,
+            "expected_sha": exp, "found_sha": found}
+
+
 def test_checkpoint_clean_fixture_passes_with_counters(tmp_path):
     """AC1/AC2 (behavioral cross-file contract): a quiescent, well-formed run is clean
     (exit 0) and emits `counters` derived per the I3 rules — reviewCount from
@@ -185,6 +202,10 @@ def test_checkpoint_clean_fixture_passes_with_counters(tmp_path):
     assert rc == 0, f"clean fixture should exit 0; got {rc} / {obj}"
     assert obj["clean"] is True
     assert obj["mode"] == "checkpoint"
+    # `tip` is load-bearing: the checkpoint-complete.marker's `proof.tip` is validated
+    # against it at resume. Assert it resolves to the live featureBranch (drive/<runId>)
+    # tip exactly — a broken/empty tip would silently break marker validation.
+    assert obj["tip"] == _rev(repo, "drive/ckpt-clean"), obj
     counters = obj["counters"]
     assert counters["reviewCount"] == {"1.1": 2}, counters
     assert counters["phaseReviewRound"] == {"1": 2}, counters  # 3 files − 1 yes
@@ -235,7 +256,10 @@ def test_checkpoint_inflight_open_violation(tmp_path):
     _inflight(rd, "review-phase1")
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 1 and obj["clean"] is False
-    assert "inflight-open" in _reasons(obj)
+    # EXACT: one inflight-open violation, scope = the marker's basename, no shas, no extras.
+    assert obj["violations"] == [
+        _viol("inflight-review-phase1.marker", "inflight-open")
+    ], obj["violations"]
 
 
 def test_checkpoint_regress_mismatch_violation_and_zero_round(tmp_path):
@@ -248,7 +272,10 @@ def test_checkpoint_regress_mismatch_violation_and_zero_round(tmp_path):
     _harden(rd, 1, 2, "yes")
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 1
-    assert "regress-mismatch" in _reasons(obj)
+    # EXACT: exactly one regress-mismatch on scope `phase1`, no shas, nothing else.
+    assert obj["violations"] == [
+        _viol("phase1", "regress-mismatch")
+    ], obj["violations"]
     assert obj["counters"]["phaseReviewRound"] == {"1": 0}
 
 
@@ -266,7 +293,11 @@ def test_checkpoint_epoch_gap_violation_and_highest_r(tmp_path):
     )
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 1
-    assert "epoch-gap" in _reasons(obj)
+    # EXACT: a single epoch-gap on scope `redesign-1` (the loop breaks on the first gap, so
+    # r1+r3 yields ONE violation, not two) — a duplicate or stray entry would fail here.
+    assert obj["violations"] == [
+        _viol("redesign-1", "epoch-gap")
+    ], obj["violations"]
     assert obj["counters"]["redesigns"] == {"1": 3}, (
         "redesigns must reconstruct as highest-R (3), not the marker count (2)"
     )
@@ -280,7 +311,10 @@ def test_checkpoint_unparseable_review_violation(tmp_path):
     )
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 1
-    assert "unparseable-review" in _reasons(obj)
+    # EXACT: one unparseable-review on the offending file's basename, no shas, no extras.
+    assert obj["violations"] == [
+        _viol("review-2.2-1.md", "unparseable-review")
+    ], obj["violations"]
 
 
 def test_checkpoint_unparseable_harden_violation(tmp_path):
@@ -291,7 +325,10 @@ def test_checkpoint_unparseable_harden_violation(tmp_path):
     )
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 1
-    assert "unparseable-harden" in _reasons(obj)
+    # EXACT: one unparseable-harden on the offending file's basename, no shas, no extras.
+    assert obj["violations"] == [
+        _viol("harden-1-1.md", "unparseable-harden")
+    ], obj["violations"]
 
 
 def test_checkpoint_epoch_unmarked_violation(tmp_path):
@@ -305,7 +342,11 @@ def test_checkpoint_epoch_unmarked_violation(tmp_path):
     _codex(rd, "phasedesign1-r1")
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 1
-    assert "epoch-unmarked" in _reasons(obj)
+    # EXACT: one epoch-unmarked on scope `phasedesign1` (one per phase, deduped over both
+    # the review and codex markerless artifacts), no shas, nothing else.
+    assert obj["violations"] == [
+        _viol("phasedesign1", "epoch-unmarked")
+    ], obj["violations"]
 
 
 def test_checkpoint_phaseint_divergent_violation(tmp_path):
@@ -318,20 +359,70 @@ def test_checkpoint_phaseint_divergent_violation(tmp_path):
     _commit(repo, "px.sh", "echo px", "divergent phase work")
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 1
-    assert "phaseInt-divergent" in _reasons(obj)
+    # EXACT: one phaseInt-divergent on the divergent ref, with expected_sha = drive tip and
+    # found_sha = the phaseInt tip (this violation DOES carry shas — assert both, not just
+    # the reason — so a wrong-sha or duplicate-ref regression is caught).
+    drive_tip = _rev(repo, "drive/ckpt-divergent")
+    pint_tip = _rev(repo, "phaseInt/ckpt-divergent/1")
+    assert obj["tip"] == drive_tip
+    assert obj["violations"] == [
+        _viol("phaseInt/ckpt-divergent/1", "phaseInt-divergent", drive_tip, pint_tip)
+    ], obj["violations"]
 
 
-def test_checkpoint_nonnumeric_phase_id_4a_accepted(tmp_path):
-    """AC1/AC11 boundary (D18 ancestry, no numeric phase-id ordering): a non-numeric
-    phase id `phaseInt/<runId>/4a` whose tip descends from `drive/<runId>` is accepted
-    by the (b) ancestry rule — clean, exit 0. Pins that the mode does NO numeric
-    phase-id ordering."""
+def _run_checkpoint_with_script(repo, rd, script):
+    """Run an arbitrary conformance script (used to exercise a MUTATED tmp COPY of the real
+    script — the real bin/drive-conformance.sh is never edited)."""
+    proc = subprocess.run(
+        ["bash", str(script), str(rd), "--mode", "checkpoint"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    return proc.returncode, proc.stdout
+
+
+def test_checkpoint_nonnumeric_phase_id_4a_processed_not_skipped(tmp_path):
+    """AC1/AC11 boundary (D18 ancestry, NO numeric phase-id ordering): the mode must
+    actually PROCESS a non-numeric phase id `phaseInt/<runId>/4a`, not silently skip it.
+    To make a skip observably fail, `4a` is built DIVERGENT (cut from `main`, non-ancestor
+    of `drive/<runId>`): the real script must flag `phaseInt-divergent` for `phaseInt/.../4a`
+    specifically. A numeric-only selection would skip `4a` and read CLEAN — proving that the
+    flagged-divergent assertion is load-bearing on non-numeric processing (proof below via a
+    tmp COPY of the script with a numeric-id filter injected)."""
     repo, rd = _base_run(tmp_path, "ckpt-4a")
+    _git(repo, "checkout", "-q", "main")
     _git(repo, "checkout", "-q", "-b", "phaseInt/ckpt-4a/4a")
-    _commit(repo, "p4a.sh", "echo 4a", "phase 4a integration")
+    _commit(repo, "p4a.sh", "echo 4a", "phase 4a divergent integration")
     rc, obj = _run_checkpoint(repo, rd)
-    assert rc == 0, f"non-numeric 4a phaseInt must be accepted; got {obj}"
-    assert obj["clean"] is True
+    assert rc == 1, f"divergent non-numeric 4a must be flagged (processed); got {obj}"
+    drive_tip = _rev(repo, "drive/ckpt-4a")
+    pint_tip = _rev(repo, "phaseInt/ckpt-4a/4a")
+    assert obj["violations"] == [
+        _viol("phaseInt/ckpt-4a/4a", "phaseInt-divergent", drive_tip, pint_tip)
+    ], obj["violations"]
+
+    # PROOF the assertion FLIPS under numeric-only selection: copy the real script to a
+    # tmp dir, inject a `skip non-numeric phase id` filter into the phaseInt loop, and
+    # confirm the COPY now reads CLEAN (no phaseInt-divergent) for the very same fixture —
+    # i.e. the real script's NON-numeric processing is what makes the assertion above
+    # catch the divergence. The real bin/drive-conformance.sh is never modified.
+    src = CONFORMANCE.read_text(encoding="utf-8")
+    anchor = '    if ! ptip="$(rev "$pref")"; then\n'
+    assert anchor in src, "expected phaseInt-loop anchor in drive-conformance.sh"
+    # derive the numeric phase id from the ref (basename) and `continue` if non-numeric.
+    numeric_only = (
+        '    _pid="${pref##*/}"\n'
+        '    case "$_pid" in (*[!0-9]*|"") continue;; esac\n'
+    ) + anchor
+    mutated = src.replace(anchor, numeric_only, 1)
+    assert mutated != src, "numeric-only mutation must change the script text"
+    copy = tmp_path / "conformance-numeric-only.sh"
+    copy.write_text(mutated, encoding="utf-8")
+    rc2, out2 = _run_checkpoint_with_script(repo, rd, copy)
+    obj2 = json.loads(out2)
+    assert rc2 == 0 and obj2["clean"] is True and obj2["violations"] == [], (
+        "under numeric-only selection the divergent 4a is skipped and reads CLEAN — "
+        "this is exactly the regression the real (non-numeric-processing) script prevents"
+    )
 
 
 def test_checkpoint_epoch_files_count_current_epoch_only(tmp_path):
@@ -359,6 +450,43 @@ def test_checkpoint_usage_error_exits_2(tmp_path):
         cwd=str(repo), capture_output=True, text=True,
     )
     assert proc.returncode == 2, f"missing RUN_DIR must exit 2; got {proc.returncode}"
+
+
+def test_checkpoint_unresolvable_enumerated_ref_exits_2(tmp_path):
+    """AC1: an enumerated `slice/<runId>/*` ref that for-each-ref LISTS but `rev` cannot
+    resolve (a dangling ref → a missing object) is a genuine git/IO error, NOT a verdict —
+    it must exit 2 (the ref-error path), distinct from the 1 = has-violations verdict and
+    distinct from a clean exit 0. Without this split a corrupt ref would read as no-finding."""
+    repo, rd = _base_run(tmp_path, "ckpt-referr")
+    # plant a dangling loose ref under slice/<runId>/: for-each-ref lists it, but the sha
+    # names no object so `git rev-parse <ref>^{commit}` fails → the loop's exit-2 path.
+    ref_path = repo / ".git" / "refs" / "heads" / "slice" / "ckpt-referr" / "9.9"
+    ref_path.parent.mkdir(parents=True, exist_ok=True)
+    ref_path.write_text("dead" * 9 + "beef" + "\n", encoding="utf-8")  # 40 hex, no object
+    # sanity: for-each-ref must surface it AND rev-parse must fail (so the exit-2 is real,
+    # not a fixture that quietly resolves).
+    listed = subprocess.run(
+        ["git", "-C", str(repo), "for-each-ref", "--format=%(refname:short)",
+         "refs/heads/slice/ckpt-referr/"],
+        capture_output=True, text=True,
+    ).stdout
+    assert "slice/ckpt-referr/9.9" in listed, listed
+    resolves = subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", "--verify", "--quiet",
+         "slice/ckpt-referr/9.9^{commit}"],
+        capture_output=True, text=True,
+    )
+    assert resolves.returncode != 0, "fixture ref must be UNRESOLVABLE for the exit-2 path"
+
+    proc = subprocess.run(
+        ["bash", str(CONFORMANCE), str(rd), "--mode", "checkpoint"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    assert proc.returncode == 2, (
+        f"unresolvable enumerated slice ref must exit 2 (git-error, not verdict); "
+        f"got rc={proc.returncode} stdout={proc.stdout!r} stderr={proc.stderr!r}"
+    )
+    assert "cannot resolve slice ref" in proc.stderr, proc.stderr
 
 
 # --------------------------------------------------------------------------- #
@@ -435,25 +563,32 @@ def test_resume_repair_hint_sentence_verbatim():
 
 
 def test_five_reconstruction_rules_pinned():
-    """AC4/AC6: all five I3 per-counter reconstruction rules are present, each keyed on
-    its artifact derivation. A dropped rule is a silent resume-repair hole."""
+    """AC4/AC6: all five I3 per-counter reconstruction rules are present, each pinned as
+    its CONTIGUOUS formula clause (not scattered substrings) so a semantic rewrite that
+    changes the derivation — e.g. dropping the `MINUS … AppliedEdits: yes` subtraction or
+    the `HIGHEST epoch R` rule — breaks the pin. A dropped rule is a silent resume hole."""
     blob = _norm(_drive_md())
-    # rule 1: reviewCount from pure-integer-N review-<id>-N.md files
-    assert "slices[<id>].reviewCount" in blob and "review-<id>-N.md" in blob
-    # rule 2: phaseReview round = review-phase count MINUS AppliedEdits: yes harden files
-    assert "phaseReview[<P>].round" in blob
-    assert "review-phase<P>-N.md" in blob
-    assert "AppliedEdits: yes" in blob, "rule 2 must subtract AppliedEdits: yes harden files"
-    # rule 3: hardenRound counts ONLY AppliedEdits: yes (clean audit writes `no`)
-    assert "phaseReview[<P>].hardenRound" in blob
-    assert "AppliedEdits: no" in blob, "rule 3 must note the clean audit writes `no`"
-    # rule 4: redesigns = HIGHEST epoch R among redesign markers
-    assert "phaseDesign[<P>].redesigns" in blob
-    assert "HIGHEST epoch R" in blob, "rule 4 must reconstruct redesigns as the highest R"
-    assert "redesign-<P>-r*.marker" in blob
-    # rule 5: phaseDesign round counts only the current epoch's files
-    assert "phaseDesign[<P>].round" in blob
-    assert "phasedesign<P>-r<R>" in blob
+    # Each entry is the literal contiguous formula from drive.md's reconstruction list.
+    rules = [
+        # rule 1 — reviewCount derivation
+        "`slices[<id>].reviewCount` = max(state, count of `review-<id>-N.md`, "
+        "pure-integer N)",
+        # rule 2 — phaseReview round = review-phase count MINUS AppliedEdits: yes harden
+        "`phaseReview[<P>].round` = max(state, count of `review-phase<P>-N.md` "
+        "(pure-integer N) MINUS count of `harden-<P>-*.md` with `AppliedEdits: yes`)",
+        # rule 3 — hardenRound counts ONLY AppliedEdits: yes
+        "`phaseReview[<P>].hardenRound` = max(state, count of `harden-<P>-*.md` with "
+        "`AppliedEdits: yes`)",
+        # rule 4 — redesigns = HIGHEST epoch R among the redesign markers
+        "`phaseDesign[<P>].redesigns` = max(state, HIGHEST epoch R among "
+        "`redesign-<P>-r*.marker`)",
+        # rule 5 — phaseDesign round counts only the CURRENT-epoch round files
+        "`phaseDesign[<P>].round` = max(state, count of `review-<T>-N.md`) where "
+        "`T = phasedesign<P>` if artifact-derived redesigns == 0, else "
+        "`phasedesign<P>-r<R>` for the current (highest) epoch R",
+    ]
+    for i, rule in enumerate(rules, 1):
+        assert rule in blob, f"reconstruction rule {i} formula drifted or dropped:\n{rule}"
 
 
 def test_sessionId_rebind_is_first_resume_bullet():
@@ -465,6 +600,16 @@ def test_sessionId_rebind_is_first_resume_bullet():
         "drive.md resume must open with the FIRST sessionId-rebind bullet"
     )
     assert "rewrite `state.sessionId` to the live `$CLAUDE_CODE_SESSION_ID`" in blob
+    # STRUCTURAL FIRST-ness (not just the parenthetical label): the rebind bullet must
+    # POSITIONALLY precede the other resume-section steps, so a reorder that delays
+    # hook-attribution is caught even if it leaves the now-false "(FIRST, ...)" label.
+    i_rebind = blob.index("sessionId rebind (FIRST")
+    i_marker = blob.index("Consume `checkpoint-complete.marker` (single-use)")
+    i_phase = blob.index("**Current phase:**")
+    assert i_rebind < i_marker < i_phase, (
+        "the sessionId-rebind bullet must appear BEFORE the marker-consume and "
+        "current-phase resume steps (structural FIRST-ness, not just the label)"
+    )
 
 
 def test_checkpoint_marker_consumption_single_use():
@@ -590,14 +735,15 @@ def test_harden_sets_applied_yes_before_dispatching_regress():
     counts. If harden dispatched the regress before setting `yes`, the crash window would
     widen and the subtraction would mis-count."""
     blob = _norm(_drive_harden_md())
-    # in the "fix applied" branch: set AppliedEdits: yes, THEN re-run the regress review.
-    m = re.search(
-        r"A fix was applied.*?set `AppliedEdits: yes`\.\s*Re-run\s*`/drive-review phase <P> harden-regress`",
-        blob,
-    )
-    assert m, (
-        "drive-harden.md Step 4 must set `AppliedEdits: yes` BEFORE re-running "
-        "`/drive-review phase <P> harden-regress`"
+    # CONTIGUOUS span of the Step-4 "fix applied" branch: it must increment hardenRound,
+    # set `AppliedEdits: yes`, THEN re-run the harden-regress review — pinned as one literal
+    # clause so a reorder (dispatch-before-yes) or a dropped `yes` set breaks the pin.
+    assert (
+        "**A fix was applied** → `hardenRound += 1`; set `AppliedEdits: yes`. "
+        "Re-run `/drive-review phase <P> harden-regress`"
+    ) in blob, (
+        "drive-harden.md Step 4 'fix applied' branch must set `AppliedEdits: yes` BEFORE "
+        "re-running `/drive-review phase <P> harden-regress`, as one contiguous clause"
     )
 
 
@@ -620,11 +766,16 @@ def test_harden_cap_stop_dispatches_no_regress():
     writes no `AppliedEdits: yes`, preserving the rule-2 subtraction. The cap-STOP branch
     returns STOP without the fix→yes→regress sequence."""
     blob = _norm(_drive_harden_md())
-    # The cap-STOP branch: hardenRound >= HARDEN_CAP with an open P1 returns STOP, with no
-    # intervening fix→yes→regress sequence. Pin the ordered span (condition → return STOP).
-    assert re.search(
-        r"`hardenRound >= HARDEN_CAP`.*?open P1.*?→ return `STOP`", blob
-    ), "the cap-STOP branch must return STOP on hardenRound >= HARDEN_CAP + open P1"
+    # The cap-STOP branch, pinned as the LOCAL contiguous Step-4 clause — NOT a lazy
+    # `.*?` span that could bridge to the distant "→ STOP and summarize" statement ~9KB
+    # away. This is the single `→ return `STOP`` in the doc; a rewrite of the local
+    # condition→return ordering breaks the pin.
+    assert (
+        "**`hardenRound >= HARDEN_CAP` and this audit still has open P1** → return `STOP`."
+    ) in blob, (
+        "drive-harden.md Step 4 must return `STOP` on `hardenRound >= HARDEN_CAP` + open "
+        "P1 as one contiguous clause (the cap-STOP branch applies no fix → no regress)"
+    )
     # the clean confirming audit writes `no` (not `yes`) and dispatches no regress.
     assert "set `harden-<P>-N.md` `AppliedEdits: no`" in blob, (
         "the no-fix confirming audit must set AppliedEdits: no (no regress dispatch)"
