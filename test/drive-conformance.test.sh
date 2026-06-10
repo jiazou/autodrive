@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Plain-bash test runner for bin/drive-conformance.sh.
-# Asserts acceptance criteria 0,1,2,3,4,4b,4c,5,10 and Item-C C1..C4b. Prints PASS/FAIL per case and
-# exits nonzero if any fail. Builds hermetic throwaway repos via test/fixtures/mkfixture.sh.
+# Asserts acceptance criteria 0,1,2,3,4,4b,4c,5,10, Item-C C1..C4b, and the Phase-1
+# checkpoint criteria (CK1..CK6: --mode checkpoint, epoch-aware phasedesign-gate, audit
+# ancestry). Prints PASS/FAIL per case and exits nonzero if any fail. Builds hermetic
+# throwaway repos via test/fixtures/mkfixture.sh.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,6 +29,23 @@ assert_rc() {
     echo "PASS: $1 (exit $3)"; PASS=$((PASS+1))
   else
     echo "FAIL: $1 (expected exit $2, got $3) :: ${OUT:-}"; FAIL=$((FAIL+1))
+  fi
+}
+
+# Assert $OUT contains substring. $1=desc $2=needle
+assert_out_contains() {
+  case "$OUT" in
+    *"$2"*) echo "PASS: $1"; PASS=$((PASS+1)) ;;
+    *)      echo "FAIL: $1 (missing '$2') :: ${OUT:-}"; FAIL=$((FAIL+1)) ;;
+  esac
+}
+
+# Assert two strings are equal. $1=desc $2=expected $3=actual
+assert_eq() {
+  if [ "$2" = "$3" ]; then
+    echo "PASS: $1"; PASS=$((PASS+1))
+  else
+    echo "FAIL: $1 (expected '$2', got '$3')"; FAIL=$((FAIL+1))
   fi
 }
 
@@ -213,6 +232,96 @@ run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(dot) tests/m
 read -r repo rd < <(mk_impl_presence test impl-empty-id)
 OUT="$(cd "$repo" && "$CONF" "$rd" --mode "impl-presence:" 2>/dev/null)"; RC=$?
 assert_rc "AC-C empty impl-presence id -> exit 2" 2 "$RC"
+
+echo "=== CK1: --mode checkpoint — safe-boundary proof + artifact-derived counters ==="
+# Regression-guard validity: every CK case expecting exit 0/1 FAILS against the
+# pre-change script — `--mode checkpoint` did not exist (usage exit 2).
+read -r repo rd < <(mk_checkpoint clean)
+run_conf "$repo" "$rd" --mode checkpoint
+assert_rc "CK1 quiescent well-formed fixture clean (state.json corrupt — never read)" 0 "$RC"
+assert_out_contains "CK1 clean envelope" '"clean":true,"mode":"checkpoint"'
+# All five I3 rules in one assertion: reviewCount from pure-integer-N counts (the
+# review-1.1-final.md non-round file does NOT count); phaseReviewRound = 3 review-phase1
+# files MINUS the 1 AppliedEdits:yes regress marker (regress files don't overcount the
+# round); hardenRound counts ONLY yes (one yes + one no -> 1); phaseDesignRound epoch-0.
+assert_out_contains "CK1 counters per I3" \
+  '"counters":{"redesigns":{},"phaseDesignRound":{"1":1},"phaseReviewRound":{"1":2},"hardenRound":{"1":1},"reviewCount":{"1.1":2}}'
+
+# (a) an open in-flight marker fails the checkpoint — never probe, never wait.
+read -r repo rd < <(mk_checkpoint inflight)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 open in-flight marker -> exit 1" 1 "$RC"
+assert_out_contains "CK1 inflight-open violation" '"reason":"inflight-open"'
+
+# (c) artifact well-formedness violations
+read -r repo rd < <(mk_checkpoint unparseable_review)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 round file w/o verdict -> exit 1" 1 "$RC"
+assert_out_contains "CK1 unparseable-review violation" '"reason":"unparseable-review"'
+read -r repo rd < <(mk_checkpoint unparseable_harden)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 harden file w/o AppliedEdits -> exit 1" 1 "$RC"
+assert_out_contains "CK1 unparseable-harden violation" '"reason":"unparseable-harden"'
+
+# (b) divergent phaseInt (related to drive/<runId> in neither direction)
+read -r repo rd < <(mk_checkpoint divergent)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 divergent phaseInt -> exit 1" 1 "$RC"
+assert_out_contains "CK1 phaseInt-divergent violation" '"reason":"phaseInt-divergent"'
+
+# (b) non-numeric phase id accepted by the ancestry rule (no numeric ordering anywhere)
+read -r repo rd < <(mk_checkpoint fourA)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 non-numeric phaseInt 4a accepted (clean)" 0 "$RC"
+
+# usage/IO: a run dir with no drive/<runId> branch -> exit 2
+read -r repo rd < <(mk_slice_clean ckpt-nodrive)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 absent featureBranch -> exit 2" 2 "$RC"
+
+echo "=== CK2: counters — regress subtraction edge + epoch-scoped design rounds ==="
+# yes-count exceeding the review-file count is malformed: regress-mismatch, value 0.
+read -r repo rd < <(mk_checkpoint regress_mismatch)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 yes-count > review count -> exit 1" 1 "$RC"
+assert_out_contains "CK2 regress-mismatch violation" '"reason":"regress-mismatch"'
+assert_out_contains "CK2 phaseReviewRound reported 0" '"phaseReviewRound":{"1":0}'
+assert_out_contains "CK2 hardenRound counts both yes files" '"hardenRound":{"1":2}'
+# phaseDesignRound counts ONLY the current epoch's files once an r1 marker exists.
+read -r repo rd < <(mk_checkpoint epoch_files)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 epoch_files fixture clean" 0 "$RC"
+assert_out_contains "CK2 epoch-0 round file does not count under r1" '"phaseDesignRound":{"1":2}'
+assert_out_contains "CK2 redesigns from marker" '"redesigns":{"1":1}'
+
+echo "=== CK3/CK4: epoch-gap + dropped-increment recovery; state.json never read ==="
+# Markers r1+r3 with state.json claiming redesigns:2 — the dropped 3rd increment is
+# recovered from the artifact (highest-R wins), the gap is flagged for a human.
+read -r repo rd < <(mk_checkpoint epoch_gap)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK3 gapped epoch markers -> exit 1" 1 "$RC"
+assert_out_contains "CK3 epoch-gap violation" '"reason":"epoch-gap"'
+assert_out_contains "CK3 redesigns = highest R (3), not state's 2 or the file count 2" '"redesigns":{"1":3}'
+OUT_WITH_STATE="$OUT"
+rm -f "$rd/state.json"
+run_conf "$repo" "$rd" --mode checkpoint
+assert_rc "CK4 state.json deleted -> same exit" 1 "$RC"
+assert_eq "CK4 output byte-identical without state.json (state never a proof input)" \
+  "$OUT_WITH_STATE" "$OUT"
+
+echo "=== CK5: epoch-aware phasedesign-gate ==="
+# Regression-guard validity: pre-change the gate had no epoch concept — epoch1_stale's
+# stale epoch-0 CONVERGED pair PASSED (exit 0), and epoch1_clean's r1-scoped files were
+# invisible to the bare-token glob (exit 1). Both assertions flip on the pre-change script.
+read -r repo rd < <(mk_phasedesign epoch1_clean 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 current-epoch (r1) CONVERGED pair satisfies the gate" 0 "$RC"
+read -r repo rd < <(mk_phasedesign epoch1_stale 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 stale epoch-0 pair does NOT satisfy after a redesign" 1 "$RC"
+assert_out_contains "CK5 stale epoch reports no-review for the current epoch" '"reason":"no-review"'
+
+echo "=== CK6: audit live-phase selection by ancestry (criterion 11) ==="
+# Regression-guard validity: pre-change audit picked the live phase by highest
+# pure-NUMERIC <P> — the 4a fixture was skipped entirely (false clean, exit 0) and the
+# completed-phase fixture was picked as live (false flag, exit 1). Both flip pre-change.
+read -r repo rd < <(mk_audit_4a)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 non-numeric live phaseInt 4a IS audited (unreviewed slice flagged)" 1 "$RC"
+read -r repo rd < <(mk_audit_completed)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 completed phaseInt (STRICT ancestor of drive) skipped -> clean" 0 "$RC"
+# Equality (advance done, drive not yet past) classifies LIVE — still audited; this is
+# the pre-retrofit behavior for a just-advanced phase and what the stop-guard relies on.
+read -r repo rd < <(mk_audit_equal_tip)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 equal-tip phaseInt audits as live" 1 "$RC"
 
 echo
 echo "=== usage/error guards ==="

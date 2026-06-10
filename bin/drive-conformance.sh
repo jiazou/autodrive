@@ -5,7 +5,7 @@
 # state.json's `step`/`phaseReview` for the verdict (D1: git-truth, not state-trust).
 #
 # Usage:
-#   drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit
+#   drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit | checkpoint
 #
 # Truth model:
 #   runId        = basename(RUN_DIR)
@@ -26,7 +26,7 @@ set -euo pipefail
 SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md")
 
 usage() {
-  echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|phasedesign-gate:<P>|slice-merge:<id>|phase-merge:<P>|impl-presence:<id>|ship|audit" >&2
+  echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|phasedesign-gate:<P>|slice-merge:<id>|phase-merge:<P>|impl-presence:<id>|ship|audit|checkpoint" >&2
 }
 
 # Emit the JSON result and exit. $1=clean(true|false) $2=mode $3=tip $4=violations-json-array
@@ -81,6 +81,37 @@ codex_present() {
   [ -s "$f" ] || return 1           # empty file does NOT satisfy
   # Any non-empty content satisfies (real review OR CODEX_UNAVAILABLE note); not inspected.
   return 0
+}
+
+# Highest redesign epoch R for phase $1, from $RUN_DIR/redesign-<P>-r*.marker names
+# (the load-bearing data is the file NAME — I1). Echoes 0 when no marker exists.
+highest_epoch() {
+  local P="$1" best=0 f r
+  for f in "$RUN_DIR"/redesign-"$P"-r*.marker; do
+    [ -e "$f" ] || continue
+    r="${f##*-r}"; r="${r%.marker}"
+    case "$r" in (*[!0-9]*|'') continue;; esac
+    if [ "$r" -gt "$best" ]; then best="$r"; fi
+  done
+  printf '%s\n' "$best"
+}
+
+# Count exact-match lines of key $2 in newline-list $1. Echoes the count (0 if none).
+count_in_list() {
+  local c
+  c="$(printf '%s' "$1" | grep -cxF -- "$2")" || true
+  printf '%s' "$c"
+}
+
+# Build a JSON object from "key value" lines on stdin. Keys are scope tokens /
+# phase ids / slice ids (no quotes or backslashes to escape).
+json_from_pairs() {
+  local out="" k v
+  while read -r k v; do
+    [ -n "$k" ] || continue
+    out="$out${out:+,}\"$k\":$v"
+  done
+  printf '{%s}' "$out"
 }
 
 # Read `reviewed-sha:` (first match) from a review file; echo sha or empty. $1=file
@@ -212,11 +243,16 @@ case "$MODE_ARG" in
 
   phasedesign-gate:*)
     # Enforces the per-phase DESIGN review (Tier 2). Like plan-gate, no git tip — it audits
-    # the design DOC design-phase<P>.md. Clean iff highest-N review-phasedesign<P>-N.md is
-    # CONVERGED AND codex-review-phasedesign<P>.md exists.
+    # the design DOC design-phase<P>.md. Epoch-aware (I5/D9): the redesign epoch rides the
+    # SCOPE TOKEN — phasedesign<P> for epoch 0, phasedesign<P>-r<R> for the current epoch
+    # R = highest redesign-<P>-r*.marker — so a stale prior-epoch CONVERGED pair cannot
+    # satisfy the gate after a redesign. Clean iff the current epoch's highest-N
+    # review-<scope>-N.md is CONVERGED AND its codex-review-<scope>.md sibling exists.
     P="${MODE_ARG#phasedesign-gate:}"
     [ -n "$P" ] || { usage; exit 2; }
+    R="$(highest_epoch "$P")"
     scope="phasedesign$P"
+    if [ "$R" -gt 0 ]; then scope="phasedesign$P-r$R"; fi
     rf=""; viols=""
     if ! rf="$(highest_review_file "$scope")"; then
       viols="$(violation "$scope" "no-review")"
@@ -392,70 +428,266 @@ EOF
     fi
     ;;
 
-  audit)
-    # Scoped to the in-flight phase only. Report slices merged into the CURRENT LIVE
-    # phaseInt/<runId>/<P> that lack a counting review. Completed phases are NOT
-    # re-audited (guaranteed by phase-merge + ship gates). If no live phaseInt, clean.
-    #
-    # git-error-vs-verdict: `for-each-ref` enumerating refs and `git diff`-style ref
-    # resolution are genuine git ops — a failure is exit 2, NOT exit 0 clean (which
-    # would swallow a broken repo into a false "nothing to audit"). `merge-base
-    # --is-ancestor` nonzero=1 stays a legitimate "not merged in" verdict (skip);
-    # only rc>1 is a true error → exit 2.
-    #
-    # Find the highest live phaseInt/<runId>/<P>.
-    live_P=""; live_ref=""
-    phase_refs="$(git_or_die for-each-ref --format='%(refname:short)' "refs/heads/phaseInt/$runId/")"
-    while IFS= read -r ref; do
-      [ -n "$ref" ] || continue
-      p="${ref##*/}"
-      case "$p" in (*[!0-9]*|'') continue;; esac
-      if [ -z "$live_P" ] || [ "$p" -gt "$live_P" ]; then live_P="$p"; live_ref="$ref"; fi
-    done <<EOF
-$phase_refs
-EOF
-
-    if [ -z "$live_ref" ]; then
-      emit true "audit" "" "[]"
+  checkpoint)
+    # The checkpoint_complete safe-boundary proof (I4): a pure function over git refs +
+    # durable RUN_DIR artifacts — state.json is NEVER a proof input. Envelope gains a
+    # "counters" key (this mode only): the artifact-derived I3 values that resume-repair
+    # and the rebirth handoff read (single computation point).
+    if ! tip="$(rev "$featureBranch")"; then
+      echo "error: cannot resolve featureBranch $featureBranch" >&2; exit 2
     fi
-
-    # The live ref came from for-each-ref, so it MUST resolve; a non-resolving ref here
-    # is a genuine git error → exit 2 (not an empty-tip false verdict).
-    if ! tip="$(rev "$live_ref")"; then
-      echo "error: cannot resolve live phaseInt ref $live_ref" >&2; exit 2
-    fi
-
-    # Enumerate slice branches merged into live_ref. Slice refs: slice/<runId>/<id>.
     viol_arr=()
+
+    # (a) No open in-flight marker. An open marker is "not safe", full stop — the proof
+    # never probes liveness and never waits.
+    for f in "$RUN_DIR"/inflight-*.marker; do
+      [ -e "$f" ] || continue
+      viol_arr+=("$(violation "${f##*/}" "inflight-open")")
+    done
+
+    # (b) Run refs resolve & relate. Non-resolve of an enumerated ref = exit 2 (same
+    # convention as audit). Every phaseInt ref must relate to drive/<runId> by ancestry
+    # in ONE direction — tip ancestor of drive (completed/advanced) OR drive ancestor of
+    # tip (live) — else phaseInt-divergent. NO numeric phase-id ordering: ids come from
+    # design.md ## Phases and may be non-numeric (e.g. 4a); the ancestry test needs none.
+    # merge-base --is-ancestor rc 1 = verdict; rc > 1 = real git error → exit 2.
     slice_refs="$(git_or_die for-each-ref --format='%(refname:short)' "refs/heads/slice/$runId/")"
     while IFS= read -r sref; do
       [ -n "$sref" ] || continue
-      id="${sref#slice/$runId/}"
-      [ "$id" = "$sref" ] && continue
-      # This slice ref came from for-each-ref, so it MUST resolve → non-resolve = error.
-      if ! stip="$(rev "$sref")"; then
+      if ! rev "$sref" >/dev/null; then
         echo "error: cannot resolve slice ref $sref" >&2; exit 2
-      fi
-      # Is this slice's tip an ancestor of the live phaseInt tip (i.e. merged in)?
-      # Nonzero rc=1 = not merged in (verdict, skip); rc>1 = real error → exit 2.
-      anc_rc=0
-      git merge-base --is-ancestor "$stip" "$tip" 2>/dev/null || anc_rc=$?
-      if [ "$anc_rc" -gt 1 ]; then
-        echo "error: git merge-base --is-ancestor failed (rc=$anc_rc)" >&2; exit 2
-      fi
-      [ "$anc_rc" -eq 0 ] || continue   # not merged into the live phase → skip
-      if ! v="$(check_scope_counts "slice:$id" "$id" "$stip")"; then
-        viol_arr+=("$v")
       fi
     done <<EOF
 $slice_refs
 EOF
+    phase_refs="$(git_or_die for-each-ref --format='%(refname:short)' "refs/heads/phaseInt/$runId/")"
+    while IFS= read -r pref; do
+      [ -n "$pref" ] || continue
+      if ! ptip="$(rev "$pref")"; then
+        echo "error: cannot resolve phaseInt ref $pref" >&2; exit 2
+      fi
+      anc_rc=0
+      git merge-base --is-ancestor "$ptip" "$tip" 2>/dev/null || anc_rc=$?
+      if [ "$anc_rc" -gt 1 ]; then
+        echo "error: git merge-base --is-ancestor failed (rc=$anc_rc)" >&2; exit 2
+      fi
+      [ "$anc_rc" -ne 0 ] || continue   # completed/advanced phase
+      anc_rc=0
+      git merge-base --is-ancestor "$tip" "$ptip" 2>/dev/null || anc_rc=$?
+      if [ "$anc_rc" -gt 1 ]; then
+        echo "error: git merge-base --is-ancestor failed (rc=$anc_rc)" >&2; exit 2
+      fi
+      if [ "$anc_rc" -ne 0 ]; then
+        viol_arr+=("$(violation "$pref" "phaseInt-divergent" "$tip" "$ptip")")
+      fi
+    done <<EOF
+$phase_refs
+EOF
 
+    # (c) Counter artifacts well-formed + per-counter reconstruction (the I3 rules,
+    # artifact side only — no max(state,…) here).
+    # Round files are review-<scope>-N.md with pure-integer N; classify the scope:
+    # design (not a counter) | phasedesign<P>[-r<R>] | phase<P> | else a slice id.
+    slice_keys=""; phase_keys=""; pd_keys=""
+    for f in "$RUN_DIR"/review-*.md; do
+      [ -e "$f" ] || continue
+      base="${f##*/}"; core="${base#review-}"; core="${core%.md}"
+      n="${core##*-}"
+      case "$n" in (*[!0-9]*|'') continue;; esac   # not a round file
+      scope="${core%-*}"
+      [ -n "$scope" ] || continue
+      if ! grep -qE '^## Verdict:' "$f"; then
+        viol_arr+=("$(violation "$base" "unparseable-review")")
+      fi
+      case "$scope" in
+        (design) ;;
+        (phasedesign?*) pd_keys="$pd_keys${scope#phasedesign}"$'\n' ;;
+        (phase?*)       phase_keys="$phase_keys${scope#phase}"$'\n' ;;
+        (*)             slice_keys="$slice_keys$scope"$'\n' ;;
+      esac
+    done
+
+    # harden-<P>-N.md: must carry an AppliedEdits: line; only `yes` counts a fix round
+    # (a confirming clean audit writes `no` and is free — cap-3 is on fix rounds).
+    harden_all=""; harden_yes=""
+    for f in "$RUN_DIR"/harden-*.md; do
+      [ -e "$f" ] || continue
+      base="${f##*/}"; core="${base#harden-}"; core="${core%.md}"
+      n="${core##*-}"
+      case "$n" in (*[!0-9]*|'') continue;; esac
+      P="${core%-*}"
+      [ -n "$P" ] || continue
+      harden_all="$harden_all$P"$'\n'
+      if ! grep -qE '^(##[[:space:]]*)?AppliedEdits:' "$f"; then
+        viol_arr+=("$(violation "$base" "unparseable-harden")")
+      elif grep -qE '^(##[[:space:]]*)?AppliedEdits:[[:space:]]*yes[[:space:]]*$' "$f"; then
+        harden_yes="$harden_yes$P"$'\n'
+      fi
+    done
+
+    # redesigns = HIGHEST epoch R per phase (not file count — epochs are sequential, so
+    # marker rN proves N redesigns even if an intermediate marker was lost; the proof
+    # flags the gap). Gapless r1..rR required, else epoch-gap.
+    rd_phases=""
+    for f in "$RUN_DIR"/redesign-*-r*.marker; do
+      [ -e "$f" ] || continue
+      core="${f##*/}"; core="${core#redesign-}"; core="${core%.marker}"
+      r="${core##*-r}"
+      case "$r" in (*[!0-9]*|'') continue;; esac
+      P="${core%-r$r}"
+      [ -n "$P" ] || continue
+      rd_phases="$rd_phases$P"$'\n'
+    done
+    rd_pairs=""
+    for P in $(printf '%s' "$rd_phases" | sort -u); do
+      R="$(highest_epoch "$P")"
+      k=1
+      while [ "$k" -le "$R" ]; do
+        if [ ! -e "$RUN_DIR/redesign-$P-r$k.marker" ]; then
+          viol_arr+=("$(violation "redesign-$P" "epoch-gap")")
+          break
+        fi
+        k=$((k+1))
+      done
+      rd_pairs="$rd_pairs$P $R"$'\n'
+    done
+    rdj="$(printf '%s' "$rd_pairs" | json_from_pairs)"
+
+    # hardenRound[<P>] = count of AppliedEdits: yes files (I3 rule 3).
+    hr_pairs=""
+    for P in $(printf '%s' "$harden_all" | sort -u); do
+      hr_pairs="$hr_pairs$P $(count_in_list "$harden_yes" "$P")"$'\n'
+    done
+    hrj="$(printf '%s' "$hr_pairs" | json_from_pairs)"
+
+    # phaseReviewRound[<P>] = R_conf = review-phase<P> file count MINUS AppliedEdits: yes
+    # harden files (I3 rule 2 — harden-regress writes into the same review-phase<P>-N.md
+    # family without incrementing the round; each fix round's `yes` audit is its durable
+    # 1:1 marker). yes-count > review-file count is malformed → regress-mismatch, value 0.
+    prr_pairs=""
+    for P in $(printf '%s\n%s' "$phase_keys" "$harden_all" | sort -u); do
+      prc="$(count_in_list "$phase_keys" "$P")"
+      yc="$(count_in_list "$harden_yes" "$P")"
+      if [ "$yc" -gt "$prc" ]; then
+        viol_arr+=("$(violation "phase$P" "regress-mismatch")")
+        prr_pairs="$prr_pairs$P 0"$'\n'
+      else
+        prr_pairs="$prr_pairs$P $((prc - yc))"$'\n'
+      fi
+    done
+    prrj="$(printf '%s' "$prr_pairs" | json_from_pairs)"
+
+    # phaseDesignRound[<P>] = round files of the CURRENT epoch only (I3 rule 5): scope
+    # phasedesign<P> when redesigns == 0, else phasedesign<P>-r<R> for the highest R —
+    # a redesign legitimately resets the round to 0 with a fresh cap-8.
+    pd_phases=""
+    for t in $(printf '%s' "$pd_keys" | sort -u); do
+      P="$t"
+      r="${t##*-r}"
+      if [ "$r" != "$t" ]; then
+        case "$r" in (*[!0-9]*|'') ;; (*) P="${t%-r$r}";; esac
+      fi
+      pd_phases="$pd_phases$P"$'\n'
+    done
+    pdr_pairs=""
+    for P in $(printf '%s\n%s' "$pd_phases" "$rd_phases" | sort -u); do
+      R="$(highest_epoch "$P")"
+      tok="$P"
+      if [ "$R" -gt 0 ]; then tok="$P-r$R"; fi
+      pdr_pairs="$pdr_pairs$P $(count_in_list "$pd_keys" "$tok")"$'\n'
+    done
+    pdrj="$(printf '%s' "$pdr_pairs" | json_from_pairs)"
+
+    # reviewCount[<id>] = count of review-<id>-N.md, pure-integer N (I3 rule 1).
+    rcj="$(printf '%s' "$slice_keys" | sort | uniq -c | awk '{print $2, $1}' | json_from_pairs)"
+
+    counters="{\"redesigns\":$rdj,\"phaseDesignRound\":$pdrj,\"phaseReviewRound\":$prrj,\"hardenRound\":$hrj,\"reviewCount\":$rcj}"
     if [ "${#viol_arr[@]:-0}" -eq 0 ]; then
-      emit true "audit" "$tip" "[]"
+      printf '{"clean":true,"mode":"checkpoint","tip":"%s","violations":[],"counters":%s}\n' "$tip" "$counters"
+      exit 0
     else
       joined="$(IFS=,; echo "${viol_arr[*]}")"
-      emit false "audit" "$tip" "[$joined]"
+      printf '{"clean":false,"mode":"checkpoint","tip":"%s","violations":[%s],"counters":%s}\n' "$tip" "$joined" "$counters"
+      exit 1
+    fi
+    ;;
+
+  audit)
+    # Scoped to LIVE phaseInt refs only. Live = drive/<runId> is an ancestor of the ref
+    # tip (the phase is built on the current base; EQUAL tips audit as live — re-auditing
+    # a just-advanced phase is harmless since its reviews are gate-guaranteed); a ref
+    # whose tip is a STRICT ancestor of drive/<runId> is a completed phase → skipped
+    # (guaranteed by phase-merge + ship gates). Selection is the D18 ancestry rule — NO
+    # numeric phase-id ordering (ids come from design.md ## Phases and may be
+    # non-numeric, e.g. 4a). A ref related in NEITHER direction is divergent → not
+    # audited here (--mode checkpoint flags it as phaseInt-divergent). Report slices
+    # merged into each live ref that lack a counting review. If no live phaseInt, clean.
+    #
+    # git-error-vs-verdict: `for-each-ref` enumerating refs and resolving an enumerated
+    # ref are genuine git ops — a failure is exit 2, NOT exit 0 clean (which would
+    # swallow a broken repo into a false "nothing to audit"). `merge-base --is-ancestor`
+    # nonzero=1 stays a legitimate verdict (skip); only rc>1 is a true error → exit 2.
+    phase_refs="$(git_or_die for-each-ref --format='%(refname:short)' "refs/heads/phaseInt/$runId/")"
+    drive_tip=""
+    if [ -n "$phase_refs" ]; then
+      # Needed only to CLASSIFY refs; phaseInt refs with no resolvable drive/<runId>
+      # is a broken run → exit 2.
+      if ! drive_tip="$(rev "$featureBranch")"; then
+        echo "error: cannot resolve featureBranch $featureBranch" >&2; exit 2
+      fi
+    fi
+
+    viol_arr=()
+    audit_tip=""
+    slice_refs="$(git_or_die for-each-ref --format='%(refname:short)' "refs/heads/slice/$runId/")"
+    while IFS= read -r pref; do
+      [ -n "$pref" ] || continue
+      # An enumerated ref MUST resolve; a non-resolving ref here is a genuine git
+      # error → exit 2 (not an empty-tip false verdict).
+      if ! ptip="$(rev "$pref")"; then
+        echo "error: cannot resolve phaseInt ref $pref" >&2; exit 2
+      fi
+      # live first, so EQUAL tips classify live (not completed): completed = strict.
+      anc_rc=0
+      git merge-base --is-ancestor "$drive_tip" "$ptip" 2>/dev/null || anc_rc=$?
+      if [ "$anc_rc" -gt 1 ]; then
+        echo "error: git merge-base --is-ancestor failed (rc=$anc_rc)" >&2; exit 2
+      fi
+      [ "$anc_rc" -eq 0 ] || continue   # completed (strict ancestor) or divergent → skip
+      [ -n "$audit_tip" ] || audit_tip="$ptip"
+      # Enumerate slice branches merged into THIS live ref. Slice refs: slice/<runId>/<id>.
+      while IFS= read -r sref; do
+        [ -n "$sref" ] || continue
+        id="${sref#slice/$runId/}"
+        [ "$id" = "$sref" ] && continue
+        if ! stip="$(rev "$sref")"; then
+          echo "error: cannot resolve slice ref $sref" >&2; exit 2
+        fi
+        # Merged in = slice tip is an ancestor of the live phaseInt tip.
+        anc_rc=0
+        git merge-base --is-ancestor "$stip" "$ptip" 2>/dev/null || anc_rc=$?
+        if [ "$anc_rc" -gt 1 ]; then
+          echo "error: git merge-base --is-ancestor failed (rc=$anc_rc)" >&2; exit 2
+        fi
+        [ "$anc_rc" -eq 0 ] || continue   # not merged into this live phase → skip
+        if ! v="$(check_scope_counts "slice:$id" "$id" "$stip")"; then
+          viol_arr+=("$v")
+        fi
+      done <<EOF_SLICES
+$slice_refs
+EOF_SLICES
+    done <<EOF_PHASES
+$phase_refs
+EOF_PHASES
+
+    if [ -z "$audit_tip" ]; then
+      emit true "audit" "" "[]"
+    fi
+    if [ "${#viol_arr[@]:-0}" -eq 0 ]; then
+      emit true "audit" "$audit_tip" "[]"
+    else
+      joined="$(IFS=,; echo "${viol_arr[*]}")"
+      emit false "audit" "$audit_tip" "[$joined]"
     fi
     ;;
 

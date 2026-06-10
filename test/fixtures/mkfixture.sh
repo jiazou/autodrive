@@ -99,6 +99,32 @@ _write_codex_empty() {
   : > "$rd/codex-review-$scope.md"
 }
 
+# Write a harden audit file (drive-harden.md template shape). $1=rd $2=P $3=N $4=yes|no
+_write_harden() {
+  local rd="$1" P="$2" n="$3" applied="$4"
+  mkdir -p "$rd"
+  {
+    echo "# Harden phase $P $n"
+    echo "## Verdict: HARDENED"
+    echo "## AppliedEdits: $applied"
+  } > "$rd/harden-$P-$n.md"
+}
+
+# Write a redesign epoch marker (I1 — the file NAME is the load-bearing data). $1=rd $2=P $3=R
+_write_redesign_marker() {
+  local rd="$1" P="$2" R="$3"
+  mkdir -p "$rd"
+  printf '{"phase":"%s","epoch":%s}\n' "$P" "$R" > "$rd/redesign-$P-r$R.marker"
+}
+
+# Write an open in-flight dispatch marker (I2). $1=rd $2=kind-scope (e.g. review-phase1)
+_write_inflight() {
+  local rd="$1" ks="$2"
+  mkdir -p "$rd"
+  printf '{"kind":"x","scope":"x","runId":"x","sessionId":null,"startedAt":"now"}\n' \
+    > "$rd/inflight-$ks.marker"
+}
+
 # ---------------------------------------------------------------------------------
 # Fixture builders. Each echoes "REPO_DIR RUN_DIR" on one line (space-separated).
 # runId is the basename of RUN_DIR; featureBranch is drive/<runId>.
@@ -195,7 +221,11 @@ mk_plan() {
 
 # Per-phase design-gate fixtures (Tier 2). RUN_DIR holds review-phasedesign<P>-N.md +
 # codex-review-phasedesign<P>.md. Mirrors mk_plan, scoped to phasedesign<P>. Like plan-gate,
-# no git tip (it audits a design DOC). $1=variant (clean|nodesign|nocodex|findings) $2=P.
+# no git tip (it audits a design DOC). Epoch variants exercise the redesign-epoch scope
+# token (phasedesign<P>-r<R>, R = highest redesign-<P>-r*.marker):
+#   epoch1_clean -- r1 marker + CONVERGED review-phasedesign<P>-r1-1.md + codex sibling
+#   epoch1_stale -- r1 marker + ONLY a stale epoch-0 CONVERGED pair (must NOT satisfy)
+# $1=variant (clean|nodesign|nocodex|findings|epoch1_clean|epoch1_stale) $2=P.
 mk_phasedesign() {
   local variant="$1"
   local P="${2:-1}"
@@ -217,6 +247,14 @@ mk_phasedesign() {
       _write_codex "$rd" "$scope" ;;
     nocodex)
       _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})" ;;
+    epoch1_clean)
+      _write_redesign_marker "$rd" "$P" 1
+      _write_review "$rd" "$scope-r1" 1 "$(printf '0%.0s' {1..40})"
+      _write_codex "$rd" "$scope-r1" ;;
+    epoch1_stale)
+      _write_redesign_marker "$rd" "$P" 1
+      _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})"   # stale epoch-0 pair
+      _write_codex "$rd" "$scope" ;;
   esac
   echo "$repo $rd"
 }
@@ -305,13 +343,15 @@ mk_phase_harden() {
   echo "$repo $rd"
 }
 
-# Audit fixture: a live phaseInt/<runId>/<P> with one slice merged in.
+# Audit fixture: a live phaseInt/<runId>/<P> with one slice merged in. drive/<runId>
+# sits at the base, so the phaseInt tip descends from it (live, per the ancestry rule).
 # variant: reviewed (slice has a counting review) | unreviewed (slice merged, no review)
 mk_audit() {
   local variant="$1" name="${2:-audit-$1}" P=1
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
   _init_repo "$repo"
   _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
   # slice branch with work
   _gitc "$repo" checkout -q -b "slice/$name/4a"
   local stip; stip="$(_commit "$repo" "feature.sh" "echo hi" "slice 4a")"
@@ -321,6 +361,150 @@ mk_audit() {
   case "$variant" in
     reviewed)   _write_review "$rd" "4a" 1 "$stip" ;;
     unreviewed) : ;;   # no review-4a-*.md -> audit must flag it
+  esac
+  echo "$repo $rd"
+}
+
+# Audit ancestry fixture (criterion 11): the ONLY live ref is the NON-NUMERIC
+# phaseInt/<runId>/4a (tip descends from drive/<runId>) with a merged-but-UNREVIEWED
+# slice — audit must flag it. Pre-retrofit the numeric filter skipped `4a` entirely
+# (false clean). Echoes "REPO RUN_DIR".
+mk_audit_4a() {
+  local name="${1:-audit-4a}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
+  _gitc "$repo" checkout -q -b "slice/$name/s1"
+  _commit "$repo" "feature.sh" "echo hi" "slice s1" >/dev/null
+  _gitc "$repo" checkout -q -b "phaseInt/$name/4a"   # at slice tip -> merged, live
+  mkdir -p "$rd"   # no review-s1-*.md -> audit must flag
+  echo "$repo $rd"
+}
+
+# Audit ancestry fixture (criterion 11): a COMPLETED phaseInt (tip is a STRICT ancestor
+# of drive/<runId> — the step-6 advance moved drive to it and later work moved drive
+# past it) containing a merged unreviewed slice must be SKIPPED (clean). Pre-retrofit
+# the numeric pick audited it (false flag).
+mk_audit_completed() {
+  local name="${1:-audit-completed}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
+  _gitc "$repo" checkout -q -b "slice/$name/s1"
+  _commit "$repo" "feature.sh" "echo hi" "slice s1" >/dev/null
+  _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+  _gitc "$repo" branch -f "drive/$name" "phaseInt/$name/1"   # the advance
+  _gitc "$repo" checkout -q "drive/$name"
+  _commit "$repo" "next.sh" "echo next" "post-advance work moves drive past" >/dev/null
+  mkdir -p "$rd"   # no review for s1 — flagged only if the completed ref were audited
+  echo "$repo $rd"
+}
+
+# Audit ancestry fixture: drive/<runId> EQUAL to the phaseInt tip (advance done, drive
+# not yet moved past). Equality classifies LIVE — the merged unreviewed slice is flagged.
+mk_audit_equal_tip() {
+  local name="${1:-audit-equal}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
+  _gitc "$repo" checkout -q -b "slice/$name/s1"
+  _commit "$repo" "feature.sh" "echo hi" "slice s1" >/dev/null
+  _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+  _gitc "$repo" branch -f "drive/$name" "phaseInt/$name/1"   # equal tips
+  mkdir -p "$rd"
+  echo "$repo $rd"
+}
+
+# ---------------------------------------------------------------------------------
+# --mode checkpoint fixtures (I4). All have a real drive/<runId> branch; artifacts per
+# variant. Echoes "REPO RUN_DIR".
+#
+# variant:
+#   clean             -- quiescent well-formed run: live phaseInt, no inflight markers,
+#                        counter artifacts covering all five I3 rules; state.json is
+#                        CORRUPT garbage (proves the mode never reads it).
+#                        Expected counters: reviewCount {"1.1":2} (review-1.1-final.md
+#                        is not a round file), phaseReviewRound {"1":2} (3 review-phase1
+#                        files MINUS 1 AppliedEdits:yes regress marker), hardenRound
+#                        {"1":1} (one yes + one no), phaseDesignRound {"1":1} (epoch 0),
+#                        redesigns {}.
+#   inflight          -- clean-shaped + one open inflight-*.marker        -> inflight-open
+#   unparseable_review-- a round file with NO '## Verdict:' line          -> unparseable-review
+#   unparseable_harden-- a harden file with NO 'AppliedEdits:' line       -> unparseable-harden
+#   epoch_gap         -- markers r1+r3 (r2 missing) + a VALID state.json claiming
+#                        redesigns:2 -> counters.redesigns {"1":3} (highest-R; state
+#                        never read) + epoch-gap violation
+#   regress_mismatch  -- 1 review-phase1 file but 2 AppliedEdits:yes harden files
+#                        -> regress-mismatch, phaseReviewRound {"1":0}
+#   divergent         -- phaseInt cut from main with its own commit while drive moved on
+#                        -> related in NEITHER direction -> phaseInt-divergent
+#   fourA             -- only ref is the non-numeric phaseInt/<runId>/4a descending from
+#                        drive -> accepted by the ancestry rule (clean)
+#   epoch_files       -- r1 marker + 1 epoch-0 round file + 2 epoch-r1 round files
+#                        -> phaseDesignRound {"1":2} (current epoch only), redesigns {"1":1}
+mk_checkpoint() {
+  local variant="$1" name="${2:-ckpt-$1}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  local zeros; zeros="$(printf '0%.0s' {1..40})"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$name"
+  _commit "$repo" "drive.sh" "echo drive" "drive work" >/dev/null
+  mkdir -p "$rd"
+  case "$variant" in
+    clean)
+      _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+      _commit "$repo" "phase.sh" "echo p1" "phase 1 integration" >/dev/null
+      _write_review "$rd" design 1 "$zeros"
+      _write_review "$rd" "1.1" 1 "$zeros"
+      _write_review "$rd" "1.1" 2 "$zeros"
+      printf 'notes, not a round file\n' > "$rd/review-1.1-final.md"  # non-integer N
+      _write_review "$rd" phase1 1 "$zeros"
+      _write_review "$rd" phase1 2 "$zeros"
+      _write_review "$rd" phase1 3 "$zeros"
+      _write_harden "$rd" 1 1 yes
+      _write_harden "$rd" 1 2 no
+      _write_review "$rd" phasedesign1 1 "$zeros"
+      printf 'CORRUPT-NOT-JSON{{{\n' > "$rd/state.json"   # never a proof input
+      ;;
+    inflight)
+      _write_review "$rd" phase1 1 "$zeros"
+      _write_inflight "$rd" "review-phase1"
+      ;;
+    unparseable_review)
+      { echo "# half-written review"; echo "no verdict line here"; } > "$rd/review-2.2-1.md"
+      ;;
+    unparseable_harden)
+      { echo "# Harden phase 1 1"; echo "## Verdict: HARDENED"; } > "$rd/harden-1-1.md"
+      ;;
+    epoch_gap)
+      _write_redesign_marker "$rd" 1 1
+      _write_redesign_marker "$rd" 1 3   # r2 lost
+      printf '{"phaseDesign":{"1":{"redesigns":2,"round":0}}}\n' > "$rd/state.json"
+      ;;
+    regress_mismatch)
+      _write_review "$rd" phase1 1 "$zeros"
+      _write_harden "$rd" 1 1 yes
+      _write_harden "$rd" 1 2 yes
+      ;;
+    divergent)
+      _gitc "$repo" checkout -q main
+      _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+      _commit "$repo" "px.sh" "echo px" "divergent phase work" >/dev/null
+      ;;
+    fourA)
+      _gitc "$repo" checkout -q -b "phaseInt/$name/4a"
+      _commit "$repo" "p4a.sh" "echo 4a" "phase 4a integration" >/dev/null
+      ;;
+    epoch_files)
+      _write_redesign_marker "$rd" 1 1
+      _write_review "$rd" phasedesign1 1 "$zeros"        # epoch 0: must NOT count
+      _write_review "$rd" "phasedesign1-r1" 1 "$zeros"
+      _write_review "$rd" "phasedesign1-r1" 2 "$zeros"
+      ;;
   esac
   echo "$repo $rd"
 }
@@ -381,6 +565,7 @@ mk_audit_git_error() {
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
   _init_repo "$repo"
   _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
   _gitc "$repo" checkout -q -b "phaseInt/$name/$P"
   local tip; tip="$(_commit "$repo" "phase.sh" "echo phase" "phase $P integration")"
   mkdir -p "$rd"
@@ -536,6 +721,8 @@ mk_two_concurrent() {
   local rd1="$FIXROOT/$r1" rd2="$FIXROOT/$r2"
   _init_repo "$repo"
   _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$r1"
+  _gitc "$repo" branch "drive/$r2"
   # R1 phase1: reviewed & clean
   _gitc "$repo" checkout -q -b "phaseInt/$r1/1"
   local t1; t1="$(_commit "$repo" "r1.sh" "echo r1" "R1 phase1")"
