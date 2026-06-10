@@ -370,16 +370,6 @@ def test_checkpoint_phaseint_divergent_violation(tmp_path):
     ], obj["violations"]
 
 
-def _run_checkpoint_with_script(repo, rd, script):
-    """Run an arbitrary conformance script (used to exercise a MUTATED tmp COPY of the real
-    script — the real bin/drive-conformance.sh is never edited)."""
-    proc = subprocess.run(
-        ["bash", str(script), str(rd), "--mode", "checkpoint"],
-        cwd=str(repo), capture_output=True, text=True,
-    )
-    return proc.returncode, proc.stdout
-
-
 def test_checkpoint_nonnumeric_phase_id_4a_processed_not_skipped(tmp_path):
     """AC1/AC11 boundary (D18 ancestry, NO numeric phase-id ordering): the mode must
     actually PROCESS a non-numeric phase id `phaseInt/<runId>/4a`, not silently skip it.
@@ -400,29 +390,37 @@ def test_checkpoint_nonnumeric_phase_id_4a_processed_not_skipped(tmp_path):
         _viol("phaseInt/ckpt-4a/4a", "phaseInt-divergent", drive_tip, pint_tip)
     ], obj["violations"]
 
-    # PROOF the assertion FLIPS under numeric-only selection: copy the real script to a
-    # tmp dir, inject a `skip non-numeric phase id` filter into the phaseInt loop, and
-    # confirm the COPY now reads CLEAN (no phaseInt-divergent) for the very same fixture —
-    # i.e. the real script's NON-numeric processing is what makes the assertion above
-    # catch the divergence. The real bin/drive-conformance.sh is never modified.
-    src = CONFORMANCE.read_text(encoding="utf-8")
-    anchor = '    if ! ptip="$(rev "$pref")"; then\n'
-    assert anchor in src, "expected phaseInt-loop anchor in drive-conformance.sh"
-    # derive the numeric phase id from the ref (basename) and `continue` if non-numeric.
-    numeric_only = (
-        '    _pid="${pref##*/}"\n'
-        '    case "$_pid" in (*[!0-9]*|"") continue;; esac\n'
-    ) + anchor
-    mutated = src.replace(anchor, numeric_only, 1)
-    assert mutated != src, "numeric-only mutation must change the script text"
-    copy = tmp_path / "conformance-numeric-only.sh"
-    copy.write_text(mutated, encoding="utf-8")
-    rc2, out2 = _run_checkpoint_with_script(repo, rd, copy)
-    obj2 = json.loads(out2)
-    assert rc2 == 0 and obj2["clean"] is True and obj2["violations"] == [], (
-        "under numeric-only selection the divergent 4a is skipped and reads CLEAN — "
-        "this is exactly the regression the real (non-numeric-processing) script prevents"
+
+def test_checkpoint_nonnumeric_phase_id_4a_verdict_flips_on_divergence(tmp_path):
+    """AC1/AC11 (companion to the divergent-4a case): the non-numeric `4a` id is PROCESSED,
+    not skipped — proven BEHAVIORALLY by flipping only whether `phaseInt/<runId>/4a` is
+    divergent and asserting the verdict differs, with NO coupling to drive-conformance.sh
+    source text. A numeric-only selection would skip `4a` in BOTH builds and read CLEAN in
+    both — so the verdict difference IS the proof the script handles the non-numeric id.
+    Same fixture shape as the divergent case, but `4a` is cut FROM `drive/<runId>` (a
+    descendant, fast-forwardable) → no divergence → CLEAN."""
+    repo, rd = _base_run(tmp_path, "ckpt-4a-ff")
+    # 4a as a DESCENDANT of drive/<runId> (cut from it, then commit forward): an ancestor
+    # relation holds in one direction, so it is NOT phaseInt-divergent.
+    _git(repo, "checkout", "-q", "-b", "phaseInt/ckpt-4a-ff/4a", "drive/ckpt-4a-ff")
+    _commit(repo, "p4a.sh", "echo 4a", "phase 4a fast-forward integration")
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0 and obj["clean"] is True and obj["violations"] == [], (
+        f"a NON-divergent (descendant) non-numeric 4a must read CLEAN; got {obj}"
     )
+    # The flip: identical fixture except 4a IS divergent (cut from main) → phaseInt-divergent.
+    # If the script skipped the non-numeric id, BOTH builds would read CLEAN and the verdict
+    # would NOT differ — so this difference proves the non-numeric id is processed.
+    repo2, rd2 = _base_run(tmp_path, "ckpt-4a-div")
+    _git(repo2, "checkout", "-q", "main")
+    _git(repo2, "checkout", "-q", "-b", "phaseInt/ckpt-4a-div/4a")
+    _commit(repo2, "p4a.sh", "echo 4a", "phase 4a divergent integration")
+    rc2, obj2 = _run_checkpoint(repo2, rd2)
+    assert rc2 == 1 and "phaseInt-divergent" in _reasons(obj2), (
+        f"a divergent non-numeric 4a must be flagged phaseInt-divergent; got {obj2}"
+    )
+    # The verdicts differ on the SAME non-numeric id — the behavioral proof of processing.
+    assert obj["clean"] != obj2["clean"]
 
 
 def test_checkpoint_epoch_files_count_current_epoch_only(tmp_path):
@@ -591,6 +589,22 @@ def test_five_reconstruction_rules_pinned():
         assert rule in blob, f"reconstruction rule {i} formula drifted or dropped:\n{rule}"
 
 
+def _resume_section_text(md):
+    """The body of drive.md's `## Run setup & resume` section, from the `- **Resume:**`
+    bullet to the next `## ` heading — the span whose nested `- **<Label>:**` sub-bullets
+    are the resume reconciliation steps. Returned with original newlines (not _norm'd) so a
+    line-anchored bullet regex can enumerate them in document order."""
+    start = md.index("- **Resume:**")
+    end = md.index("\n## ", start)
+    return md[start:end]
+
+
+# A resume reconciliation sub-bullet: a nested (indented) `- **<Label>:**` line. The
+# top-level `- **Resume:**` bullet is at column 0; its children are indented, so the
+# leading-whitespace requirement excludes the parent and matches only the steps.
+_RESUME_BULLET_RE = re.compile(r"^[ \t]+- \*\*(.+?):\*\*", re.MULTILINE)
+
+
 def test_sessionId_rebind_is_first_resume_bullet():
     """AC6 (I7): resume opens with the sessionId rebind — rewrite state.sessionId to the
     live $CLAUDE_CODE_SESSION_ID on ANY new-session resume, BEFORE reconciling. Pinned as
@@ -600,15 +614,20 @@ def test_sessionId_rebind_is_first_resume_bullet():
         "drive.md resume must open with the FIRST sessionId-rebind bullet"
     )
     assert "rewrite `state.sessionId` to the live `$CLAUDE_CODE_SESSION_ID`" in blob
-    # STRUCTURAL FIRST-ness (not just the parenthetical label): the rebind bullet must
-    # POSITIONALLY precede the other resume-section steps, so a reorder that delays
-    # hook-attribution is caught even if it leaves the now-false "(FIRST, ...)" label.
-    i_rebind = blob.index("sessionId rebind (FIRST")
-    i_marker = blob.index("Consume `checkpoint-complete.marker` (single-use)")
-    i_phase = blob.index("**Current phase:**")
-    assert i_rebind < i_marker < i_phase, (
-        "the sessionId-rebind bullet must appear BEFORE the marker-consume and "
-        "current-phase resume steps (structural FIRST-ness, not just the label)"
+    # STRUCTURAL FIRST-ness (not just the parenthetical label, and not merely "before two
+    # named siblings"): enumerate EVERY resume sub-bullet in document order and assert the
+    # rebind bullet is the minimum-index one — so a NEW bullet inserted ahead of the rebind
+    # (which a `rebind < marker < phase` ordering check would pass) breaks the pin.
+    section = _resume_section_text(_drive_md())
+    labels = _RESUME_BULLET_RE.findall(section)
+    assert len(labels) >= 5, f"expected the resume sub-bullets to enumerate; got {labels}"
+    rebind_idx = next(
+        (i for i, lbl in enumerate(labels) if lbl.startswith("sessionId rebind")), None
+    )
+    assert rebind_idx is not None, f"no sessionId-rebind sub-bullet found among {labels}"
+    assert rebind_idx == 0, (
+        "the sessionId-rebind bullet must be the FIRST resume sub-bullet (minimum index "
+        f"among ALL resume steps), not just ahead of two named siblings; got order {labels}"
     )
 
 
@@ -761,23 +780,43 @@ def test_harden_one_regress_per_fix_round():
     assert "harden-regress" in blob
 
 
+def _harden_cap_stop_branch_body(md):
+    r"""The cap-STOP branch of drive-harden.md Step 4: the `- **\`hardenRound >= HARDEN_CAP\`
+    …**` bullet, bounded at the next paragraph break (blank line). Returns the bullet's
+    OWN text so an assertion can pin what THAT branch does (and does not) dispatch — not
+    text borrowed from a sibling bullet."""
+    anchor = "- **`hardenRound >= HARDEN_CAP` and this audit still has open P1**"
+    start = md.index(anchor)
+    end = md.index("\n\n", start)
+    return md[start:end]
+
+
 def test_harden_cap_stop_dispatches_no_regress():
     """AC10: a cap-STOP round applies no fix and dispatches NO regress review — so it
     writes no `AppliedEdits: yes`, preserving the rule-2 subtraction. The cap-STOP branch
     returns STOP without the fix→yes→regress sequence."""
-    blob = _norm(_drive_harden_md())
-    # The cap-STOP branch, pinned as the LOCAL contiguous Step-4 clause — NOT a lazy
-    # `.*?` span that could bridge to the distant "→ STOP and summarize" statement ~9KB
-    # away. This is the single `→ return `STOP`` in the doc; a rewrite of the local
-    # condition→return ordering breaks the pin.
-    assert (
-        "**`hardenRound >= HARDEN_CAP` and this audit still has open P1** → return `STOP`."
-    ) in blob, (
-        "drive-harden.md Step 4 must return `STOP` on `hardenRound >= HARDEN_CAP` + open "
-        "P1 as one contiguous clause (the cap-STOP branch applies no fix → no regress)"
+    md = _drive_harden_md()
+    branch = _harden_cap_stop_branch_body(md)
+    # The branch returns STOP …
+    assert "return `STOP`" in branch, (
+        "the `hardenRound >= HARDEN_CAP` + open-P1 branch must return `STOP`"
+    )
+    # … and — the load-bearing assertion the round-subtraction depends on — it dispatches
+    # NO regress review: a `harden-regress` re-run added to THIS branch would write an
+    # `AppliedEdits: yes` audit and break rule-2's `MINUS yes-count` subtraction. Pinned on
+    # the branch's OWN text (not the whole Step) so adding a regress dispatch here BITES.
+    assert "harden-regress" not in branch, (
+        "the cap-STOP branch must dispatch NO `harden-regress` review (a regress re-run "
+        "here writes AppliedEdits: yes and breaks the rule-2 round-subtraction)"
+    )
+    # Sanity that the branch bound is the LOCAL bullet (not the whole doc): the sibling
+    # "fix applied" branch — which DOES dispatch harden-regress — must lie OUTSIDE it, so
+    # the `not in branch` check above is genuinely scoped to the cap-STOP branch.
+    assert "A fix was applied" not in branch, (
+        "the cap-STOP branch body must not bleed into the sibling 'fix applied' branch"
     )
     # the clean confirming audit writes `no` (not `yes`) and dispatches no regress.
-    assert "set `harden-<P>-N.md` `AppliedEdits: no`" in blob, (
+    assert "set `harden-<P>-N.md` `AppliedEdits: no`" in _norm(md), (
         "the no-fix confirming audit must set AppliedEdits: no (no regress dispatch)"
     )
 
