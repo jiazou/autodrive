@@ -175,8 +175,9 @@ the coordinator's self-report. Two marker families carry the contract:
   `phasedesign<P>[-r<R>]` scope token resolves `<R>` at write time by the ONE rule: `R`
   = highest epoch among `$RUN_DIR/redesign-<P>-r*.marker` (0 → the bare `phasedesign<P>`;
   `R >= 1` → `phasedesign<P>-r<R>`). The coordinator applies this rule when it writes a
-  remediation marker (Stage 2–4.5 gate); drive-review.md applies the IDENTICAL rule for
-  every phasedesign artifact it writes (its in-flight marker included).
+  remediation marker (Stage 2–4.5 gate) — the coordinator is the SOLE marker writer.
+  drive-review.md applies the IDENTICAL rule only to resolve `<R>` for the phasedesign
+  review/codex artifact filenames it writes; it never writes the in-flight marker.
   **Write-before-dispatch, clear-after-record:** the coordinator (main context) writes
   the marker (tmp + `mv`) immediately BEFORE the dispatch and `rm`s it only AFTER the
   result is fully recorded — artifact written + `state.json` updated + event-log line
@@ -192,8 +193,10 @@ that must not be split (the REDESIGN handler's marker-write → state-write span
 atomic step — complete it before any checkpoint.
 
 **The checkpoint proof:** `bin/drive-conformance.sh $RUN_DIR --mode checkpoint` — clean
-iff no open in-flight marker, every run ref resolves and relates to `drive/<runId>` by
-ancestry, and every counter artifact is well-formed. Its `counters` output is the single
+iff no open in-flight marker, every `phaseInt/<runId>/<P>` ref resolves AND relates to
+`drive/<runId>` by ancestry, every `slice/<runId>/<id>` ref resolves (slice branches are
+cut from `phaseBaseSha`, so they are NOT ancestors of `drive/<runId>` — resolution only),
+and every counter artifact is well-formed. Its `counters` output is the single
 computation point for the artifact-derived counter values (it never reads `state.json`).
 After it exits 0, write **`$RUN_DIR/checkpoint-complete.marker`** (tmp + `mv`; single
 file, overwritten), content:
@@ -269,10 +272,10 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
    `phase`, `phaseList`, `designReview`, `phaseDesign[<P>].status`,
    `slices[<id>].{step,owns,deps}`, `phaseReview[<P>].status`, `verify`, `ship`.
    **The status fields pick glyphs only.** Every round COUNT
-   (`slices[<id>].reviewCount`, `phaseDesign[<P>].round`, `phaseReview[<P>].{round,
-   hardenRound}`) is artifact-derived (rule below); the matching state counter is read
-   ONLY as the labeled DISPLAY fallback in the missing-artifact rule — never as a proof
-   of a count.
+   (`designReview`, `slices[<id>].reviewCount`, `phaseDesign[<P>].round`,
+   `phaseReview[<P>].{round, hardenRound}`) is artifact-derived (rule below); the matching
+   state counter is read ONLY as the labeled DISPLAY fallback in the missing-artifact rule
+   — never as a proof of a count.
 2. **Fixed-format markdown files** (scope-token naming):
    - `design.md` (Goal → root cause). (`task.md` may also exist, but the Premises line is
      taken from `state.task`, which always has a writer — never an unsourced node.)

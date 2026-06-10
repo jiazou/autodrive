@@ -34,7 +34,8 @@ checkpoint contract, In-flight dispatch markers) — invokers pass `phase <P> de
 unchanged: set `R` = the highest epoch among `$RUN_DIR/redesign-<P>-r*.marker` (0 if
 none); `R == 0` → the bare `phasedesign<P>`, `R >= 1` → `phasedesign<P>-r<R>`. Use the
 resolved token everywhere `<scope>` appears — the review file, the codex sibling, the
-`codex-raw-<scope>.log`, the in-flight marker, and the file-count counter fallback.
+`codex-raw-<scope>.log`, and the file-count counter fallback. The coordinator writes the
+in-flight marker, not this stage.
 
 **Loop counter:** `N = (this scope's counter) + 1` — `state.designReview` for
 `design`, `state.slices[<id>].reviewCount` for a slice, the `phaseReview[<P>]`
