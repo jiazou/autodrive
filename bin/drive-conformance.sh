@@ -88,7 +88,9 @@ codex_present() {
 highest_epoch() {
   local P="$1" best=0 f r
   for f in "$RUN_DIR"/redesign-"$P"-r*.marker; do
-    [ -e "$f" ] || continue
+    # -e || -L: a DANGLING marker symlink (the `-e` test follows the link and fails)
+    # must still COUNT its epoch — skipping it would resolve a LOWER epoch (fail-OPEN).
+    [ -e "$f" ] || [ -L "$f" ] || continue
     r="${f##*-r}"; r="${r%.marker}"
     case "$r" in (*[!0-9]*|'') continue;; esac
     if [ "$r" -gt "$best" ]; then best="$r"; fi
@@ -106,7 +108,9 @@ highest_epoch() {
 unmarked_epochs() {
   local P="$1" f core r out=""
   for f in "$RUN_DIR"/review-phasedesign"$P"-r*-*.md "$RUN_DIR"/codex-review-phasedesign"$P"-r*.md; do
-    [ -e "$f" ] || continue
+    # -e || -L: a DANGLING epoch-suffixed dirent (broken symlink) is still corruption to
+    # flag — skipping it would hide the markerless epoch and fail OPEN.
+    [ -e "$f" ] || [ -L "$f" ] || continue
     core="${f##*/}"
     # strip the leading prefix down to "r<R>..."; both families share the -r<R> token.
     core="${core#review-phasedesign"$P"-r}"
@@ -565,7 +569,8 @@ EOF
     # flags the gap). Gapless r1..rR required, else epoch-gap.
     rd_phases=""
     for f in "$RUN_DIR"/redesign-*-r*.marker; do
-      [ -e "$f" ] || continue
+      # -e || -L: a DANGLING marker still proves its epoch (highest_epoch/epoch-gap below).
+      [ -e "$f" ] || [ -L "$f" ] || continue
       core="${f##*/}"; core="${core#redesign-}"; core="${core%.marker}"
       r="${core##*-r}"
       case "$r" in (*[!0-9]*|'') continue;; esac
@@ -620,7 +625,9 @@ EOF
     # sibling is still corruption to flag).
     pdr_phases=""
     for f in "$RUN_DIR"/review-phasedesign*-r*-*.md "$RUN_DIR"/codex-review-phasedesign*-r*.md; do
-      [ -e "$f" ] || continue
+      # -e || -L: a DANGLING epoch-suffixed dirent still belongs to a phase whose markerless
+      # epoch unmarked_epochs() must flag — skipping it would fail OPEN.
+      [ -e "$f" ] || [ -L "$f" ] || continue
       core="${f##*/}"
       core="${core#review-phasedesign}"
       core="${core#codex-review-phasedesign}"

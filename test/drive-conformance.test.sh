@@ -310,6 +310,15 @@ assert_out_contains "CK2 redesigns from marker" '"redesigns":{"1":1}'
 read -r repo rd < <(mk_checkpoint epoch_unmarked)
 run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 markerless epoch artifact -> exit 1 (fail closed, not clean)" 1 "$RC"
 assert_out_contains "CK2 epoch-unmarked violation" '"reason":"epoch-unmarked"'
+# Dangling redesign-1-r1.marker (broken symlink) + a stale well-formed epoch-0 review;
+# otherwise quiescent. An `-e`-only marker scan follows the broken link, fails `-e`, SKIPS it,
+# sees no redesign marker, and reads clean (fail-OPEN). `-e || -L` counts it -> highest_epoch=1
+# and the gapless epoch check's `-e` probe of the broken r1 marker fails -> epoch-gap. Regression
+# validity: against the pre-fix tip 77a7476 the marker scan's `-e`-only guard skips the symlink
+# and the run reads clean (rc 0); this flips to rc 1.
+read -r repo rd < <(mk_checkpoint epoch_marker_dangling)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 dangling epoch marker counts -> exit 1 (fail closed, not clean)" 1 "$RC"
+assert_out_contains "CK2 dangling epoch marker reports epoch-gap" '"reason":"epoch-gap"'
 
 echo "=== CK3/CK4: epoch-gap + dropped-increment recovery; state.json never read ==="
 # Markers r1+r3 with state.json claiming redesigns:2 — the dropped 3rd increment is
@@ -342,6 +351,15 @@ assert_out_contains "CK5 stale epoch reports no-review for the current epoch" '"
 read -r repo rd < <(mk_phasedesign epoch1_unmarked 1)
 run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 markerless r1 artifact fails the gate closed (not a stale epoch-0 PASS)" 1 "$RC"
 assert_out_contains "CK5 markerless epoch reports epoch-unmarked" '"reason":"epoch-unmarked"'
+# Dangling r1 marker (broken symlink) + ONLY a stale epoch-0 CONVERGED pair. An `-e`-only
+# highest_epoch() follows the broken link, fails the `-e` test, SKIPS it, resolves epoch 0,
+# and the stale epoch-0 pair PASSES (fail-OPEN). `-e || -L` counts the dangling marker ->
+# epoch 1 -> scope phasedesign1-r1 has no review -> fail closed. Regression validity: against
+# the pre-fix tip 77a7476 highest_epoch's `-e`-only guard skips the symlink and the gate
+# PASSES (rc 0); this flips to rc 1.
+read -r repo rd < <(mk_phasedesign epoch1_marker_dangling 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 dangling r1 marker counts -> gate fails closed (not a stale epoch-0 PASS)" 1 "$RC"
+assert_out_contains "CK5 dangling-marker epoch resolves r1 -> no-review for current epoch" '"reason":"no-review"'
 
 echo "=== CK6: audit live-phase selection by ancestry (criterion 11) ==="
 # Regression-guard validity: pre-change audit picked the live phase by highest
@@ -355,12 +373,17 @@ run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 completed pha
 # the pre-retrofit behavior for a just-advanced phase and what the stop-guard relies on.
 read -r repo rd < <(mk_audit_equal_tip)
 run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 equal-tip phaseInt audits as live" 1 "$RC"
-# Dedup: one unreviewed slice merged into TWO live refs is flagged ONCE, not twice (the
-# raw violations JSON is the human-facing STOP evidence). Pre-dedup emits two identical
-# slice:s1 objects; the count assertion below flips (2 -> 1).
+# Dedup: one unreviewed slice s1 merged into TWO live refs (the just-advanced equal-tip
+# phaseInt/1 AND the descending phaseInt/2) is flagged ONCE, not twice (the raw violations
+# JSON is the human-facing STOP evidence). The dedup is load-bearing ONLY under the
+# ancestry audit (multiple live refs) — the same ancestry code with the seen_slice dedup
+# removed emits TWO identical slice:s1 objects on this fixture, so the exact-1 assertions
+# below flip (2 -> 1) against a no-dedup regression. (Two live refs sharing the slice are a
+# precondition, asserted via the pair of phaseInt branches the fixture builds.)
 read -r repo rd < <(mk_audit_multi_live)
 run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 slice merged into two live refs -> exit 1" 1 "$RC"
 assert_out_count "CK6 shared slice flagged once (deduped across live refs)" 'slice:s1' 1
+assert_out_count "CK6 exactly one violation object (no-dedup regression would emit 2)" '"reason":"no-review"' 1
 
 echo
 echo "=== usage/error guards ==="

@@ -117,6 +117,16 @@ _write_redesign_marker() {
   printf '{"phase":"%s","epoch":%s}\n' "$P" "$R" > "$rd/redesign-$P-r$R.marker"
 }
 
+# Write a DANGLING redesign epoch marker (a broken symlink). The dirent NAME still encodes
+# the epoch, so highest_epoch()/the checkpoint marker scan must COUNT it (forcing the higher
+# epoch) — the `-e` glob test follows the link and fails, so an `-e`-only guard would skip it
+# and fall back to a LOWER epoch (fail-OPEN). $1=rd $2=P $3=R
+_write_redesign_marker_dangling() {
+  local rd="$1" P="$2" R="$3"
+  mkdir -p "$rd"
+  ln -s /nonexistent/redesign-target "$rd/redesign-$P-r$R.marker"
+}
+
 # Write an open in-flight dispatch marker (I2). $1=rd $2=kind-scope (e.g. review-phase1)
 _write_inflight() {
   local rd="$1" ks="$2"
@@ -230,7 +240,12 @@ mk_plan() {
 #                      fall back to bare phasedesign<P> and PASS on the stale epoch-0 pair;
 #                      the gate must instead fail closed with epoch-unmarked. An epoch-0
 #                      CONVERGED pair is seeded too, so a marker-only check would PASS.
-# $1=variant (clean|nodesign|nocodex|findings|epoch1_clean|epoch1_stale|epoch1_unmarked) $2=P.
+#   epoch1_marker_dangling -- a DANGLING redesign-<P>-r1.marker symlink + ONLY a stale
+#                      epoch-0 CONVERGED pair (no r1 review/codex). An `-e`-only highest_epoch()
+#                      skips the broken symlink, resolves epoch 0, and PASSES on the stale
+#                      pair (fail-OPEN); `-e || -L` counts the dangling marker -> epoch 1 ->
+#                      scope phasedesign<P>-r1 has no review -> fail closed (no-review).
+# $1=variant (clean|nodesign|nocodex|findings|epoch1_clean|epoch1_stale|epoch1_unmarked|epoch1_marker_dangling) $2=P.
 mk_phasedesign() {
   local variant="$1"
   local P="${2:-1}"
@@ -267,6 +282,13 @@ mk_phasedesign() {
       _write_codex "$rd" "$scope"
       _write_review "$rd" "$scope-r1" 1 "$(printf '0%.0s' {1..40})"
       _write_codex "$rd" "$scope-r1" ;;
+    epoch1_marker_dangling)
+      # dangling r1 marker (broken symlink) + ONLY a stale epoch-0 CONVERGED pair. An
+      # -e-only highest_epoch() skips the broken link, resolves epoch 0, and PASSES on the
+      # stale pair; -e||-L counts the marker -> epoch 1 -> phasedesign<P>-r1 has no review.
+      _write_redesign_marker_dangling "$rd" "$P" 1
+      _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})"   # stale epoch-0 pair
+      _write_codex "$rd" "$scope" ;;
   esac
   echo "$repo $rd"
 }
@@ -484,6 +506,12 @@ mk_audit_multi_live() {
 #   inflight_symlink  -- clean-shaped + a DANGLING symlink named inflight-*.marker: the
 #                        `-e` glob guard follows the link and fails, so a marker-only
 #                        glob would read clean; `-L` must fail it closed -> inflight-open.
+#   epoch_marker_dangling -- a DANGLING redesign-1-r1.marker symlink (broken) + a stale,
+#                        well-formed epoch-0 phasedesign review; otherwise quiescent. An
+#                        `-e`-only marker scan skips the broken link, sees no redesign, and
+#                        reads clean (fail-OPEN); `-e || -L` counts it -> highest_epoch=1 and
+#                        the r1 marker fails the `-e` existence probe in the gapless check
+#                        -> epoch-gap, exit 1.
 mk_checkpoint() {
   local variant="$1" name="${2:-ckpt-$1}"
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -556,6 +584,14 @@ mk_checkpoint() {
       _commit "$repo" "phase.sh" "echo p1" "phase 1 integration" >/dev/null
       _write_review "$rd" phase1 1 "$zeros"
       ln -s /nonexistent/target "$rd/inflight-review-phase1.marker"   # dangling symlink
+      ;;
+    epoch_marker_dangling)
+      # dangling r1 marker + stale well-formed epoch-0 review; otherwise quiescent. An
+      # -e-only marker scan skips the broken link and reads clean; -e||-L counts it ->
+      # highest_epoch=1 and the gapless check's `-e` probe of the broken r1 marker fails
+      # -> epoch-gap.
+      _write_redesign_marker_dangling "$rd" 1 1
+      _write_review "$rd" phasedesign1 1 "$zeros"   # stale epoch-0 review (well-formed)
       ;;
   esac
   echo "$repo $rd"
