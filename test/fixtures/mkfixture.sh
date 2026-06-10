@@ -127,6 +127,16 @@ _write_redesign_marker_dangling() {
   ln -s /nonexistent/redesign-target "$rd/redesign-$P-r$R.marker"
 }
 
+# Write a DANGLING artifact symlink (a broken symlink) at $rd/$2. The dirent NAME still
+# parses (round N / scope), so the dirent loops must COUNT it as present-but-unparseable
+# and fail closed — the `-e` glob test follows the link and fails, so an `-e`-only guard
+# would skip it (fail-OPEN: a dropped highest-N round / undercounted counter). $1=rd $2=name
+_write_dangling_dirent() {
+  local rd="$1" name="$2"
+  mkdir -p "$rd"
+  ln -s /nonexistent/artifact-target "$rd/$name"
+}
+
 # Write an open in-flight dispatch marker (I2). $1=rd $2=kind-scope (e.g. review-phase1)
 _write_inflight() {
   local rd="$1" ks="$2"
@@ -193,7 +203,13 @@ mk_slice_no_codex() {
 }
 
 # plan-gate fixtures. RUN_DIR holds review-design-N.md + codex-review-design.md.
-# variant: clean | findings | nodesign | nocodex | codex_unavailable | codex_buried | codex_empty
+# variant: clean | findings | nodesign | nocodex | codex_unavailable | codex_buried |
+#          codex_empty | dangling_highest
+#   dangling_highest -- a CONVERGED review-design-1.md + a DANGLING review-design-2.md
+#                       symlink (broken) + codex. highest_review_file's `-e`-only guard
+#                       skips the broken higher-N link and drops to the N=1 CONVERGED
+#                       round -> plan-gate PASSES (fail-OPEN). `-e || -L` counts N=2 as
+#                       `best`; it is unreadable so verdict_converged() fails -> block.
 mk_plan() {
   local variant="$1" name="${2:-plan-$1}"
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -225,6 +241,13 @@ mk_plan() {
       # for AC3 negative: an EMPTY codex file (bare `touch`) does NOT satisfy.
       _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
       _write_codex_empty "$rd" design ;;
+    dangling_highest)
+      # N=1 CONVERGED + a DANGLING higher-N (N=2) review symlink + codex. The dangling
+      # N=2 is the real highest round; an -e-only highest_review_file drops to N=1 and
+      # PASSES. -e||-L counts N=2 (unreadable -> verdict-not-converged) -> block.
+      _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
+      _write_dangling_dirent "$rd" "review-design-2.md"
+      _write_codex "$rd" design ;;
   esac
   echo "$repo $rd"
 }
@@ -512,6 +535,14 @@ mk_audit_multi_live() {
 #                        reads clean (fail-OPEN); `-e || -L` counts it -> highest_epoch=1 and
 #                        the r1 marker fails the `-e` existence probe in the gapless check
 #                        -> epoch-gap, exit 1.
+#   dangling_review   -- a DANGLING review-1.1-2.md symlink (broken), otherwise quiescent.
+#                        The `-e`-only review-* scan skips it (undercounting reviewCount and
+#                        reading clean on corruption); `-e || -L` counts it present-but-
+#                        unparseable (grep '## Verdict:' fails) -> unparseable-review, exit 1.
+#   dangling_harden   -- a DANGLING harden-1-2.md symlink (broken), otherwise quiescent. The
+#                        `-e`-only harden-* scan skips it (erasing a fix round / suppressing
+#                        a regress-mismatch); `-e || -L` counts it (grep 'AppliedEdits:' fails)
+#                        -> unparseable-harden, exit 1.
 mk_checkpoint() {
   local variant="$1" name="${2:-ckpt-$1}"
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -592,6 +623,17 @@ mk_checkpoint() {
       # -> epoch-gap.
       _write_redesign_marker_dangling "$rd" 1 1
       _write_review "$rd" phasedesign1 1 "$zeros"   # stale epoch-0 review (well-formed)
+      ;;
+    dangling_review)
+      # a DANGLING review-1.1-2.md symlink, otherwise quiescent. The -e-only review-* scan
+      # skips it (undercount + clean-on-corruption); -e||-L counts it present-but-unparseable
+      # (grep '## Verdict:' fails on the broken link) -> unparseable-review.
+      _write_dangling_dirent "$rd" "review-1.1-2.md"
+      ;;
+    dangling_harden)
+      # a DANGLING harden-1-2.md symlink, otherwise quiescent. The -e-only harden-* scan skips
+      # it (erasing a fix round); -e||-L counts it (grep 'AppliedEdits:' fails) -> unparseable-harden.
+      _write_dangling_dirent "$rd" "harden-1-2.md"
       ;;
   esac
   echo "$repo $rd"

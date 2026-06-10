@@ -60,7 +60,14 @@ featureBranch="drive/$runId"
 highest_review_file() {
   local scope="$1" best="" bestn=-1 f n
   for f in "$RUN_DIR"/review-"$scope"-*.md; do
-    [ -e "$f" ] || continue
+    # -e || -L: a DANGLING higher-N review symlink (the `-e` test follows the link and
+    # fails) must still COUNT as the highest round — skipping it would resolve a LOWER-N
+    # file as `best`, and that lower round may be CONVERGED (a harden-regress round, or
+    # any non-highest round whose verdict is not guaranteed FINDINGS) → a gate that should
+    # block on the real (dangling/corrupt) highest round passes (fail-OPEN). Counting the
+    # dangling file as `best` is fail-CLOSED: it is unreadable, so verdict_converged() and
+    # reviewed_sha_of() both fail on it → the scope does NOT count → block.
+    [ -e "$f" ] || [ -L "$f" ] || continue
     n="${f##*/review-"$scope"-}"; n="${n%.md}"
     case "$n" in (*[!0-9]*|'') continue;; esac   # only pure-integer N
     if [ "$n" -gt "$bestn" ]; then bestn="$n"; best="$f"; fi
@@ -395,6 +402,10 @@ EOF
     candidate_R=""
     seen_phase=" "
     for f in "$RUN_DIR"/review-phase*-*.md; do
+      # This scan only discovers WHICH phase scopes exist; the counting verdict for each is
+      # re-derived via highest_review_file (now -L-hardened). A DANGLING dirent here is safe
+      # to skip (fail-CLOSED): ship requires a POSITIVE existential R, so dropping a candidate
+      # can only WITHHOLD a candidate → ship blocks, never passes. Skipping strictly tightens.
       [ -e "$f" ] || continue
       base="${f##*/}"                       # review-phase<P>-<N>.md
       rest="${base#review-}"                # phase<P>-<N>.md
@@ -529,7 +540,11 @@ EOF
     # design (not a counter) | phasedesign<P>[-r<R>] | phase<P> | else a slice id.
     slice_keys=""; phase_keys=""; pd_keys=""
     for f in "$RUN_DIR"/review-*.md; do
-      [ -e "$f" ] || continue
+      # -e || -L: a DANGLING review dirent is corruption, not absence — skipping it would
+      # UNDERCOUNT reviewCount/phaseReviewRound (the counters the resume path consumes) and
+      # let the checkpoint read CLEAN on a corrupt artifact. Counting it is fail-CLOSED: the
+      # `grep '^## Verdict:'` below fails on the unreadable file → unparseable-review violation.
+      [ -e "$f" ] || [ -L "$f" ] || continue
       base="${f##*/}"; core="${base#review-}"; core="${core%.md}"
       n="${core##*-}"
       case "$n" in (*[!0-9]*|'') continue;; esac   # not a round file
@@ -550,7 +565,12 @@ EOF
     # (a confirming clean audit writes `no` and is free — cap-3 is on fix rounds).
     harden_all=""; harden_yes=""
     for f in "$RUN_DIR"/harden-*.md; do
-      [ -e "$f" ] || continue
+      # -e || -L: a DANGLING harden dirent is corruption — skipping it would erase a fix
+      # round (undercounting hardenRound) AND drop its yes-count from the regress-mismatch
+      # check below (suppressing a real mismatch), letting the checkpoint read CLEAN on a
+      # corrupt artifact. Counting it is fail-CLOSED: the `grep 'AppliedEdits:'` fails on
+      # the unreadable file → unparseable-harden violation.
+      [ -e "$f" ] || [ -L "$f" ] || continue
       base="${f##*/}"; core="${base#harden-}"; core="${core%.md}"
       n="${core##*-}"
       case "$n" in (*[!0-9]*|'') continue;; esac

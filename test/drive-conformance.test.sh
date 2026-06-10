@@ -81,6 +81,16 @@ read -r repo rd < <(mk_plan clean)
   echo "Round 1 had been:"; echo "## Verdict: CONVERGED"; } > "$rd/review-design-1.md"
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0b later standalone CONVERGED line in FINDINGS still blocked" 1 "$RC"
 
+# AC0d: highest_review_file fail-closed on a DANGLING higher-N review symlink. A CONVERGED
+# review-design-1.md plus a DANGLING (broken) review-design-2.md is corruption at the real
+# highest round; an `-e`-only scan skips the broken link and drops to the N=1 CONVERGED round,
+# so plan-gate PASSES (fail-OPEN). `-e || -L` counts N=2 as `best`; it is unreadable so
+# verdict_converged fails -> block. Regression validity: against tip 109c0ed highest_review_file
+# was `-e`-only, so this exits 0 (false clean); the assertion below flips to rc 1.
+read -r repo rd < <(mk_plan dangling_highest)
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0d dangling higher-N review drops to lower CONVERGED round -> blocked (fail closed)" 1 "$RC"
+assert_out_contains "AC0d dangling highest-N reads as verdict-not-converged" '"reason":"verdict-not-converged"'
+
 echo "=== AC0c: phasedesign-gate (per-phase Tier-2 design review, omission-proof) ==="
 read -r repo rd < <(mk_phasedesign clean 1)
 run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "AC0c phasedesign-gate clean" 0 "$RC"
@@ -277,6 +287,17 @@ assert_out_contains "CK1 unparseable-review violation" '"reason":"unparseable-re
 read -r repo rd < <(mk_checkpoint unparseable_harden)
 run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 harden file w/o AppliedEdits -> exit 1" 1 "$RC"
 assert_out_contains "CK1 unparseable-harden violation" '"reason":"unparseable-harden"'
+# (c) DANGLING review/harden dirents are corruption, not absence: the round scans must COUNT
+# them present-but-unparseable (fail closed), never skip them (which would undercount the I3
+# counters the resume path reads and read CLEAN on corruption). Regression validity: against
+# tip 109c0ed both scans were `-e`-only, so the broken symlink is skipped and the otherwise-
+# quiescent fixture reads clean (rc 0); the assertions below flip to rc 1.
+read -r repo rd < <(mk_checkpoint dangling_review)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 dangling review-*.md symlink -> exit 1 (counted, not skipped)" 1 "$RC"
+assert_out_contains "CK1 dangling review reads as unparseable-review" '"reason":"unparseable-review"'
+read -r repo rd < <(mk_checkpoint dangling_harden)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 dangling harden-*.md symlink -> exit 1 (counted, not skipped)" 1 "$RC"
+assert_out_contains "CK1 dangling harden reads as unparseable-harden" '"reason":"unparseable-harden"'
 
 # (b) divergent phaseInt (related to drive/<runId> in neither direction)
 read -r repo rd < <(mk_checkpoint divergent)
