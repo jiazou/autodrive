@@ -29,11 +29,12 @@ refs:
 
 Let `<scope>` be `design`, `<id>` (e.g. `1.2`), `phase<P>`, or the phasedesign token (the
 per-phase design review of `design-phase<P>.md`). **Resolve the phasedesign token's
-redesign epoch YOURSELF** — invokers pass `phase <P> design` unchanged: set `R` = the
-highest epoch among `$RUN_DIR/redesign-<P>-r*.marker` (0 if none); `R == 0` → the bare
-`phasedesign<P>`, `R >= 1` → `phasedesign<P>-r<R>`. Use the resolved token everywhere
-`<scope>` appears — the review file, the codex sibling, the `codex-raw-<scope>.log`, the
-in-flight marker, and the file-count counter fallback.
+redesign epoch YOURSELF** by the single epoch-resolution rule (drive.md § Durable
+checkpoint contract, In-flight dispatch markers) — invokers pass `phase <P> design`
+unchanged: set `R` = the highest epoch among `$RUN_DIR/redesign-<P>-r*.marker` (0 if
+none); `R == 0` → the bare `phasedesign<P>`, `R >= 1` → `phasedesign<P>-r<R>`. Use the
+resolved token everywhere `<scope>` appears — the review file, the codex sibling, the
+`codex-raw-<scope>.log`, the in-flight marker, and the file-count counter fallback.
 
 **Loop counter:** `N = (this scope's counter) + 1` — `state.designReview` for
 `design`, `state.slices[<id>].reviewCount` for a slice, the `phaseReview[<P>]`
@@ -98,7 +99,9 @@ commits). Bind it by scope:
 - **design / phasedesign:** OMIT `reviewed-sha:` — these audit a design DOC
   (`design.md` / `design-phase<P>.md`), not a git tip. (`design` feeds the plan-gate,
   which requires only `## Verdict: CONVERGED` + the codex file; `phasedesign<P>` is
-  consumed by `/drive-design`, not a conformance gate.)
+  consumed by `/drive-design` and the verdict-only `phasedesign-gate:<P>` (which
+  reads the current-epoch `review-phasedesign<P>[-r<R>]-N.md` + codex pair — verdict +
+  codex presence, no git tip to bind).)
 ----- END SUBAGENT SCOPE -----
 
 ## Step 2 — Cross-model codex pass (direct CLI, per-scope log)

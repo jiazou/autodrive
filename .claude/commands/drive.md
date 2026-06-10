@@ -88,8 +88,11 @@ verdict / merge / gate.
     never a proof input. Repair each counter one-directionally —
     `counter = max(state hint, artifact-derived value)`: the hint may RAISE a counter
     (tightening a cap risks at worst a premature STOP — safe), never lower it (loosening
-    a cap risks a loop overrunning it — unsafe). The checkpoint proof and the run graph
-    assert ONLY the artifact-derived value.
+    a cap risks a loop overrunning it — unsafe). The checkpoint proof asserts ONLY the
+    artifact-derived value. The run graph derives every round COUNT from the review/harden
+    files (artifact-derived); state status fields pick glyphs only, and a state counter is
+    a DISPLAY fallback solely in the missing-artifact `?` rule (labeled a hint there) —
+    never a proof input.
     1. `slices[<id>].reviewCount` = max(state, count of `review-<id>-N.md`,
        pure-integer N).
     2. `phaseReview[<P>].round` = max(state, count of `review-phase<P>-N.md`
@@ -160,7 +163,7 @@ the coordinator's self-report. Two marker families carry the contract:
   deleted; if the file already exists → STOP (a duplicate write means a state bug).
   Atomic write: `$RUN_DIR/.tmp.<name>` then `mv`. Content (informational — the NAME is
   the load-bearing datum):
-  `{"phase": <P>, "epoch": R, "runId": "<id>", "at": "<iso>", "trigger": "<what>"}`.
+  `{"phase": <P>, "epoch": R, "runId": "<runId>", "at": "<iso>", "trigger": "<what>"}`.
 - **In-flight dispatch markers — `$RUN_DIR/inflight-<kind>-<scope>.marker`.** One marker
   per coordinator dispatch unit: `inflight-design-<P>.marker` (the whole `/drive-design
   phase <P>` run, spanning its author+review loop), `inflight-implement-<id>.marker`,
@@ -168,11 +171,17 @@ the coordinator's self-report. Two marker families carry the contract:
   `phase<P>`, `phasedesign<P>[-r<R>]`; this ONE marker brackets the whole dual-voice
   chain: reviewer subagent → background codex → post-process → counter/state record),
   `inflight-harden-<P>.marker`, `inflight-verify.marker`, `inflight-ship.marker`.
+  **Epoch resolution (single owner — the marker WRITER).** Whoever writes a
+  `phasedesign<P>[-r<R>]` scope token resolves `<R>` at write time by the ONE rule: `R`
+  = highest epoch among `$RUN_DIR/redesign-<P>-r*.marker` (0 → the bare `phasedesign<P>`;
+  `R >= 1` → `phasedesign<P>-r<R>`). The coordinator applies this rule when it writes a
+  remediation marker (Stage 2–4.5 gate); drive-review.md applies the IDENTICAL rule for
+  every phasedesign artifact it writes (its in-flight marker included).
   **Write-before-dispatch, clear-after-record:** the coordinator (main context) writes
   the marker (tmp + `mv`) immediately BEFORE the dispatch and `rm`s it only AFTER the
   result is fully recorded — artifact written + `state.json` updated + event-log line
   appended. No `pid`, no liveness probing. Content:
-  `{"kind": "...", "scope": "...", "runId": "<id>", "sessionId": "<dispatching session or null>", "startedAt": "<iso>"}`.
+  `{"kind": "...", "scope": "...", "runId": "<runId>", "sessionId": "<dispatching session or null>", "startedAt": "<iso>"}`.
 
 **Safe boundary** = no open `inflight-*.marker` AND no partial multi-step git mutation
 detectable from git. Two steps carry NO marker by design: **assemble** — a partial phase
@@ -257,9 +266,13 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
 
 1. **`state.json`** — the durable structured run-model. Fields the graph reads:
    `task` (→ Premises line — always written at run-setup), `stage`, `lastGate`, `waiting`,
-   `phase`, `phaseList`, `designReview`, `phaseDesign[<P>].{round,status}`,
-   `slices[<id>].{step,reviewCount,owns,deps}`,
-   `phaseReview[<P>].{status,round,hardenRound}`, `verify`, `ship`.
+   `phase`, `phaseList`, `designReview`, `phaseDesign[<P>].status`,
+   `slices[<id>].{step,owns,deps}`, `phaseReview[<P>].status`, `verify`, `ship`.
+   **The status fields pick glyphs only.** Every round COUNT
+   (`slices[<id>].reviewCount`, `phaseDesign[<P>].round`, `phaseReview[<P>].{round,
+   hardenRound}`) is artifact-derived (rule below); the matching state counter is read
+   ONLY as the labeled DISPLAY fallback in the missing-artifact rule — never as a proof
+   of a count.
 2. **Fixed-format markdown files** (scope-token naming):
    - `design.md` (Goal → root cause). (`task.md` may also exist, but the Premises line is
      taken from `state.task`, which always has a writer — never an unsourced node.)
@@ -316,8 +329,9 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
   (absent/no-status ⇒ `◐` in-progress). `stage==execute` + the current phase has empty
   `slices` ⇒ it is still in Tier-2 design (`phaseDesign[<P>].status != converged`) → render
   `◐ Phase N (designing…)` under the `design:` line; `stage` past execute + empty `slices` ⇒
-  `(no slices recorded)`. Harden from
-  `harden-<P>-*.md` + `codex-harden-<P>*.md` + `phaseReview[<P>].hardenRound/status`.
+  `(no slices recorded)`. Harden rounds from `harden-<P>-*.md` (`AppliedEdits: yes`
+  count) + `codex-harden-<P>*.md`; `phaseReview[<P>].status` picks the glyph and
+  `hardenRound` is the missing-artifact display fallback only.
   A `stop:<r>` while in Execute anchors `← YOU ARE HERE` to a `✗ STOP: <r>` leaf under
   the responsible slice/phase node.
 - **Verify:** from `state.verify.attempts[]` (ordered ⇒ saga); multiple attempts render
@@ -372,9 +386,12 @@ so it never drifts and never fabricates:
 ### Missing-artifact rule (general — never fabricate)
 
 For ANY counted round whose artifact is absent — for ANY family: `review-design-*.md`,
-`review-<id>-*.md`, `review-phase<P>-*.md`, `harden-<P>-*.md`, and their codex siblings
-(`codex-review-<scope>*.md`, `codex-harden-<P>*.md`) — show the round count from state
-with verdict `?`; never fabricate a verdict.
+`review-<id>-*.md`, `review-phase<P>-*.md`, the current-epoch
+`review-phasedesign<P>[-r<R>]-*.md` (`R` = highest `redesign-<P>-r*.marker`),
+`harden-<P>-*.md`, and their codex siblings (`codex-review-<scope>*.md`,
+`codex-harden-<P>*.md`) — show the matching state counter as a DISPLAY HINT (its sole
+graph use) with verdict `?`; never fabricate a verdict, never treat this fallback count
+as proof.
 
 ### Line budget — an ordered collapse LADDER (always terminates ≤ ~45)
 
@@ -501,7 +518,9 @@ the CURRENT epoch's family — `review-phasedesign<P>[-r<R>]-N.md` +
 named review (`/drive-review design` or `/drive-review phase <P> design` — drive-review.md
 resolves the epoch itself) until it converges, then retry. At this remediation dispatch
 the coordinator writes/clears `inflight-review-phasedesign<P>[-r<R>].marker` around the
-`/drive-review` call (in the normal flow a phase's design reviews are bracketed by the
+`/drive-review` call, resolving `<R>` by the single epoch-resolution rule (§ Durable
+checkpoint contract, In-flight dispatch markers) (in the normal flow a phase's design
+reviews are bracketed by the
 outer `inflight-design-<P>` marker — no separate review marker there). The PreToolUse
 hook enforces both on the `git worktree add -b slice/…` (deriving `<P>` from the slice
 id prefix); the in-prose check degrades gracefully
@@ -567,9 +586,10 @@ it before it advances):
      stale vs the real prior-slice code, or a slice needs files outside its ownership).
      FIRST action — strictly BEFORE the `redesigns`/`round` mutation — write the epoch
      marker `$RUN_DIR/redesign-<P>-r<R>.marker` (`R` = highest existing epoch for `<P>`
-     + 1; create-only, tmp + `mv`; marker already exists → STOP, state bug). The whole
-     handler — marker-write → state-write → re-queue — is one atomic step w.r.t.
-     checkpointing. Then `phaseDesign[<P>].redesigns += 1`; at `>= 3` → STOP (a phase that
+     + 1; create-only, tmp + `mv`; marker already exists → STOP, state bug). The
+     marker-write → state-write span is one atomic step w.r.t. checkpointing (§ Durable
+     checkpoint contract); re-queue may follow a checkpoint.
+     Then `phaseDesign[<P>].redesigns += 1`; at `>= 3` → STOP (a phase that
      keeps breaking its own design needs a human). Else set `phaseDesign[<P>].round = 0`
      (this redesign is a fresh design pass → fresh cap-8) and re-run step 1's design (it
      merge-updates `state.slices`) — every subsequent phasedesign review for `<P>` uses
