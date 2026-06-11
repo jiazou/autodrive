@@ -12,14 +12,17 @@
 #      bin/drive-stop-hook.py + bin/statusline.sh (all four in the SAME dir).
 #   2. drive-stop-hook.py imports rebirth_thresholds via sys.path.insert(dirname(__file__))
 #      — i.e. it expects the resolver as a bin/ sibling, not an installed copy.
-#   3. rebirth_thresholds.py resolves rebirth-thresholds.json relative to its OWN
-#      dirname (dirname(__file__)/rebirth-thresholds.json) — sibling, not cwd/abspath.
-#   4. statusline.sh resolves rebirth-thresholds.json relative to its OWN dirname
-#      (dirname(BASH_SOURCE)/rebirth-thresholds.json) — sibling, not a copied path.
-#   5. The installers do NOT copy these files (no install step deploys them): the
-#      stop hook is registered as an in-place `python3 "<repo>/bin/drive-stop-hook.py"`
-#      command and statusline is symlinked — so bin/ is canonical-by-reference and the
-#      siblings resolve with no install action.
+#   3. rebirth_thresholds.py's EFFECTIVE THRESHOLDS_PATH (imported and read at runtime)
+#      resolves to the bin/ sibling json — reds on any later override to a copied/
+#      absolute/non-sibling path, not just on the textual expression disappearing.
+#   4. statusline.sh's EFFECTIVE THRESHOLDS_FILE (its last winning assignment, evaled
+#      with BASH_SOURCE pinned) resolves to the bin/ sibling json — same effective-path
+#      assertion, reds on a later override.
+#   5. The installers do NOT copy the rebirth files (or bin/ wholesale) to a non-sibling
+#      location: NO copy-like op (cp / cp -R/-r / install / rsync / ditto / python
+#      shutil.copy*) references bin/ or a rebirth file. The stop hook is registered as an
+#      in-place `python3 "<repo>/bin/drive-stop-hook.py"` command and statusline is
+#      symlinked — bin/ is canonical-by-reference and the siblings resolve with no copy.
 #
 # bash 3.2-safe; read-only (touches no settings.json, runs no installer).
 set -uo pipefail
@@ -72,22 +75,86 @@ check "stop-hook puts its own dir on sys.path (sibling import)" "$( [ "$sys_path
 imports_resolver=$(grep -c 'import rebirth_thresholds' "$HOOK")
 check "stop-hook imports rebirth_thresholds (sibling module)" "$( [ "$imports_resolver" -ge 1 ] && echo yes || echo no )" "yes"
 
-# --- 3. rebirth_thresholds.py resolves the json relative to its own dir ----
-# THRESHOLDS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "rebirth-thresholds.json")
-resolver_sibling=$(grep -A1 'THRESHOLDS_PATH' "$RESOLVER" | grep -c 'os\.path\.dirname(os\.path\.abspath(__file__))')
-check "resolver builds json path from dirname(__file__)" "$( [ "$resolver_sibling" -ge 1 ] && echo yes || echo no )" "yes"
-resolver_names_json=$(grep -c '"rebirth-thresholds\.json"' "$RESOLVER")
-check "resolver names rebirth-thresholds.json as the sibling file" "$( [ "$resolver_names_json" -ge 1 ] && echo yes || echo no )" "yes"
+# --- 3. rebirth_thresholds.py resolves the json to its bin/ sibling --------
+# Assert the EFFECTIVE runtime path, not just that a sibling-style expression
+# appears: import the resolver and read the THRESHOLDS_PATH it actually computes.
+# A later reassignment to a copied/absolute/non-sibling path reds here (the appears-
+# somewhere grep would stay green). Resolved through dirname so a symlinked bin/
+# compares equal to its physical location.
+resolver_effective=$(python3 - "$RESOLVER" "$BIN" <<'PY' 2>/dev/null
+import importlib.util, os, sys
+resolver, want_dir = sys.argv[1], sys.argv[2]
+spec = importlib.util.spec_from_file_location("rebirth_thresholds", resolver)
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+p = mod.THRESHOLDS_PATH
+got_dir = os.path.realpath(os.path.dirname(p))
+print("yes" if (got_dir == os.path.realpath(want_dir)
+                and os.path.basename(p) == "rebirth-thresholds.json") else "no")
+PY
+)
+check "resolver's effective THRESHOLDS_PATH is the bin/ sibling json" "${resolver_effective:-no}" "yes"
 
-# --- 4. statusline.sh resolves the json relative to its own dir -----------
-# THRESHOLDS_FILE="$(dirname "${BASH_SOURCE[0]}")/rebirth-thresholds.json"
-statusline_sibling=$(grep -c 'dirname "\${BASH_SOURCE\[0\]}")/rebirth-thresholds\.json' "$STATUSLINE")
-check "statusline resolves json from dirname(BASH_SOURCE) (sibling)" "$( [ "$statusline_sibling" -ge 1 ] && echo yes || echo no )" "yes"
+# --- 4. statusline.sh resolves the json to its bin/ sibling ----------------
+# Assert the EFFECTIVE runtime path the script computes for THRESHOLDS_FILE, not
+# just that a dirname(BASH_SOURCE) expression appears. Eval the script's own
+# assignment(s) for THRESHOLDS_FILE with BASH_SOURCE pinned to the real statusline,
+# taking the LAST assignment that wins at runtime — so a later override to a
+# copied/absolute/non-sibling path reds here. Then resolve through dirname.
+statusline_effective=$(
+  THRESHOLDS_FILE=""
+  # Replay every THRESHOLDS_FILE= assignment in source order; the last one wins,
+  # exactly as it would at runtime. ${BASH_SOURCE[0]} / $BASH_SOURCE are textually
+  # substituted with the real statusline path (the interpreter does not let a caller
+  # override the BASH_SOURCE call-stack array inside eval), so dirname(BASH_SOURCE)
+  # resolves to bin/ just as it does when the script runs.
+  _bs0='${BASH_SOURCE[0]}'; _bs='$BASH_SOURCE'
+  while IFS= read -r _line; do
+    _line="${_line//"$_bs0"/$STATUSLINE}"
+    _line="${_line//"$_bs"/$STATUSLINE}"
+    eval "$_line"
+  done < <(grep -E '^[[:space:]]*THRESHOLDS_FILE=' "$STATUSLINE")
+  if [ -n "$THRESHOLDS_FILE" ]; then
+    got_dir="$( cd "$(dirname "$THRESHOLDS_FILE")" 2>/dev/null && pwd -P )"
+    if [ "$got_dir" = "$( cd "$BIN" && pwd -P )" ] \
+       && [ "$(basename "$THRESHOLDS_FILE")" = "rebirth-thresholds.json" ]; then
+      echo yes
+    else
+      echo no
+    fi
+  else
+    echo no
+  fi
+)
+check "statusline's effective THRESHOLDS_FILE is the bin/ sibling json" "${statusline_effective:-no}" "yes"
 
 # --- 5. The installers deploy the rebirth files by REFERENCE, not by copy --
-# No installer copies the rebirth data file or resolver anywhere; the hook is
-# registered as an in-place command and statusline is symlinked. So a `cp` of
-# either rebirth file would be a regression (it would fork a stale copy off bin/).
+# The installers register the hook in-place and symlink statusline; they must NOT
+# copy the rebirth files (or bin/ wholesale) to a non-sibling location, which would
+# fork a stale copy off bin/ and break the sibling resolution. Catch the BROAD class,
+# not one literal: any copy-like operation (cp / cp -R/-r / install / rsync / ditto /
+# a python shutil.copy*/copyfile) whose line references bin/ or a rebirth file. The
+# two legit backup copies (`cp "$GLOBAL" ...`, `cp -- "$SETTINGS" ...`) name ~/CLAUDE.md
+# and settings.json — neither touches bin/ or a rebirth file, so they do not match;
+# the symlink (`ln -sfn`) and backup `mv` lines are not copy verbs at all.
+#
+# Two-stage match per line: (a) it invokes a copy verb, AND (b) it references bin/ or a
+# rebirth file. Comments are stripped first (leading-# lines and trailing ` #...`) so a
+# narrating comment that merely mentions `cp ... bin` is not a false positive.
+copy_into_bin=$(
+  for f in "$INSTALL_RULES" "$INSTALL_HOOKS"; do
+    [ -f "$f" ] || continue
+    # drop full-line comments, then strip trailing comments, then scan code only.
+    grep -vE '^[[:space:]]*#' "$f" \
+      | sed -E 's/[[:space:]]#.*$//' \
+      | grep -E '(^|[[:space:];|&(])(cp|install|rsync|ditto)([[:space:]]|$)|shutil\.(copy[a-z]*|copyfile)|copyfileobj' \
+      | grep -E '/bin([/"'"'"' ]|$)|(^|[^[:alnum:]_])bin/|rebirth-thresholds\.json|rebirth_thresholds\.py|drive-stop-hook\.py|statusline\.sh|\$\{?BIN\}?'
+  done | wc -l | tr -d ' '
+)
+check "no installer copy-op (cp/install/rsync/ditto/shutil) targets bin/ or a rebirth file" "$copy_into_bin" "0"
+
+# Positive evidence the deployment is by-reference: the hook is registered as an in-place
+# `python3 "<repo>/bin/drive-stop-hook.py"` command and statusline is symlinked (ln -sfn).
 data_copied=$( { grep -E 'cp .*rebirth-thresholds\.json' "$INSTALL_RULES" "$INSTALL_HOOKS"; } 2>/dev/null | wc -l | tr -d ' ')
 check "no installer copies rebirth-thresholds.json (canonical-by-reference)" "$data_copied" "0"
 resolver_copied=$( { grep -E 'cp .*rebirth_thresholds\.py' "$INSTALL_RULES" "$INSTALL_HOOKS"; } 2>/dev/null | wc -l | tr -d ' ')
