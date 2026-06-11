@@ -376,8 +376,9 @@ def test_checkpoint_nonnumeric_phase_id_4a_processed_not_skipped(tmp_path):
     To make a skip observably fail, `4a` is built DIVERGENT (cut from `main`, non-ancestor
     of `drive/<runId>`): the real script must flag `phaseInt-divergent` for `phaseInt/.../4a`
     specifically. A numeric-only selection would skip `4a` and read CLEAN — proving that the
-    flagged-divergent assertion is load-bearing on non-numeric processing (proof below via a
-    tmp COPY of the script with a numeric-id filter injected)."""
+    flagged-divergent assertion is load-bearing on non-numeric processing (the behavioral
+    proof is the companion test_..._verdict_flips_on_divergence: flip only `4a`'s divergence
+    and the verdict differs, with NO coupling to the script source)."""
     repo, rd = _base_run(tmp_path, "ckpt-4a")
     _git(repo, "checkout", "-q", "main")
     _git(repo, "checkout", "-q", "-b", "phaseInt/ckpt-4a/4a")
@@ -778,6 +779,98 @@ def test_harden_one_regress_per_fix_round():
     assert "`hardenRound += 1`" in blob
     # the regress review is the same family the phase review writes (review-phase<P>-N.md)
     assert "harden-regress" in blob
+
+
+def test_harden_regress_no_round_increment_contract_pinned_both_voices():
+    """AC10 (load-bearing): the harden-regress round-scheme contract that the rule-2
+    reconstruction depends on — pinned on BOTH prose voices as CONTIGUOUS clauses so a
+    drift to a DIFFERENT round/file scheme (a separate counter, a new file family, or an
+    incrementing harden-regress) breaks this test.
+
+    The contract: a harden-regress review writes into the SAME `review-phase<P>-N.md`
+    family WITHOUT incrementing the conformance `phaseReview[<P>].round`. That is the exact
+    basis for the checkpoint counter rule `phaseReview.round = count(review-phase<P>-N.md)
+    MINUS count(harden-<P>-*.md AppliedEdits: yes)`: each fix round adds one review-phase
+    file (no round bump) and one `yes` audit, so subtracting the yes-count recovers the
+    real round. If the prose drifted to a different scheme, the reconstruction would over-
+    or under-count silently and lossless rebirth counter recovery would break."""
+    # 1a. drive.md — the contiguous clause that states the same-family / no-round-increment
+    # half of rule 2. Pinned as one literal span (not scattered words) so a reword onto a
+    # different round/file scheme fails. `_norm` collapses the wrap so the clause is one line.
+    drive = _norm(_drive_md())
+    assert (
+        "harden-regress reviews write into the same `review-phase<P>-N.md` family "
+        "without incrementing the round, and each fix round's `AppliedEdits: yes` audit "
+        "is its durable 1:1 marker"
+    ) in drive, (
+        "drive.md rule 2 must keep the contiguous 'harden-regress … same `review-phase<P>-"
+        "N.md` family without incrementing the round' clause — a drift to a different "
+        "round/file scheme must break this pin"
+    )
+    # 1b. drive-review.md — the harden-regress exception that operationalizes 'no round
+    # increment' at the review-write point: it must NOT read/increment/cap the conformance
+    # round. Pinned as a contiguous clause naming the SAME `phaseReview[<P>].round` counter.
+    review = _norm(_drive_review_md())
+    assert (
+        "Exception — `harden-regress`:** do NOT read, increment, or cap against the "
+        "conformance `phaseReview[<P>].round`"
+    ) in review, (
+        "drive-review.md must pin the harden-regress exception (do NOT increment the "
+        "conformance `phaseReview[<P>].round`) — the write-point half of the no-increment "
+        "contract"
+    )
+
+    # 2. CROSS-CHECK prose ⇆ script describe the SAME contract. The script's rule-2 derives
+    # `phaseReviewRound = review-phase<P> file count MINUS AppliedEdits: yes harden files`.
+    # The prose's "no round increment for harden-regress" and the script's "MINUS yes-count"
+    # are the two ends of ONE contract: because harden-regress does not bump the round, the
+    # extra review-phase file each fix round emits is corrected for by subtracting that
+    # round's `yes` audit. Assert both ends so a one-sided drift (prose says no-increment but
+    # script stops subtracting, or vice versa) is caught.
+    conf = _conformance()
+    # (a) the script subtraction exists and is keyed on the SAME family + the `yes` audit.
+    assert "review-phase<P> file count MINUS AppliedEdits: yes" in conf, (
+        "drive-conformance.sh rule-2 must subtract the AppliedEdits:yes harden count from "
+        "the review-phase<P> file count"
+    )
+    assert "$((prc - yc))" in conf, (
+        "the script must literally compute review-file-count MINUS yes-count for the round"
+    )
+    # (b) the script's own rationale comment names the SAME no-increment / same-family fact
+    # the prose pins — so the two files cannot drift apart on the scheme silently.
+    assert (
+        "harden-regress writes into the same review-phase<P>-N.md\n"
+        "    # family without incrementing the round"
+    ) in conf, (
+        "drive-conformance.sh rule-2 rationale must state the SAME 'harden-regress … same "
+        "review-phase<P>-N.md family without incrementing the round' contract the prose pins"
+    )
+
+    # 3. BEHAVIORAL agreement: the subtraction is live, not just commented. A clean phase
+    # with 3 review-phase files and 1 AppliedEdits:yes harden file must reconstruct
+    # phaseReviewRound == 2 (3 − 1) — i.e. the harden-regress review file did NOT add a
+    # round. (Covered structurally by test_checkpoint_clean_fixture_passes_with_counters;
+    # re-asserted here bound to THIS contract so a regression in the subtraction surfaces
+    # against the prose pin it must agree with.)
+    import tempfile, pathlib
+    with tempfile.TemporaryDirectory() as td:
+        tmp = pathlib.Path(td)
+        repo = tmp / "r"; rd = tmp / "rd"
+        repo.mkdir(); rd.mkdir()
+        _git(repo, "init", "-q", "-b", "main")
+        _commit(repo, "README", "base", "base")
+        _git(repo, "checkout", "-q", "-b", "drive/rd")
+        _commit(repo, "drive.sh", "echo", "work")
+        _review(rd, "phase1", 1)
+        _review(rd, "phase1", 2)
+        _review(rd, "phase1", 3)   # one of these three is a harden-regress write
+        _harden(rd, 1, 1, "yes")   # the matching fix-round audit
+        rc, obj = _run_checkpoint(repo, rd)
+        assert rc == 0, obj
+        assert obj["counters"]["phaseReviewRound"] == {"1": 2}, (
+            "3 review-phase files − 1 AppliedEdits:yes harden = round 2 (harden-regress "
+            "added a review file but NOT a round) — script and prose must agree"
+        )
 
 
 def _harden_cap_stop_branch_body(md):
