@@ -160,10 +160,13 @@ import re, sys
 
 # A path token that designates the REPO bin/ or a rebirth/hook/statusline file.
 # Anchored so system bins do NOT match: a `bin` segment counts only when it is
-# $BIN/${BIN}, or a `bin/` whose left boundary is start, quote, space, or `$VAR/`
-# / `${VAR}/` (i.e. `$REPO_DIR/bin/`) — never `/usr/bin`, `/usr/local/bin`, `/bin`.
+# $BIN/${BIN}, or a `bin` whose left boundary is start, quote, space, or `$VAR/`
+# / `${VAR}/` (i.e. `$REPO_DIR/bin`) — never `/usr/bin`, `/usr/local/bin`, `/bin`.
+# The `bin` is matched as a path component at its right boundary (a following `/`
+# OR a word boundary: quote, space, end-of-token), so a wholesale `cp -R "$REPO_DIR/bin"
+# /dest` with NO trailing slash is caught the same as `$REPO_DIR/bin/`.
 REBIRTH_FILE = r'(rebirth-thresholds\.json|rebirth_thresholds\.py|drive-stop-hook\.py|statusline\.sh)'
-REPO_BIN = r'(\$\{?BIN\}?|(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/)bin/|(?<![/\w])bin/)'
+REPO_BIN = r'(\$\{?BIN\}?|(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/)bin(?:/|\b)|(?<![/\w])bin(?:/|\b))'
 SYS_BIN = re.compile(r'(^|[\s"\'=(])/(usr/(local/)?)?s?bin/')   # /usr/bin, /usr/local/bin, /bin, /sbin
 
 def references_repo_bin(text):
