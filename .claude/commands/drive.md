@@ -15,7 +15,8 @@ Argument: `$ARGUMENTS` is the task (the premise).
 - Inside a git repo with a **clean main working tree** (`git status --porcelain`
   empty) — else STOP (a run branches from a clean base; don't disturb the user's
   uncommitted work).
-- `gh` (or `glab`) + `jq` on PATH for ship.
+- `jq` on PATH (used by the conformance checker — ship, checkpoint, and state-lint);
+  `gh` (or `glab`) on PATH for ship.
 
 ## Decision policy (every stage)
 
@@ -74,10 +75,13 @@ verdict / merge / gate.
     continuing — it does NOT trust the marker's tip alone (per § Durable checkpoint contract,
     a tip-matching marker is *necessary, NOT sufficient*: later work — an open in-flight
     marker, a mid-flight redesign span — can postdate a tip-matching file, so any consumer
-    needing current safety MUST re-run `--mode checkpoint`). **RE-PROVE via
-    `bin/drive-conformance.sh $RUN_DIR --mode checkpoint`** (the just-consumed marker's
+    needing current safety MUST re-run the proof). **RE-PROVE via BOTH
+    `bin/drive-conformance.sh $RUN_DIR --mode checkpoint` AND `bin/drive-conformance.sh
+    $RUN_DIR --mode state-lint`** (§ Durable checkpoint contract, the proof = both modes,
+    both clean — a `state-lint` failure on resume fails closed exactly like a checkpoint
+    failure; the just-consumed marker's
     `markerValid` is corroborating evidence only, never the authorization): a passing proof
-    (exit 0) re-establishes resumability → clear `state.waiting = null` AND reset
+    (BOTH exit 0) re-establishes resumability → clear `state.waiting = null` AND reset
     `state.rebirth_pending = false` (one JSON-safe write) and continue autonomous reconciliation
     exactly as any resume. The `rebirth_pending` reset belongs ONLY on this passing-proof
     CONTINUE branch (never before the re-prove, never on the fail-closed branch below — those
@@ -188,6 +192,13 @@ interpolation corrupts the file. Construct it with a JSON tool, e.g.
 same for every later write. Apply the same rule anywhere run text is embedded in
 JSON (event-log lines, etc.).
 
+**Atomic write — every `state.json` write goes through a temp file + `mv`.** Write to
+`$RUN_DIR/.tmp.state.json.$$` (or equivalent) and `mv` it over `state.json`; never an
+in-place redirect/truncate (`> state.json`) that can leave a torn file if the turn dies
+mid-write. Resume reads `state.json` as a routing hint and a torn hint must never
+half-parse — `--mode state-lint` would flag it `unparseable-state`. Mirrors the marker
+tmp + `mv` discipline.
+
 Update `state.json` after every transition. Increment `budget.calls` on each
 subagent/codex dispatch; if `ceilingCalls`/`ceilingMin` is set and exceeded → STOP
 with a spend summary (budget circuit-breaker).
@@ -252,12 +263,24 @@ case resume already completes. **Finish-the-current-atomic-step:** a multi-write
 that must not be split (the REDESIGN handler's marker-write → state-write span) is one
 atomic step — complete it before any checkpoint.
 
-**The checkpoint proof:** `bin/drive-conformance.sh $RUN_DIR --mode checkpoint` — clean
-iff no open in-flight marker, every `phaseInt/<runId>/<P>` ref resolves AND relates to
-`drive/<runId>` by ancestry, every `slice/<runId>/<id>` ref resolves (slice branches are
-cut from `phaseBaseSha`, so they are NOT ancestors of `drive/<runId>` — resolution only),
-and every counter artifact is well-formed. Its `counters` output is the single
-computation point for the artifact-derived counter values (it never reads `state.json`).
+**The proof = BOTH modes, both clean** (the single authoritative definition every other
+surface references): the handoff/resume proof is `bin/drive-conformance.sh $RUN_DIR --mode
+checkpoint` (narrator-independent: git refs + durable artifacts, proves resumability) AND
+`bin/drive-conformance.sh $RUN_DIR --mode state-lint` (the routing-hint sanity check —
+guards the `state.json` routing fields the successor's resume reads). Both must exit 0
+(clean) at the prove AND the re-prove points; either non-clean fails closed identically.
+The two modes stay SEPARATE — `--mode checkpoint` still NEVER reads `state.json`;
+`state-lint` is the ONLY mode that does — they are merely co-invoked at the same boundaries.
+
+The `--mode checkpoint` half is clean iff no open in-flight marker, every
+`phaseInt/<runId>/<P>` ref resolves AND relates to `drive/<runId>` by ancestry, every
+`slice/<runId>/<id>` ref resolves (slice branches are cut from `phaseBaseSha`, so they are
+NOT ancestors of `drive/<runId>` — resolution only), and every counter artifact is
+well-formed. Its `counters` output is the single computation point for the artifact-derived
+counter values (it never reads `state.json`). The `--mode state-lint` half is clean iff
+`state.json` parses and its routing fields are present + meaningfully routable (non-empty
+stage-aware `phaseList`, each slice's `step` in the valid enum, non-empty `owns`, array
+`deps`, well-formed `verify`/`ship`).
 After it exits 0, write **`$RUN_DIR/checkpoint-complete.marker`** (tmp + `mv`; single
 file, overwritten), content:
 `{"at": "<iso>", "sessionId": "<outgoing>", "proof": <the mode's stdout JSON, incl. tip + counters>}`.
@@ -265,14 +288,14 @@ Validity rules:
 - **A proof RECORD, never an authorization.** `proof.tip` must equal the current
   `drive/<runId>` tip — necessary, NOT sufficient (`drive/<runId>` moves only at the
   step-6 advance, so later work — even an open in-flight marker — can postdate a
-  tip-matching file). Any consumer needing current safety MUST re-run
-  `--mode checkpoint`; the marker attests only that a passing proof was computed at `at`.
+  tip-matching file). Any consumer needing current safety MUST re-run the proof (both
+  modes, above); the marker attests only that a passing proof was computed at `at`.
 - **SINGLE-USE — consumed at resume.** The resume path validates then DELETES it (valid
   or not) as its first act after the sessionId rebind; one marker covers at most one
   resume, and any later checkpoint re-proves from scratch and writes a fresh marker.
 
-**Prove-then-pause:** a rebirth pause may be entered ONLY after a passing
-`--mode checkpoint` plus a fresh `checkpoint-complete.marker`. If, after finishing the
+**Prove-then-pause:** a rebirth pause may be entered ONLY after a passing proof (both
+modes, above) plus a fresh `checkpoint-complete.marker`. If, after finishing the
 current atomic step and ONE stranded-marker recovery attempt, the proof still fails →
 STOP via Present human pause with `waiting = "stop:checkpoint-unprovable"` + the
 violations JSON. Never set `waiting = "rebirth"` on a failing proof.
@@ -358,8 +381,12 @@ with no open `inflight-*.marker`). Steps, in this exact order (this handler NEVE
 2. **Finish the current atomic step** (§ Durable checkpoint contract). Let any in-flight
    unit return + record + clear its marker; finish a REDESIGN marker-write → state-write
    span. Do NOT enter the sequence mid-dispatch.
-3. **PROVE resumability.** Run `bin/drive-conformance.sh $RUN_DIR --mode checkpoint`. On a
-   FAILING proof (exit 1) make ONE stranded-marker recovery attempt (§ Durable checkpoint
+3. **PROVE resumability.** Run BOTH `bin/drive-conformance.sh $RUN_DIR --mode checkpoint`
+   AND `bin/drive-conformance.sh $RUN_DIR --mode state-lint` (§ Durable checkpoint contract,
+   the proof = both modes, both clean). On a
+   FAILING proof — EITHER mode non-clean, incl. a `state-lint` `unparseable-state`/routing
+   violation, treated identically to a checkpoint violation — (exit 1) make ONE
+   stranded-marker recovery attempt (§ Durable checkpoint
    contract — adopt / re-dispatch / STOP, never wait), then re-prove. Still failing, or
    exit 2 (usage/IO/git error) → **fail closed: Never set `waiting = "rebirth"` on a
    failing proof.** A
@@ -398,8 +425,9 @@ double-handoff: the marker is single-use, consumed only by a `/drive <runId>` re
 **Gate/STOP precedence over rebirth.** At a boundary where BOTH `rebirth_pending == true`
 AND the next pipeline action is a Gate A / Gate B / a non-decision STOP: the **gate/STOP
 wins** — present the gate/STOP (its own `waiting` value), NOT `waiting="rebirth"`. The
-human is present at that pause and can resume in a fresh session if they wish: BOTH Gate A
-and Gate B hand the next leg's `/goal` line on approval, and the user, knowing the runId,
+human is present at that pause and can resume in a fresh session if they wish: **Gate A**
+hands the next leg's `/goal` line on approval; **Gate B** hands NO goal (after Gate-B
+approval the push is immediate — there is no next leg). The user, knowing the runId,
 pastes `/drive <runId>` into a fresh session themselves — NEITHER gate emits a `/drive
 <runId>` resume token (that runId resume line is the rebirth handshake's distinct
 contribution). `rebirth_pending` does NOT carry forward ACROSS the fresh-session resume:
@@ -708,8 +736,9 @@ key throughlines:
    condition is met**. A single whole-run goal therefore can't span a human gate — to
    let the run *pause* at Gate A the gate has to count as a satisfying state, but that
    same satisfaction auto-clears the goal, leaving the execute half with none. So we
-   scope **one goal per autonomous leg**, re-armed at each gate (Gate A and Gate B hand
-   the user the next leg's line to paste on approval).
+   scope **one goal per autonomous leg**, re-armed at Gate A (which hands the user the
+   next/execute-leg line to paste on approval); Gate B hands no further line — after Gate-B
+   approval the push is immediate.
 
    Present the **leg-1** goal (drives planning → Gate A). Bind `<task>` = the resolved
    premise (`$ARGUMENTS`), then **continue regardless** (never block waiting for them):

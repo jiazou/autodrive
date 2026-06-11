@@ -5,7 +5,11 @@
 # state.json's `step`/`phaseReview` for the verdict (D1: git-truth, not state-trust).
 #
 # Usage:
-#   drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit | checkpoint
+#   drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit | checkpoint | state-lint
+#
+# Mode `state-lint` is the ONLY mode that reads state.json: it validates the routing
+# fields resume keys on (D40). All other modes derive the verdict from git refs +
+# review artifacts and NEVER read state.json (D1/D8).
 #
 # Truth model:
 #   runId        = basename(RUN_DIR)
@@ -26,7 +30,7 @@ set -euo pipefail
 SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md")
 
 usage() {
-  echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|phasedesign-gate:<P>|slice-merge:<id>|phase-merge:<P>|impl-presence:<id>|ship|audit|checkpoint" >&2
+  echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|phasedesign-gate:<P>|slice-merge:<id>|phase-merge:<P>|impl-presence:<id>|ship|audit|checkpoint|state-lint" >&2
 }
 
 # Emit the JSON result and exit. $1=clean(true|false) $2=mode $3=tip $4=violations-json-array
@@ -824,6 +828,97 @@ EOF_PHASES
     else
       joined="$(IFS=,; echo "${viol_arr[*]}")"
       emit false "audit" "$audit_tip" "[$joined]"
+    fi
+    ;;
+
+  state-lint)
+    # The ONLY mode that reads state.json (D40): validate the load-bearing routing fields
+    # resume keys on are PRESENT + MEANINGFULLY ROUTABLE (not bare type checks). state.json
+    # is a resume HINT, never a proof input — but a corrupt/unroutable hint must fail closed
+    # at the rebirth handoff/resume, so violations exit 1 (a verdict), and only true
+    # usage/IO/git error is exit 2. `tip` = current drive/<runId> rev for record (a
+    # non-resolving featureBranch is a git/IO error -> exit 2).
+    if ! tip="$(rev "$featureBranch")"; then
+      echo "error: cannot resolve featureBranch $featureBranch" >&2; exit 2
+    fi
+    SJ="$RUN_DIR/state.json"
+    [ -f "$SJ" ] || { echo "error: state.json not found: $SJ" >&2; exit 2; }
+    viol_arr=()
+
+    # (1) state.json parses as JSON. A corrupt file is a VERDICT the handoff fails closed
+    # on (exit 1 unparseable-state), NOT a usage error (exit 2).
+    if ! jq -e . "$SJ" >/dev/null 2>&1; then
+      printf '{"clean":false,"mode":"state-lint","tip":"%s","violations":[%s]}\n' \
+        "$tip" "$(violation "state.json" "unparseable-state")"
+      exit 1
+    fi
+
+    # (2) Routing fields present + meaningfully routable. stage drives the phaseList check:
+    # an empty phaseList is well-formed-empty at premises/plan but UNROUTABLE once executing.
+    stage="$(jq -r '.stage // ""' "$SJ")"
+
+    # phaseList: a non-empty array of non-empty phase-id strings — but an empty/absent
+    # phaseList is allowed ONLY while stage ∈ {premises, plan}. Anything else (execute,
+    # verify, ship, done, or an unknown stage) with no routable phases is malformed.
+    pl_ok="$(jq -r '
+      if (.phaseList | type) != "array" then "notarray"
+      elif (.phaseList | length) == 0 then "empty"
+      elif ([.phaseList[] | select((type != "string") or (length == 0))] | length) > 0 then "badelem"
+      else "ok" end' "$SJ")"
+    case "$pl_ok" in
+      ok) ;;
+      empty)
+        case "$stage" in
+          premises|plan) ;;   # well-formed-empty early run
+          *) viol_arr+=("$(violation "phaseList" "phaselist-malformed")") ;;
+        esac ;;
+      *) viol_arr+=("$(violation "phaseList" "phaselist-malformed")") ;;
+    esac
+
+    # slices: an object; each value must be meaningfully routable —
+    #   step  ∈ {queued, implementing, awaiting_review, needs_fix, converged, blocked}
+    #   owns  = a NON-EMPTY array of strings
+    #   deps  = an array (possibly empty)
+    # ONE violation object PER malformed slice, scoped to the slice id (D44).
+    if [ "$(jq -r '(.slices | type) == "object"' "$SJ")" = "true" ]; then
+      bad_slices="$(jq -r '
+        ["queued","implementing","awaiting_review","needs_fix","converged","blocked"] as $steps
+        | .slices | to_entries[] | . as $e
+        | select(
+            (($e.value.step | type) != "string")
+            or (($e.value.step) as $s | $steps | index($s) | not)
+            or (($e.value.owns | type) != "array")
+            or (($e.value.owns | length) == 0)
+            or ([$e.value.owns[] | select(type != "string")] | length > 0)
+            or (($e.value.deps | type) != "array")
+          )
+        | $e.key' "$SJ")"
+      while IFS= read -r sid; do
+        [ -n "$sid" ] || continue
+        viol_arr+=("$(violation "$sid" "slice-routing-malformed")")
+      done <<EOF
+$bad_slices
+EOF
+    fi
+
+    # verify: an object with an `attempts` array.
+    if [ "$(jq -r '((.verify | type) == "object") and ((.verify.attempts | type) == "array")' "$SJ")" != "true" ]; then
+      viol_arr+=("$(violation "verify" "verify-malformed")")
+    fi
+
+    # ship: an object with the suite/conformance/prUrl KEYS present (any value incl. null —
+    # a not-yet-shipped run has suite:null; the KEYS must exist).
+    if [ "$(jq -r '((.ship | type) == "object") and (.ship | has("suite") and has("conformance") and has("prUrl"))' "$SJ")" != "true" ]; then
+      viol_arr+=("$(violation "ship" "ship-malformed")")
+    fi
+
+    if [ "${#viol_arr[@]:-0}" -eq 0 ]; then
+      printf '{"clean":true,"mode":"state-lint","tip":"%s","violations":[]}\n' "$tip"
+      exit 0
+    else
+      joined="$(IFS=,; echo "${viol_arr[*]}")"
+      printf '{"clean":false,"mode":"state-lint","tip":"%s","violations":[%s]}\n' "$tip" "$joined"
+      exit 1
     fi
     ;;
 

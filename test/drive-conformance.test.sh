@@ -438,6 +438,58 @@ run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 slice merged 
 assert_out_count "CK6 shared slice flagged once (deduped across live refs)" 'slice:s1' 1
 assert_out_count "CK6 exactly one violation object (no-dedup regression would emit 2)" '"reason":"no-review"' 1
 
+echo "=== SL: --mode state-lint (routing-field validator; the ONLY mode that reads state.json) ==="
+# Regression-guard validity: every SL case expecting exit 0/1 FAILS against the pre-change
+# script — `--mode state-lint` did not exist (usage exit 2).
+read -r repo rd < <(mk_state_lint clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL well-formed executing state.json clean" 0 "$RC"
+assert_out_contains "SL clean envelope" '"clean":true,"mode":"state-lint"'
+# stage-aware: a premises run with empty phaseList + empty slices is well-formed-empty.
+read -r repo rd < <(mk_state_lint early_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL early (stage=premises) empty phaseList clean" 0 "$RC"
+# corrupt state.json is a VERDICT (exit 1 unparseable-state), NOT a usage error (exit 2).
+read -r repo rd < <(mk_state_lint unparseable)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL corrupt state.json -> exit 1 (verdict, not usage)" 1 "$RC"
+assert_out_contains "SL unparseable-state violation" '"reason":"unparseable-state"'
+# the strengthened (meaningful-routability) checks bite, not just bare types:
+# phaseList:[] WHILE executing is unroutable -> fail.
+read -r repo rd < <(mk_state_lint phaselist_empty_executing)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL phaseList:[] while executing -> exit 1" 1 "$RC"
+assert_out_contains "SL phaselist-malformed violation" '"reason":"phaselist-malformed"'
+# an out-of-enum slice step is unroutable -> slice-routing-malformed (scoped to the slice id).
+read -r repo rd < <(mk_state_lint step_bogus)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL step:\"bogus\" -> exit 1" 1 "$RC"
+assert_out_contains "SL slice-routing-malformed scoped to the slice id" '{"scope":"1.1","reason":"slice-routing-malformed"'
+# empty owns is unroutable -> slice-routing-malformed.
+read -r repo rd < <(mk_state_lint owns_empty)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL empty owns -> exit 1" 1 "$RC"
+assert_out_contains "SL empty-owns slice-routing-malformed" '"reason":"slice-routing-malformed"'
+# malformed verify -> verify-malformed.
+read -r repo rd < <(mk_state_lint verify_bad)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL malformed verify -> exit 1" 1 "$RC"
+assert_out_contains "SL verify-malformed violation" '"reason":"verify-malformed"'
+# ship missing a required key -> ship-malformed.
+read -r repo rd < <(mk_state_lint ship_bad)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL ship missing prUrl key -> exit 1" 1 "$RC"
+assert_out_contains "SL ship-malformed violation" '"reason":"ship-malformed"'
+# cardinality (D44): TWO malformed slices -> TWO slice-routing-malformed objects.
+read -r repo rd < <(mk_state_lint multi_bad_slice)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL two malformed slices -> exit 1" 1 "$RC"
+assert_out_count "SL one slice-routing-malformed object PER malformed slice (D44)" '"reason":"slice-routing-malformed"' 2
+# missing state.json (no file, but drive/<runId> resolves) -> exit 2 (IO error, not a verdict).
+read -r repo rd < <(mk_state_lint no_state)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL absent state.json -> exit 2 (IO error)" 2 "$RC"
+
+echo "=== SL/CK4: checkpoint is UNCHANGED — a state-lint FAILURE still passes checkpoint ==="
+# A state.json that FAILS state-lint (phaseList:[] while executing) must still PASS
+# --mode checkpoint on a quiescent fixture: the two modes are independent (D8 — checkpoint
+# never reads state.json). Reuse the quiescent checkpoint `clean` fixture (its state.json is
+# corrupt garbage) and confirm checkpoint clean while state-lint fails on the same dir.
+read -r repo rd < <(mk_checkpoint clean slck4-ckpt)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "SL/CK4 checkpoint clean despite a state-lint-failing state.json" 0 "$RC"
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL/CK4 the SAME dir's corrupt state.json FAILS state-lint" 1 "$RC"
+assert_out_contains "SL/CK4 corrupt state.json -> unparseable-state" '"reason":"unparseable-state"'
+
 echo
 echo "=== usage/error guards ==="
 OUT="$("$CONF" 2>/dev/null)"; RC=$?;                 assert_rc "no args -> usage exit 2" 2 "$RC"

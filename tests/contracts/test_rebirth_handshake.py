@@ -553,8 +553,12 @@ def test_resume_rebirth_continue_is_fail_closed_re_proven():
     assert "the resume consumer\nRE-PROVES resumability before continuing".replace("\n", " ") in blob, (
         "the resume consumer must RE-PROVE resumability before continuing"
     )
-    assert "RE-PROVE via\n`bin/drive-conformance.sh $RUN_DIR --mode checkpoint`".replace("\n", " ") in blob, (
-        "fail-closed must RE-PROVE via the checkpoint conformance mode"
+    # the re-prove names BOTH modes (D40 r2 — checkpoint AND state-lint, both clean)
+    assert (
+        "RE-PROVE via BOTH `bin/drive-conformance.sh $RUN_DIR --mode checkpoint` AND "
+        "`bin/drive-conformance.sh $RUN_DIR --mode state-lint`"
+    ) in blob, (
+        "fail-closed must RE-PROVE via BOTH the checkpoint AND state-lint conformance modes"
     )
     # the marker's tip alone is NOT trusted (necessary-not-sufficient carve-out)
     assert "it does NOT trust the marker's tip alone" in blob, (
@@ -739,17 +743,27 @@ def test_ac4_resume_order_pin_flips_on_reordered_copy():
 
 
 # =========================================================================== #
-# AC9 — gate precedence: both gates hand a /goal line; neither emits /drive <runId>;
-# rebirth uniquely contributes the runId resume line.
+# AC8 — gate precedence (D45): Gate A hands the next leg's /goal line; Gate B hands NONE
+# (push is immediate); NEITHER gate emits /drive <runId>; rebirth uniquely contributes the
+# runId resume line. (Ground truth: drive-ship.md Gate B pushes after approval, no goal.)
 # =========================================================================== #
 def test_gate_precedence_neither_gate_emits_runid_resume():
-    """AC9: drive.md's gate-precedence prose states BOTH Gate A and Gate B hand the next
-    leg's `/goal` line on approval, NEITHER emits a `/drive <runId>` resume token, and the
-    runId resume line is the rebirth handshake's DISTINCT contribution."""
+    """AC8/D45: drive.md's gate-precedence prose states Gate A hands the next leg's `/goal`
+    line on approval and Gate B hands NONE (immediate push, no next leg), NEITHER emits a
+    `/drive <runId>` resume token, and the runId resume line is the rebirth handshake's
+    DISTINCT contribution. (Corrected from the false 'BOTH gates hand a goal' claim.)"""
     blob = _norm(_drive_md())
     assert (
-        "BOTH Gate A and Gate B hand the next leg's `/goal` line on approval" in blob
-    ), "gate precedence must state both gates hand the next leg's /goal line"
+        "**Gate A** hands the next leg's `/goal` line on approval; **Gate B** hands NO goal "
+        "(after Gate-B approval the push is immediate — there is no next leg)"
+    ) in blob, (
+        "gate precedence must state Gate A hands the next leg's /goal line and Gate B hands "
+        "NONE (immediate push) — not the false 'BOTH gates hand a goal'"
+    )
+    # the false claim must NOT remain anywhere
+    assert "BOTH Gate A and Gate B hand the next leg's `/goal` line" not in blob, (
+        "the false 'BOTH Gate A and Gate B hand the next leg's /goal line' claim must be gone"
+    )
     assert (
         "NEITHER gate emits a `/drive <runId>` resume token (that runId resume line is the "
         "rebirth handshake's distinct contribution)"
@@ -757,6 +771,65 @@ def test_gate_precedence_neither_gate_emits_runid_resume():
         "gate precedence must state NEITHER gate emits `/drive <runId>` and that the runId "
         "resume line is rebirth's distinct contribution"
     )
+
+
+def test_gate_precedence_pin_flips_on_false_both_gates_copy():
+    """Flip-proof: a COPY of drive.md reverted to the FALSE 'BOTH Gate A and Gate B hand a
+    goal' claim must RED the corrected pin — proves the pin bites on the Gate-B-hands-none
+    truth, not just any text. Reverts the RAW (line-wrapped) prose, then runs the same
+    `_norm`'d pin the live test uses against the COPY."""
+    drifted = _drive_md().replace(
+        "**Gate A**\nhands the next leg's `/goal` line on approval; **Gate B** hands NO goal "
+        "(after Gate-B\napproval the push is immediate — there is no next leg).",
+        "BOTH Gate A and Gate B hand the next leg's `/goal` line on approval.",
+        1,
+    )
+    assert drifted != _drive_md(), "the gate-precedence revert matched nothing"
+    blob = _norm(drifted)
+    with pytest.raises(AssertionError):
+        assert (
+            "**Gate A** hands the next leg's `/goal` line on approval; **Gate B** hands NO "
+            "goal (after Gate-B approval the push is immediate — there is no next leg)"
+        ) in blob
+
+
+def test_stage0_goal_gateB_hands_none():
+    """AC8/D45 (P2-fix — the Stage-0 site was previously unguarded): the Stage-0 §"Set the
+    session goal" prose states the goal is re-armed at Gate A and that Gate B hands no
+    further line (immediate push) — and does NOT carry the false 'Gate B hand(s) … the next
+    leg's line' claim."""
+    blob = _norm(_drive_md())
+    assert (
+        "re-armed at Gate A (which hands the user the next/execute-leg line to paste on "
+        "approval); Gate B hands no further line — after Gate-B approval the push is immediate"
+    ) in blob, (
+        "Stage-0 goal prose must state re-armed at Gate A and Gate B hands no further line"
+    )
+    assert "re-armed at each gate (Gate A and Gate B hand" not in blob, (
+        "the false Stage-0 'Gate A and Gate B hand … the next leg's line' claim must be gone"
+    )
+
+
+def test_stage0_goal_pin_flips_on_false_both_gates_copy():
+    """Flip-proof: a COPY reverted to the FALSE Stage-0 're-armed at each gate (Gate A and
+    Gate B hand …)' claim must RED the corrected Stage-0 pin. Reverts the RAW (line-wrapped)
+    prose, then runs the same `_norm`'d pin the live test uses against the COPY."""
+    drifted = _drive_md().replace(
+        "re-armed at Gate A (which hands the user the\n   next/execute-leg line to paste on "
+        "approval); Gate B hands no further line — after Gate-B\n   approval the push is "
+        "immediate.",
+        "re-armed at each gate (Gate A and Gate B hand\n   the user the next leg's line to "
+        "paste on approval).",
+        1,
+    )
+    assert drifted != _drive_md(), "the Stage-0 revert matched nothing"
+    blob = _norm(drifted)
+    with pytest.raises(AssertionError):
+        assert (
+            "re-armed at Gate A (which hands the user the next/execute-leg line to paste on "
+            "approval); Gate B hands no further line — after Gate-B approval the push is "
+            "immediate"
+        ) in blob
 
 
 def test_gate_stop_wins_precedence_over_rebirth():

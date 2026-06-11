@@ -871,6 +871,146 @@ mk_impl_presence() {
   echo "$repo $rd"
 }
 
+# ---------------------------------------------------------------------------------
+# --mode state-lint fixtures (D40). state-lint is the ONLY mode that reads state.json; it
+# validates the routing fields resume keys on. Each fixture builds a real drive/<runId>
+# branch (so `rev featureBranch` resolves and `tip` is recorded) + a state.json per variant.
+# Echoes "REPO RUN_DIR".
+#
+# variant:
+#   clean             -- well-formed executing state.json: non-empty phaseList, slices with
+#                        valid step/owns/deps, well-formed verify/ship                -> exit 0
+#   early_clean       -- stage=premises with EMPTY phaseList + empty slices (well-formed-
+#                        empty early run) — must PASS (stage-aware)                    -> exit 0
+#   unparseable       -- state.json is corrupt non-JSON -> unparseable-state           -> exit 1
+#   phaselist_empty_executing -- stage=execute but phaseList:[] (unroutable)
+#                        -> phaselist-malformed                                         -> exit 1
+#   step_bogus        -- a slice with step:"bogus" (out of enum) -> slice-routing-malformed
+#   owns_empty        -- a slice with owns:[] (empty) -> slice-routing-malformed       -> exit 1
+#   verify_bad        -- verify is not an object-with-attempts-array -> verify-malformed
+#   ship_bad          -- ship missing the prUrl key -> ship-malformed                  -> exit 1
+#   multi_bad_slice   -- TWO malformed slices -> TWO slice-routing-malformed objects
+#                        (cardinality: one per malformed slice, D44)                   -> exit 1
+#   no_state          -- a real drive/<runId> branch but NO state.json file -> exit 2 (IO)
+mk_state_lint() {
+  local variant="$1" name="${2:-statelint-$1}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$name"
+  _commit "$repo" "drive.sh" "echo drive" "drive work" >/dev/null
+  mkdir -p "$rd"
+  local sj="$rd/state.json"
+  case "$variant" in
+    clean)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1", "2"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []},
+    "1.2": {"step": "implementing", "owns": ["bin/y.sh", "test/y.test.sh"], "deps": ["1.1"]}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    early_clean)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "premises",
+  "phaseList": [],
+  "slices": {},
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    unparseable)
+      printf 'CORRUPT-NOT-JSON{{{\n' > "$sj"
+      ;;
+    phaselist_empty_executing)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": [],
+  "slices": {},
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    step_bogus)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "bogus", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    owns_empty)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": [], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    verify_bad)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": "not-an-object",
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    ship_bad)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null}
+}
+JSON
+      ;;
+    multi_bad_slice)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "bogus", "owns": ["bin/x.sh"], "deps": []},
+    "1.2": {"step": "converged", "owns": [], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+  esac
+  echo "$repo $rd"
+}
+
 # Two concurrent runs in ONE repo (AC10): run-keyed phaseInt/R1/1 and phaseInt/R2/1.
 # Echoes "REPO R1_RUN_DIR R2_RUN_DIR".
 mk_two_concurrent() {
