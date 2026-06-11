@@ -488,6 +488,35 @@ assert_out_contains "SL ship-malformed violation" '"reason":"ship-malformed"'
 read -r repo rd < <(mk_state_lint multi_bad_slice)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL two malformed slices -> exit 1" 1 "$RC"
 assert_out_count "SL one slice-routing-malformed object PER malformed slice (D44)" '"reason":"slice-routing-malformed"' 2
+# P1-A: a parseable-but-non-object ROOT (JSON array / scalar) must NOT crash jq (exit 5,
+# no envelope) — it is unparseable-state (exit 1). NEVER-crashes invariant at the root.
+read -r repo rd < <(mk_state_lint toplevel_array)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL top-level array root -> exit 1 (not a jq crash 5)" 1 "$RC"
+assert_out_contains "SL top-level array root -> unparseable-state" '"reason":"unparseable-state"'
+assert_out_contains "SL top-level array root still emits the envelope" '"mode":"state-lint"'
+read -r repo rd < <(mk_state_lint toplevel_scalar)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL top-level scalar root -> exit 1 (not a jq crash 5)" 1 "$RC"
+assert_out_contains "SL top-level scalar root -> unparseable-state" '"reason":"unparseable-state"'
+# P1-B: stage itself must be in the real enum — an out-of-enum stage is unroutable.
+read -r repo rd < <(mk_state_lint stage_bogus)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL stage:\"bogus\" -> exit 1" 1 "$RC"
+assert_out_contains "SL out-of-enum stage -> stage-malformed" '{"scope":"stage","reason":"stage-malformed"'
+read -r repo rd < <(mk_state_lint stage_done_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL stage:\"done\" (real stage) clean" 0 "$RC"
+assert_out_contains "SL real stage clean envelope" '"clean":true,"mode":"state-lint"'
+# P1-C: phaseList element must be a REF-SAFE phase id — a value with spaces forms an
+# invalid phaseInt/<runId>/<P> ref.
+read -r repo rd < <(mk_state_lint phaselist_badref)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL phaseList element \"bad ref name\" -> exit 1" 1 "$RC"
+assert_out_contains "SL non-ref-safe phaseList element -> phaselist-malformed" '"reason":"phaselist-malformed"'
+read -r repo rd < <(mk_state_lint phaselist_epoch_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL phaseList epoch id \"4a\" (ref-safe) clean" 0 "$RC"
+assert_out_contains "SL ref-safe epoch phase id clean envelope" '"clean":true,"mode":"state-lint"'
+# P1-C: slice-id KEY must be ref-safe — a key with a space forms an invalid slice/<runId>/<id>
+# ref; scoped to the offending key.
+read -r repo rd < <(mk_state_lint slice_key_badref)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL slice key \"1 bad\" -> exit 1" 1 "$RC"
+assert_out_contains "SL non-ref-safe slice key -> slice-routing-malformed scoped to key" '{"scope":"1 bad","reason":"slice-routing-malformed"'
 # missing state.json (no file, but drive/<runId> resolves) -> exit 2 (IO error, not a verdict).
 read -r repo rd < <(mk_state_lint no_state)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL absent state.json -> exit 2 (IO error)" 2 "$RC"

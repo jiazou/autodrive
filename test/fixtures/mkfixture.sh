@@ -1048,6 +1048,87 @@ JSON
 }
 JSON
       ;;
+    toplevel_array)
+      # A parseable-but-non-object ROOT (valid JSON array) must NOT crash jq (exit 5) —
+      # it is unparseable-state (exit 1), like a scalar root.
+      printf '[1,2,3]\n' > "$sj"
+      ;;
+    toplevel_scalar)
+      # A parseable scalar ROOT — same fail-closed verdict, never a crash.
+      printf '42\n' > "$sj"
+      ;;
+    stage_bogus)
+      # An out-of-enum stage is an unroutable hint -> stage-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "bogus",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    stage_done_clean)
+      # `done` is a real stage -> must still pass.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "done",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    phaselist_badref)
+      # A phaseList element that isn't ref-safe (spaces) forms an invalid
+      # phaseInt/<runId>/<P> ref -> phaselist-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["bad ref name"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    phaselist_epoch_clean)
+      # A `4a` epoch phase id is ref-safe -> must pass (with its matching `4a.1` slice).
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1", "4a"],
+  "slices": {
+    "4a.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_key_badref)
+      # A slice-id KEY that isn't ref-safe (spaces) forms an invalid slice/<runId>/<id>
+      # ref -> slice-routing-malformed, scoped to the offending key.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1 bad": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
   esac
   echo "$repo $rd"
 }

@@ -845,9 +845,12 @@ EOF_PHASES
     [ -f "$SJ" ] || { echo "error: state.json not found: $SJ" >&2; exit 2; }
     viol_arr=()
 
-    # (1) state.json parses as JSON. A corrupt file is a VERDICT the handoff fails closed
-    # on (exit 1 unparseable-state), NOT a usage error (exit 2).
-    if ! jq -e . "$SJ" >/dev/null 2>&1; then
+    # (1) state.json parses as JSON AND its root is an OBJECT. The gate requires
+    # `type == "object"`, not bare `jq -e .` — a parseable-but-non-object root (a JSON
+    # array `[…]` or scalar `42`) is valid JSON yet every later `.<field>` index crashes
+    # jq (exit 5, no envelope). A corrupt/non-object file is a VERDICT the handoff fails
+    # closed on (exit 1 unparseable-state), NOT a usage error (exit 2) and NEVER a crash.
+    if ! jq -e 'type == "object"' "$SJ" >/dev/null 2>&1; then
       printf '{"clean":false,"mode":"state-lint","tip":"%s","violations":[%s]}\n' \
         "$tip" "$(violation "state.json" "unparseable-state")"
       exit 1
@@ -857,13 +860,25 @@ EOF_PHASES
     # an empty phaseList is well-formed-empty at premises/plan but UNROUTABLE once executing.
     stage="$(jq -r '.stage // ""' "$SJ")"
 
-    # phaseList: a non-empty array of non-empty phase-id strings — but an empty/absent
+    # stage must be one of the real pipeline stages — an out-of-enum stage is an
+    # unroutable hint (a resume can't place the run). The enum is the state.json
+    # template's stage values: premises, plan, execute, verify, ship, done.
+    case "$stage" in
+      premises|plan|execute|verify|ship|done) ;;
+      *) viol_arr+=("$(violation "stage" "stage-malformed")") ;;
+    esac
+
+    # phaseList: a non-empty array of REF-SAFE phase-id strings — but an empty/absent
     # phaseList is allowed ONLY while stage ∈ {premises, plan}. Anything else (execute,
     # verify, ship, done, or an unknown stage) with no routable phases is malformed.
+    # Each element must match the phase-id grammar `^[0-9]+[a-z]?$` (e.g. `1`, `2`, `4a`):
+    # a digit run with an optional lowercase-letter epoch suffix. A non-empty-but-unsafe
+    # value (`"bad ref name"` with spaces, slashes, etc.) is NOT routable — it forms an
+    # invalid `phaseInt/<runId>/<P>` git ref and breaks conformance scope-token parsing.
     pl_ok="$(jq -r '
       if (.phaseList | type) != "array" then "notarray"
       elif (.phaseList | length) == 0 then "empty"
-      elif ([.phaseList[] | select((type != "string") or (length == 0))] | length) > 0 then "badelem"
+      elif ([.phaseList[] | select((type != "string") or (test("^[0-9]+[a-z]?$") | not))] | length) > 0 then "badelem"
       else "ok" end' "$SJ")"
     case "$pl_ok" in
       ok) ;;
@@ -880,8 +895,12 @@ EOF_PHASES
     #   step  ∈ {queued, implementing, awaiting_review, needs_fix, converged, blocked}
     #   owns  = a NON-EMPTY array of strings
     #   deps  = an array (possibly empty)
-    # A non-object slice value (scalar/array/bool/null) is unroutable -> one
-    # `slice-routing-malformed` PER malformed slice, scoped to the slice id (D44).
+    # The slice-id KEY must also be ref-safe: it forms `slice/<runId>/<id>` and a
+    # conformance scope token, so it must match `^[0-9]+[a-z]?\.[0-9]+$` (phase-id `.`
+    # slice number, e.g. `1.2`, `4.3`). A key with a space/slash/special char (`"1 bad"`)
+    # is unroutable. A non-object slice value (scalar/array/bool/null) is unroutable too.
+    # Either condition -> one `slice-routing-malformed` PER malformed slice, scoped to the
+    # slice id (D44).
     # The container itself: an empty `{}` is always legitimate (a run may not have
     # designed slices yet); a non-object container (null/array/scalar/missing) is a
     # `slices-malformed` violation once the run is past plan (stage ∉ {premises, plan}) —
@@ -892,7 +911,8 @@ EOF_PHASES
         ["queued","implementing","awaiting_review","needs_fix","converged","blocked"] as $steps
         | .slices | to_entries[] | . as $e
         | select(
-            (($e.value | type) != "object")
+            (($e.key | test("^[0-9]+[a-z]?\\.[0-9]+$") | not))
+            or (($e.value | type) != "object")
             or (($e.value.step | type) != "string")
             or (($e.value.step) as $s | $steps | index($s) | not)
             or (($e.value.owns | type) != "array")
