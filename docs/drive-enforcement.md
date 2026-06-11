@@ -202,10 +202,13 @@ are deliberately separate:
 - **`--mode state-lint`** is the **ONLY** mode that reads `state.json`. It sanity-checks the
   load-bearing **routing fields** the successor's resume reads — `state.json` parses as a JSON
   object (`unparseable-state` otherwise); `stage` is a real pipeline stage (`stage-malformed`);
-  `phaseList` is a non-empty array of ref-safe phase ids — empty only while `stage` ∈
-  {premises, plan} (`phaselist-malformed`); each slice's `step` is in the 6-value enum,
-  `owns` non-empty, `deps` an array (`slice-routing-malformed`, one per offending slice, or
-  `slices-malformed` for a non-object container past plan); `verify`/`ship` are well-shaped
+  `phaseList` is a non-empty array of phase ids each matching `^[0-9]+[a-z]?$` (digits + an
+  optional single lowercase-letter epoch suffix, e.g. `1`, `2`, `4a`) — empty only while
+  `stage` ∈ {premises, plan} (`phaselist-malformed` otherwise); each slice-id KEY matches
+  `^[0-9]+[a-z]?\.[0-9]+$` (phase id `.` slice number, e.g. `1.2`, `4.3`), its `step` is in
+  the 6-value enum, `owns` is a non-empty string array, and `deps` is an array whose every
+  element matches the same slice-id grammar (`slice-routing-malformed`, one per offending
+  slice, or `slices-malformed` for a non-object container past plan); `verify`/`ship` are well-shaped
   (`verify-malformed` / `ship-malformed`). It validates **routing-field presence + meaningful
   routability only** — never value cross-checks against git.
 

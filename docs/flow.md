@@ -169,8 +169,10 @@ Neither acts directly: both only *record* the `rebirth_pending` signal. Acting o
 separated out so the handoff happens at a boundary the run can actually resume from.
 
 **The handshake (safe-boundary, prove-then-pause).** When `rebirth_pending` is set and the
-coordinator reaches a safe boundary (no open `inflight-*.marker`), the shared **I1 rebirth
-handler** runs, in order:
+coordinator reaches a safe boundary — no open `inflight-*.marker` AND no partial multi-step
+git mutation detectable from git AND the current atomic step finished (a REDESIGN
+marker-write → state-write span is never split) — the shared **I1 rebirth handler** runs, in
+order:
 1. **Prove** resumability — both `bin/drive-conformance.sh $RUN_DIR --mode checkpoint` AND
    `--mode state-lint` must be clean (fail-closed: a failing proof never sets the pause).
 2. **Write** `checkpoint-complete.marker` (durable, sha-bound, single-use).
