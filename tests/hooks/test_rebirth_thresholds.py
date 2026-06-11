@@ -157,6 +157,82 @@ def test_token_sum_matches_statusline_jq(fixture):
     assert rt.latest_usage_tokens(str(fixture)) == bash_tokens
 
 
+# --------------------------------------------------------------------------- #
+# AC6 anti-drift — EDGE CASES the clean fixtures never exercise. Each runs the
+# REAL statusline jq token pipeline (L24, verbatim filter `| tail -1`) and the
+# python resolver on the SAME transcript and asserts they AGREE. The clean
+# over/under fixtures masked these three drift bugs (codex-review-2.1.md).
+# --------------------------------------------------------------------------- #
+def _statusline_token_sum(transcript_path):
+    """statusline.sh's REAL token pipeline (script L24): the verbatim jq filter piped to
+    `tail -1`, run through bash so jq's halt-at-first-error + tail semantics are exact.
+    Returns the int, or None when the pipeline emits nothing (statusline's empty TOKENS)."""
+    script = (
+        f'jq -r {json.dumps(JQ_TOKEN_FILTER)} {json.dumps(str(transcript_path))} '
+        f'2>/dev/null | tail -1'
+    )
+    out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
+    raw = out.stdout.strip()
+    return int(raw) if raw else None
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq required")
+def test_drift_empty_usage_counts_as_present_zero(tmp_path):
+    """P1-1: an empty `{}` usage on the latest line is PRESENT-0 in jq (select passes,
+    fields default to 0), not skipped. Resolver must return 0 here, not the earlier
+    line's 100 — matching statusline. (Pre-fix `if not usage: continue` returned 100.)"""
+    t = tmp_path / "empty-usage.jsonl"
+    t.write_text(
+        json.dumps({"type": "assistant",
+                    "message": {"model": "claude-opus-4-8",
+                                "usage": {"input_tokens": 100}}}) + "\n"
+        + json.dumps({"type": "assistant",
+                      "message": {"model": "claude-opus-4-8", "usage": {}}}) + "\n",
+        encoding="utf-8",
+    )
+    bash = _statusline_token_sum(t)
+    assert bash == 0  # jq: {} usage present, sums to 0
+    assert rt.latest_usage_tokens(str(t)) == bash
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq required")
+def test_drift_malformed_line_halts_scan(tmp_path):
+    """P1-2: jq stops at the first malformed line; `tail -1` then yields the last value
+    BEFORE it (100), never a later valid line's value (999). Resolver must halt there
+    too. (Pre-fix skip-and-continue returned 999.)"""
+    t = tmp_path / "malformed.jsonl"
+    t.write_text(
+        json.dumps({"type": "assistant",
+                    "message": {"usage": {"input_tokens": 100}}}) + "\n"
+        + "THIS IS NOT JSON\n"
+        + json.dumps({"type": "assistant",
+                      "message": {"usage": {"input_tokens": 999}}}) + "\n",
+        encoding="utf-8",
+    )
+    bash = _statusline_token_sum(t)
+    assert bash == 100  # value before the parse error, via tail -1
+    assert rt.latest_usage_tokens(str(t)) == bash
+
+
+def test_drift_latest_model_none_when_latest_line_omits_it(tmp_path):
+    """P1-3: latest_model takes the LATEST assistant line's model verbatim — if that line
+    omits model it is None (NOT an older line's `claude-opus-4-8`), so resolve_window
+    falls back to the DEFAULT window. (Pre-fix kept-last-truthy returned the older opus
+    id → wrong 1M window.) Drift here would split the hook's window from the default."""
+    t = tmp_path / "unmodeled-latest.jsonl"
+    t.write_text(
+        json.dumps({"type": "assistant",
+                    "message": {"model": "claude-opus-4-8",
+                                "usage": {"input_tokens": 10}}}) + "\n"
+        + json.dumps({"type": "assistant",
+                      "message": {"usage": {"input_tokens": 20}}}) + "\n",  # no model
+        encoding="utf-8",
+    )
+    assert rt.latest_model(str(t)) is None
+    th = rt.load_thresholds()
+    assert rt.resolve_window(rt.latest_model(str(t)), th) == th["defaultWindow"]
+
+
 def test_mutating_json_changes_resolution(tmp_path):
     """Proves neither number is hardcoded: a window/fraction edit to the data file
     changes the resolver's output (it reads the file, not a constant)."""

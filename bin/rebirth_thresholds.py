@@ -18,9 +18,11 @@ Resolution contract (mirrors statusline's bash, restated in python — D24/D25/D
   (tokens >= window * fraction) to avoid integer-pct rounding at the boundary.
 
 Token sum (canonical, VERBATIM from statusline.sh L24 — D26): over the transcript
-JSONL, for each `assistant` line carrying `.message.usage`, sum input_tokens +
+JSONL, for each `assistant` line whose `.message.usage` is jq-truthy (an empty `{}`
+counts and sums to 0; `null`/absent is dropped), sum input_tokens +
 cache_creation_input_tokens + cache_read_input_tokens (each missing => 0); take the
-LAST such value (statusline's `tail -1`). None when no usage line exists.
+LAST such value (statusline's `tail -1`). jq halts at the first malformed line, so the
+scan stops there and keeps the prior value. None when no usage line exists.
 """
 import json
 import os
@@ -62,8 +64,13 @@ def latest_usage_tokens(transcript_path):
     """The canonical token sum: the LAST assistant line's input + cache_creation +
     cache_read usage in the transcript JSONL, or None when no usage line exists.
 
-    Mirrors statusline.sh's `jq ... | tail -1`: a malformed line is skipped (jq's
-    per-line model), a line without `.message.usage` does not count."""
+    Byte-for-behavior with statusline.sh's `jq ... | tail -1`:
+      - jq's `select(... and .message.usage)` keeps a line whose `.message.usage` is
+        jq-truthy — an empty `{}` usage is PRESENT and sums to 0; an absent or `null`
+        usage is dropped. So `{}` counts as a 0-total line, `None`/absent does not.
+      - jq stops emitting at the FIRST malformed line and `tail -1` then takes the last
+        value emitted BEFORE it — so a parse error ENDS the scan (no skip-and-continue).
+    (Blank lines are not jq inputs and are skipped on both sides.)"""
     tokens = None
     with open(transcript_path, encoding="utf-8") as fh:
         for line in fh:
@@ -73,11 +80,11 @@ def latest_usage_tokens(transcript_path):
             try:
                 obj = json.loads(line)
             except Exception:
-                continue
+                break  # jq halts at the first parse error; tail -1 keeps the prior value
             if obj.get("type") != "assistant":
                 continue
             usage = obj.get("message", {}).get("usage")
-            if not usage:
+            if usage is None:  # null/absent is jq-falsy → dropped by select; `{}` is kept
                 continue
             tokens = ((usage.get("input_tokens") or 0)
                       + (usage.get("cache_creation_input_tokens") or 0)
@@ -86,8 +93,11 @@ def latest_usage_tokens(transcript_path):
 
 
 def latest_model(transcript_path):
-    """The LAST assistant line's `.message.model` (a model id, e.g. `claude-opus-4-8`),
-    or None when no assistant line carries one — fed to resolve_window."""
+    """The LAST assistant line's `.message.model` VERBATIM (a model id, e.g.
+    `claude-opus-4-8`), or None — fed to resolve_window, which maps None to the default
+    window. Takes the latest assistant line's model as-is: if that line omits model it
+    yields None (NOT an older line's value), so an unmodeled latest line falls back to
+    the default window. Halts at the first malformed line, matching the token scan."""
     model = None
     with open(transcript_path, encoding="utf-8") as fh:
         for line in fh:
@@ -97,10 +107,8 @@ def latest_model(transcript_path):
             try:
                 obj = json.loads(line)
             except Exception:
-                continue
+                break
             if obj.get("type") != "assistant":
                 continue
-            m = obj.get("message", {}).get("model")
-            if m:
-                model = m
+            model = obj.get("message", {}).get("model")
     return model
