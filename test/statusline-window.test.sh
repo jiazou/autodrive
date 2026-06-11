@@ -34,20 +34,26 @@ payload() {  # <display_name> <transcript>
     '{model:{display_name:$m}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}'
 }
 
-# --- AC5: output is byte-identical to the pre-refactor statusline ---
-# The pre-refactor statusline is the committed git HEAD version (before this slice's
-# de-dup), exercised with the SAME payload. If git/HEAD is unavailable, this case is
-# skipped (the AC6 data-file assertions below stand on their own).
+# --- AC5: output is byte-identical to the pre-refactor (inline-case) statusline ---
+# Baseline = statusline.sh at the slice's phaseBaseSha — the ORIGINAL inline-`case`
+# version, BEFORE this slice's json de-dup. (HEAD is the slice tip, which already
+# contains the de-dup, so comparing against HEAD self-compares and proves nothing —
+# it must be the true pre-refactor tree.) Run BOTH the base and the current statusline
+# on the same payload across the 4 model cases + an unmatched default, and assert the
+# displayed output is byte-identical. If the base ref is unavailable (no git, shallow
+# tree) the case is skipped so the AC6 data-file assertions still stand alone.
+BASE_SHA="$(jq -r '.phaseBaseSha' "$REPO/../../state.json" 2>/dev/null)"
 OLD="$(mktemp)"
-if git -C "$REPO" show HEAD:bin/statusline.sh > "$OLD" 2>/dev/null && [ -s "$OLD" ]; then
-  for M in "Opus 4.8" "Opus 4.7" "Sonnet 4.5" "Haiku 4"; do
+if [ -n "${BASE_SHA:-}" ] && [ "$BASE_SHA" != "null" ] \
+   && git -C "$REPO" show "$BASE_SHA:bin/statusline.sh" > "$OLD" 2>/dev/null && [ -s "$OLD" ]; then
+  for M in "Opus 4.8" "Opus 4.7" "Sonnet 4.5" "Haiku 4" "Some Unknown Model"; do
     P="$(payload "$M" "$TRANS")"
     new_out="$(printf '%s' "$P" | bash "$STATUSLINE")"
     old_out="$(printf '%s' "$P" | bash "$OLD")"
-    assert_eq "AC5 output unchanged for [$M]" "$old_out" "$new_out"
+    assert_eq "AC5 output unchanged vs pre-refactor base for [$M]" "$old_out" "$new_out"
   done
 else
-  pass "AC5 skipped (no git HEAD baseline available)"
+  pass "AC5 skipped (no pre-refactor phaseBaseSha baseline available)"
 fi
 rm -f "$OLD"
 

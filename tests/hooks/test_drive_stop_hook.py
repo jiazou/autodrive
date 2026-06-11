@@ -441,47 +441,61 @@ def test_hook_leaves_state_byte_unchanged(fake_home, transcript, pending):
 
 
 # --- AC7: fail-open everywhere — detection error -> pre-change behavior ----- #
-def _base_block_reason(fake_home):
-    """The hook's ORIGINAL continue-only reason (no transcript_path at all) — the exact
-    string a fully fail-open detection must degrade back to."""
-    write_run(fake_home, "run-base", _block_state(runId="run-base"))
-    cp = run_hook({"session_id": SID}, home=fake_home)
+# The fail-open CONTRACT is byte-strict: on ANY detection error the steer helper must
+# return "" so the hook's reason is the EXACT string it would emit with the extension
+# absent (the original continue-only reason). Asserting merely "the anchor is absent"
+# is too weak — a partial/garbled steer fragment could also lack the anchor. So every
+# error path below asserts d["reason"] == the pre-change baseline, byte for byte.
+
+# The ORIGINAL continue-only reason for run "run-42" — captured by running the hook
+# with NO transcript_path (the no-transcript guard returns "" first, so this IS the
+# pre-extension reason). Every error-path test below pins reason to THIS exact string.
+def _baseline_reason(fake_home):
+    """The hook's original continue-only block reason for run-42 (no steer appended).
+    The byte-exact string a fully fail-open detection must degrade back to."""
+    path = write_run(fake_home, "run-42", _block_state())
+    cp = run_hook({"session_id": SID}, home=fake_home)  # no transcript_path -> no steer
     d = decision(cp)
     assert d is not None and d["decision"] == "block"
+    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"]
+    path.unlink()  # clear so each caller re-materializes its own run-42 state
     return d["reason"]
 
 
-def test_failopen_missing_transcript_path(fake_home):
-    """No transcript_path in the payload -> token sum unavailable -> rebirth check
-    SKIPPED, the hook emits its original continue reason, exit 0, no crash (AC7)."""
-    base = _base_block_reason(fake_home)
-    write_run(fake_home, "run-42", _block_state())
-    cp = run_hook({"session_id": SID}, home=fake_home)  # no transcript_path
-
-    assert cp.returncode == 0
-    assert cp.stderr == ""
-    d = decision(cp)
-    assert d is not None and CONTEXT_PRESSURE_ANCHOR not in d["reason"]
-    assert d["reason"] == base.replace("run-base", "run-42")
-
-
-def test_failopen_nonexistent_transcript_file(fake_home):
-    """transcript_path points at a file that does not exist -> rebirth check skipped,
-    original reason, exit 0, no traceback (AC7)."""
-    write_run(fake_home, "run-42", _block_state())
-    cp = run_hook(_payload(transcript=fake_home / "nope.jsonl"), home=fake_home)
-
+def _assert_failopen(cp, baseline):
+    """A fail-open error path: exit 0, no traceback, and reason BYTE-IDENTICAL to the
+    pre-change baseline (steer helper returned "")."""
     assert cp.returncode == 0
     assert cp.stderr == ""
     d = decision(cp)
     assert d is not None and d["decision"] == "block"
     assert CONTEXT_PRESSURE_ANCHOR not in d["reason"]
+    assert d["reason"] == baseline, "fail-open must restore the byte-exact pre-change reason"
+
+
+def test_failopen_missing_transcript_path(fake_home):
+    """No transcript_path in the payload -> token sum unavailable -> rebirth check
+    SKIPPED, the hook emits its byte-exact original continue reason, exit 0 (AC7)."""
+    baseline = _baseline_reason(fake_home)
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook({"session_id": SID}, home=fake_home)  # no transcript_path
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_nonexistent_transcript_file(fake_home):
+    """transcript_path points at a file that does not exist -> rebirth check skipped,
+    byte-exact original reason, exit 0, no traceback (AC7)."""
+    baseline = _baseline_reason(fake_home)
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=fake_home / "nope.jsonl"), home=fake_home)
+    _assert_failopen(cp, baseline)
 
 
 def test_failopen_no_usage_transcript(fake_home):
     """A transcript with no completed assistant usage line -> token sum unavailable ->
-    SKIP the rebirth check (a fresh transcript is exactly this case -> no false steer)
-    (AC7)."""
+    SKIP the rebirth check (a fresh transcript is exactly this case -> no false steer);
+    byte-exact original reason (AC7)."""
+    baseline = _baseline_reason(fake_home)
     trans = fake_home / "fresh.jsonl"
     trans.write_text(
         '{"type": "user", "message": {"role": "user", "content": "hi"}}\n',
@@ -489,12 +503,77 @@ def test_failopen_no_usage_transcript(fake_home):
     )
     write_run(fake_home, "run-42", _block_state())
     cp = run_hook(_payload(transcript=trans), home=fake_home)
+    _assert_failopen(cp, baseline)
 
-    assert cp.returncode == 0
-    assert cp.stderr == ""
-    d = decision(cp)
-    assert d is not None and d["decision"] == "block"
-    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"]
+
+def test_failopen_unknown_model_below_default_byte_exact(fake_home):
+    """An unknown model resolving to the default window whose sum is BELOW water -> no
+    steer -> reason is byte-identical to the pre-change baseline (not merely
+    anchor-absent). Pins the under-water unknown-model path to the strict contract."""
+    baseline = _baseline_reason(fake_home)
+    trans = fake_home / "unknown-under.jsonl"
+    # sum 100000 < 200000*0.85=170000 -> under water on the default window.
+    trans.write_text(
+        '{"type": "assistant", "message": {"model": "mystery-model-9", '
+        '"usage": {"input_tokens": 100000, "cache_creation_input_tokens": 0, '
+        '"cache_read_input_tokens": 0}}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_resolver_import_failure(fake_home):
+    """`import rebirth_thresholds` inside the steer's try FAILS (the sibling module is
+    absent from the bin/ the hook imports from) -> ImportError is swallowed -> byte-exact
+    original reason, exit 0, no traceback (AC7). Run a COPY of bin/ WITHOUT the resolver
+    module so the real `import rebirth_thresholds` raises on the live import path."""
+    import shutil
+    baseline = _baseline_reason(fake_home)
+    bindir = fake_home / "bin-no-resolver"
+    shutil.copytree(_helpers.REPO_ROOT / "bin", bindir)
+    (bindir / "rebirth_thresholds.py").unlink()  # remove the sibling resolver
+
+    write_run(fake_home, "run-42", _block_state())
+    cp = subprocess.run(
+        [sys.executable, str(bindir / "drive-stop-hook.py")],
+        input=json.dumps(_payload(transcript=OVER_WATER)),
+        env={**os.environ, "HOME": str(fake_home)},
+        capture_output=True, text=True, timeout=30,
+    )
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_steer_helper_unexpected_exception(fake_home, monkeypatch):
+    """ANY unexpected exception inside the steer helper degrades to no steer (the
+    catch-all `except Exception: return ""`). Force it by making the resolver's
+    latest_usage_tokens raise a generic RuntimeError mid-detection (a path none of the
+    typed guards cover) -> byte-exact original reason, exit 0, no traceback (AC7).
+
+    Run a COPY of bin/ whose rebirth_thresholds.py raises in latest_usage_tokens, so the
+    real steer helper hits its catch-all on a genuinely unexpected error."""
+    import shutil
+    baseline = _baseline_reason(fake_home)
+    bindir = fake_home / "bin-raising-resolver"
+    shutil.copytree(_helpers.REPO_ROOT / "bin", bindir)
+    resolver = bindir / "rebirth_thresholds.py"
+    src = resolver.read_text(encoding="utf-8")
+    # Make latest_usage_tokens raise a generic (non-IO, non-Import) error -> catch-all.
+    src += (
+        "\n\ndef latest_usage_tokens(*_a, **_k):\n"
+        "    raise RuntimeError('boom: unexpected steer-helper failure')\n"
+    )
+    resolver.write_text(src, encoding="utf-8")
+
+    write_run(fake_home, "run-42", _block_state())
+    cp = subprocess.run(
+        [sys.executable, str(bindir / "drive-stop-hook.py")],
+        input=json.dumps(_payload(transcript=OVER_WATER)),
+        env={**os.environ, "HOME": str(fake_home)},
+        capture_output=True, text=True, timeout=30,
+    )
+    _assert_failopen(cp, baseline)
 
 
 def test_failopen_unknown_model_uses_default_window_no_false_steer(fake_home):
@@ -539,12 +618,13 @@ def test_failopen_unknown_model_over_default_window_steers(fake_home):
     assert "200000-token window" in d["reason"]
 
 
-def test_failopen_malformed_thresholds_file(fake_home, monkeypatch, tmp_path):
+def test_failopen_malformed_thresholds_file(fake_home, tmp_path):
     """A malformed bin/rebirth-thresholds.json -> the resolver's load raises -> the
     rebirth check is swallowed and the hook emits its original continue reason, exit 0,
     no crash (AC7). Exercised by running a COPY of bin/ whose data file is corrupt, so
     the real owned data file is untouched."""
     import shutil
+    baseline = _baseline_reason(fake_home)
     bindir = tmp_path / "bin"
     shutil.copytree(_helpers.REPO_ROOT / "bin", bindir)
     (bindir / "rebirth-thresholds.json").write_text("not json {{{", encoding="utf-8")
@@ -556,9 +636,4 @@ def test_failopen_malformed_thresholds_file(fake_home, monkeypatch, tmp_path):
         env={**os.environ, "HOME": str(fake_home)},
         capture_output=True, text=True, timeout=30,
     )
-    assert cp.returncode == 0
-    assert cp.stderr == ""
-    d = decision(cp)
-    assert d is not None and d["decision"] == "block"
-    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"], "malformed data file -> no steer (fail-open)"
-    assert "Continue the pipeline" in d["reason"]
+    _assert_failopen(cp, baseline)
