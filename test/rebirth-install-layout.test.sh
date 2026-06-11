@@ -178,8 +178,13 @@ COPY_OP = re.compile(
 )
 # Both shell (`VAR=value`) and python (`var = value`) assignment forms — the latter has
 # spaces around `=`, so an indirected `shutil.copy2(statusline_src, ...)` whose source var
-# was set to a rebirth path is caught too.
-ASSIGN = re.compile(r'^[\s]*([A-Za-z_][A-Za-z0-9_]*)[\s]*=[\s]*(.*)$')
+# was set to a rebirth path is caught too. A leading shell declaration keyword
+# (export/local/readonly/declare[ -flags]) before `NAME=` is allowed and skipped, so
+# `export SRC="$HOOK_PY"` / `local SRC=...` taints SRC too — mirrors the THRESHOLDS_FILE
+# replay prefix handling. Python `var = ...` has no such prefix, so that path is unaffected.
+ASSIGN = re.compile(
+    r'^[\s]*(?:(?:export|local|readonly|declare(?:[\s]+-[A-Za-z]+)*)[\s]+)?'
+    r'([A-Za-z_][A-Za-z0-9_]*)[\s]*=[\s]*(.*)$')
 
 def strip_comment(line):
     # drop a full-line comment; strip a trailing ` # ...` (space-anchored so a `#`
