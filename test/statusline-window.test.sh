@@ -34,28 +34,44 @@ payload() {  # <display_name> <transcript>
     '{model:{display_name:$m}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}'
 }
 
-# --- AC5: output is byte-identical to the pre-refactor (inline-case) statusline ---
-# Baseline = statusline.sh at the slice's phaseBaseSha — the ORIGINAL inline-`case`
-# version, BEFORE this slice's json de-dup. (HEAD is the slice tip, which already
-# contains the de-dup, so comparing against HEAD self-compares and proves nothing —
-# it must be the true pre-refactor tree.) Run BOTH the base and the current statusline
-# on the same payload across the 4 model cases + an unmatched default, and assert the
-# displayed output is byte-identical. If the base ref is unavailable (no git, shallow
-# tree) the case is skipped so the AC6 data-file assertions still stand alone.
-BASE_SHA="$(jq -r '.phaseBaseSha' "$REPO/../../state.json" 2>/dev/null)"
-OLD="$(mktemp)"
-if [ -n "${BASE_SHA:-}" ] && [ "$BASE_SHA" != "null" ] \
-   && git -C "$REPO" show "$BASE_SHA:bin/statusline.sh" > "$OLD" 2>/dev/null && [ -s "$OLD" ]; then
-  for M in "Opus 4.8" "Opus 4.7" "Sonnet 4.5" "Haiku 4" "Some Unknown Model"; do
-    P="$(payload "$M" "$TRANS")"
-    new_out="$(printf '%s' "$P" | bash "$STATUSLINE")"
-    old_out="$(printf '%s' "$P" | bash "$OLD")"
-    assert_eq "AC5 output unchanged vs pre-refactor base for [$M]" "$old_out" "$new_out"
-  done
-else
-  pass "AC5 skipped (no pre-refactor phaseBaseSha baseline available)"
-fi
-rm -f "$OLD"
+# --- AC5: displayed output is byte-identical to the pre-refactor statusline ---
+# Self-contained GOLDEN guard: hardcode the EXACT displayed output the statusline
+# must produce for a fixed set of (model, stdin payload) cases, then assert the
+# current bin/statusline.sh reproduces each golden byte-for-byte. The goldens were
+# captured from the current statusline.sh — confirmed byte-identical to the
+# pre-refactor (inline-`case`) version — so they ARE the pre-refactor outputs.
+# No git ancestor ref and no run state.json: the guard works in a bare repo checkout
+# (CI, main) and reds if any case's displayed output changes.
+#
+# Determinism: the env-dependent segments are pinned away so only the model+context
+# part (what this refactor touches) is golden — a FIXED non-git current_dir (empty
+# git segment), an empty $HOME + ccusage-free $PATH (empty cost segment), and a
+# payload with no rate_limits (empty limit segment). \033[36m=cyan dir, \033[31m=red
+# ctx (PCT>=80), \033[0m=reset. token sum 909200: window(Opus)=1_000_000 -> 90%,
+# window(default)=200_000 -> 454%.
+GOLDEN_DIR="/zzz-not-a-git-repo/golden/statusline-dir"
+GE="$(printf '\033')"  # ESC
+golden_for() {  # <model> — the exact line statusline.sh must print (no trailing \n)
+  case "$1" in
+    "Opus 4.8")           printf '%s[36m%s%s[0m [Opus 4.8] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
+    "Opus 4.7")           printf '%s[36m%s%s[0m [Opus 4.7] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
+    "Sonnet 4.5")         printf '%s[36m%s%s[0m [Sonnet 4.5] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
+    "Haiku 4")            printf '%s[36m%s%s[0m [Haiku 4] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
+    "Some Unknown Model") printf '%s[36m%s%s[0m [Some Unknown Model] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
+  esac
+}
+golden_payload() {  # <display_name> <transcript> — uses the FIXED non-git dir
+  jq -n --arg m "$1" --arg t "$2" --arg d "$GOLDEN_DIR" \
+    '{model:{display_name:$m}, workspace:{current_dir:$d}, transcript_path:$t}'
+}
+GOLDEN_HOME="$(mktemp -d)"  # empty HOME -> no $HOME/.bun/bin/ccusage -> empty cost seg
+for M in "Opus 4.8" "Opus 4.7" "Sonnet 4.5" "Haiku 4" "Some Unknown Model"; do
+  P="$(golden_payload "$M" "$TRANS")"
+  # Strip ccusage from PATH so the cost segment is empty in any environment.
+  got="$(printf '%s' "$P" | HOME="$GOLDEN_HOME" PATH=/usr/bin:/bin bash "$STATUSLINE")"
+  assert_eq "AC5 displayed output matches golden for [$M]" "$(golden_for "$M")" "$got"
+done
+rm -rf "$GOLDEN_HOME"
 
 # --- AC6 (bash half): the statusline window comes from rebirth-thresholds.json ---
 # Resolve the window the SAME way the statusline does, directly from the data file,
