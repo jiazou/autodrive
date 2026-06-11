@@ -28,8 +28,11 @@ its ordering pinned by the sibling suites):
      set). The detection->steer link actually fires on real input.
   2. PROVE         — REAL. `bin/drive-conformance.sh --mode checkpoint` AND `--mode
      state-lint` both report clean on a checkpoint-complete (quiescent + well-formed) state,
-     and BOTH fail closed on a deliberately-unresumable state (open in-flight marker /
-     malformed routing state.json). The fail-closed gate actually gates.
+     and the TWO-MODE GATE (proven-resumable = BOTH clean) fails closed on a
+     deliberately-unresumable state: an OPEN in-flight marker reds `--mode checkpoint`; a
+     malformed routing state.json reds `--mode state-lint` while `--mode checkpoint` stays
+     CLEAN (D8 — checkpoint never reads state.json), so it is state-lint that catches it.
+     Either way one mode fails, so the both-clean gate fails closed.
   3. HANDOFF       — REAL artifacts, PROSE ordering. The marker/`waiting` WRITES use the real
      proof stdout + the atomic tmp+mv discipline; the marker's `proof.tip` == the
      `drive/<runId>` tip is checked against real `git rev-parse`. The marker-then-waiting
@@ -362,18 +365,33 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
     st["waiting"] = "rebirth"
     _atomic_write_json(rd / "state.json", st)
 
-    # BEFORE the rebind: the successor (incoming-sess) is NOT yet attributed the run, so
-    # the Stop hook must ALLOW for it (the run is owned by outgoing-sess + waiting set).
+    # BEFORE the rebind: prove the sessionId rebind (D7) is the load-bearing variable, with
+    # `waiting` controlled OUT of the picture. The continuation hook keeps a run driving only
+    # for the session whose id == state.sessionId AND only when waiting is empty (see
+    # drive-stop-hook.py main(): it `continue`s past any waiting run, so a still-set
+    # waiting=="rebirth" would make the hook allow for ANY session regardless of ownership —
+    # which would NOT isolate the rebind). So CLEAR waiting here, leave sessionId at SID_OUT,
+    # and assert the sessionId-MATCH branch: the successor (SID_IN) does NOT own the run, so
+    # the hook does NOT keep THIS run driving for it -> allows. (Removing the rebind below —
+    # i.e. leaving sessionId at SID_OUT — reds the post-rebind block assertion; this is the
+    # executable form of test_chainbreak_resume_severed_unrebound_session_does_not_block.)
+    st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    st["waiting"] = None
+    _atomic_write_json(rd / "state.json", st)
     cp_before = run_hook(
         _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_IN),
         home=fake_home,
     )
     assert hook_decision(cp_before) is None, \
-        "pre-rebind: the run is not yet attributed to the successor -> hook allows"
+        "pre-rebind (waiting cleared): sessionId still SID_OUT -> the successor does NOT own " \
+        "the run -> the hook does not keep it driving for SID_IN (allows). The rebind, not " \
+        "waiting, is the variable under test."
 
     # --- the SCRIPTABLE resume acts (drive.md I4/I7/D7/D17/D36) --------------
     st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
-    # (1) sessionId rebind FIRST (D7): re-attribute the run to the live session.
+    # (1) sessionId rebind FIRST (D7): re-attribute the run to the live session. With waiting
+    # already cleared above, this rebind is the SOLE difference from the pre-rebind allow —
+    # so the post-rebind block below isolates the rebind's real consequence.
     st["sessionId"] = SID_IN
     # (2) re-arm: reset rebirth_pending (D36).
     st["rebirth_pending"] = False
@@ -385,14 +403,15 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
     assert marker_valid, "the marker must validate (tip-match) before consumption"
     marker.unlink()  # single-use consumption — the resume's first act after rebind
 
-    # (4) RE-PROVE both modes (the resume re-prove gate), THEN clear waiting.
+    # (4) RE-PROVE both modes (the resume re-prove gate). `waiting` was already cleared in the
+    # pre-rebind control above; the re-prove confirms BOTH modes stay clean on the
+    # reconstructed (rebound + re-armed + marker-consumed) state.
     rc_c, obj_c = run_conformance(repo, rd, "checkpoint")
     rc_l, obj_l = run_conformance(repo, rd, "state-lint")
     assert rc_c == 0 and obj_c["clean"] is True, "re-prove checkpoint must still pass"
     assert rc_l == 0 and obj_l["clean"] is True, "re-prove state-lint must still pass"
     st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
-    st["waiting"] = None
-    _atomic_write_json(rd / "state.json", st)
+    assert st["waiting"] is None, "waiting was cleared in the pre-rebind control (CONTINUE semantics)"
 
     # --- the reconstructed run is continuable -------------------------------
     # (i) the Stop hook now RE-ATTRIBUTES the run to the successor and blocks-to-continue
