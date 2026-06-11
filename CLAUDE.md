@@ -153,13 +153,20 @@ state.json                   -- run model: runId, baseRef, featureBranch, stage,
                                 redesigns = REDESIGN re-run count, cap 3),
                                 phaseReview{status,round,hardenRound} where status
                                 = converged→hardening→hardened (terminal);
-                                plus lastGate, designPath, and the Stop-hook keys the hooks
+                                plus lastGate, designPath, rebirth_pending (signal/hint —
+                                never a proof input), and the Stop-hook keys the hooks
                                 read: sessionId, autoContinue, waiting
 event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
-review-<scope>-N.md          -- per-scope (design/phasedesign<P>/slice/phase) review outputs
+review-<scope>-N.md          -- per-scope (design/phasedesign<P>[-r<R>]/slice/phase) review outputs
 codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw
 harden-<P>-N.md              -- per-phase harden audit (3-lens) outputs
 codex-harden-<P>.md          -- codex harden findings; codex-harden-<P>.log raw
+redesign-<P>-r<R>.marker     -- append-only redesign epoch markers (highest R = the
+                                artifact-derived redesign count; current review epoch)
+inflight-<kind>-<scope>.marker -- open = a dispatch unit in flight (write-before-dispatch,
+                                clear-after-record); none open = half of "safe boundary"
+checkpoint-complete.marker   -- single-use checkpoint proof record (tip-bound; consumed
+                                at resume; never an authorization)
 decisions.md / followups.md  -- run-local ledgers (promoted to the repo at ship)
 verify.md                    -- verify-stage evidence
 wt/                          -- per-slice + integration + ship worktrees

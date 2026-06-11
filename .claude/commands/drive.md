@@ -41,11 +41,32 @@ verdict / merge / gate.
 - **Resume:** if invoked with an existing runId (its `$RUN_DIR/state.json` exists), load it
   and reconcile from git — `git worktree list`, branch tips, and ancestry are authoritative;
   state fields are hints. Never re-dispatch, advance, or clean up on a state value alone:
+  - **sessionId rebind (FIRST, on ANY resume into a new session):** rewrite
+    `state.sessionId` to the live `$CLAUDE_CODE_SESSION_ID` (null if unset) BEFORE
+    reconciling anything — the Stop hook attributes a run by exact sessionId match, so a
+    stale id kills auto-continue and rebirth detection. JSON-safe write (the jq rule below).
+  - **Consume `checkpoint-complete.marker` (single-use):** if
+    `$RUN_DIR/checkpoint-complete.marker` exists, validate it (JSON parses AND `proof.tip`
+    equals the current `drive/<runId>` tip), then DELETE it — valid or invalid — before any
+    reconciliation acts on its content. Resume never REQUIRES the marker: missing/invalid
+    means reconcile from scratch. (Format + validity rules: § Durable checkpoint contract.)
   - **Current phase:** `state.phase` = the lowest phase in `state.phaseList` whose
     `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch` (branch absent, or
     `git merge-base --is-ancestor phaseInt/<runId>/<P> <featureBranch>` fails). All are
-    ancestors → `stage = verify`. If the current phase's `phaseDesign[<P>].status` is not
-    `converged`, (re)run its design (Execute step 1) before dispatching slices.
+    ancestors → `stage = verify`.
+  - **Derived phase-design status:** the current phase's design counts as converged ONLY if
+    the epoch-aware `bin/drive-conformance.sh $RUN_DIR --mode phasedesign-gate:<P>` passes
+    for the CURRENT epoch — `phaseDesign[<P>].status` is a hint, never the trigger. Gate
+    fails → treat the phase as `designing` and re-run Execute step 1 (re-AUTHOR via
+    `/drive-design`, not merely re-review) before dispatching slices.
+  - **Redesign cap at resume:** artifact-derived `redesigns >= 3` (reconstruction rule 4
+    below) with the current epoch unconverged → STOP — the step-4 handler's verdict,
+    re-derived without re-entering the handler.
+  - **Stranded in-flight markers:** at resume, every open `$RUN_DIR/inflight-*.marker` is
+    stranded by definition (the dispatching session is gone). Apply the recovery rule in
+    § Durable checkpoint contract — **adopt / re-dispatch / STOP, never wait** for a
+    worker; adopt of a review unit requires BOTH the round's `review-<scope>-N.md` AND a
+    non-empty `codex-review-<scope>.md` sibling.
   - **Worktrees:** classify each `$RUN_DIR/wt/` worktree by its checked-out branch and
     remove stale ones with `git worktree remove` only — never `branch -D` (branch cleanup is
     the guarded assemble/advance steps' job). A `slice/<runId>/<id>` worktree is live until
@@ -62,8 +83,34 @@ verdict / merge / gate.
     (branch kept for assembly). `blocked` → STOP.
   - **Phase `hardening`:** resume HARDEN on `phaseInt/<runId>/<P>` (don't rebuild). If
     `status == hardened` but `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch`,
-    complete its `git branch -f` advance (Execute step 6) instead. Set `hardenRound =
-    max(state, count of `harden-<P>-*.md` with `AppliedEdits: yes`)`.
+    complete its `git branch -f` advance (Execute step 6) instead.
+  - **Counter reconstruction (all five counters):** state.json is a resume-repair HINT,
+    never a proof input. Repair each counter one-directionally —
+    `counter = max(state hint, artifact-derived value)`: the hint may RAISE a counter
+    (tightening a cap risks at worst a premature STOP — safe), never lower it (loosening
+    a cap risks a loop overrunning it — unsafe). The checkpoint proof asserts ONLY the
+    artifact-derived value. The run graph derives every round COUNT from the review/harden
+    files (artifact-derived); state status fields pick glyphs only, and a state counter is
+    a DISPLAY fallback solely in the missing-artifact `?` rule (labeled a hint there) —
+    never a proof input.
+    1. `slices[<id>].reviewCount` = max(state, count of `review-<id>-N.md`,
+       pure-integer N).
+    2. `phaseReview[<P>].round` = max(state, count of `review-phase<P>-N.md`
+       (pure-integer N) MINUS count of `harden-<P>-*.md` with `AppliedEdits: yes`) —
+       harden-regress reviews write into the same `review-phase<P>-N.md` family without
+       incrementing the round, and each fix round's `AppliedEdits: yes` audit is its
+       durable 1:1 marker, so the bare file count is only an upper bound. yes-count >
+       review-file count is malformed → use 0 (checkpoint flags `regress-mismatch`).
+    3. `phaseReview[<P>].hardenRound` = max(state, count of `harden-<P>-*.md` with
+       `AppliedEdits: yes`) — a confirming clean audit writes `AppliedEdits: no` and
+       does NOT count (cap-3 is on fix rounds); never count all harden files.
+    4. `phaseDesign[<P>].redesigns` = max(state, HIGHEST epoch R among
+       `redesign-<P>-r*.marker`) — highest-R, not file count: marker `rN` proves N
+       redesigns even if an intermediate marker was lost (checkpoint flags `epoch-gap`).
+    5. `phaseDesign[<P>].round` = max(state, count of `review-<T>-N.md`) where
+       `T = phasedesign<P>` if artifact-derived redesigns == 0, else
+       `phasedesign<P>-r<R>` for the current (highest) epoch R — count ONLY the current
+       epoch's round files (a redesign resets the round with a fresh cap-8).
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
   initialize and write `$RUN_DIR/state.json` in this shape (set `sessionId` from the
@@ -77,7 +124,7 @@ verdict / merge / gate.
   "budget": { "ceilingCalls": null, "ceilingMin": null, "calls": 0, "startedAt": "<iso>" },
   "slices": {}, "phaseDesign": {}, "phaseReview": {}, "lastGate": null,
   "verify": { "attempts": [] }, "ship": { "suite": null, "conformance": null, "prUrl": null },
-  "sessionId": null, "autoContinue": true, "waiting": null,
+  "sessionId": null, "autoContinue": true, "waiting": null, "rebirth_pending": false,
   "designPath": "$RUN_DIR/design.md" }
 ```
 
@@ -103,6 +150,91 @@ autonomous work. Forgetting to set it just means the hook nudges you to continue
 biases toward letting you stop and fails open); it never forces you past a STOP. This
 is independent of `/goal` — use either or both. Set `autoContinue:false` to disable
 the hook for this run.
+
+## Durable checkpoint contract (safe boundary)
+
+Every checkpoint-proof input is a durable artifact (git refs + `$RUN_DIR` files), never
+the coordinator's self-report. Two marker families carry the contract:
+
+- **Redesign epoch markers — `$RUN_DIR/redesign-<P>-r<R>.marker`.** Written by the
+  step-4 REDESIGN handler as its FIRST action, strictly BEFORE the
+  `phaseDesign[<P>].redesigns`/`round` mutation; `R` = (highest existing epoch for
+  `<P>`) + 1. Create-only and append-only for the life of the run — never modified or
+  deleted; if the file already exists → STOP (a duplicate write means a state bug).
+  Atomic write: `$RUN_DIR/.tmp.<name>` then `mv`. Content (informational — the NAME is
+  the load-bearing datum):
+  `{"phase": <P>, "epoch": R, "runId": "<runId>", "at": "<iso>", "trigger": "<what>"}`.
+- **In-flight dispatch markers — `$RUN_DIR/inflight-<kind>-<scope>.marker`.** One marker
+  per coordinator dispatch unit: `inflight-design-<P>.marker` (the whole `/drive-design
+  phase <P>` run, spanning its author+review loop), `inflight-implement-<id>.marker`,
+  `inflight-review-<scope>.marker` (scope = the review scope token — `design`, `<id>`,
+  `phase<P>`, `phasedesign<P>[-r<R>]`; this ONE marker brackets the whole dual-voice
+  chain: reviewer subagent → background codex → post-process → counter/state record),
+  `inflight-harden-<P>.marker`, `inflight-verify.marker`, `inflight-ship.marker`.
+  **Epoch resolution (single owner — the marker WRITER).** Whoever writes a
+  `phasedesign<P>[-r<R>]` scope token resolves `<R>` at write time by the ONE rule: `R`
+  = highest epoch among `$RUN_DIR/redesign-<P>-r*.marker` (0 → the bare `phasedesign<P>`;
+  `R >= 1` → `phasedesign<P>-r<R>`). The coordinator applies this rule when it writes a
+  remediation marker (Stage 2–4.5 gate) — the coordinator is the SOLE marker writer.
+  drive-review.md applies the IDENTICAL rule only to resolve `<R>` for the phasedesign
+  review/codex artifact filenames it writes; it never writes the in-flight marker.
+  **Write-before-dispatch, clear-after-record:** the coordinator (main context) writes
+  the marker (tmp + `mv`) immediately BEFORE the dispatch and `rm`s it only AFTER the
+  result is fully recorded — artifact written + `state.json` updated + event-log line
+  appended. No `pid`, no liveness probing. Content:
+  `{"kind": "...", "scope": "...", "runId": "<runId>", "sessionId": "<dispatching session or null>", "startedAt": "<iso>"}`.
+
+**Safe boundary** = no open `inflight-*.marker` AND no partial multi-step git mutation
+detectable from git. Two steps carry NO marker by design: **assemble** — a partial phase
+integration is git-detectable and inert (the step-5 rebuild-from-base is the rollback) —
+and the **step-6 `git branch -f` advance** — a single atomic ref move whose not-yet-done
+case resume already completes. **Finish-the-current-atomic-step:** a multi-write span
+that must not be split (the REDESIGN handler's marker-write → state-write span) is one
+atomic step — complete it before any checkpoint.
+
+**The checkpoint proof:** `bin/drive-conformance.sh $RUN_DIR --mode checkpoint` — clean
+iff no open in-flight marker, every `phaseInt/<runId>/<P>` ref resolves AND relates to
+`drive/<runId>` by ancestry, every `slice/<runId>/<id>` ref resolves (slice branches are
+cut from `phaseBaseSha`, so they are NOT ancestors of `drive/<runId>` — resolution only),
+and every counter artifact is well-formed. Its `counters` output is the single
+computation point for the artifact-derived counter values (it never reads `state.json`).
+After it exits 0, write **`$RUN_DIR/checkpoint-complete.marker`** (tmp + `mv`; single
+file, overwritten), content:
+`{"at": "<iso>", "sessionId": "<outgoing>", "proof": <the mode's stdout JSON, incl. tip + counters>}`.
+Validity rules:
+- **A proof RECORD, never an authorization.** `proof.tip` must equal the current
+  `drive/<runId>` tip — necessary, NOT sufficient (`drive/<runId>` moves only at the
+  step-6 advance, so later work — even an open in-flight marker — can postdate a
+  tip-matching file). Any consumer needing current safety MUST re-run
+  `--mode checkpoint`; the marker attests only that a passing proof was computed at `at`.
+- **SINGLE-USE — consumed at resume.** The resume path validates then DELETES it (valid
+  or not) as its first act after the sessionId rebind; one marker covers at most one
+  resume, and any later checkpoint re-proves from scratch and writes a fresh marker.
+
+**Prove-then-pause:** a rebirth pause may be entered ONLY after a passing
+`--mode checkpoint` plus a fresh `checkpoint-complete.marker`. If, after finishing the
+current atomic step and ONE stranded-marker recovery attempt, the proof still fails →
+STOP via Present human pause with `waiting = "stop:checkpoint-unprovable"` + the
+violations JSON. Never set `waiting = "rebirth"` on a failing proof.
+
+**Stranded-marker recovery (adopt / re-dispatch / STOP — never wait):** an open marker
+with no live worker (died before the dispatch ran, or died after the work but before the
+clear — indistinguishable on disk, treated the same):
+1. **Adopt** only if the unit's COMPLETE artifact set exists and parses — for a review
+   unit BOTH the round's `review-<scope>-N.md` (verdict line) AND a non-empty
+   `codex-review-<scope>.md` sibling (a first-line `CODEX_UNAVAILABLE` is
+   parseable-by-contract); for an implement unit, slice commits past `phaseBaseSha` with
+   green slice tests. Then finish the recording (counters self-repair via the resume
+   reconstruction rules), clear the marker, continue. A Claude review file WITHOUT its
+   codex sibling is an unfinished dual-voice chain → step 2.
+2. **Re-dispatch** otherwise: clear the marker and re-run the unit per the resume rules.
+   For a review unit, first `mv` the scope's `codex-raw-<scope>.log` aside — an orphaned
+   background codex may still be appending to it.
+3. **STOP** if re-dispatch would breach the scope's cap (per the reconstructed counter) —
+   the cap logic, not the marker, makes that call.
+
+At resume, every open marker is stranded by definition (the dispatching session is
+gone). In-session, a marker the coordinator is not actively awaiting gets the same rule.
 
 ## Present human pause (shared routine)
 
@@ -137,9 +269,13 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
 
 1. **`state.json`** — the durable structured run-model. Fields the graph reads:
    `task` (→ Premises line — always written at run-setup), `stage`, `lastGate`, `waiting`,
-   `phase`, `phaseList`, `designReview`, `phaseDesign[<P>].{round,status}`,
-   `slices[<id>].{step,reviewCount,owns,deps}`,
-   `phaseReview[<P>].{status,round,hardenRound}`, `verify`, `ship`.
+   `phase`, `phaseList`, `designReview`, `phaseDesign[<P>].status`,
+   `slices[<id>].{step,owns,deps}`, `phaseReview[<P>].status`, `verify`, `ship`.
+   **The status fields pick glyphs only.** Every round COUNT
+   (`designReview`, `slices[<id>].reviewCount`, `phaseDesign[<P>].round`,
+   `phaseReview[<P>].{round, hardenRound}`) is artifact-derived (rule below); the matching
+   state counter is read ONLY as the labeled DISPLAY fallback in the missing-artifact rule
+   — never as a proof of a count.
 2. **Fixed-format markdown files** (scope-token naming):
    - `design.md` (Goal → root cause). (`task.md` may also exist, but the Premises line is
      taken from `state.task`, which always has a writer — never an unsourced node.)
@@ -147,8 +283,10 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
      BLOCKING/MAJOR = P1) — the Claude reviewer file, **persisted per round** (the `-N`
      suffix) — and its codex sibling `codex-review-<scope>.md` (same tags, or bare
      first-line token `CODEX_UNAVAILABLE`).
-   - `design-phase<P>.md` (the per-phase detailed design) and its review
-     `review-phasedesign<P>-N.md` (`## Verdict: CONVERGED|FINDINGS`) + `codex-review-phasedesign<P>.md`.
+   - `design-phase<P>.md` (the per-phase detailed design) and its CURRENT-epoch review
+     family `review-phasedesign<P>[-r<R>]-N.md` (`## Verdict: CONVERGED|FINDINGS`) +
+     `codex-review-phasedesign<P>[-r<R>].md`, `R` = highest `redesign-<P>-r*.marker` in
+     `$RUN_DIR` (no marker → the bare `phasedesign<P>` token).
    - `harden-<P>-N.md` (`## Verdict: HARDENED|FINDINGS`) and `codex-harden-<P>.md`.
    - **The slice scope token is the BARE id** — `review-<id>-*.md` /
      `codex-review-<id>*.md` (e.g. `review-1.2-3.md`, `codex-review-1.2.md`), per
@@ -181,8 +319,11 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
   `awaiting approval`. `waiting=="gateA"` anchors `← YOU ARE HERE` to this line.
 - **Execute:** each phase (from `state.phaseList`) → first a **`design:`** child line from
   `phaseDesign[<P>]` (`✓ design: CONVERGED (k rounds)` when `status=="converged"`, else
-  `◐ design: designing` — rounds/verdict from `review-phasedesign<P>-*.md` + its codex
-  sibling, same dual-voice rule as any review) → then its slices (`state.slices` keyed by
+  `◐ design: designing` — rounds/verdict from the CURRENT epoch's
+  `review-phasedesign<P>[-r<R>]-*.md` + its codex sibling (`R` = highest
+  `redesign-<P>-r*.marker`), same dual-voice rule as any review; **older epochs render
+  ONLY as a redesign count on the `design:` line** — e.g. `✓ design: CONVERGED (2 rounds,
+  1 redesign)` — old-epoch files never render as rounds) → then its slices (`state.slices` keyed by
   id-prefix == phase; `‖` between independent slices — see below). **Under each slice**
   (and each phase-integration), as child lines: one line per review round + combined
   dual-voice verdict, then `fix round k` child lines (or the numeric summary), then —
@@ -191,8 +332,9 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
   (absent/no-status ⇒ `◐` in-progress). `stage==execute` + the current phase has empty
   `slices` ⇒ it is still in Tier-2 design (`phaseDesign[<P>].status != converged`) → render
   `◐ Phase N (designing…)` under the `design:` line; `stage` past execute + empty `slices` ⇒
-  `(no slices recorded)`. Harden from
-  `harden-<P>-*.md` + `codex-harden-<P>*.md` + `phaseReview[<P>].hardenRound/status`.
+  `(no slices recorded)`. Harden rounds from `harden-<P>-*.md` (`AppliedEdits: yes`
+  count) + `codex-harden-<P>*.md`; `phaseReview[<P>].status` picks the glyph and
+  `hardenRound` is the missing-artifact display fallback only.
   A `stop:<r>` while in Execute anchors `← YOU ARE HERE` to a `✗ STOP: <r>` leaf under
   the responsible slice/phase node.
 - **Verify:** from `state.verify.attempts[]` (ordered ⇒ saga); multiple attempts render
@@ -247,9 +389,12 @@ so it never drifts and never fabricates:
 ### Missing-artifact rule (general — never fabricate)
 
 For ANY counted round whose artifact is absent — for ANY family: `review-design-*.md`,
-`review-<id>-*.md`, `review-phase<P>-*.md`, `harden-<P>-*.md`, and their codex siblings
-(`codex-review-<scope>*.md`, `codex-harden-<P>*.md`) — show the round count from state
-with verdict `?`; never fabricate a verdict.
+`review-<id>-*.md`, `review-phase<P>-*.md`, the current-epoch
+`review-phasedesign<P>[-r<R>]-*.md` (`R` = highest `redesign-<P>-r*.marker`),
+`harden-<P>-*.md`, and their codex siblings (`codex-review-<scope>*.md`,
+`codex-harden-<P>*.md`) — show the matching state counter as a DISPLAY HINT (its sole
+graph use) with verdict `?`; never fabricate a verdict, never treat this fallback count
+as proof.
 
 ### Line budget — an ordered collapse LADDER (always terminates ≤ ~45)
 
@@ -370,10 +515,18 @@ converged). Before dispatching a phase's first IMPLEMENT, run
 `bin/drive-conformance.sh $RUN_DIR --mode plan-gate` and `… --mode phasedesign-gate:<P>`
 and proceed only if both report clean — plan-gate requires a `review-design-N.md`
 `## Verdict: CONVERGED` + `codex-review-design.md`; phasedesign-gate requires the same for
-`review-phasedesign<P>-N.md` + `codex-review-phasedesign<P>.md`. On a violation, run the
-named review (`/drive-review design` or `/drive-review phase <P> design`) until it
-converges, then retry. The PreToolUse hook enforces both on the `git worktree add -b
-slice/…` (deriving `<P>` from the slice id prefix); the in-prose check degrades gracefully
+the CURRENT epoch's family — `review-phasedesign<P>[-r<R>]-N.md` +
+`codex-review-phasedesign<P>[-r<R>].md`, `R` = highest `redesign-<P>-r*.marker` in
+`$RUN_DIR` (no marker → the bare `phasedesign<P>` token). On a violation, run the
+named review (`/drive-review design` or `/drive-review phase <P> design` — drive-review.md
+resolves the epoch itself) until it converges, then retry. At this remediation dispatch
+the coordinator writes/clears `inflight-review-phasedesign<P>[-r<R>].marker` around the
+`/drive-review` call, resolving `<R>` by the single epoch-resolution rule (§ Durable
+checkpoint contract, In-flight dispatch markers) (in the normal flow a phase's design
+reviews are bracketed by the
+outer `inflight-design-<P>` marker — no separate review marker there). The PreToolUse
+hook enforces both on the `git worktree add -b slice/…` (deriving `<P>` from the slice
+id prefix); the in-prose check degrades gracefully
 where the hooks aren't installed. (`/drive-design` already converges the phase design in
 step 1, so this is a backstop in the normal flow.)
 
@@ -401,7 +554,10 @@ it before it advances):
    DESIGN stage (`/drive-design phase <P>` — `~/.claude/commands/drive-design.md`) with that
    worktree as the subagent's cwd: it authors + dual-voice-reviews `design-phase<P>.md`
    against the real prior-phase code and populates `state.slices` for `<P>` (cap 8, no human
-   gate; can't converge → STOP). Then `git worktree remove --force $RUN_DIR/wt/design<P>`.
+   gate; can't converge → STOP). Bracket the whole `/drive-design` unit with
+   `inflight-design-<P>.marker` (write-before-dispatch, clear-after-record — § Durable
+   checkpoint contract; the same discipline applies to EVERY dispatch below). Then
+   `git worktree remove --force $RUN_DIR/wt/design<P>`.
 2. **Freeze base:** `phaseBaseSha = git rev-parse <featureBranch>`; initialize
    `state.phaseReview[<P>] = { "round": 0 }` if absent.
 3. **Dispatch slices** whose `deps` are CONVERGED, ≤ `concurrencyCap` in flight.
@@ -412,12 +568,15 @@ it before it advances):
    branch (`git branch -f slice/<runId>/<id> <phaseBaseSha>`), then `git worktree add
    $RUN_DIR/wt/<id> slice/<runId>/<id>` (no `-b`). Then copy
    the declared gitignored config allowlist (`.env`, …) in, and dispatch IMPLEMENT
-   (`/drive-implement` — `~/.claude/commands/drive-implement.md`) with cwd = that worktree (`step=implementing`).
+   (`/drive-implement` — `~/.claude/commands/drive-implement.md`) with cwd = that worktree
+   (`step=implementing`; marker `inflight-implement-<id>.marker`).
    Overlapping-`owns` ready slices are NOT parallelized — run by dep order; if the
    design left them unsequenced, STOP (planning bug). Excess past the cap queue.
 4. **Per-slice loop:** when a slice's IMPLEMENT returns:
    - `DONE` → `step=awaiting_review`; run REVIEW scoped `slice <id>` (slice-local
-     tests). CONVERGED → `step=converged`, then **`git worktree remove` its worktree
+     tests; marker `inflight-review-<id>.marker` brackets the whole dual-voice chain,
+     and each re-run IMPLEMENT gets `inflight-implement-<id>.marker`).
+     CONVERGED → `step=converged`, then **`git worktree remove` its worktree
      (keep the slice branch for assembly)** — frees a concurrency slot + disk, so
      worktree count stays ≤ cap regardless of slices-per-phase. FINDINGS →
      `step=needs_fix`; if its `reviewCount < 8` re-run IMPLEMENT then REVIEW; if `>=8` → STOP.
@@ -428,9 +587,16 @@ it before it advances):
      `phaseBaseSha`, which would discard the commits the fix builds on.
    - `REDESIGN` → the slice's assumption-check hit a big divergence (the phase design is
      stale vs the real prior-slice code, or a slice needs files outside its ownership).
-     `phaseDesign[<P>].redesigns += 1`; at `>= 3` → STOP (a phase that keeps breaking its own
-     design needs a human). Else set `phaseDesign[<P>].round = 0` (this redesign is a fresh
-     design pass → fresh cap-8) and re-run step 1's design (it merge-updates `state.slices`);
+     FIRST action — strictly BEFORE the `redesigns`/`round` mutation — write the epoch
+     marker `$RUN_DIR/redesign-<P>-r<R>.marker` (`R` = highest existing epoch for `<P>`
+     + 1; create-only, tmp + `mv`; marker already exists → STOP, state bug). The
+     marker-write → state-write span is one atomic step w.r.t. checkpointing (§ Durable
+     checkpoint contract); re-queue may follow a checkpoint.
+     Then `phaseDesign[<P>].redesigns += 1`; at `>= 3` → STOP (a phase that
+     keeps breaking its own design needs a human). Else set `phaseDesign[<P>].round = 0`
+     (this redesign is a fresh design pass → fresh cap-8) and re-run step 1's design (it
+     merge-updates `state.slices`) — every subsequent phasedesign review for `<P>` uses
+     the epoch-qualified scope token `phasedesign<P>-r<R>` (resolved by drive-review.md);
      `git worktree remove --force` the worktree of any slice id the redesign dropped (leave
      its branch — assemble only merges ids still in `state.slices`). Re-dispatch from step 3.
    - `BLOCKED`/`NEEDS_CONTEXT` → `step=blocked`, STOP that slice + surface; other
@@ -447,14 +613,15 @@ it before it advances):
    per-slice merge keeps each transition individually gated). **Conflict → STOP** (the
    rebuild-from-base is the rollback; never `git merge --abort` to undo prior merges).
    Run the **FULL build + integration tests** + REVIEW scoped `phase <P>` in this
-   worktree.
+   worktree (marker `inflight-review-phase<P>.marker`).
    - CONVERGED → `phaseReview[<P>].status = converged`, then **HARDEN** (step 6).
    - FINDINGS → route each P1 to the responsible slice (`step=needs_fix`, re-dispatch —
      re-attaching its worktree to the existing branch per step 4, preserving its commits —
      loop its cap-8), then **re-assemble from scratch**.
 6. **Harden (per phase, after the phase review converges)** — run the HARDEN stage
    (`/drive-harden phase <P>` — `~/.claude/commands/drive-harden.md`) IN the
-   `phaseInt/<runId>/<P>` worktree (`phaseReview[<P>].status = hardening`). It is a mutating
+   `phaseInt/<runId>/<P>` worktree (`phaseReview[<P>].status = hardening`; each
+   `/drive-harden` invocation gets `inflight-harden-<P>.marker`). It is a mutating
    find→fix→verify pass over the assembled phase to **reduce AI slop, add missing
    tests, and fix logic bugs** — beyond acceptance criteria — committing to
    `phaseInt/<runId>/<P>`. Its own 3-fix-round cap (independent of the conformance cap-8);
@@ -487,14 +654,16 @@ When all phases reach `status = hardened` → `stage = verify`.
 
 ### Stage 4b — Verify (optional)
 If the change touches a UI/URL (auto-detect), run gstack `qa-only` / `browse` on the
-`featureBranch` tree; write `$RUN_DIR/verify.md`. Report-only. Honor "no qa".
+`featureBranch` tree (marker `inflight-verify.marker`); write `$RUN_DIR/verify.md`.
+Report-only. Honor "no qa".
 Append each e2e/QA attempt's outcome to `state.verify.attempts`
 (`{result:"PASS"|"FAIL"}`) — the ordered array is the run graph's Verify source and its
 false-negative → re-verify saga.
 → `stage = ship`
 
 ### Stage 5 — Ship (once)
-Run the SHIP stage (`/drive-ship` — `~/.claude/commands/drive-ship.md`) on `featureBranch`: promote
+Run the SHIP stage (`/drive-ship` — `~/.claude/commands/drive-ship.md`) on `featureBranch`
+(marker `inflight-ship.marker`): promote
 `$RUN_DIR/decisions.md`+`followups.md` into the repo ledgers, run the full suite
 (red → retry once → STOP), build the **single** commit + PR, **Gate B** (approve
 diff), then push/open PR. → `lastGate = "B"`, `stage = done`
