@@ -385,8 +385,14 @@ def test_drive_plan_invokes_rebirth_handshake_at_planning_boundary():
     assert "§ *I1 — Safe-boundary rebirth\nhandler*".replace("\n", " ") in plan, (
         "drive-plan.md must reference drive.md's § I1 routine (not duplicate it)"
     )
-    # and names the load-bearing handshake steps (prove → marker → waiting → handoff)
-    assert "--mode checkpoint" in plan and "checkpoint-complete.marker" in plan
+    # and names the load-bearing handshake steps (prove → marker → waiting → handoff).
+    # Per D46 (slice 4.3), drive-plan.md names NO inline proof mode itself — it defers to
+    # drive.md's § I1 as "the authority for the proof modes" — so the call-site says "prove
+    # the checkpoint" and references I1 for the modes, rather than spelling `--mode checkpoint`.
+    assert "prove the checkpoint" in plan and "checkpoint-complete.marker" in plan
+    assert "the I1 routine is the authority for the proof modes" in plan, (
+        "drive-plan.md must defer the proof modes to drive.md's § I1 (D46: no inline mode here)"
+    )
     assert 'set `waiting="rebirth"`' in plan
     assert "/drive <runId>" in plan, "the handoff must surface the paste-ready resume line"
 
