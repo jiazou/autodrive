@@ -536,6 +536,11 @@ mk_audit_multi_live() {
 #                        `-e`-only harden-* scan skips it (erasing a fix round / suppressing
 #                        a regress-mismatch); `-e || -L` counts it (grep 'AppliedEdits:' fails)
 #                        -> unparseable-harden, exit 1.
+#   epoch_phaseid_dash_r_round -- a `-r`-containing phase id (`4-r1`) at epoch 0 with 2 round
+#                        files -> phaseDesignRound {"4-r1":2} (marker-anchored counter; the
+#                        pre-fix `${t##*-r}` split mis-keys to {"4":0}). exit 1 from the
+#                        epoch-unmarked detector's by-design residual on a terminal-`-r` id;
+#                        the assertion is on the counter VALUE, not cleanliness.
 mk_checkpoint() {
   local variant="$1" name="${2:-ckpt-$1}"
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -638,6 +643,18 @@ mk_checkpoint() {
       _commit "$repo" "p.sh" "echo p" "phase 4-r1 integration" >/dev/null
       _write_review "$rd" "phasedesign4-r1-r1" 1 "$zeros"
       _write_codex "$rd" "phasedesign4-r1-r1"
+      ;;
+    epoch_phaseid_dash_r_round)
+      # phaseDesignRound counter: a phase id that itself contains `-r` (`4-r1`) at EPOCH 0
+      # (no redesign markers). Its round files are review-phasedesign4-r1-N.md, so the pd_key
+      # is `4-r1`. The pre-fix `${t##*-r}` split mis-keys the counter to phase `4` (count 0);
+      # the marker-anchored phase_of_pd_key keeps `4-r1` (count 2). The epoch-unmarked detector
+      # still fires on `phasedesign4` (its by-design fail-closed residual on a terminal-`-r`
+      # phase id) so the run is exit 1 — the assertion is on the COUNTER value, not cleanliness.
+      _gitc "$repo" checkout -q -b "phaseInt/$name/4-r1"
+      _commit "$repo" "p.sh" "echo p" "phase 4-r1 integration" >/dev/null
+      _write_review "$rd" "phasedesign4-r1" 1 "$zeros"
+      _write_review "$rd" "phasedesign4-r1" 2 "$zeros"
       ;;
     epoch_unmarked_codex_only)
       # FIX 2: ONLY the codex sibling of an epoch artifact (codex-review-phasedesign1-r1.md),

@@ -360,6 +360,19 @@ read -r repo rd < <(mk_checkpoint epoch_unmarked_codex_only)
 run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 codex-only markerless epoch -> exit 1 (codex-half fails closed)" 1 "$RC"
 assert_out_contains "CK2 codex-only epoch-unmarked violation" '{"scope":"phasedesign1","reason":"epoch-unmarked",'
 
+# FIX 3: the phaseDesignRound COUNTER on a `-r`-containing phase id (`4-r1`) at epoch 0. The
+# pd_key is `4-r1`; the pre-fix `${t##*-r}` split mis-keys the counter to phase `4` with count 0
+# ('"phaseDesignRound":{"4":0}'). The marker-anchored phase_of_pd_key keeps the literal phase id,
+# so the counter is '"phaseDesignRound":{"4-r1":2}'. Regression validity: against the pre-fix tip
+# f5c8f25 the output carries {"4":0}; the {"4-r1":2} assertion below flips with the fix. (The run
+# is exit 1 from the epoch-unmarked detector's by-design fail-closed residual on a terminal-`-r`
+# phase id — that is the corruption-detector site, deliberately NOT marker-anchored; the counter
+# value is the thing under test here.)
+read -r repo rd < <(mk_checkpoint epoch_phaseid_dash_r_round)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 -r-phase-id counter run -> exit 1 (detector residual)" 1 "$RC"
+assert_out_contains "CK2 phaseDesignRound counts the FULL -r phase id 4-r1 (not mis-keyed to 4)" \
+  '"phaseDesignRound":{"4-r1":2}'
+
 echo "=== CK3/CK4: epoch-gap + dropped-increment recovery; state.json never read ==="
 # Markers r1+r3 with state.json claiming redesigns:2 — the dropped 3rd increment is
 # recovered from the artifact (highest-R wins), the gap is flagged for a human.

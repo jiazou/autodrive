@@ -150,6 +150,30 @@ phase_of_pd_core() {
   case "$core" in (*-r"$tail") printf '%s' "${core%-r$tail}";; (*) printf '%s' "";; esac
 }
 
+# Resolve the phase id <P> from a pd_key (= the round-file scope minus the `phasedesign`
+# prefix, so `<P>` for epoch 0 or `<P>-r<R>` for epoch R) — MARKER-anchored, for the
+# COUNTING path. A trailing `-r<R>` is the epoch suffix ONLY when redesign-<base>-r<R>.marker
+# confirms the phase actually reached epoch R; otherwise the `-r<R>` belongs to the phase id
+# itself (a literal epoch-0 phase like `4-r1`) and the key is returned unchanged. This is the
+# opposite policy to the epoch-unmarked detector, which deliberately treats any trailing
+# `-r<R>` as an epoch CLAIM and fails closed on a missing marker — so a deleted-marker
+# corruption can't be reclassified into a benign phase id here. $1=pd_key
+phase_of_pd_key() {
+  local t="$1" r base
+  r="${t##*-r}"
+  # No trailing `-r…`, or the suffix isn't all-digits → t is the phase id as-is.
+  [ "$r" = "$t" ] && { printf '%s' "$t"; return; }
+  case "$r" in (*[!0-9]*|'') printf '%s' "$t"; return;; esac
+  base="${t%-r$r}"
+  [ -n "$base" ] || { printf '%s' "$t"; return; }
+  # Epoch only if the marker backs it; else the `-r<R>` is part of the phase id.
+  if [ -e "$RUN_DIR/redesign-$base-r$r.marker" ] || [ -L "$RUN_DIR/redesign-$base-r$r.marker" ]; then
+    printf '%s' "$base"
+  else
+    printf '%s' "$t"
+  fi
+}
+
 # Count exact-match lines of key $2 in newline-list $1. Echoes the count (0 if none).
 count_in_list() {
   local c
@@ -685,14 +709,13 @@ EOF
     # phaseDesignRound[<P>] = round files of the CURRENT epoch only (I3 rule 5): scope
     # phasedesign<P> when redesigns == 0, else phasedesign<P>-r<R> for the highest R —
     # a redesign legitimately resets the round to 0 with a fresh cap-8.
+    # Resolve each pd_key to its phase id MARKER-anchored (phase_of_pd_key): a trailing
+    # `-r<R>` is the epoch suffix only when redesign-<P>-r<R>.marker exists, else the key is a
+    # literal epoch-0 phase id (e.g. `4-r1`) and survives intact — so `4-r1` is counted under
+    # `4-r1`, not mis-keyed to `4`.
     pd_phases=""
     for t in $(printf '%s' "$pd_keys" | sort -u); do
-      P="$t"
-      r="${t##*-r}"
-      if [ "$r" != "$t" ]; then
-        case "$r" in (*[!0-9]*|'') ;; (*) P="${t%-r$r}";; esac
-      fi
-      pd_phases="$pd_phases$P"$'\n'
+      pd_phases="$pd_phases$(phase_of_pd_key "$t")"$'\n'
     done
     pdr_pairs=""
     for P in $(printf '%s\n%s' "$pd_phases" "$rd_phases" | sort -u); do
