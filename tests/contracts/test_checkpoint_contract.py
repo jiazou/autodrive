@@ -732,6 +732,27 @@ def test_drive_review_self_resolves_epoch():
     assert "invokers pass `phase <P> design`" in blob
 
 
+def test_drive_review_codex_rule_matches_codex_present():
+    """P1-1: drive-review.md's degradation prose must state the SAME rule codex_present()
+    enforces — ANY non-empty codex-review file satisfies, the first-line CODEX_UNAVAILABLE
+    is a convention the gate does NOT parse — with no residual "anchored/buried" claim."""
+    blob = _norm(_drive_review_md())
+    assert "satisfied by ANY non-empty `codex-review-<scope>.md`" in blob
+    assert "does NOT parse the marker" in blob
+    assert "matches it anchored" not in blob
+    assert "buried mention" not in blob
+
+
+def test_drive_review_round_fallback_is_pure_integer_n():
+    """P1-2: the state-absent round-count fallback counts ONLY pure-integer-N round files
+    (`review-<scope>-<N>.md`, all digits) and EXCLUDES suffixed names, matching how
+    bin/drive-conformance.sh reconstructs the round count."""
+    blob = _norm(_drive_review_md())
+    assert "pure-integer-N round files" in blob
+    assert "EXCLUDE any suffixed name" in blob
+    assert "review-<scope>-*.md` + 1" not in blob
+
+
 def test_run_graph_and_gate_name_current_epoch_family():
     """AC9: drive.md's run-graph data-sources/render lines AND the Stage-2–4.5 gate
     paragraph name the CURRENT-epoch phasedesign file family (R = highest redesign

@@ -222,8 +222,9 @@ with no live worker (died before the dispatch ran, or died after the work but be
 clear — indistinguishable on disk, treated the same):
 1. **Adopt** only if the unit's COMPLETE artifact set exists and parses — for a review
    unit BOTH the round's `review-<scope>-N.md` (verdict line) AND a non-empty
-   `codex-review-<scope>.md` sibling (a first-line `CODEX_UNAVAILABLE` is
-   parseable-by-contract); for an implement unit, slice commits past `phaseBaseSha` with
+   `codex-review-<scope>.md` sibling (any non-empty content satisfies; the first-line
+   `CODEX_UNAVAILABLE` is the degradation convention, not a parsed gate token); for an
+   implement unit, slice commits past `phaseBaseSha` with
    green slice tests. Then finish the recording (counters self-repair via the resume
    reconstruction rules), clear the marker, continue. A Claude review file WITHOUT its
    codex sibling is an unfinished dual-voice chain → step 2.

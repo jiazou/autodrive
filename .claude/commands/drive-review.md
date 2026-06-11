@@ -40,7 +40,10 @@ in-flight marker, not this stage.
 **Loop counter:** `N = (this scope's counter) + 1` — `state.designReview` for
 `design`, `state.slices[<id>].reviewCount` for a slice, the `phaseReview[<P>]`
 round for a `phase <P>` review, `state.phaseDesign[<P>].round` for a `phase <P> design`
-review (fall back to counting `$RUN_DIR/review-<scope>-*.md` + 1 if state is absent).
+review (fall back, if state is absent, to counting only the pure-integer-N round files
+`$RUN_DIR/review-<scope>-<N>.md` where `<N>` is all digits — EXCLUDE any suffixed name
+such as `review-<scope>-r<R>.md` or `review-<scope>-final.md` — and add 1, consistent
+with how `bin/drive-conformance.sh` reconstructs the round count).
 If N > 8, STOP — not converging; summarize each side.
 **Exception — `harden-regress`:** do NOT read, increment, or cap against the
 conformance `phaseReview[<P>].round`. The harden loop already bounds the number of
@@ -128,11 +131,12 @@ run_in_background; wait for completion; then a bounded post-process subagent: "R
 `$RUN_DIR/codex-raw-<scope>.log`, extract codex's final findings, write
 `$RUN_DIR/codex-review-<scope>.md` (same severity tags, <150 words)."
 
-Degradation (do NOT hard-fail): codex missing OR hangs/times out → write
-`codex-review-<scope>.md` with the **anchored first-line token `CODEX_UNAVAILABLE`**
-(exactly that bare token as the file's FIRST line — conformance's codex check matches
-it anchored, so a buried mention elsewhere is NOT recognized), optionally followed by
-a warning note on later lines; continue.
+Degradation (do NOT hard-fail): codex missing OR hangs/times out → write a non-empty
+`codex-review-<scope>.md` whose FIRST line is the conventional degradation marker
+`CODEX_UNAVAILABLE`, optionally followed by a warning note on later lines; continue.
+The conformance codex check is satisfied by ANY non-empty `codex-review-<scope>.md`
+(real review OR degradation note); it does NOT parse the marker — the first-line
+`CODEX_UNAVAILABLE` is the human-readable convention, not a gate token.
 
 ## Step 3 — Combine & converge
 

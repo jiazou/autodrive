@@ -123,13 +123,15 @@ run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc "AC2 slice-merge m
 read -r repo rd < <(mk_slice_no_codex)
 run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc "AC2 slice-merge no codex" 1 "$RC"
 
-echo "=== AC3: codex marker behavioral — anchored token vs buried substring vs empty ==="
-# Anchored first-line CODEX_UNAVAILABLE = degraded-but-satisfied -> clean.
+echo "=== AC3: codex_present rule — ANY non-empty codex file satisfies; empty does not ==="
+# The gate does NOT parse the marker: a first-line CODEX_UNAVAILABLE degradation file is
+# non-empty -> clean.
 read -r repo rd < <(mk_plan codex_unavailable)
-run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 anchored CODEX_UNAVAILABLE satisfies codex" 0 "$RC"
-# A real review whose body merely buries the substring = non-empty real review -> clean.
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 non-empty CODEX_UNAVAILABLE file satisfies codex" 0 "$RC"
+# A real review whose body merely mentions the word is just a non-empty file -> clean
+# (identical to the degradation file: codex_present() inspects only non-emptiness).
 read -r repo rd < <(mk_plan codex_buried)
-run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 buried substring still a real present codex file (clean)" 0 "$RC"
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 non-empty real codex file satisfies (marker not parsed)" 0 "$RC"
 # EMPTY codex file (bare touch) does NOT satisfy -> plan-gate blocks (exit 1).
 read -r repo rd < <(mk_plan codex_empty)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 empty codex file does NOT satisfy (blocked)" 1 "$RC"

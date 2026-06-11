@@ -78,14 +78,17 @@ _write_codex() {
   { echo "codex review for $scope"; echo "looks fine"; } > "$rd/codex-review-$scope.md"
 }
 
-# Write a codex file with the anchored first-line CODEX_UNAVAILABLE token. $1=rd $2=scope
+# Write a degradation codex file: first-line CODEX_UNAVAILABLE marker (convention).
+# Non-empty, so it satisfies codex_present(). $1=rd $2=scope
 _write_codex_unavailable() {
   local rd="$1" scope="$2"
   mkdir -p "$rd"
   { echo "CODEX_UNAVAILABLE"; echo "codex CLI not installed"; } > "$rd/codex-review-$scope.md"
 }
 
-# Write a codex file that merely MENTIONS the word elsewhere (not anchored). $1=rd $2=scope
+# Write a real codex review that merely mentions the word in its body. Non-empty, so it
+# satisfies codex_present() exactly like any review (the gate does not parse the marker).
+# $1=rd $2=scope
 _write_codex_word_buried() {
   local rd="$1" scope="$2"
   mkdir -p "$rd"
