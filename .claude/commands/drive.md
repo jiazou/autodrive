@@ -390,7 +390,8 @@ forgotten:
 
      /goal The /drive run <runId> is resuming after a context-pressure rebirth and is
      driving the pipeline autonomously toward its next human gate (Gate A/B) or a
-     non-decision STOP. NOT met while autonomous implement/review/harden/verify work remains.
+     non-decision STOP, OR is paused at a rebirth handoff (waiting="rebirth") awaiting my
+     paste of the resume line. NOT met while autonomous implement/review/harden/verify work remains.
 
    (This session can stop now; the fresh session owns the run once it resumes.)
    ```
@@ -639,7 +640,7 @@ key throughlines:
    > Paste this to drive planning autonomously up to Gate A:
    >
    > ```
-   > /goal The /drive run for "<task>" has reached Gate A and is presenting the plan for my approval, OR is paused awaiting my input at a non-decision STOP or an AskUserQuestion. NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.
+   > /goal The /drive run for "<task>" has reached Gate A and is presenting the plan for my approval, OR is paused awaiting my input at a non-decision STOP or an AskUserQuestion, OR is paused at a rebirth handoff (waiting="rebirth") awaiting my paste of the resume line. NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.
    > ```
 
    This complements the gates rather than overriding them: `/goal` continues the
