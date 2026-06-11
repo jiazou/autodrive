@@ -311,6 +311,54 @@ def test_drift_latest_model_none_when_latest_line_omits_it(tmp_path):
     assert rt.resolve_window(rt.latest_model(str(t)), th) == th["defaultWindow"]
 
 
+# --------------------------------------------------------------------------- #
+# STRUCTURAL close of the malformed-shape drift class (slice 2.1 r3). Instead of
+# one bespoke test per exotic shape (rounds 1-2 whack-a-mole), one PARAMETRIZED
+# sweep proves the resolver replicates jq's two-mode error model UNIFORMLY: a parse
+# error HALTS (prior value wins), a per-line runtime error DROPS that line and the
+# scan CONTINUES. Each case runs the REAL statusline jq pipeline and the resolver on
+# the SAME transcript and asserts agreement — closing the class, not a shape.
+# --------------------------------------------------------------------------- #
+_A = '{"type":"assistant","message":{"usage":{"input_tokens":100}}}'      # prior valid: 100
+_B = '{"type":"assistant","message":{"usage":{"input_tokens":999}}}'      # later valid: 999
+
+_DRIFT_SHAPES = {
+    # name: (jsonl body, expected jq|resolver sum)
+    # --- mode 2: per-line RUNTIME error → drop bad line, scan CONTINUES to 999 ---
+    "toplevel_scalar_false":   (f"{_A}\nfalse\n{_B}", 999),
+    "toplevel_scalar_number":  (f"{_A}\n42\n{_B}", 999),
+    "toplevel_scalar_string":  (f'{_A}\n"hi"\n{_B}', 999),
+    "toplevel_array":          (f"{_A}\n[1,2,3]\n{_B}", 999),
+    "message_nonobject":       (f'{_A}\n{{"type":"assistant","message":false}}\n{_B}', 999),
+    "usage_nonobject_string":  (f'{_A}\n{{"type":"assistant","message":{{"usage":"x"}}}}\n{_B}', 999),
+    "string_input_tokens":     (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":"7"}}}}}}\n{_B}', 999),
+    "string_cache_field":      (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"cache_read_input_tokens":"x"}}}}}}\n{_B}', 999),
+    # --- jq-falsy/absent usage → dropped by `select`, scan continues (no crash) ---
+    "usage_false_latest":      (f'{_A}\n{{"type":"assistant","message":{{"usage":false}}}}', 100),
+    "usage_null_latest":       (f'{_A}\n{{"type":"assistant","message":{{"usage":null}}}}', 100),
+    "toplevel_null":           (f"{_A}\nnull\n{_B}", 999),
+    # --- jq-truthy `{}` usage → PRESENT, sums to 0 (not skipped) ---
+    "empty_usage_latest":      (f'{_A}\n{{"type":"assistant","message":{{"usage":{{}}}}}}', 0),
+    # --- mode 1: PARSE error → HALT, tail -1 keeps the prior 100 (never the later 999) ---
+    "unparseable_line":        (f"{_A}\n{{not json\n{_B}", 100),
+}
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq required")
+@pytest.mark.parametrize("name", sorted(_DRIFT_SHAPES))
+def test_drift_class_resolver_agrees_with_jq(tmp_path, name):
+    """The whole malformed-shape class, closed structurally: the resolver AGREES with
+    statusline.sh's live jq pipeline on every exotic shape, because both modes (parse=halt,
+    runtime=drop+continue) are replicated uniformly. Pre-fix HEAD crashed or diverged on
+    the top-level-scalar / string-token / non-object shapes; this pins them shut."""
+    body, expected = _DRIFT_SHAPES[name]
+    t = tmp_path / f"{name}.jsonl"
+    t.write_text(body + "\n", encoding="utf-8")
+    bash = _statusline_token_sum(t)
+    assert bash == expected, f"{name}: jq gave {bash}, expected {expected}"
+    assert rt.latest_usage_tokens(str(t)) == bash, f"{name}: resolver drifts from jq"
+
+
 def test_mutating_json_changes_resolution(tmp_path):
     """Proves neither number is hardcoded: a window/fraction edit to the data file
     changes the resolver's output (it reads the file, not a constant)."""
