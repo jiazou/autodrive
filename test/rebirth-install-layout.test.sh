@@ -107,13 +107,18 @@ statusline_effective=$(
   # exactly as it would at runtime. ${BASH_SOURCE[0]} / $BASH_SOURCE are textually
   # substituted with the real statusline path (the interpreter does not let a caller
   # override the BASH_SOURCE call-stack array inside eval), so dirname(BASH_SOURCE)
-  # resolves to bin/ just as it does when the script runs.
+  # resolves to bin/ just as it does when the script runs. A bare, `export `-,
+  # `readonly `- or `declare `-prefixed assignment all count (last wins); the prefix
+  # is stripped so the eval is a plain assignment into this scope's THRESHOLDS_FILE.
   _bs0='${BASH_SOURCE[0]}'; _bs='$BASH_SOURCE'
   while IFS= read -r _line; do
     _line="${_line//"$_bs0"/$STATUSLINE}"
     _line="${_line//"$_bs"/$STATUSLINE}"
+    # Strip a leading export/readonly/declare[ -flags] keyword so the override lands
+    # in THIS scope (a prefixed eval can scope/protect the var and hide the override).
+    _line="$(printf '%s' "$_line" | sed -E 's/^[[:space:]]*(export|readonly|declare([[:space:]]+-[A-Za-z]+)*)[[:space:]]+//')"
     eval "$_line"
-  done < <(grep -E '^[[:space:]]*THRESHOLDS_FILE=' "$STATUSLINE")
+  done < <(grep -E '^[[:space:]]*(export|readonly|declare([[:space:]]+-[A-Za-z]+)*[[:space:]]+)?THRESHOLDS_FILE=' "$STATUSLINE")
   if [ -n "$THRESHOLDS_FILE" ]; then
     got_dir="$( cd "$(dirname "$THRESHOLDS_FILE")" 2>/dev/null && pwd -P )"
     if [ "$got_dir" = "$( cd "$BIN" && pwd -P )" ] \
@@ -132,26 +137,84 @@ check "statusline's effective THRESHOLDS_FILE is the bin/ sibling json" "${statu
 # The installers register the hook in-place and symlink statusline; they must NOT
 # copy the rebirth files (or bin/ wholesale) to a non-sibling location, which would
 # fork a stale copy off bin/ and break the sibling resolution. Catch the BROAD class,
-# not one literal: any copy-like operation (cp / cp -R/-r / install / rsync / ditto /
-# a python shutil.copy*/copyfile) whose line references bin/ or a rebirth file. The
-# two legit backup copies (`cp "$GLOBAL" ...`, `cp -- "$SETTINGS" ...`) name ~/CLAUDE.md
-# and settings.json — neither touches bin/ or a rebirth file, so they do not match;
-# the symlink (`ln -sfn`) and backup `mv` lines are not copy verbs at all.
+# not one literal: any copy-like op (cp / cp -R/-r / install / rsync / ditto / a python
+# shutil.copy*/copyfile/copyfileobj) whose SOURCE OR TARGET is a rebirth/hook/statusline
+# file or the repo bin/ dir — INCLUDING WHEN THE PATH IS HELD IN A VARIABLE the installer
+# assigned (e.g. `STATUSLINE_SRC="$REPO_DIR/bin/statusline.sh"; cp "$STATUSLINE_SRC" /x`).
 #
-# Two-stage match per line: (a) it invokes a copy verb, AND (b) it references bin/ or a
-# rebirth file. Comments are stripped first (leading-# lines and trailing ` #...`) so a
-# narrating comment that merely mentions `cp ... bin` is not a false positive.
-copy_into_bin=$(
-  for f in "$INSTALL_RULES" "$INSTALL_HOOKS"; do
-    [ -f "$f" ] || continue
-    # drop full-line comments, then strip trailing comments, then scan code only.
-    grep -vE '^[[:space:]]*#' "$f" \
-      | sed -E 's/[[:space:]]#.*$//' \
-      | grep -E '(^|[[:space:];|&(])(cp|install|rsync|ditto)([[:space:]]|$)|shutil\.(copy[a-z]*|copyfile)|copyfileobj' \
-      | grep -E '/bin([/"'"'"' ]|$)|(^|[^[:alnum:]_])bin/|rebirth-thresholds\.json|rebirth_thresholds\.py|drive-stop-hook\.py|statusline\.sh|\$\{?BIN\}?'
-  done | wc -l | tr -d ' '
+# Why a variable-tracking pass, not a single line-grep: a copy whose argument is `$HOOK_PY`
+# is indirected — the rebirth path is one assignment away — so a literal-only filter stays
+# green on exactly the copy that breaks the layout. We first taint every var assigned a
+# value that references bin/ or a rebirth file, then flag a copy op referencing a rebirth
+# literal OR a tainted var. Precision: only the REPO bin/ counts — system paths
+# (/usr/bin, /usr/local/bin, /bin, /sbin) and the two legit backups (`cp "$GLOBAL" ...` →
+# ~/CLAUDE.md, `cp -- "$SETTINGS" ...` → settings.json) reference neither a rebirth file
+# nor a tainted var, so they do not trip. Comments are stripped before scanning.
+# The guard is a Python pass (robust variable tracking); written to a temp file and
+# invoked normally — a heredoc nested in $(...) trips bash 3.2's paren matcher on the
+# unbalanced parens in the Python body.
+COPY_GUARD_PY="$(mktemp -t rebirth-copy-guard.XXXXXX.py)"
+trap 'rm -f "$COPY_GUARD_PY"' EXIT
+cat > "$COPY_GUARD_PY" <<'PY'
+import re, sys
+
+# A path token that designates the REPO bin/ or a rebirth/hook/statusline file.
+# Anchored so system bins do NOT match: a `bin` segment counts only when it is
+# $BIN/${BIN}, or a `bin/` whose left boundary is start, quote, space, or `$VAR/`
+# / `${VAR}/` (i.e. `$REPO_DIR/bin/`) — never `/usr/bin`, `/usr/local/bin`, `/bin`.
+REBIRTH_FILE = r'(rebirth-thresholds\.json|rebirth_thresholds\.py|drive-stop-hook\.py|statusline\.sh)'
+REPO_BIN = r'(\$\{?BIN\}?|(?:\$\{?[A-Za-z_][A-Za-z0-9_]*\}?/)bin/|(?<![/\w])bin/)'
+SYS_BIN = re.compile(r'(^|[\s"\'=(])/(usr/(local/)?)?s?bin/')   # /usr/bin, /usr/local/bin, /bin, /sbin
+
+def references_repo_bin(text):
+    # Strip out any system-bin token first so its `bin/` can't satisfy REPO_BIN.
+    scrubbed = SYS_BIN.sub(' /SYSBIN/ ', text)
+    return re.search(REBIRTH_FILE, scrubbed) or re.search(REPO_BIN, scrubbed)
+
+# Copy-class op detector (shell verbs at command position + python copy calls).
+COPY_OP = re.compile(
+    r'(^|[\s;|&(])(cp|install|rsync|ditto)([\s]|$)'
+    r'|shutil\.(copy[a-z0-9_]*|copyfile)|copyfileobj'
 )
-check "no installer copy-op (cp/install/rsync/ditto/shutil) targets bin/ or a rebirth file" "$copy_into_bin" "0"
+# Both shell (`VAR=value`) and python (`var = value`) assignment forms — the latter has
+# spaces around `=`, so an indirected `shutil.copy2(statusline_src, ...)` whose source var
+# was set to a rebirth path is caught too.
+ASSIGN = re.compile(r'^[\s]*([A-Za-z_][A-Za-z0-9_]*)[\s]*=[\s]*(.*)$')
+
+def strip_comment(line):
+    # drop a full-line comment; strip a trailing ` # ...` (space-anchored so a `#`
+    # inside a path/quote is not mistaken for a comment start).
+    if re.match(r'^[\s]*#', line):
+        return ''
+    return re.sub(r'\s#.*$', '', line)
+
+hits = 0
+for path in sys.argv[1:]:
+    try:
+        lines = open(path, encoding='utf-8').read().splitlines()
+    except OSError:
+        continue
+    tainted = set()
+    code = [strip_comment(l) for l in lines]
+    # Pass 1: taint vars assigned a value that references the repo bin/ or a rebirth file.
+    for l in code:
+        m = ASSIGN.match(l)
+        if m and references_repo_bin(m.group(2)):
+            tainted.add(m.group(1))
+    # A tainted var is referenced as `$v`/`${v}` (shell) OR as a bare identifier `v`
+    # (python), the latter word-bounded so it cannot match a substring of another name.
+    alt = '|'.join(re.escape(v) for v in tainted)
+    var_ref = re.compile(r'\$\{?(' + alt + r')\}?|(?<![A-Za-z0-9_.])(' + alt + r')(?![A-Za-z0-9_])') if tainted else None
+    # Pass 2: a copy op trips if it names a rebirth/bin literal OR a tainted var.
+    for l in code:
+        if not COPY_OP.search(l):
+            continue
+        if references_repo_bin(l) or (var_ref and var_ref.search(l)):
+            hits += 1
+print(hits)
+PY
+copy_into_bin="$(python3 "$COPY_GUARD_PY" "$INSTALL_RULES" "$INSTALL_HOOKS")"
+check "no installer copy-op (cp/install/rsync/ditto/shutil) targets bin/ or a rebirth file (incl. via a variable)" "$copy_into_bin" "0"
 
 # Positive evidence the deployment is by-reference: the hook is registered as an in-place
 # `python3 "<repo>/bin/drive-stop-hook.py"` command and statusline is symlinked (ln -sfn).
