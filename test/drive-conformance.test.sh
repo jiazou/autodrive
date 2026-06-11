@@ -544,6 +544,19 @@ assert_out_contains "SL non-grammar deps elem -> slice-routing-malformed scoped 
 read -r repo rd < <(mk_state_lint deps_clean)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL valid deps [\"1.1\"] still clean (no over-rejection)" 0 "$RC"
 assert_out_contains "SL valid deps clean envelope" '"clean":true,"mode":"state-lint"'
+# P1-final: an EMPTY-STRING slice-id KEY ("") is unroutable but jq emits an empty token for
+# it — the OLD newline-split loop did `[ -n "$sid" ] || continue` and DROPPED it (false-clean).
+# The NUL-delimited loop must fire slice-routing-malformed instead of silently passing.
+read -r repo rd < <(mk_state_lint slice_key_empty)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL empty-string slice key -> exit 1 (not false-clean)" 1 "$RC"
+assert_valid_json "SL empty-string slice key -> envelope is still VALID JSON"
+assert_out_contains "SL empty-string slice key fires slice-routing-malformed" '"reason":"slice-routing-malformed"'
+# A slice-id KEY containing a NEWLINE must be consumed losslessly (NUL-delimited) — a
+# newline-split loop would shred it; exactly one slice-routing-malformed fires.
+read -r repo rd < <(mk_state_lint slice_key_newline)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL newline slice key -> exit 1" 1 "$RC"
+assert_valid_json "SL newline slice key -> envelope is still VALID JSON"
+assert_out_count "SL newline slice key -> exactly one slice-routing-malformed (no shredding)" '"reason":"slice-routing-malformed"' 1
 # missing state.json (no file, but drive/<runId> resolves) -> exit 2 (IO error, not a verdict).
 read -r repo rd < <(mk_state_lint no_state)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL absent state.json -> exit 2 (IO error)" 2 "$RC"

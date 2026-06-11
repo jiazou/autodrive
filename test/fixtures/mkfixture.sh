@@ -902,6 +902,10 @@ mk_impl_presence() {
 #   deps_nonstring    -- a deps element that isn't a string (42) -> slice-routing-malformed
 #   deps_badref       -- a deps element not matching slice-id grammar ("1 bad") -> same   -> exit 1
 #   deps_clean        -- valid deps ("1.1") still pass (no over-rejection)              -> exit 0
+#   slice_key_empty   -- an EMPTY-STRING slice-id KEY ("") -> slice-routing-malformed, must
+#                        NOT be skipped (false-clean) by the key loop                   -> exit 1
+#   slice_key_newline -- a slice-id KEY containing a newline ("1\n2") -> one
+#                        slice-routing-malformed, consumed losslessly (no shredding)    -> exit 1
 #   no_state          -- a real drive/<runId> branch but NO state.json file -> exit 2 (IO)
 mk_state_lint() {
   local variant="$1" name="${2:-statelint-$1}"
@@ -1187,6 +1191,38 @@ JSON
   "slices": {
     "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []},
     "1.2": {"step": "implementing", "owns": ["bin/y.sh"], "deps": ["1.1"]}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_key_empty)
+      # An EMPTY-STRING slice-id KEY ("": {...}) fails the slice-id grammar and is
+      # unroutable. A newline-split loop would emit an empty line for it and skip it
+      # (false-clean); the NUL-delimited loop must still fire slice-routing-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_key_newline)
+      # A slice-id KEY containing a newline ("1\n2") fails the grammar and is unroutable.
+      # A newline-split loop would shred it into fragments; the NUL-delimited loop must
+      # consume it losslessly and fire exactly one slice-routing-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1\n2": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
   },
   "verify": {"attempts": []},
   "ship": {"suite": null, "conformance": null, "prUrl": null}

@@ -912,7 +912,13 @@ EOF_PHASES
     # at premises/plan it is well-formed-absent like an empty phaseList.
     sl_type="$(jq -r '.slices | type' "$SJ")"
     if [ "$sl_type" = "object" ]; then
-      bad_slices="$(jq -r '
+      # NUL-delimit each malformed key: an empty-string key (`"": {...}`) or a
+      # newline-containing key is itself unroutable (fails the slice-id grammar) and must
+      # NOT be skipped — a newline-split loop would drop an empty key (false-clean) or split
+      # a newline key into fragments. NUL round-trips both losslessly.
+      while IFS= read -r -d '' sid; do
+        viol_arr+=("$(violation "$sid" "slice-routing-malformed")")
+      done < <(jq -j '
         ["queued","implementing","awaiting_review","needs_fix","converged","blocked"] as $steps
         | .slices | to_entries[] | . as $e
         | select(
@@ -926,13 +932,7 @@ EOF_PHASES
             or (($e.value.deps | type) != "array")
             or ([$e.value.deps[] | select((type != "string") or (test("^[0-9]+[a-z]?\\.[0-9]+$") | not))] | length > 0)
           )
-        | $e.key' "$SJ")"
-      while IFS= read -r sid; do
-        [ -n "$sid" ] || continue
-        viol_arr+=("$(violation "$sid" "slice-routing-malformed")")
-      done <<EOF
-$bad_slices
-EOF
+        | $e.key, "\u0000"' "$SJ")
     else
       case "$stage" in
         premises|plan) ;;   # well-formed-absent before slices are designed
