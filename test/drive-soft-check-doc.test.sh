@@ -58,6 +58,15 @@ pin "uses the soft fraction from the data file" \
 pin "sets rebirth_pending itself" \
   "set \`state.rebirth_pending = true\`"
 
+# --- Writes the event-log line on the soft signal (AC8 / drive.md step 3) ----
+# The design REQUIRES the coordinator to append a rebirth_pending event-log line when it
+# self-signals at a soft boundary; pin that contract (the via/pct shape) so a drift that
+# drops the event-log write reds the suite.
+pin "appends the rebirth_pending event-log line" \
+  "append one event-log"
+pin "event-log line shape (via=coordinator-soft)" \
+  '{"event":"rebirth_pending","via":"coordinator-soft","pct":<tokens*100/window>}'
+
 # --- Idempotent -------------------------------------------------------------
 pin "guarded on not-already-true (idempotent condition)" \
   "\`state.rebirth_pending\` is not already"

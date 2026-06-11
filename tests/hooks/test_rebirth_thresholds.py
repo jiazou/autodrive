@@ -117,6 +117,38 @@ def test_latest_model_from_transcript():
     assert rt.latest_model(str(UNDER)) == "claude-opus-4-8"
 
 
+def test_latest_usage_model_and_tokens_bound_to_same_line(tmp_path):
+    """P1-1: the window model and the token sum must come from the SAME usage-bearing
+    line. A usage-bearing opus line followed by a LATER usage-less line with a different
+    model must yield the opus line's model AND tokens together — NOT the later line's
+    model paired with the opus tokens (the mismatch that splits window from the token
+    source). Contrast with `latest_model`, which by design returns the latest line's
+    model (haiku) regardless of usage."""
+    t = tmp_path / "usage-then-usageless.jsonl"
+    t.write_text(
+        json.dumps({"type": "assistant",
+                    "message": {"model": "claude-opus-4-8",
+                                "usage": {"input_tokens": 500000}}}) + "\n"
+        + json.dumps({"type": "assistant",
+                      "message": {"model": "claude-haiku-4"}}) + "\n",  # usage-less, later
+        encoding="utf-8",
+    )
+    model, tokens = rt.latest_usage_model_and_tokens(str(t))
+    assert (model, tokens) == ("claude-opus-4-8", 500000)
+    # latest_model still tracks the latest LINE (the divergence this fix routes around).
+    assert rt.latest_model(str(t)) == "claude-haiku-4"
+
+
+def test_latest_usage_model_and_tokens_none_when_no_usage(tmp_path):
+    """No usage-bearing line -> (None, None), the skip signal the hook needs."""
+    t = tmp_path / "no-usage.jsonl"
+    t.write_text(
+        json.dumps({"type": "assistant", "message": {"model": "claude-opus-4-8"}}) + "\n",
+        encoding="utf-8",
+    )
+    assert rt.latest_usage_model_and_tokens(str(t)) == (None, None)
+
+
 def test_token_sum_none_when_no_usage(tmp_path):
     t = tmp_path / "no-usage.jsonl"
     t.write_text(

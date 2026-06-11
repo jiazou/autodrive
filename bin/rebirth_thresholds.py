@@ -155,3 +155,44 @@ def latest_model(transcript_path):
             except Exception:
                 continue  # mode 2: runtime error drops this line, scan continues (keeps prior)
     return model
+
+
+def latest_usage_model_and_tokens(transcript_path):
+    """`(model, tokens)` from the SAME latest usage-bearing assistant line, or
+    `(None, None)` when no usage line exists.
+
+    The window lookup and the token sum MUST come from one line: the model selects the
+    window the tokens are measured against, so reading the model from a *different* line
+    than the tokens (e.g. a usage-less/synthetic line emitted after the last usage line,
+    with a different or absent model) yields a window that does not match the token
+    source. This binds both to the last line that sums a usage — the same line `tail -1`
+    on the canonical token jq selects — so the hook's `pct = tokens / window` is always
+    self-consistent. Same two-mode guard as the token scan (parse error BREAKs; per-line
+    runtime error DROPS the line and CONTINUEs)."""
+    model = None
+    tokens = None
+    with open(transcript_path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except Exception:
+                break  # mode 1: parse error halts the stream; keep the prior pair
+            try:
+                # mode 2: any indexing/arithmetic error here mirrors jq emitting nothing
+                # for this line while the stream keeps going → drop the line, continue.
+                usage = obj["message"]["usage"]  # raises on non-object obj/message
+                if obj.get("type") != "assistant" or usage is None or usage is False:
+                    continue
+                line_tokens = (_jq_token(usage, "input_tokens")
+                               + _jq_token(usage, "cache_creation_input_tokens")
+                               + _jq_token(usage, "cache_read_input_tokens"))
+            except Exception:
+                continue
+            # This line sums a usage → it is the canonical token source; bind the model
+            # to THIS same line (`.message.model`, None if absent) so both advance together.
+            tokens = line_tokens
+            model = obj["message"].get("model")
+    return model, tokens

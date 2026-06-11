@@ -400,6 +400,67 @@ def test_under_water_no_rebirth_steer(fake_home):
     assert "run-42" in d["reason"]
 
 
+# --- AC1/AC2 boundary: tokens EXACTLY at window*0.85 steers (>=, not >) ----- #
+@pytest.mark.parametrize(
+    "tokens, steers",
+    [(850_000, True), (849_999, False)],
+    ids=["exactly-at-hard", "one-below-hard"],
+)
+def test_hard_water_boundary_is_inclusive(fake_home, tokens, steers):
+    """The hard-water comparison is `tokens >= window * fraction` (D27: compared on the
+    raw token count vs the fractional byte threshold, no integer-pct rounding). For the
+    default Opus window 1_000_000 * 0.85 = 850_000, a sum of EXACTLY 850_000 must steer
+    and 849_999 must not — pins the inclusive boundary the whole detection pivots on."""
+    trans = fake_home / f"boundary-{tokens}.jsonl"
+    trans.write_text(
+        '{"type": "assistant", "message": {"model": "claude-opus-4-8", '
+        f'"usage": {{"input_tokens": {tokens}, "cache_creation_input_tokens": 0, '
+        '"cache_read_input_tokens": 0}}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert (CONTEXT_PRESSURE_ANCHOR in d["reason"]) is steers
+
+
+# --- P1-1: model + tokens come from the SAME usage-bearing line ------------ #
+def test_window_uses_model_of_latest_usage_line_not_a_later_usageless_line(fake_home):
+    """Regression for the model/token line mismatch: the window must be resolved from the
+    model on the SAME line the token sum came from (the last usage-bearing assistant
+    line), NOT from a later usage-less/synthetic line whose model differs or is absent.
+
+    Transcript: a usage-bearing Opus-4.8 line at 909_200 tokens (>= 1M*0.85 -> over its
+    1M window), then a LATER usage-less assistant line with a DIFFERENT model
+    (`claude-haiku-4`, no usage). Pre-fix the hook read the model from the latest line
+    (haiku -> default 200_000 window) while the tokens came from the opus line, so the
+    %/window in the steer described the wrong window. Post-fix both come from the opus
+    line: the steer fires (909_200 >= 850_000) and reports the 1_000_000-token window."""
+    trans = fake_home / "model-token-mismatch.jsonl"
+    trans.write_text(
+        '{"type": "assistant", "message": {"model": "claude-opus-4-8", '
+        '"usage": {"input_tokens": 909200, "cache_creation_input_tokens": 0, '
+        '"cache_read_input_tokens": 0}}}\n'
+        # a later usage-less assistant line with a DIFFERENT model -> must be ignored
+        '{"type": "assistant", "message": {"model": "claude-haiku-4"}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert CONTEXT_PRESSURE_ANCHOR in d["reason"], \
+        "must steer: tokens 909200 >= 1M*0.85 using the opus line's own window"
+    # The window in the steer is the opus line's 1M, NOT the later haiku line's default.
+    assert "1000000-token window" in d["reason"]
+    assert "200000-token window" not in d["reason"]
+
+
 # --- AC3: idempotent -> no re-steer ---------------------------------------- #
 def test_already_pending_no_resteer_even_over_water(fake_home):
     """A run with rebirth_pending == true and a transcript OVER water -> no
@@ -548,20 +609,20 @@ def test_failopen_resolver_import_failure(fake_home):
 def test_failopen_steer_helper_unexpected_exception(fake_home, monkeypatch):
     """ANY unexpected exception inside the steer helper degrades to no steer (the
     catch-all `except Exception: return ""`). Force it by making the resolver's
-    latest_usage_tokens raise a generic RuntimeError mid-detection (a path none of the
-    typed guards cover) -> byte-exact original reason, exit 0, no traceback (AC7).
+    latest_usage_model_and_tokens raise a generic RuntimeError mid-detection (a path none
+    of the typed guards cover) -> byte-exact original reason, exit 0, no traceback (AC7).
 
-    Run a COPY of bin/ whose rebirth_thresholds.py raises in latest_usage_tokens, so the
-    real steer helper hits its catch-all on a genuinely unexpected error."""
+    Run a COPY of bin/ whose rebirth_thresholds.py raises in latest_usage_model_and_tokens
+    (the function the steer helper calls), so the real steer hits its catch-all."""
     import shutil
     baseline = _baseline_reason(fake_home)
     bindir = fake_home / "bin-raising-resolver"
     shutil.copytree(_helpers.REPO_ROOT / "bin", bindir)
     resolver = bindir / "rebirth_thresholds.py"
     src = resolver.read_text(encoding="utf-8")
-    # Make latest_usage_tokens raise a generic (non-IO, non-Import) error -> catch-all.
+    # Make the resolver call the hook uses raise a generic (non-IO, non-Import) error.
     src += (
-        "\n\ndef latest_usage_tokens(*_a, **_k):\n"
+        "\n\ndef latest_usage_model_and_tokens(*_a, **_k):\n"
         "    raise RuntimeError('boom: unexpected steer-helper failure')\n"
     )
     resolver.write_text(src, encoding="utf-8")
@@ -574,26 +635,6 @@ def test_failopen_steer_helper_unexpected_exception(fake_home, monkeypatch):
         capture_output=True, text=True, timeout=30,
     )
     _assert_failopen(cp, baseline)
-
-
-def test_failopen_unknown_model_uses_default_window_no_false_steer(fake_home):
-    """An unknown model (not in the window table) resolves to the default 200_000 window.
-    A transcript whose sum is BELOW 200_000*0.85 must NOT steer — the default-window path
-    still computes correctly and stays below water (AC7's unknown-model degrade)."""
-    trans = fake_home / "unknown-model.jsonl"
-    # sum 100000 < 200000*0.85=170000 -> under water on the default window.
-    trans.write_text(
-        '{"type": "assistant", "message": {"model": "mystery-model-9", '
-        '"usage": {"input_tokens": 100000, "cache_creation_input_tokens": 0, '
-        '"cache_read_input_tokens": 0}}}\n',
-        encoding="utf-8",
-    )
-    write_run(fake_home, "run-42", _block_state())
-    cp = run_hook(_payload(transcript=trans), home=fake_home)
-
-    assert cp.returncode == 0
-    d = decision(cp)
-    assert d is not None and CONTEXT_PRESSURE_ANCHOR not in d["reason"]
 
 
 def test_failopen_unknown_model_over_default_window_steers(fake_home):

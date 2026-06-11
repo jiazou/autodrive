@@ -117,10 +117,12 @@ def _rebirth_steer(run, payload):
 
         import rebirth_thresholds  # sibling bin/ module (slice 2.1 resolver)
 
-        tokens = rebirth_thresholds.latest_usage_tokens(transcript_path)
+        # Model + tokens MUST come from the SAME usage-bearing line: the model picks the
+        # window the tokens are measured against, so a usage-less/synthetic line after the
+        # last usage line (different/absent model) would otherwise split window from tokens.
+        model, tokens = rebirth_thresholds.latest_usage_model_and_tokens(transcript_path)
         if not tokens or tokens <= 0:
             return ""  # no usage line yet -> skip (a fresh transcript hits this)
-        model = rebirth_thresholds.latest_model(transcript_path)
         thresholds = rebirth_thresholds.load_thresholds()
         window, hard, _soft = rebirth_thresholds.resolve_thresholds(model, thresholds)
         if tokens < hard:
