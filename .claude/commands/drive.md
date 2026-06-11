@@ -44,12 +44,30 @@ verdict / merge / gate.
   - **sessionId rebind (FIRST, on ANY resume into a new session):** rewrite
     `state.sessionId` to the live `$CLAUDE_CODE_SESSION_ID` (null if unset) BEFORE
     reconciling anything — the Stop hook attributes a run by exact sessionId match, so a
-    stale id kills auto-continue and rebirth detection. JSON-safe write (the jq rule below).
+    stale id kills auto-continue and rebirth detection. In the SAME JSON-safe write (the jq
+    rule below), reset `state.rebirth_pending = false` — uniformly on ANY fresh-session
+    resume (keyed on `state.sessionId != $CLAUDE_CODE_SESSION_ID`), NOT gated on a
+    `rebirth` waiting. `rebirth_pending` is derived from the OUTGOING session's transcript
+    growth, gone on a fresh resume, so the signal is stale and the successor re-derives it
+    from its own growth (the soft-check/hook re-set it). This is the SINGLE reset point
+    (never re-done in the `rebirth`-continue step below): a Gate A/B/STOP/crash run carrying
+    a stale `rebirth_pending = true` re-arms cleanly here, so the successor's safe-boundary
+    handler does not fire a spurious empty handoff at its first boundary.
   - **Consume `checkpoint-complete.marker` (single-use):** if
     `$RUN_DIR/checkpoint-complete.marker` exists, validate it (JSON parses AND `proof.tip`
     equals the current `drive/<runId>` tip), then DELETE it — valid or invalid — before any
     reconciliation acts on its content. Resume never REQUIRES the marker: missing/invalid
     means reconcile from scratch. (Format + validity rules: § Durable checkpoint contract.)
+  - **`waiting == "rebirth"` → normal CONTINUE, NOT a STOP.** A `rebirth`-waiting run found
+    on resume is the outgoing session's context-pressure handoff, now picked up: clear
+    `state.waiting = null` (JSON-safe write) and continue autonomous reconciliation exactly
+    as any resume — do NOT surface it as a paused-for-human state, do NOT re-present the
+    handoff. (Distinct from a `gateA`/`gateB`/`stop:`/`ask:` waiting found on resume, which
+    is re-presented because the human is back to an open question; `rebirth`'s "human
+    action" was *starting this fresh session*, which the resume itself proves happened.) The
+    sessionId was already rebound and `rebirth_pending` already reset to `false` in that same
+    rebind step (above); the `checkpoint-complete.marker` was already consumed (above).
+    Reconcile phase / counters from git + artifacts as normal.
   - **Current phase:** `state.phase` = the lowest phase in `state.phaseList` whose
     `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch` (branch absent, or
     `git merge-base --is-ancestor phaseInt/<runId>/<P> <featureBranch>` fails). All are
@@ -150,6 +168,13 @@ autonomous work. Forgetting to set it just means the hook nudges you to continue
 biases toward letting you stop and fails open); it never forces you past a STOP. This
 is independent of `/goal` — use either or both. Set `autoContinue:false` to disable
 the hook for this run.
+
+`waiting = "rebirth"` is the lone CONTINUE exception: it is set-to-pause in the
+OUTGOING session (so its turn can end at a safe boundary after a context-pressure
+checkpoint) and auto-cleared-as-continue by the resume path in the INCOMING session —
+it is NOT a STOP awaiting a human answer. The hook reads only `waiting`'s truthiness, so
+it lets the turn end on `rebirth` exactly as on any pause; the resume path (§ Run setup &
+resume) clears it and drives forward.
 
 ## Durable checkpoint contract (safe boundary)
 
@@ -266,6 +291,70 @@ Honest-coverage residuals: a single catastrophic turn can overshoot the window b
 boundary or Stop-hook firing; when the Stop hook is ABSENT this self-check is the ONLY
 detection surface, firing only when the coordinator reaches a boundary.
 
+### I1 — Safe-boundary rebirth handler (consume `rebirth_pending`)
+
+The single site that CONSUMES `rebirth_pending` and ACTS. It runs at the SAME enumerated
+safe boundaries as the Coordinator soft-check (after each per-slice review verdict, the
+phase-integration review verdict, each HARDEN round verdict, and the phase advance),
+IMMEDIATELY AFTER the soft-check (so the soft-check may set the flag and this handler
+consumes it in the same boundary), plus any Stage-0/Plan/Verify/Ship natural boundary where
+the coordinator is between dispatch units with no open marker. Steps, in this exact order
+(this handler NEVER sets `rebirth_pending` — phase-2 detection does):
+
+1. **Gate on the signal + the boundary.** Proceed ONLY if `state.rebirth_pending == true`
+   AND this is a genuine safe boundary (no open `inflight-*.marker`). Falsy → do nothing,
+   continue the pipeline.
+2. **Finish the current atomic step** (§ Durable checkpoint contract). Let any in-flight
+   unit return + record + clear its marker; finish a REDESIGN marker-write → state-write
+   span. Do NOT enter the sequence mid-dispatch.
+3. **PROVE resumability.** Run `bin/drive-conformance.sh $RUN_DIR --mode checkpoint`. On a
+   FAILING proof (exit 1) make ONE stranded-marker recovery attempt (§ Durable checkpoint
+   contract — adopt / re-dispatch / STOP, never wait), then re-prove. Still failing, or
+   exit 2 (usage/IO/git error) → **fail closed: Never set `waiting = "rebirth"` on a
+   failing proof.** A
+   transient open-marker failure → continue the pipeline and re-attempt at the next safe
+   boundary; a structural violation (`phaseInt-divergent`/`epoch-gap`/`regress-mismatch`/
+   `unparseable-*`/`epoch-unmarked`) or exit 2 → STOP via Present human pause with
+   `waiting = "stop:checkpoint-unprovable"` + the violations JSON (§ Durable checkpoint
+   contract, Prove-then-pause).
+4. **WRITE the durable marker.** On a passing proof (exit 0) write
+   `$RUN_DIR/checkpoint-complete.marker` (§ Durable checkpoint contract — tmp + `mv`, single
+   file, content `{"at": …, "sessionId": <outgoing>, "proof": <the mode's stdout JSON incl.
+   tip + counters>}`).
+5. **THEN set `waiting = "rebirth"`.** Only after the marker is written AND validated
+   (re-read it; JSON parses AND `proof.tip` equals the `drive/<runId>` tip) set
+   `state.waiting = "rebirth"` (JSON-safe write). The ordering is load-bearing and
+   fail-closed: the marker write is step 4 and the `waiting` set is step 5 — marker BEFORE
+   `waiting`, adjacent. (Setting `waiting` first would let the turn end before resumability
+   is durable.)
+6. **Present the handoff via Present human pause.** `waiting` is already set (step 5), so
+   the routine emits the run graph (rendering the `↻ REBIRTH` node from
+   `waiting=="rebirth"`) and presents the **rebirth handoff block** (the literal `/drive
+   <runId>` resume line + re-armed `/goal`), then ENDS THE TURN. Do NOT clear `waiting`
+   here — the OUTGOING session leaves it set; the INCOMING session's resume clears it
+   (§ Run setup & resume).
+
+**Leave-pending semantics:** within the SAME (outgoing) session `rebirth_pending` STAYS SET
+through the pause — it is consumed at the next safe boundary (where this handshake fires)
+and is NEVER reset inside the outgoing session; it is reset to `false` exactly ONCE, at the
+sessionId-rebind step on a fresh-session resume (§ Run setup & resume). If the human ignores
+the handoff and the outgoing session keeps going, `waiting="rebirth"` +
+`checkpoint-complete.marker` persist; the next safe boundary re-observes `rebirth_pending`
+still true and re-presents (re-proving — the marker is record-not-authorization). No
+double-handoff: the marker is single-use, consumed only by a `/drive <runId>` resume.
+
+**Gate/STOP precedence over rebirth.** At a boundary where BOTH `rebirth_pending == true`
+AND the next pipeline action is a Gate A / Gate B / a non-decision STOP: the **gate/STOP
+wins** — present the gate/STOP (its own `waiting` value), NOT `waiting="rebirth"`. The
+human is present at that pause and can resume in a fresh session if they wish: BOTH Gate A
+and Gate B hand the next leg's `/goal` line on approval, and the user, knowing the runId,
+pastes `/drive <runId>` into a fresh session themselves — NEITHER gate emits a `/drive
+<runId>` resume token (that runId resume line is the rebirth handshake's distinct
+contribution). `rebirth_pending` does NOT carry forward: on the fresh-session resume it is
+reset to `false` at the sessionId-rebind step, so a still-pressured run re-detects pressure
+from the successor's own transcript growth and hands off at the next safe boundary there —
+no handoff is lost; the flag is re-derived, not persisted.
+
 ## Present human pause (shared routine)
 
 This is the **ONLY** way `/drive` pauses for the human — Gate A, Gate B, every
@@ -274,13 +363,41 @@ order; emitting the run graph is a mandatory step (step 2) so it can never be
 forgotten:
 
 1. **Set `state.waiting` FIRST** to the pause reason — `"gateA"`, `"gateB"`,
-   `"stop:<short>"`, or `"ask:<header>"`. This satisfies the autonomous-continuation
-   contract above (set `waiting` before pausing) and lets the run graph derive
-   `← YOU ARE HERE` from it.
+   `"stop:<short>"`, `"ask:<header>"`, or `"rebirth"`. This satisfies the
+   autonomous-continuation contract above (set `waiting` before pausing) and lets the run
+   graph derive `← YOU ARE HERE` from it. Unlike the others — which await a human ANSWER —
+   `"rebirth"` awaits a FRESH-SESSION RESUME: the resume path auto-clears it and continues
+   (§ Run setup & resume), so it is set-to-pause in the outgoing session and
+   auto-cleared-as-continue on resume, never a STOP.
 2. **Emit the run graph** (per § *Emit run graph (shared step)* below) — it reads the
    just-set `state.waiting`.
 3. **Present** the gate text / STOP reason, or call `AskUserQuestion`; then end the
-   turn. Clear `waiting = null` the instant autonomous work resumes.
+   turn. Clear `waiting = null` the instant autonomous work resumes. When
+   `waiting == "rebirth"`, present the **rebirth handoff block** below (no `AskUserQuestion`
+   — the user pastes or ignores) and end the turn WITHOUT clearing `waiting` (the incoming
+   session's resume clears it, § Run setup & resume). Substitute `<runId>` = `state.runId`
+   literally (the same value the run graph's `↻ REBIRTH` node shows):
+
+   ```
+   ↻ REBIRTH — this /drive run is approaching its context budget and has checkpointed
+   to hand off to a fresh session. Your run is proven resumable (checkpoint passed).
+
+   To continue, paste this into a FRESH Claude Code session:
+
+     /drive <runId>
+
+   Then re-arm the goal for the next autonomous leg:
+
+     /goal The /drive run <runId> is resuming after a context-pressure rebirth and is
+     driving the pipeline autonomously toward its next human gate (Gate A/B) or a
+     non-decision STOP. NOT met while autonomous implement/review/harden/verify work remains.
+
+   (This session can stop now; the fresh session owns the run once it resumes.)
+   ```
+
+   The `/drive <runId>` line is the EXACT resume invocation (the resume path keys on an
+   existing-runId `$RUN_DIR/state.json`); the `/goal` line re-arms the SUCCESSOR's leg goal,
+   mirroring the Gate A/B re-arm.
 
 **Pre-run exception:** the **preconditions** STOPs (gstack missing, dirty tree) fire *before*
 a run exists — there is no `$RUN_DIR`/`state.json` to render, so they STOP plainly (no graph).
@@ -337,7 +454,7 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
 - A single **fenced code block** (terminal-friendly ASCII tree; **no mermaid**
   anywhere).
 - Print the glyph legend once at the top of the block:
-  `[✓ done · ◐ current · ✗ stop · ? unknown]`, plus the `‖` note (below).
+  `[✓ done · ◐ current · ✗ stop · ↻ rebirth · ? unknown]`, plus the `‖` note (below).
 - **One branch per stage that has STARTED**, in order
   `Premises · Plan · Execute · Verify · Ship` (a not-yet-started stage is omitted).
   "Started" = `state.stage` has reached/passed it OR its artifacts exist.
@@ -377,8 +494,16 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
   EVERY value has a defined anchor node: `gateA` → the `Gate A:` line (Plan); `gateB` →
   the `Gate B:` line (Ship); `stop:<r>` → a `✗ STOP: <r>` leaf under the current stage's
   active node; `ask:<header>` → a `? <header>` leaf under the current stage (Premises if
-  Stage 0). An unrecognized `waiting` still renders, with `← YOU ARE HERE` on a generic
-  `✗ STOP: <reason>` leaf under the current stage.
+  Stage 0); `rebirth` → a `↻ REBIRTH` CONTINUATION node (NOT a `✗ STOP` leaf) under the
+  current stage's active node — the active Execute node (the current phase, or the current
+  slice if the boundary was a per-slice review verdict) when `stage==execute`, else the
+  active Plan/Verify/Ship node. Its node text is
+  `↻ REBIRTH: context-pressure handoff (resume: /drive <runId>) ← YOU ARE HERE`, with
+  `<runId>` = `state.runId`. It derives purely from `state.waiting=="rebirth"` +
+  `state.runId` + `state.stage`/`phase` — no new artifact, no event-log parse. An
+  unrecognized `waiting` still renders, with `← YOU ARE HERE` on a generic `✗ STOP:
+  <reason>` leaf under the current stage (`rebirth` is RECOGNIZED, so it is NOT caught by
+  this fallback).
 - End with a **`key throughlines:` 2–3 bullet** synthesis derived from the rounds that
   had findings (a recurring P1 theme, a slice that needed many fix rounds, a verify
   false negative).
@@ -453,7 +578,7 @@ budget because the last rung is unconditional):
 ### Worked example A — a lean run paused at Gate A
 
 ```
-/drive run graph  [✓ done · ◐ current · ✗ stop · ? unknown]
+/drive run graph  [✓ done · ◐ current · ✗ stop · ↻ rebirth · ? unknown]
 ‖ = independent slices (disjoint ownership), dispatched as a parallel group;
     wall-clock concurrency is bounded by concurrencyCap
 
@@ -473,7 +598,7 @@ key throughlines:
 ### Worked example B — a run paused at an AskUserQuestion
 
 ```
-/drive run graph  [✓ done · ◐ current · ✗ stop · ? unknown]
+/drive run graph  [✓ done · ◐ current · ✗ stop · ↻ rebirth · ? unknown]
 ‖ = independent slices (disjoint ownership), dispatched as a parallel group;
     wall-clock concurrency is bounded by concurrencyCap
 
@@ -571,7 +696,9 @@ the gate.
 For each PHASE in order (step 1 designs it, steps 2–5 build & review it, step 6 HARDENS
 it before it advances). At each safe boundary in this loop — after a per-slice review
 verdict (step 4), the phase-integration review verdict (step 5), a HARDEN round verdict and
-the phase advance (step 6) — run the **Coordinator soft-check** (§ above) before proceeding:
+the phase advance (step 6) — run the **Coordinator soft-check** (§ above), then the
+**Safe-boundary rebirth handler** (§ I1 above — it consumes any `rebirth_pending` the
+soft-check just set), before proceeding:
 
 1. **Design the phase (detailed, against real code):** initialize
    `state.phaseDesign[<P>] = { "round": 0, "redesigns": 0, "status": "designing" }` if absent,
