@@ -475,7 +475,8 @@ forgotten:
 
    ```
    ↻ REBIRTH — this /drive run is approaching its context budget and has checkpointed
-   to hand off to a fresh session. Your run is proven resumable (checkpoint passed).
+   to hand off to a fresh session. Your run is proven resumable — both proof modes
+   clean (checkpoint AND state-lint passed).
 
    To continue, paste this into a FRESH Claude Code session:
 

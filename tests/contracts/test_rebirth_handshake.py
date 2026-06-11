@@ -452,6 +452,37 @@ def test_handoff_block_has_resume_line_and_rearmed_goal():
     )
 
 
+def test_handoff_block_resumability_claim_names_both_proof_modes():
+    """The handoff block's resumability claim must name BOTH proof modes — checkpoint AND
+    state-lint — matching the both-modes resumability contract (proof = checkpoint AND
+    state-lint clean). A checkpoint-only claim (the pre-fix `(checkpoint passed)`) contradicts
+    the contract; this pin keeps the user-facing handoff surface from regressing to one mode."""
+    block = _norm(_handoff_block())
+    start = block.index("Your run is proven resumable")
+    # the resumability sentence runs to its closing parenthesis
+    claim = block[start: block.index(")", start) + 1]
+    assert "checkpoint" in claim and "state-lint" in claim, (
+        "the handoff block's resumability claim must name BOTH proof modes (checkpoint AND "
+        f"state-lint), not checkpoint-only — saw: {claim!r}"
+    )
+
+
+def test_handoff_resumability_pin_flips_on_checkpoint_only_copy():
+    """Flip-proof (mutate a COPY): reverting the resumability claim to the pre-fix
+    checkpoint-only prose reds the both-modes pin — proving it bites on the named modes,
+    not incidentally green."""
+    block = _norm(_handoff_block())
+    start = block.index("Your run is proven resumable")
+    claim = block[start: block.index(")", start) + 1]
+    drifted = block.replace(claim, "Your run is proven resumable (checkpoint passed)", 1)
+    assert drifted != block, "the checkpoint-only revert matched nothing"
+    dstart = drifted.index("Your run is proven resumable")
+    dclaim = drifted[dstart: drifted.index(")", dstart) + 1]
+    assert not ("checkpoint" in dclaim and "state-lint" in dclaim), (
+        "checkpoint-only copy must NOT name both modes (pin would be incidentally green)"
+    )
+
+
 def _handoff_goal_line():
     """The `/goal …` line inside the bounded handoff block, whitespace-normalized — the
     leg-aware re-arm line whose trailing `<leg-condition>` placeholder the selector binds.

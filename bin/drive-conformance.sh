@@ -875,17 +875,25 @@ EOF_PHASES
       *) viol_arr+=("$(violation "phaseList" "phaselist-malformed")") ;;
     esac
 
-    # slices: an object; each value must be meaningfully routable —
+    # slices: the routing CONTAINER must be an object; each value must be meaningfully
+    # routable —
     #   step  ∈ {queued, implementing, awaiting_review, needs_fix, converged, blocked}
     #   owns  = a NON-EMPTY array of strings
     #   deps  = an array (possibly empty)
-    # ONE violation object PER malformed slice, scoped to the slice id (D44).
-    if [ "$(jq -r '(.slices | type) == "object"' "$SJ")" = "true" ]; then
+    # A non-object slice value (scalar/array/bool/null) is unroutable -> one
+    # `slice-routing-malformed` PER malformed slice, scoped to the slice id (D44).
+    # The container itself: an empty `{}` is always legitimate (a run may not have
+    # designed slices yet); a non-object container (null/array/scalar/missing) is a
+    # `slices-malformed` violation once the run is past plan (stage ∉ {premises, plan}) —
+    # at premises/plan it is well-formed-absent like an empty phaseList.
+    sl_type="$(jq -r '.slices | type' "$SJ")"
+    if [ "$sl_type" = "object" ]; then
       bad_slices="$(jq -r '
         ["queued","implementing","awaiting_review","needs_fix","converged","blocked"] as $steps
         | .slices | to_entries[] | . as $e
         | select(
-            (($e.value.step | type) != "string")
+            (($e.value | type) != "object")
+            or (($e.value.step | type) != "string")
             or (($e.value.step) as $s | $steps | index($s) | not)
             or (($e.value.owns | type) != "array")
             or (($e.value.owns | length) == 0)
@@ -899,6 +907,11 @@ EOF_PHASES
       done <<EOF
 $bad_slices
 EOF
+    else
+      case "$stage" in
+        premises|plan) ;;   # well-formed-absent before slices are designed
+        *) viol_arr+=("$(violation "slices" "slices-malformed")") ;;
+      esac
     fi
 
     # verify: an object with an `attempts` array.

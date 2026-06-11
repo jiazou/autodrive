@@ -887,6 +887,12 @@ mk_impl_presence() {
 #                        -> phaselist-malformed                                         -> exit 1
 #   step_bogus        -- a slice with step:"bogus" (out of enum) -> slice-routing-malformed
 #   owns_empty        -- a slice with owns:[] (empty) -> slice-routing-malformed       -> exit 1
+#   slice_scalar      -- a slice VALUE is a non-object scalar (string) -> must emit a named
+#                        slice-routing-malformed (exit 1), NOT crash jq                  -> exit 1
+#   slices_array      -- the .slices CONTAINER is an array (non-object) while executing —
+#                        unroutable -> slices-malformed (must NOT false-clean)           -> exit 1
+#   slices_empty_executing -- stage=execute with slices:{} (empty object, mid-design):
+#                        legitimate pre-design -> must PASS (empty {} is always OK)      -> exit 0
 #   verify_bad        -- verify is not an object-with-attempts-array -> verify-malformed
 #   ship_bad          -- ship missing the prUrl key -> ship-malformed                  -> exit 1
 #   multi_bad_slice   -- TWO malformed slices -> TWO slice-routing-malformed objects
@@ -962,6 +968,41 @@ JSON
   "slices": {
     "1.1": {"step": "converged", "owns": [], "deps": []}
   },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_scalar)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": "notanobject"
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slices_array)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": [],
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slices_empty_executing)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {},
   "verify": {"attempts": []},
   "ship": {"suite": null, "conformance": null, "prUrl": null}
 }

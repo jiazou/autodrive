@@ -464,6 +464,18 @@ assert_out_contains "SL slice-routing-malformed scoped to the slice id" '{"scope
 read -r repo rd < <(mk_state_lint owns_empty)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL empty owns -> exit 1" 1 "$RC"
 assert_out_contains "SL empty-owns slice-routing-malformed" '"reason":"slice-routing-malformed"'
+# a non-object slice VALUE (scalar) must emit a NAMED violation, not crash jq (exit 5).
+read -r repo rd < <(mk_state_lint slice_scalar)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL non-object slice value -> exit 1 (not a jq crash)" 1 "$RC"
+assert_out_contains "SL non-object slice value slice-routing-malformed scoped to id" '{"scope":"1.1","reason":"slice-routing-malformed"'
+# a non-object .slices CONTAINER (array) while executing must NOT false-clean -> slices-malformed.
+read -r repo rd < <(mk_state_lint slices_array)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL non-object .slices container -> exit 1" 1 "$RC"
+assert_out_contains "SL non-object .slices container slices-malformed" '{"scope":"slices","reason":"slices-malformed"'
+# stage-aware: an EMPTY slices object ({}) is legitimate mid-design -> must PASS even at execute.
+read -r repo rd < <(mk_state_lint slices_empty_executing)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL empty slices {} at execute (pre-design) clean" 0 "$RC"
+assert_out_contains "SL empty slices {} clean envelope" '"clean":true,"mode":"state-lint"'
 # malformed verify -> verify-malformed.
 read -r repo rd < <(mk_state_lint verify_bad)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL malformed verify -> exit 1" 1 "$RC"
