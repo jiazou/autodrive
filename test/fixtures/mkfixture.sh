@@ -23,20 +23,10 @@ _init_repo() {
   _gitc "$r" config user.email t@t
 }
 
-# Commit a file. $1=repo $2=path $3=content $4=msg ; echoes resulting tip sha
+# Commit a file. The message $4 is passed verbatim to `commit -m`, so a multi-line message
+# (a real `Drive-Test-Waiver:` trailer block or body prose) is preserved exactly.
+# $1=repo $2=path $3=content $4=msg ; echoes resulting tip sha
 _commit() {
-  local r="$1" p="$2" c="$3" m="$4"
-  mkdir -p "$r/$(dirname "$p")"
-  printf '%s\n' "$c" > "$r/$p"
-  _gitc "$r" add -A
-  _gitc "$r" commit -q -m "$m"
-  _gitc "$r" rev-parse HEAD
-}
-
-# Commit a file with an EXPLICIT multi-line message (for trailer fixtures). The message
-# is passed verbatim so a real `Drive-Test-Waiver:` trailer block (or body prose) is
-# preserved exactly. $1=repo $2=path $3=content $4=msg ; echoes resulting tip sha
-_commit_msg() {
   local r="$1" p="$2" c="$3" m="$4"
   mkdir -p "$r/$(dirname "$p")"
   printf '%s\n' "$c" > "$r/$p"
@@ -638,6 +628,25 @@ mk_checkpoint() {
       # it (erasing a fix round); -e||-L counts it (grep 'AppliedEdits:' fails) -> unparseable-harden.
       _write_dangling_dirent "$rd" "harden-1-2.md"
       ;;
+    epoch_unmarked_phaseid_dash_r)
+      # FIX 1: a phase id that itself contains `-r` (`4-r1`). A markerless epoch artifact for
+      # this phase (review+codex for epoch r1 of phase `4-r1`, NO redesign-4-r1-r1.marker) must
+      # be flagged epoch-unmarked under the CORRECT scope `phasedesign4-r1`. The pre-fix
+      # `%%-r*` phase split mis-truncates the id to `4` (wrong scope, wrong epoch glob); the
+      # anchored-suffix parse keeps `4-r1`.
+      _gitc "$repo" checkout -q -b "phaseInt/$name/4-r1"
+      _commit "$repo" "p.sh" "echo p" "phase 4-r1 integration" >/dev/null
+      _write_review "$rd" "phasedesign4-r1-r1" 1 "$zeros"
+      _write_codex "$rd" "phasedesign4-r1-r1"
+      ;;
+    epoch_unmarked_codex_only)
+      # FIX 2: ONLY the codex sibling of an epoch artifact (codex-review-phasedesign1-r1.md),
+      # NO review file and NO redesign-1-r1.marker. Exercises the codex-half of the
+      # epoch-unmarked scan independently — a regression dropping the codex glob from
+      # unmarked_epochs()/the phase-derivation loop would otherwise stay green (every other
+      # epoch-unmarked fixture also seeds a review file). Must fail closed: epoch-unmarked.
+      _write_codex "$rd" "phasedesign1-r1"
+      ;;
   esac
   echo "$repo $rd"
 }
@@ -812,12 +821,12 @@ mk_impl_presence() {
     waiver)
       _commit "$repo" "src.sh" "echo hi" "slice 3a code only" >/dev/null
       # real trailing trailer block: blank line then Key: val at end of message
-      _commit_msg "$repo" "doc.md" "docs" \
+      _commit "$repo" "doc.md" "docs" \
         "$(printf 'doc slice work\n\nDrive-Test-Waiver: pure documentation slice, no testable surface')" >/dev/null ;;
     waiver_prose)
       _commit "$repo" "src.sh" "echo hi" "slice 3a code only" >/dev/null
       # waiver string MID-BODY with non-Key:val prose AFTER it -> NOT a trailer block
-      _commit_msg "$repo" "doc.md" "docs" \
+      _commit "$repo" "doc.md" "docs" \
         "$(printf 'explain the policy\n\nWe reference Drive-Test-Waiver: here as an example.\nMore prose follows so this is body text, not a trailer.')" >/dev/null ;;
     pred_helpers)
       _commit "$repo" "tests/_helpers.py" "X = 1" "slice 3a touches helpers only" >/dev/null ;;

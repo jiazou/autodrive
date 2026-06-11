@@ -131,6 +131,25 @@ unmarked_epochs() {
   printf '%s' "$out" | sort -un
 }
 
+# Extract the phase id <P> from a phasedesign epoch-artifact BASENAME — i.e. strip ONLY a
+# trailing epoch/round suffix, anchored from the RIGHT, so a phase id that itself contains
+# `-r<digits>` (e.g. `4-r1`) survives (a `%%-r*` split would mis-truncate it to `4`).
+# Accepts either family AFTER the `review-phasedesign` / `codex-review-phasedesign` prefix
+# is stripped (caller strips it):
+#   review sibling:  <P>-r<R>-<N>   -> strip trailing -<N> (digits) then trailing -r<R>
+#   codex sibling:   <P>-r<R>       -> strip trailing -r<R>
+# Echoes <P> (empty if the suffix shape is absent — caller skips such names).
+phase_of_pd_core() {
+  local core="$1" tail
+  # 1) review-family trailing round -<N> (all digits): peel it so step 2 sees -r<R> last.
+  tail="${core##*-}"
+  case "$tail" in (''|*[!0-9]*) ;; (*) core="${core%-*}";; esac
+  # 2) the epoch token must now be the rightmost segment: -r<R> (R all digits).
+  tail="${core##*-r}"
+  case "$tail" in (''|*[!0-9]*) printf '%s' ""; return;; esac
+  case "$core" in (*-r"$tail") printf '%s' "${core%-r$tail}";; (*) printf '%s' "";; esac
+}
+
 # Count exact-match lines of key $2 in newline-list $1. Echoes the count (0 if none).
 count_in_list() {
   local c
@@ -651,7 +670,10 @@ EOF
       core="${f##*/}"
       core="${core#review-phasedesign}"
       core="${core#codex-review-phasedesign}"
-      P="${core%%-r*}"
+      core="${core%.md}"
+      # phase_of_pd_core strips ONLY the trailing -r<R>[ -<N>] suffix (anchored right) so a
+      # phase id containing `-r` (e.g. `4-r1`) is not mis-truncated by a `%%-r*` split.
+      P="$(phase_of_pd_core "$core")"
       [ -n "$P" ] && pdr_phases="$pdr_phases$P"$'\n'
     done
     for P in $(printf '%s' "$pdr_phases" | sort -u); do

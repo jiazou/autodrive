@@ -343,6 +343,23 @@ read -r repo rd < <(mk_checkpoint epoch_marker_dangling)
 run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 dangling epoch marker counts -> exit 1 (fail closed, not clean)" 1 "$RC"
 assert_out_contains "CK2 dangling epoch marker reports epoch-gap" '"reason":"epoch-gap"'
 
+# FIX 1: a phase id containing `-r` (`4-r1`) with a markerless epoch artifact must be flagged
+# epoch-unmarked under the CORRECT scope `phasedesign4-r1`. The pre-fix `%%-r*` phase-id split
+# truncates to `4` and emits the violation under the WRONG scope `phasedesign4` (and resolves
+# the wrong epoch glob). Regression validity: against the pre-fix script the violation object
+# carries `"scope":"phasedesign4"` — the exact-scope assertion below flips with the fix.
+read -r repo rd < <(mk_checkpoint epoch_unmarked_phaseid_dash_r)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 markerless epoch on a -r-containing phase id -> exit 1 (fail closed)" 1 "$RC"
+assert_out_contains "CK2 epoch-unmarked attributed to the FULL phase id phasedesign4-r1 (not mis-truncated to phasedesign4)" \
+  '{"scope":"phasedesign4-r1","reason":"epoch-unmarked",'
+# FIX 2: the codex-half of the epoch-unmarked scan, exercised INDEPENDENTLY — ONLY a codex
+# sibling (codex-review-phasedesign1-r1.md) with no review file and no r1 marker. A regression
+# dropping the codex glob from unmarked_epochs()/the phase-derivation loop would otherwise stay
+# green (every other epoch-unmarked fixture also seeds a review file that masks the codex path).
+read -r repo rd < <(mk_checkpoint epoch_unmarked_codex_only)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 codex-only markerless epoch -> exit 1 (codex-half fails closed)" 1 "$RC"
+assert_out_contains "CK2 codex-only epoch-unmarked violation" '{"scope":"phasedesign1","reason":"epoch-unmarked",'
+
 echo "=== CK3/CK4: epoch-gap + dropped-increment recovery; state.json never read ==="
 # Markers r1+r3 with state.json claiming redesigns:2 — the dropped 3rd increment is
 # recovered from the artifact (highest-R wins), the gap is flagged for a human.
