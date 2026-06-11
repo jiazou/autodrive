@@ -209,7 +209,9 @@ are deliberately separate:
   the 6-value enum, `owns` is a non-empty string array, and `deps` is an array whose every
   element matches the same slice-id grammar (`slice-routing-malformed`, one per offending
   slice, or `slices-malformed` for a non-object container past plan); `verify`/`ship` are well-shaped
-  (`verify-malformed` / `ship-malformed`). It validates **routing-field presence + meaningful
+  (`verify-malformed` / `ship-malformed`); and `waiting` is `null` or a known pause token
+  (`gateA`|`gateB`|`rebirth`|`stop:<…>`|`ask:<…>`) the resume/Stop-hook branch on
+  (`waiting-malformed` otherwise). It validates **routing-field presence + meaningful
   routability only** — never value cross-checks against git.
 
 **sessionId rebind on resume.** The Stop hook attributes a run by exact
