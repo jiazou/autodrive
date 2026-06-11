@@ -15,9 +15,12 @@
 #   3. rebirth_thresholds.py's EFFECTIVE THRESHOLDS_PATH (imported and read at runtime)
 #      resolves to the bin/ sibling json — reds on any later override to a copied/
 #      absolute/non-sibling path, not just on the textual expression disappearing.
-#   4. statusline.sh's EFFECTIVE THRESHOLDS_FILE (its last winning assignment, evaled
-#      with BASH_SOURCE pinned) resolves to the bin/ sibling json — same effective-path
-#      assertion, reds on a later override.
+#   4. statusline.sh's THRESHOLDS_FILE resolution, HONEST about both modes: (4a) from the
+#      SOURCE TREE (direct invocation) it resolves to the bin/ sibling json — reds on a later
+#      override; (4b) from the INSTALL (a symlink) BASH_SOURCE[0] is the symlink's dir, so the
+#      json is NOT a sibling and the inline `case` fallback carries it — asserted by running
+#      statusline through a real symlink; (4c) AC6 anti-drift pins the inline window == json
+#      window, so the install's fallback yields the same answer.
 #   5. The installers do NOT copy the rebirth files (or bin/ wholesale) to a non-sibling
 #      location: NO copy-like op (cp / cp -R/-r / install / rsync / ditto / python
 #      shutil.copy*) references bin/ or a rebirth file. The stop hook is registered as an
@@ -95,21 +98,22 @@ PY
 )
 check "resolver's effective THRESHOLDS_PATH is the bin/ sibling json" "${resolver_effective:-no}" "yes"
 
-# --- 4. statusline.sh resolves the json to its bin/ sibling ----------------
-# Assert the EFFECTIVE runtime path the script computes for THRESHOLDS_FILE, not
-# just that a dirname(BASH_SOURCE) expression appears. Eval the script's own
-# assignment(s) for THRESHOLDS_FILE with BASH_SOURCE pinned to the real statusline,
-# taking the LAST assignment that wins at runtime — so a later override to a
-# copied/absolute/non-sibling path reds here. Then resolve through dirname.
+# --- 4. statusline.sh THRESHOLDS_FILE resolution — the HONEST two-mode reality -----
+# statusline resolves THRESHOLDS_FILE = dirname(BASH_SOURCE[0])/rebirth-thresholds.json.
+# In bash, BASH_SOURCE[0] is the INVOCATION path, NOT the symlink-resolved target — so the
+# json sibling is reachable ONLY when statusline runs from the SOURCE TREE (a direct
+# bin/statusline.sh invocation). The INSTALLER symlinks it to ~/.claude/statusline.sh and
+# settings.json runs it via that symlink, so at runtime dirname(BASH_SOURCE) = ~/.claude,
+# where rebirth-thresholds.json is NOT a sibling — the installed statusline therefore relies
+# on the INLINE `case` fallback (AC6 anti-drift: same numbers as the json). This section
+# asserts BOTH truths instead of pinning only the source-tree path (which masked the install).
+
+# 4a. SOURCE-TREE resolution: with BASH_SOURCE pinned to the repo bin/ statusline (a direct,
+#     non-symlinked invocation), THRESHOLDS_FILE IS the bin/ sibling json. Eval the script's
+#     own THRESHOLDS_FILE= assignment(s) — last wins at runtime, so a later override to a
+#     copied/absolute/non-sibling path reds here.
 statusline_effective=$(
   THRESHOLDS_FILE=""
-  # Replay every THRESHOLDS_FILE= assignment in source order; the last one wins,
-  # exactly as it would at runtime. ${BASH_SOURCE[0]} / $BASH_SOURCE are textually
-  # substituted with the real statusline path (the interpreter does not let a caller
-  # override the BASH_SOURCE call-stack array inside eval), so dirname(BASH_SOURCE)
-  # resolves to bin/ just as it does when the script runs. A bare, `export `-,
-  # `readonly `- or `declare `-prefixed assignment all count (last wins); the prefix
-  # is stripped so the eval is a plain assignment into this scope's THRESHOLDS_FILE.
   _bs0='${BASH_SOURCE[0]}'; _bs='$BASH_SOURCE'
   while IFS= read -r _line; do
     _line="${_line//"$_bs0"/$STATUSLINE}"
@@ -131,7 +135,36 @@ statusline_effective=$(
     echo no
   fi
 )
-check "statusline's effective THRESHOLDS_FILE is the bin/ sibling json" "${statusline_effective:-no}" "yes"
+check "statusline source-tree THRESHOLDS_FILE is the bin/ sibling json (direct invocation)" "${statusline_effective:-no}" "yes"
+
+# 4b. INSTALLED-SYMLINK reality: build the actual installed layout (a symlink in a separate
+#     dir -> the repo bin/ statusline, with NO rebirth-thresholds.json sibling next to the
+#     symlink) and run statusline THROUGH the symlink. Its dirname(BASH_SOURCE) is the
+#     symlink's dir, so the json sibling does NOT resolve there — the installed statusline
+#     CANNOT read the json and MUST fall to the inline case. Assert that honestly: the
+#     would-be json path next to the symlink is absent, and the script still renders a window
+#     (proving the inline fallback carries it). Opus 4.8 -> inline 1_000_000 -> PCT 90.
+LINK_DIR="$(mktemp -d)"
+ln -sfn "$STATUSLINE" "$LINK_DIR/statusline.sh"
+sibling_at_symlink="$( [ -f "$LINK_DIR/rebirth-thresholds.json" ] && echo present || echo absent )"
+check "installed symlink has NO rebirth-thresholds.json sibling (json unreachable from install)" "$sibling_at_symlink" "absent"
+TRANS_IL="$(mktemp)"
+printf '{"type":"assistant","message":{"usage":{"input_tokens":900000,"cache_creation_input_tokens":0,"cache_read_input_tokens":0}}}\n' > "$TRANS_IL"
+installed_pct="$(
+  printf '%s' "{\"model\":{\"display_name\":\"Opus 4.8\"},\"workspace\":{\"current_dir\":\"$LINK_DIR\"},\"transcript_path\":\"$TRANS_IL\"}" \
+    | bash "$LINK_DIR/statusline.sh" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%'
+)"
+# 900000/1_000_000 = 90% iff the inline Opus window (1_000_000) carried it (the json was
+# unreachable from the symlink dir); a fallback to the 200_000 default would render 450%.
+check "installed (symlinked) statusline falls to the inline case -> Opus window (PCT 90)" "${installed_pct:-NONE}" "90"
+rm -rf "$LINK_DIR" "$TRANS_IL"
+
+# 4c. AC6 anti-drift: the inline `case` window numbers the install relies on MUST equal the
+#     json's, so the fallback yields the SAME answer as a source-tree json read. Pin the
+#     inline Opus window (1_000_000) and the json's matching Opus window are identical.
+inline_opus_window="$(grep -oE 'WINDOW=1000000' "$STATUSLINE" | head -1 | sed 's/WINDOW=//')"
+json_opus_window="$(jq -r '.windows[] | select(.match | index("Opus 4.8")) | .window' "$DATA")"
+check "AC6 anti-drift: inline Opus window == json Opus window (fallback matches)" "${inline_opus_window:-X}" "${json_opus_window:-Y}"
 
 # --- 5. The installers deploy the rebirth files by REFERENCE, not by copy --
 # The installers register the hook in-place and symlink statusline; they must NOT
@@ -260,10 +293,12 @@ check "no installer copies rebirth_thresholds.py (canonical-by-reference)" "$res
 hook_registered_inplace=$(grep -c 'cmd = f.python3 "{hook_py}"' "$INSTALL_RULES")
 check "stop hook registered as in-place bin/ reference (not copied)" "$( [ "$hook_registered_inplace" -ge 1 ] && echo yes || echo no )" "yes"
 
-# statusline is SYMLINKED into ~/.claude (ln -sfn), so dirname(BASH_SOURCE) of the
-# symlink target is the repo bin/ — the rebirth-thresholds.json sibling resolves.
+# statusline is SYMLINKED into ~/.claude (ln -sfn) — deploy-by-reference, not a copy. Run
+# via the symlink, dirname(BASH_SOURCE) is the symlink's dir (~/.claude), NOT the repo bin/,
+# so the json sibling does NOT resolve from the install and the inline case carries it
+# (proven by section 4b). This check pins only that statusline is symlinked (by-reference).
 statusline_symlinked=$(grep -c 'ln -sfn "\$STATUSLINE_SRC"' "$INSTALL_RULES")
-check "statusline symlinked into ~/.claude (sibling json resolves)" "$( [ "$statusline_symlinked" -ge 1 ] && echo yes || echo no )" "yes"
+check "statusline symlinked into ~/.claude (deploy-by-reference, not copied)" "$( [ "$statusline_symlinked" -ge 1 ] && echo yes || echo no )" "yes"
 
 # --- Summary --------------------------------------------------------------
 echo "----------------------------------------"

@@ -951,6 +951,22 @@ EOF_PHASES
       viol_arr+=("$(violation "ship" "ship-malformed")")
     fi
 
+    # waiting: BOTH resume (§ Run setup & resume) and the stop hook BRANCH on this field —
+    # `waiting=="rebirth"` is the re-proven CONTINUE; any other truthy value is a human
+    # pause; null/absent means autonomous. A malformed `waiting` misroutes both consumers,
+    # so it must fail closed here. The canonical shape (drive.md I1 / pause routine): null,
+    # OR one of the bare reasons `gateA`/`gateB`/`rebirth`, OR a prefixed reason
+    # `stop:<short>` / `ask:<header>`. A non-null-non-string value, or a string outside this
+    # grammar, is `waiting-malformed`. (Absent ≡ null via `.waiting`.)
+    if [ "$(jq -r '
+      (.waiting) as $w
+      | if $w == null then "ok"
+        elif ($w | type) != "string" then "bad"
+        elif ($w | test("^(gateA|gateB|rebirth|stop:.+|ask:.+)$")) then "ok"
+        else "bad" end' "$SJ")" != "ok" ]; then
+      viol_arr+=("$(violation "waiting" "waiting-malformed")")
+    fi
+
     if [ "${#viol_arr[@]:-0}" -eq 0 ]; then
       printf '{"clean":true,"mode":"state-lint","tip":"%s","violations":[]}\n' "$tip"
       exit 0

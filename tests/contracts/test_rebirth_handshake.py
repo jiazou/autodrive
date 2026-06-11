@@ -575,7 +575,8 @@ def test_resume_rebirth_continue_clause_is_continue_not_stop():
 
 def test_resume_rebirth_continue_is_fail_closed_re_proven():
     """P1-3 (tightened per the adversarial review): the resume consumer RE-PROVES resumability
-    via `--mode checkpoint` BEFORE treating `waiting=="rebirth"` as a continue — it does NOT
+    via BOTH `--mode checkpoint` AND `--mode state-lint` (D40 r2) BEFORE treating
+    `waiting=="rebirth"` as a continue — it does NOT
     trust the marker's tip alone (a tip-matching marker is *necessary, NOT sufficient*: an open
     in-flight marker or mid-flight redesign span can postdate a tip-matching file). A failing/
     erroring proof OR a missing/stale marker FAILS CLOSED with `stop:checkpoint-unprovable` —
@@ -1309,9 +1310,10 @@ def test_cross_file_invariant_flips_on_renamed_steer_token_copy():
 
 
 # --- AC7: cross-file /goal rebirth-pause clause consistency ----------------- #
-# The leg-2 `/goal` rebirth-pause clause must be present + byte-identical in BOTH
-# drive.md and drive-plan.md (AC7 / design-phase4.md edge-case 4): a one-sided edit
-# to either file's `/goal` clause must red this pin.
+# The `/goal` rebirth-pause clause must be present + byte-identical across BOTH
+# drive.md (×2: the rebirth-handoff re-arm goal + the Stage-0 leg-1 goal) and
+# drive-plan.md (×1: the Gate-A→leg-2 goal) — AC7 / design-phase4.md edge-case 4: a
+# one-sided edit to any of those `/goal` surfaces must red this pin.
 _GOAL_REBIRTH_PAUSE_CLAUSE = (
     'paused at a rebirth handoff (waiting="rebirth") awaiting my paste of the resume line'
 )
@@ -1320,15 +1322,17 @@ _GOAL_REBIRTH_PAUSE_CLAUSE = (
 def _assert_goal_rebirth_pause_consistent(drive_md, drive_plan_md):
     """The cross-file AC7 pin, factored so the flip-proof runs the SAME assertion against a
     mutated COPY. Both files (whitespace-normalized) must carry the SAME rebirth-pause `/goal`
-    clause, at its expected per-file count: drive.md carries it on BOTH legs (Gate A + Gate B
-    re-arm = 2 occurrences); drive-plan.md carries it once (its single leg-2 line). A one-sided
-    edit to EITHER file's clause — including dropping just ONE of drive.md's two — reds this.
+    clause, at its expected per-file count. drive.md carries it ×2 — once in the rebirth-handoff
+    successor re-arm goal (the I-section leg-aware re-arm) and once in the Stage-0 leg-1 goal;
+    drive-plan.md carries it ×1, in the Gate-A→leg-2 goal it hands the planner. A one-sided edit
+    to EITHER file's clause — including dropping just ONE of drive.md's two — reds this.
     Raises AssertionError if the clause is missing from, altered in, or mis-counted in either."""
     assert _norm(drive_md).count(_GOAL_REBIRTH_PAUSE_CLAUSE) == 2, (
-        "drive.md must carry the SAME leg-2 /goal rebirth-pause clause on both legs (×2)"
+        "drive.md must carry the SAME /goal rebirth-pause clause in both the rebirth-handoff "
+        "re-arm goal and the Stage-0 leg-1 goal (×2)"
     )
     assert _norm(drive_plan_md).count(_GOAL_REBIRTH_PAUSE_CLAUSE) == 1, (
-        "drive-plan.md must carry the SAME leg-2 /goal rebirth-pause clause (×1)"
+        "drive-plan.md must carry the SAME /goal rebirth-pause clause in its leg-2 goal (×1)"
     )
 
 

@@ -1229,6 +1229,87 @@ JSON
 }
 JSON
       ;;
+    waiting_bad_type)
+      # A non-null-non-string `waiting` (here a number) is unroutable: resume + the stop
+      # hook both BRANCH on this field -> waiting-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": 42
+}
+JSON
+      ;;
+    waiting_bad_string)
+      # A STRING `waiting` outside the canonical grammar ("frobnicate") would mis-branch the
+      # resume/stop-hook consumers (it is neither null, a bare gateA|gateB|rebirth, nor a
+      # stop:/ask: prefixed reason) -> waiting-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": "frobnicate"
+}
+JSON
+      ;;
+    waiting_rebirth_clean)
+      # `rebirth` is the lone CONTINUE waiting value (the resume-as-continue this feature is
+      # about) — it is a valid bare reason and must pass.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": "rebirth"
+}
+JSON
+      ;;
+    waiting_stop_clean)
+      # A prefixed human-pause reason ("stop:checkpoint-unprovable") is valid -> must pass.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": "stop:checkpoint-unprovable"
+}
+JSON
+      ;;
+    waiting_null_clean)
+      # An EXPLICIT null `waiting` (the autonomous, not-paused state) is valid -> must pass.
+      # (The base `clean` fixture omits the key entirely; absent ≡ null. This pins the
+      # explicit-null form too.)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": null
+}
+JSON
+      ;;
   esac
   echo "$repo $rd"
 }

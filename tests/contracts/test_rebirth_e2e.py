@@ -471,6 +471,83 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
         "re-armed: rebirth_pending was cleared, so the hook must NOT re-fire the escalation steer"
 
 
+def test_step4b_waiting_rebirth_is_a_continue_not_a_human_pause(fake_home):
+    """The rebirth-CONTINUE branch, exercised directly (AC1 — the resume-as-continue this
+    feature exists for). DISTINCT from test_step4's rebind-isolation control, which CLEARS
+    `waiting` before the resume so the rebind is the only variable: there the
+    `waiting=="rebirth"` continue branch is never actually taken. Here `waiting` STAYS
+    "rebirth" through the handoff and the hook is exercised against it, proving:
+
+      (a) the OUTGOING session's Stop hook ALLOWS the turn to END on a `waiting=="rebirth"`
+          run — the hook acts on `waiting`'s TRUTHINESS only (drive-stop-hook main(): it
+          `continue`s past any waiting run), so a rebirth pause lets the outgoing turn end
+          exactly like a human pause would. This is what makes the handoff a clean stop.
+      (b) the CONTINUE semantics (NOT a human-answer wait): a fresh successor, after the D7
+          rebind, RE-PROVES BOTH modes clean on the still-`waiting=="rebirth"` reconstructed
+          state — i.e. the run is resumable WITHOUT any human answer — and only THEN clears
+          `waiting=null` in the re-proven CONTINUE branch (drive.md L84-87: clear in the
+          re-proven CONTINUE branch, never before). After that clear the REAL hook
+          blocks-to-continue for the successor, i.e. the pipeline auto-resumes. A human pause
+          (gateA/gateB/stop:/ask:) would instead require a human answer, never an auto-clear
+          on a passing proof.
+    """
+    repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
+    tip = _rev(repo, "drive/e2e-run")
+
+    # The outgoing handoff: both modes gate -> marker + waiting="rebirth" (NOT cleared here).
+    handed_off, _proof = _perform_handoff(repo, rd)
+    assert handed_off, "the outgoing handoff must gate on BOTH modes clean"
+    marker = rd / "checkpoint-complete.marker"
+    st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    assert st["waiting"] == "rebirth", "the handoff set the rebirth pause"
+
+    # (a) The OUTGOING session's Stop hook ALLOWS the turn to end *because* waiting is truthy:
+    #     a rebirth pause ends the outgoing turn just like a human pause. (Same session id
+    #     SID_OUT that owns the run — the allow is driven by `waiting`, not by ownership.)
+    cp_out = run_hook(
+        _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_OUT),
+        home=fake_home,
+    )
+    assert hook_decision(cp_out) is None, \
+        "waiting==rebirth is truthy -> the hook lets the OUTGOING turn END (the handoff stop)"
+
+    # (b) The successor takes the CONTINUE branch. Rebind (D7) + consume the single-use marker,
+    #     with `waiting` STILL "rebirth" (the resume re-proves BEFORE clearing — L84-87).
+    st["sessionId"] = SID_IN
+    st["rebirth_pending"] = False
+    _atomic_write_json(rd / "state.json", st)
+    recorded = json.loads(marker.read_text(encoding="utf-8"))
+    assert recorded.get("proof", {}).get("tip") == tip, "marker must validate (tip-match)"
+    marker.unlink()
+
+    # The re-prove gate runs while waiting is STILL "rebirth" — proving resumability needs NO
+    # human answer (the rebirth-continue distinction). state-lint must ALSO accept rebirth as
+    # a clean waiting value (the per-field guard added this round must not over-reject it).
+    st_reprove = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    assert st_reprove["waiting"] == "rebirth", "waiting is re-proven BEFORE it is cleared"
+    rc_c, obj_c = run_conformance(repo, rd, "checkpoint")
+    rc_l, obj_l = run_conformance(repo, rd, "state-lint")
+    assert rc_c == 0 and obj_c["clean"] is True, "re-prove checkpoint must pass on a rebirth-waiting run"
+    assert rc_l == 0 and obj_l["clean"] is True, \
+        "re-prove state-lint must pass: rebirth is a VALID waiting value (no over-reject)"
+
+    # The re-proven CONTINUE branch clears waiting=null (auto-clear on a passing proof — the
+    # mark of a continue, not a human-answer wait).
+    st_reprove["waiting"] = None
+    _atomic_write_json(rd / "state.json", st_reprove)
+
+    # The successor now blocks-to-continue: the pipeline AUTO-RESUMES (no human answer was
+    # ever required — that is the rebirth-continue semantics).
+    cp_in = run_hook(
+        _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_IN),
+        home=fake_home,
+    )
+    d_in = hook_decision(cp_in)
+    assert d_in is not None and d_in["decision"] == "block", \
+        "after the re-proven CONTINUE clears waiting, the successor auto-resumes (blocks-to-continue)"
+    assert "e2e-run" in d_in["reason"]
+
+
 # =========================================================================== #
 # CHAIN-BREAK NEGATIVES (AC2, load-bearing) — sever ONE link, prove the harness FAILS.
 # A harness that cannot red on a broken chain is worthless; each negative below is a real

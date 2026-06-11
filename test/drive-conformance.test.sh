@@ -557,6 +557,25 @@ read -r repo rd < <(mk_state_lint slice_key_newline)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL newline slice key -> exit 1" 1 "$RC"
 assert_valid_json "SL newline slice key -> envelope is still VALID JSON"
 assert_out_count "SL newline slice key -> exactly one slice-routing-malformed (no shredding)" '"reason":"slice-routing-malformed"' 1
+# `waiting` validation: resume AND the stop hook BRANCH on this field, so a malformed value
+# misroutes both -> it must fail closed. Canonical shape: null / gateA / gateB / rebirth /
+# stop:<short> / ask:<header>. A non-null-non-string OR an off-grammar string is malformed.
+read -r repo rd < <(mk_state_lint waiting_bad_type)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:42 (non-string) -> exit 1" 1 "$RC"
+assert_out_contains "SL non-string waiting -> waiting-malformed" '{"scope":"waiting","reason":"waiting-malformed"'
+read -r repo rd < <(mk_state_lint waiting_bad_string)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:\"frobnicate\" (off-grammar) -> exit 1" 1 "$RC"
+assert_out_contains "SL off-grammar waiting string -> waiting-malformed" '{"scope":"waiting","reason":"waiting-malformed"'
+# The rebirth-CONTINUE value (and other valid shapes) must NOT be over-rejected.
+read -r repo rd < <(mk_state_lint waiting_rebirth_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:\"rebirth\" (the continue value) clean" 0 "$RC"
+assert_out_contains "SL rebirth waiting clean envelope" '"clean":true,"mode":"state-lint"'
+read -r repo rd < <(mk_state_lint waiting_stop_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:\"stop:...\" (prefixed reason) clean" 0 "$RC"
+assert_out_contains "SL stop: waiting clean envelope" '"clean":true,"mode":"state-lint"'
+read -r repo rd < <(mk_state_lint waiting_null_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:null (explicit) clean" 0 "$RC"
+assert_out_contains "SL explicit-null waiting clean envelope" '"clean":true,"mode":"state-lint"'
 # missing state.json (no file, but drive/<runId> resolves) -> exit 2 (IO error, not a verdict).
 read -r repo rd < <(mk_state_lint no_state)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL absent state.json -> exit 2 (IO error)" 2 "$RC"
