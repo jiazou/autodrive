@@ -79,10 +79,10 @@ At each planning safe boundary — between these steps and after each design-rev
 coordinator is between dispatch units with no open `inflight-*.marker`), and before presenting
 Gate A — run the **Coordinator soft-check** then the **Safe-boundary rebirth handler** per
 `~/.claude/commands/drive.md` § *Coordinator soft-check* + § *I1 — Safe-boundary rebirth
-handler* (the shared routine: with `rebirth_pending` set at a safe boundary, prove
-`bin/drive-conformance.sh $RUN_DIR --mode checkpoint` → write `checkpoint-complete.marker` →
-set `waiting="rebirth"` → Present human pause with the paste-ready `/drive <runId>`). Gate A
-precedence still holds (§ I1 Gate/STOP precedence). If `drive.md` is unreachable, skip the
+handler* (the shared routine: with `rebirth_pending` set at a safe boundary, prove the
+checkpoint → write `checkpoint-complete.marker` → set `waiting="rebirth"` → Present human
+pause with the paste-ready `/drive <runId>`; the I1 routine is the authority for the proof
+modes). Gate A precedence still holds (§ I1 Gate/STOP precedence). If `drive.md` is unreachable, skip the
 handler and continue (the Stop-hook backstop still steers).
 
 ## Gate A (the single human checkpoint for direction)
@@ -105,7 +105,7 @@ me the **leg-2** goal to paste *alongside* my approval — it keeps the execute 
 > Paste this with your approval to drive the execute half up to Gate B:
 >
 > ```
-> /goal The /drive run for "<task>" has opened its PR (Gate B passed, stage=done), OR is paused awaiting my input at Gate B, a non-decision STOP, or an AskUserQuestion. NOT met while autonomous implement / review / harden / verify / ship work remains.
+> /goal The /drive run for "<task>" has opened its PR (Gate B passed, stage=done), OR is paused awaiting my input at Gate B, a non-decision STOP, or an AskUserQuestion, OR is paused at a rebirth handoff (waiting="rebirth") awaiting my paste of the resume line. NOT met while autonomous implement / review / harden / verify / ship work remains.
 > ```
 
 (If the user skips it, the execute half still runs — it just won't auto-continue
