@@ -6,7 +6,12 @@ Wired into ~/.claude/settings.json by bin/install-operating-rules.sh. On every S
 BLOCKS the turn from ending while an active /drive run owned by THIS session still has
 autonomous work to do — so the pipeline keeps driving across turns — and ALLOWS the
 stop the moment the run is waiting on the human (Gate A/B, a non-decision STOP, an
-AskUserQuestion) or is done.
+AskUserQuestion) or is done. A `rebirth` pause (context-pressure handoff) ALSO has
+`waiting` truthy, so the hook ALLOWS its stop identically — but its semantics are
+continue-on-resume, not a human pause: the outgoing session sets `waiting="rebirth"`
+to hand off and the resume path auto-clears it as a CONTINUE (see the coordinator's
+I1/I4 in drive.md). The hook acts on `waiting`'s truthiness only and does not
+distinguish it.
 
 Design bias: blocking a stop is the "dangerous" action (it can push the agent past a
 halt), so this hook is biased HARD toward allowing. It blocks ONLY on positive
@@ -23,17 +28,25 @@ state.json contract /drive maintains (see drive.md):
   sessionId    — owning Claude session id ($CLAUDE_CODE_SESSION_ID)
   stage        — pipeline stage; "done" once the PR is open
   autoContinue — if exactly False, this hook is disabled for the run (kill-switch)
-  waiting      — truthy while paused for the human (gate / STOP / question); else absent
+  waiting      — truthy while paused for the human (gate / STOP / question); else absent.
+                 `rebirth` is ALSO a truthy `waiting` value but NOT a human pause: the
+                 outgoing session sets it to checkpoint-and-hand-off and the resume path
+                 auto-clears it as a CONTINUE (dual nature). The hook does not distinguish
+                 it — it acts on truthiness only.
   rebirth_pending — truthy once context-pressure has been signalled (set by the
-                    coordinator, NOT this hook); suppresses the re-steer (idempotent)
+                    coordinator, NOT this hook); selects the ESCALATION steer over the
+                    set-flag steer (I7), never suppresses both
 
-Context-pressure detection (signal-only, design phase 2 / I2 / D28): when the owned
-run's transcript token sum crosses the hard high-water mark, this hook APPENDS a
-signal-only steer to its block reason instructing the coordinator to set
-state.rebirth_pending=true. It NEVER writes state.json itself and NEVER hands off /
-checkpoints / pauses (that is Phase 3, at a safe boundary). The detection is fully
-fail-open: any error degrades to "no steer this turn", leaving the original
-continue-only reason unchanged.
+Context-pressure detection (signal-only, design phase 2/3 / I2 / I7 / D28/D32): when the
+owned run's transcript token sum crosses the hard high-water mark, this hook APPENDS a
+steer to its block reason. The steer is keyed on state.rebirth_pending: when it is NOT
+yet set, the set-flag steer (instruct the coordinator to set state.rebirth_pending=true);
+when it is ALREADY set, the ESCALATION steer (instruct the coordinator to checkpoint and
+set state.waiting="rebirth" at its next safe boundary). BOTH are advisory — the hook NEVER
+writes state.json itself and NEVER hands off / checkpoints / pauses / inspects markers
+(that is Phase 3's coordinator handler, at a safe boundary). The detection is fully
+fail-open: any error degrades to "no steer this turn", leaving the original continue-only
+reason unchanged.
 """
 import sys
 import os
@@ -99,18 +112,20 @@ def _run_state_paths():
 
 
 def _rebirth_steer(run, payload):
-    """A signal-only CONTEXT-PRESSURE sentence to APPEND to the block reason when the
-    owned run has crossed the hard high-water mark — or "" when it has not, or on ANY
-    error (fully fail-open, per I2). Never writes state.json, never inspects markers.
+    """A CONTEXT-PRESSURE sentence to APPEND to the block reason when the owned run has
+    crossed the hard high-water mark — or "" when it has not, or on ANY error (fully
+    fail-open, per I2/I7). Never writes state.json, never inspects markers, never enacts
+    the handoff (D28 — advisory only; the coordinator's I1 handler acts at a boundary).
 
-    Steers ONLY when all hold (I2): the transcript token sum >= window * hard fraction,
-    run.rebirth_pending is not already truthy (idempotent — don't re-steer; the
-    coordinator may have already set it), and (already guaranteed by the caller's scan)
-    the run is not waiting. The wording is signal-only: "set the flag", never "hand off".
+    Both steers are hard-water gated (`tokens >= window * hard fraction`); below water ->
+    "" in either case. The branch is keyed on `run.rebirth_pending` (I7):
+      - falsy  -> the phase-2 SET-FLAG steer ("set state.rebirth_pending=true now; do NOT
+        hand off"). Signal-only: "set the flag", never "hand off".
+      - truthy -> the ESCALATION steer ("you have already signalled; checkpoint + set
+        waiting=rebirth at your NEXT safe boundary"). It steers the OUTGOING session to
+        hand off later; it does NOT itself checkpoint, write state, or pause.
     """
     try:
-        if run.get("rebirth_pending"):
-            return ""  # idempotent: already signalled, don't re-steer
         transcript_path = payload.get("transcript_path")
         if not transcript_path or not os.path.isfile(transcript_path):
             return ""  # no transcript -> no token sum -> skip (fail-open)
@@ -126,9 +141,23 @@ def _rebirth_steer(run, payload):
         thresholds = rebirth_thresholds.load_thresholds()
         window, hard, _soft = rebirth_thresholds.resolve_thresholds(model, thresholds)
         if tokens < hard:
-            return ""  # below the hard high-water mark -> no steer
+            return ""  # below the hard high-water mark -> no steer (either branch)
 
         pct = tokens * 100 // window
+        if run.get("rebirth_pending"):
+            # ESCALATION: the flag is set but no boundary has been reached yet — steer the
+            # outgoing session to perform the handoff at its NEXT safe boundary (I7/D32).
+            return (
+                f" CONTEXT-PRESSURE: this run is over the rebirth high-water mark and "
+                f"state.rebirth_pending is already set (context ~{pct}% of the "
+                f"{window}-token window). At your NEXT safe boundary (no open "
+                f"inflight-*.marker), run the rebirth handoff per the contract: prove the "
+                f"checkpoint (bin/drive-conformance.sh --mode checkpoint), write "
+                f"checkpoint-complete.marker, set state.waiting=\"rebirth\", and present "
+                f"the handoff block. Until that boundary, keep driving — do NOT hand off "
+                f"mid-dispatch."
+            )
+        # PRE-FLAG: the phase-2 signal-only set-flag steer (unchanged wording).
         return (
             f" CONTEXT-PRESSURE: this run has crossed the rebirth high-water mark "
             f"(context ~{pct}% of the {window}-token window). Set "

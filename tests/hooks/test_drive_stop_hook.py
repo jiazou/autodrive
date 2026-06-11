@@ -29,9 +29,13 @@ FIXTURES = _helpers.REPO_ROOT / "tests" / "hooks" / "fixtures"
 OVER_WATER = FIXTURES / "transcript-over-water.jsonl"    # Opus-4.8, sum 909200 (>= 850000)
 UNDER_WATER = FIXTURES / "transcript-under-water.jsonl"  # Opus-4.8, sum 315000 (< 850000)
 
-# The signal-only steer's stable anchor (the exact sentence the hook appends, I2).
+# The pre-flag set-flag steer's stable anchor (the exact sentence the hook appends, I2).
 CONTEXT_PRESSURE_ANCHOR = "CONTEXT-PRESSURE: this run has crossed the rebirth high-water mark"
-# Words the signal-only wording must NEVER use (it sets a flag, never enacts the handoff).
+# The post-flag ESCALATION steer's stable anchor (I7: flag already set, steer the handoff).
+ESCALATION_ANCHOR = (
+    "this run is over the rebirth high-water mark and state.rebirth_pending is already set"
+)
+# Words the signal-only set-flag wording must NEVER use (it sets a flag, never enacts now).
 FORBIDDEN_HANDOFF_WORDS = ("hand off now", "checkpoint now", "pause here now")
 
 
@@ -371,6 +375,8 @@ def test_over_water_appends_rebirth_steer(fake_home):
     assert d is not None and d["decision"] == "block"
     assert CONTEXT_PRESSURE_ANCHOR in d["reason"], "expected the hard-water steer appended"
     assert "state.rebirth_pending=true" in d["reason"]
+    # The pre-flag case emits the SET-FLAG steer, NOT the post-flag escalation (AC6).
+    assert ESCALATION_ANCHOR not in d["reason"], "pre-flag must not emit the escalation steer"
     # The original continue steer is PRESERVED (still drives the pipeline).
     assert "Continue the pipeline" in d["reason"]
     assert "run-42" in d["reason"]
@@ -396,6 +402,7 @@ def test_under_water_no_rebirth_steer(fake_home):
     d = decision(cp)
     assert d is not None and d["decision"] == "block"
     assert CONTEXT_PRESSURE_ANCHOR not in d["reason"], "no steer expected below water"
+    assert ESCALATION_ANCHOR not in d["reason"], "no escalation steer expected below water"
     assert "Continue the pipeline" in d["reason"]
     assert "run-42" in d["reason"]
 
@@ -461,32 +468,63 @@ def test_window_uses_model_of_latest_usage_line_not_a_later_usageless_line(fake_
     assert "200000-token window" not in d["reason"]
 
 
-# --- AC3: idempotent -> no re-steer ---------------------------------------- #
-def test_already_pending_no_resteer_even_over_water(fake_home):
-    """A run with rebirth_pending == true and a transcript OVER water -> no
-    CONTEXT-PRESSURE sentence (don't re-signal; the coordinator already set it). The
-    base block reason is still emitted (the run keeps driving) (AC3)."""
+# --- AC5: post-flag over-water -> ESCALATION steer (not the set-flag steer) -- #
+def test_already_pending_over_water_emits_escalation_steer(fake_home):
+    """A run with rebirth_pending == true and a transcript OVER water -> the block reason
+    contains the ESCALATION sentence (checkpoint + set waiting="rebirth" at the next safe
+    boundary) and NOT the phase-2 set-flag sentence (don't re-emit "set the flag"; the
+    coordinator already set it). The base continue steer is still emitted (AC5).
+
+    Replaces the phase-2 idempotency test: that pre-change behavior (return "" when the
+    flag was set) is now the two-branch split — the post-flag branch emits the escalation
+    instead of nothing."""
     write_run(fake_home, "run-42", _block_state(rebirth_pending=True))
     cp = run_hook(_payload(transcript=OVER_WATER), home=fake_home)
 
     assert cp.returncode == 0
     d = decision(cp)
     assert d is not None and d["decision"] == "block"
-    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"], "must not re-steer when already pending"
+    # Escalation steer IS present; the set-flag steer is ABSENT (the split, AC5).
+    assert ESCALATION_ANCHOR in d["reason"], "expected the post-flag escalation steer"
+    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"], \
+        "must not re-emit the set-flag steer once the flag is already set"
+    # The escalation names the handoff sequence it defers to the coordinator's boundary.
+    assert "next safe boundary" in d["reason"].lower()
+    assert 'state.waiting="rebirth"' in d["reason"]
+    assert "--mode checkpoint" in d["reason"]
+    # The base keep-driving steer is preserved.
+    assert "Continue the pipeline" in d["reason"]
+    assert "run-42" in d["reason"]
+
+
+# --- AC7: post-flag BELOW water -> neither steer ---------------------------- #
+def test_already_pending_below_water_no_steer(fake_home):
+    """A run with rebirth_pending == true but a transcript UNDER water -> neither the
+    set-flag NOR the escalation steer (escalation is hard-water gated, AC7). The base
+    continue steer is present + unchanged."""
+    write_run(fake_home, "run-42", _block_state(rebirth_pending=True))
+    cp = run_hook(_payload(transcript=UNDER_WATER), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert ESCALATION_ANCHOR not in d["reason"], "escalation is hard-water gated"
+    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"]
     assert "Continue the pipeline" in d["reason"]
 
 
-# --- AC4: signal-only — the hook NEVER writes state.json or pauses --------- #
+# --- AC8: signal-only — the hook NEVER writes state.json or pauses --------- #
 @pytest.mark.parametrize(
     "transcript, pending",
     [(OVER_WATER, False), (UNDER_WATER, False), (OVER_WATER, True)],
-    ids=["over-water", "under-water", "already-pending"],
+    ids=["set-flag", "under-water", "escalation"],
 )
 def test_hook_leaves_state_byte_unchanged(fake_home, transcript, pending):
-    """Across the steer / no-steer / idempotent cases (AC1-3), the hook prints ONLY a
+    """Across the set-flag / no-steer / ESCALATION cases (AC5-8), the hook prints ONLY a
     block decision, exits 0, and leaves state.json BYTE-UNCHANGED — detection is signal
-    only; ONLY the coordinator writes rebirth_pending. No waiting/checkpoint/handoff is
-    performed by the hook (AC4)."""
+    only; ONLY the coordinator writes rebirth_pending/waiting. No waiting/checkpoint/handoff
+    is performed by the hook, including on the escalation (rebirth_pending=true) path
+    (AC8)."""
     state = _block_state(**({"rebirth_pending": True} if pending else {}))
     path = write_run(fake_home, "run-42", state)
     before = _read_state_bytes(path)
@@ -540,6 +578,18 @@ def test_failopen_missing_transcript_path(fake_home):
     baseline = _baseline_reason(fake_home)
     write_run(fake_home, "run-42", _block_state())
     cp = run_hook({"session_id": SID}, home=fake_home)  # no transcript_path
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_escalation_path_missing_transcript(fake_home):
+    """AC8 fail-open on the ESCALATION (rebirth_pending=true) branch: a missing
+    transcript_path with the flag already set degrades to the byte-exact original
+    continue-only reason (NO escalation sentence) — the escalation branch is fail-open
+    just like the set-flag branch."""
+    baseline = _baseline_reason(fake_home)
+    write_run(fake_home, "run-42", _block_state(rebirth_pending=True))
+    cp = run_hook({"session_id": SID}, home=fake_home)  # no transcript_path, flag set
+    assert ESCALATION_ANCHOR not in baseline  # sanity: baseline carries no steer
     _assert_failopen(cp, baseline)
 
 
@@ -678,3 +728,40 @@ def test_failopen_malformed_thresholds_file(fake_home, tmp_path):
         capture_output=True, text=True, timeout=30,
     )
     _assert_failopen(cp, baseline)
+
+
+# --------------------------------------------------------------------------- #
+# AC11: the hook's module docstring `waiting` contract enumerates `rebirth`
+# with its dual nature (I6/D37). The hook BEHAVIOUR is unchanged (truthiness
+# only); this pins the documentation-contract amendment by reading the module's
+# own __doc__ so it no longer reads as "human-pause only".
+# --------------------------------------------------------------------------- #
+def _hook_doc():
+    """Load bin/drive-stop-hook.py's module __doc__ without executing main().
+    The module only runs main() under `if __name__ == "__main__"`, so importing
+    it by spec is side-effect free."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_drive_stop_hook_doc", str(STOP_HOOK))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.__doc__ or ""
+
+
+def test_docstring_waiting_contract_enumerates_rebirth_dual_nature():
+    """The hook docstring's `waiting` contract enumerates `rebirth` AND states its dual
+    nature (set-to-pause in the outgoing session; auto-cleared-as-continue on resume),
+    consistent with drive.md's canonical definition (AC11, I6/D37). A docstring that adds
+    `rebirth` to the set but omits the continue/auto-clear semantics — or omits it — flips
+    this test."""
+    doc = _hook_doc()
+    low = doc.lower()
+    assert "rebirth" in low, "the docstring `waiting` contract must enumerate rebirth"
+    # Dual nature: it is a CONTINUE on resume (auto-cleared), not a human pause.
+    assert "continue-on-resume" in low or "auto-clear" in low or "auto-clears" in low, \
+        "the docstring must state rebirth's continue/auto-clear-on-resume semantics"
+    # And that the outgoing session SETS it to hand off (the set-to-pause half).
+    assert "outgoing session sets" in low or "outgoing session" in low, \
+        "the docstring must state the outgoing session sets waiting=rebirth to hand off"
+    # The hook acts on truthiness only (it does not distinguish the value).
+    assert "truthiness" in low
