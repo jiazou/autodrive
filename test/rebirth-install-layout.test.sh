@@ -118,7 +118,7 @@ statusline_effective=$(
     # in THIS scope (a prefixed eval can scope/protect the var and hide the override).
     _line="$(printf '%s' "$_line" | sed -E 's/^[[:space:]]*(export|readonly|declare([[:space:]]+-[A-Za-z]+)*)[[:space:]]+//')"
     eval "$_line"
-  done < <(grep -E '^[[:space:]]*(export|readonly|declare([[:space:]]+-[A-Za-z]+)*[[:space:]]+)?THRESHOLDS_FILE=' "$STATUSLINE")
+  done < <(grep -E '^[[:space:]]*((export|readonly|declare([[:space:]]+-[A-Za-z]+)*)[[:space:]]+)?THRESHOLDS_FILE=' "$STATUSLINE")
   if [ -n "$THRESHOLDS_FILE" ]; then
     got_dir="$( cd "$(dirname "$THRESHOLDS_FILE")" 2>/dev/null && pwd -P )"
     if [ "$got_dir" = "$( cd "$BIN" && pwd -P )" ] \
@@ -196,11 +196,34 @@ for path in sys.argv[1:]:
         continue
     tainted = set()
     code = [strip_comment(l) for l in lines]
-    # Pass 1: taint vars assigned a value that references the repo bin/ or a rebirth file.
+    # Collect every assignment as (lhs, rhs) once, then taint to a FIXPOINT so taint
+    # propagates through ALIASES, not just one hop: a var is tainted if its RHS
+    # references the repo bin/ or a rebirth file OR references an already-tainted var
+    # (`$T`/`${T}` shell, bare `T` python). Iterating to a fixpoint catches a chain
+    # `HOOK_PY=.../bin/...; SRC="$HOOK_PY"; X="$SRC"` — every link becomes tainted.
+    assigns = []
     for l in code:
         m = ASSIGN.match(l)
-        if m and references_repo_bin(m.group(2)):
-            tainted.add(m.group(1))
+        if m:
+            assigns.append((m.group(1), m.group(2)))
+
+    def refs_tainted(text):
+        if not tainted:
+            return False
+        alt = '|'.join(re.escape(v) for v in tainted)
+        rx = re.compile(r'\$\{?(' + alt + r')\}?|(?<![A-Za-z0-9_.])(' + alt + r')(?![A-Za-z0-9_])')
+        return bool(rx.search(text))
+
+    while True:
+        grew = False
+        for lhs, rhs in assigns:
+            if lhs in tainted:
+                continue
+            if references_repo_bin(rhs) or refs_tainted(rhs):
+                tainted.add(lhs)
+                grew = True
+        if not grew:
+            break
     # A tainted var is referenced as `$v`/`${v}` (shell) OR as a bare identifier `v`
     # (python), the latter word-bounded so it cannot match a substring of another name.
     alt = '|'.join(re.escape(v) for v in tainted)
