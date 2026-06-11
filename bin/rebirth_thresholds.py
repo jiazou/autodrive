@@ -20,8 +20,10 @@ Resolution contract (mirrors statusline's bash, restated in python — D24/D25/D
 Token sum (canonical, VERBATIM from statusline.sh L24 — D26): over the transcript
 JSONL, for each `assistant` line whose `.message.usage` is jq-truthy (an empty `{}`
 counts and sums to 0; `null`/absent/`false` is dropped), sum input_tokens +
-cache_creation_input_tokens + cache_read_input_tokens (each missing => 0); take the
-LAST such value (statusline's `tail -1`).
+cache_creation_input_tokens + cache_read_input_tokens under jq's `(.field // 0)`
+arithmetic — `null`/absent/`false` field => 0, a JSON number is used, any other type
+(`""`, `true`, list, dict) is a runtime error that DROPS the line; take the LAST such
+value (statusline's `tail -1`). See `_jq_token`.
 
 jq's error model over `jq -r '<filter>' file | tail -1` has exactly two relevant modes;
 the resolver replicates BOTH uniformly (one guard per mode, no per-shape special-casing):
@@ -71,6 +73,25 @@ def resolve_thresholds(model, thresholds):
     return window, hard, soft
 
 
+def _jq_token(usage, field):
+    """One token field under jq's `(.field // 0)` arithmetic semantics (D26):
+      - absent / `null` / `false`  → 0      (jq `//` defaults on null AND false)
+      - a JSON number (int or float, incl. negative) → the number
+      - anything else (`""`, `true`, list, dict) → RAISE, so the per-line mode-2
+        guard DROPS the line (jq's arithmetic runtime-errors on a non-number, which
+        emits nothing for that line while the stream keeps going).
+    Python `bool` is an `int` subclass but jq treats `true`/`false` as non-numbers:
+    `false` is handled by the `// 0` default above; `true` must raise (drop the line)."""
+    value = usage.get(field)
+    if value is None or value is False:
+        return 0
+    if isinstance(value, bool):  # True — jq-non-number, not defaulted by `//`
+        raise TypeError("bool token field is a jq runtime error")
+    if isinstance(value, (int, float)):
+        return value
+    raise TypeError("non-number token field is a jq runtime error")
+
+
 def latest_usage_tokens(transcript_path):
     """The canonical token sum: the LAST assistant line's input + cache_creation +
     cache_read usage in the transcript JSONL, or None when no usage line exists.
@@ -99,9 +120,9 @@ def latest_usage_tokens(transcript_path):
                 # already a KeyError above) are falsy — `{}` is jq-truthy and sums to 0.
                 if obj.get("type") != "assistant" or usage is None or usage is False:
                     continue
-                tokens = ((usage.get("input_tokens") or 0)
-                          + (usage.get("cache_creation_input_tokens") or 0)
-                          + (usage.get("cache_read_input_tokens") or 0))
+                tokens = (_jq_token(usage, "input_tokens")
+                          + _jq_token(usage, "cache_creation_input_tokens")
+                          + _jq_token(usage, "cache_read_input_tokens"))
             except Exception:
                 continue
     return tokens

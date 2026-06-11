@@ -180,7 +180,10 @@ def _statusline_token_sum(transcript_path):
     )
     out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
     raw = out.stdout.strip()
-    return int(raw) if raw else None
+    if not raw:
+        return None
+    f = float(raw)
+    return int(f) if f.is_integer() else f  # jq may emit a float (e.g. 3.5)
 
 
 @pytest.mark.skipif(shutil.which("jq") is None, reason="jq required")
@@ -333,6 +336,27 @@ _DRIFT_SHAPES = {
     "usage_nonobject_string":  (f'{_A}\n{{"type":"assistant","message":{{"usage":"x"}}}}\n{_B}', 999),
     "string_input_tokens":     (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":"7"}}}}}}\n{_B}', 999),
     "string_cache_field":      (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"cache_read_input_tokens":"x"}}}}}}\n{_B}', 999),
+    # --- token-field VALUE TYPES vs jq `(.field // 0)` (r4): a non-number that is
+    # neither null nor false is a jq arithmetic runtime error → drop the line (→ 999).
+    # `null`/`false` are `// 0` defaults; a real number is summed. Sweeps both an
+    # input_tokens and a cache field so the helper is consistent across all three. ---
+    # empty-string token field is the r4 FLIP: pre-fix `or 0` collapsed `""` to 0,
+    # but jq drops the line (string arithmetic error) so the prior 100 wins:
+    "tok_emptystr_input_latest": (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":""}}}}}}', 100),
+    "tok_emptystr_cache_latest": (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":5,"cache_read_input_tokens":""}}}}}}', 100),
+    "tok_emptystr_input_mid":    (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":""}}}}}}\n{_B}', 999),
+    "tok_true_input":          (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":true}}}}}}\n{_B}', 999),
+    "tok_true_cache":          (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"cache_creation_input_tokens":true}}}}}}\n{_B}', 999),
+    "tok_emptyarr_input":      (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":[]}}}}}}\n{_B}', 999),
+    "tok_emptyobj_input":      (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":{{}}}}}}}}\n{_B}', 999),
+    # null/false token field → `// 0` default (NOT a drop); latest line so it wins:
+    "tok_false_input_latest":  (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":false}}}}}}', 0),
+    "tok_null_input_latest":   (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":null}}}}}}', 0),
+    "tok_false_cache_latest":  (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":4,"cache_creation_input_tokens":false}}}}}}', 4),
+    # a real number (int / float, incl. absent-other-fields → 0) is summed:
+    "tok_int_input_latest":    (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":5}}}}}}', 5),
+    "tok_float_input_latest":  (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"input_tokens":1.5,"cache_read_input_tokens":2}}}}}}', 3.5),
+    "tok_absent_input_latest": (f'{_A}\n{{"type":"assistant","message":{{"usage":{{"cache_read_input_tokens":7}}}}}}', 7),
     # --- jq-falsy/absent usage → dropped by `select`, scan continues (no crash) ---
     "usage_false_latest":      (f'{_A}\n{{"type":"assistant","message":{{"usage":false}}}}', 100),
     "usage_null_latest":       (f'{_A}\n{{"type":"assistant","message":{{"usage":null}}}}', 100),
