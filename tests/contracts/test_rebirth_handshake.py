@@ -233,6 +233,41 @@ def test_handoff_block_has_resume_line_and_rearmed_goal():
     )
 
 
+def _handoff_goal_line():
+    """The `/goal …` line inside the bounded handoff block, whitespace-normalized — the
+    leg-aware re-arm line whose trailing `<leg-condition>` placeholder the selector binds.
+    Bounded to the handoff block so an unrelated `/goal` line elsewhere can't satisfy it."""
+    block = _norm(_handoff_block())
+    start = block.index("/goal The /drive run <runId> is resuming after a context-pressure")
+    # the line is the goal sentence through its trailing `<leg-condition>` placeholder token
+    return block[start:]
+
+
+def test_handoff_block_goal_line_carries_leg_condition_placeholder():
+    """AC12: the handoff block's `/goal` re-arm line actually CONTAINS the `<leg-condition>`
+    placeholder token (not a dropped/empty tail) — so the leg-aware condition is bound at
+    resume, not silently omitted. Dropping the placeholder from the `/goal` line reds this."""
+    goal_line = _handoff_goal_line()
+    assert "<leg-condition>" in goal_line, (
+        "the handoff block's `/goal` re-arm line must carry the `<leg-condition>` placeholder "
+        "token (a dropped placeholder would re-arm a leg-blind goal)"
+    )
+
+
+def test_handoff_goal_placeholder_pin_flips_on_dropped_placeholder_copy():
+    """Flip-proof (mutate a COPY, never the real file): dropping the trailing
+    `<leg-condition>` placeholder from a COPY of the handoff block's `/goal` line makes the
+    placeholder pin RED — proving it bites on the bound placeholder, not incidentally green."""
+    block = _norm(_handoff_block())
+    # remove the trailing placeholder token from the COPY (the exact drop drift AC12 prevents)
+    drifted = block.replace(" <leg-condition>", "", 1)
+    assert drifted != block, "the placeholder-drop mutation matched nothing"
+    start = drifted.index("/goal The /drive run <runId> is resuming after a context-pressure")
+    assert "<leg-condition>" not in drifted[start:], (
+        "dropping the `<leg-condition>` placeholder from a COPY must red the placeholder pin"
+    )
+
+
 # =========================================================================== #
 # AC4 — resume treats rebirth-waiting as CONTINUE; rebirth_pending re-arm at the
 # sessionId-rebind step (single reset point). Bounded/enumerated by BULLET INDEX.
@@ -569,6 +604,118 @@ def test_leg_condition_selector_is_total_over_stage_enum():
     assert len(covered) == len(set(covered)) == len(_STAGE_ENUM), (
         f"each stage must map to EXACTLY ONE leg-condition; got {sorted(covered)}"
     )
+
+
+# The two canonical leg-condition semantics (whitespace-normalized, meaning-bearing
+# fragments — NOT the whole line, so benign reflow/added qualifiers don't false-red). Each
+# is the distinctive "NOT met while autonomous <leg-work> remains" clause that the resume
+# `/goal` must carry for its leg; they mirror the Stage-0/Gate-A leg-goal definitions.
+#   - PLANNING leg (premises, plan): autonomous planning/design/autoplan/review work remains.
+#   - EXECUTE   leg (execute, verify, ship): autonomous implement/review/harden/verify/ship.
+_PLANNING_COND = "NOT met while autonomous planning"
+_PLANNING_COND_TAIL = "design, autoplan, dual-voice review) work remains."
+_EXECUTE_COND = "NOT met while autonomous implement / review / harden / verify / ship work remains."
+
+# The stage-set that keys each leg, as the frozensets the selector partition must produce.
+_PLANNING_STAGES = frozenset({"premises", "plan"})
+_EXECUTE_STAGES = frozenset({"execute", "verify", "ship"})
+
+
+def _leg_bullet_map(section):
+    """Map each selector bullet's covered stage-set (a frozenset of stage tokens) to its
+    whitespace-normalized leg-condition body. Reuses the AC12 `_LEG_BULLET_RE`/`_STAGE_TOK_RE`
+    enumeration so the mapping pin walks the SAME selector partition the totality pin does."""
+    out = {}
+    for stages_blob, cond in _LEG_BULLET_RE.findall(section):
+        toks = frozenset(_STAGE_TOK_RE.findall(stages_blob))
+        out[toks] = _norm(cond)
+    return out
+
+
+def _assert_leg_condition_mapping(section):
+    """AC12 mapping pin (factored for the flip-proofs): the PLANNING stage-set binds the
+    PLANNING-leg condition semantics and the EXECUTE stage-set binds the EXECUTE-leg
+    condition semantics — and each leg's condition is NOT the other's (so swapping the two
+    condition texts, or pointing a stage-set at the wrong leg's condition, reds). Raises
+    AssertionError on any wrong-leg binding."""
+    bymap = _leg_bullet_map(section)
+    assert _PLANNING_STAGES in bymap, (
+        f"the planning leg must be keyed on {sorted(_PLANNING_STAGES)}; got {sorted(map(sorted, bymap))}"
+    )
+    assert _EXECUTE_STAGES in bymap, (
+        f"the execute leg must be keyed on {sorted(_EXECUTE_STAGES)}; got {sorted(map(sorted, bymap))}"
+    )
+    planning_cond = bymap[_PLANNING_STAGES]
+    execute_cond = bymap[_EXECUTE_STAGES]
+    # the planning-leg row binds the PLANNING condition semantics …
+    assert _PLANNING_COND in planning_cond and _PLANNING_COND_TAIL in planning_cond, (
+        "the planning-leg row (premises, plan) must bind the PLANNING-leg condition "
+        f"('NOT met while autonomous planning … work remains.'); got {planning_cond!r}"
+    )
+    # … and NOT the execute condition (so a swap reds) …
+    assert _EXECUTE_COND not in planning_cond, (
+        "the planning-leg row must NOT carry the EXECUTE-leg condition (swap/mis-map)"
+    )
+    # … the execute-leg row binds the EXECUTE condition semantics …
+    assert _EXECUTE_COND in execute_cond, (
+        "the execute-leg row (execute, verify, ship) must bind the EXECUTE-leg condition "
+        f"('NOT met while autonomous implement / review / harden / verify / ship …'); got {execute_cond!r}"
+    )
+    # … and NOT the planning condition (so a swap reds).
+    assert _PLANNING_COND_TAIL not in execute_cond, (
+        "the execute-leg row must NOT carry the PLANNING-leg condition (swap/mis-map)"
+    )
+
+
+def test_leg_condition_selector_maps_each_leg_to_its_own_condition():
+    """AC12: beyond totality, the selector binds the CORRECT condition per leg — the planning
+    stage-set (premises, plan) → the planning-leg condition, the execute stage-set (execute,
+    verify, ship) → the execute-leg condition — over the REAL merged drive.md. A swapped or
+    mis-mapped condition (a handoff that re-arms the WRONG leg's goal) reds this pin."""
+    _assert_leg_condition_mapping(_leg_selector_section())
+
+
+def test_ac12_mapping_pin_flips_on_swapped_conditions_copy():
+    """Flip-proof (mutate a COPY, never the real file): SWAP the planning-leg and execute-leg
+    condition bodies in a COPY of the selector block and assert the SAME mapping pin RAISES —
+    proving it bites on which leg owns which condition, not just on totality/presence."""
+    section = _leg_selector_section()
+    planning_line = "`NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.`"
+    execute_line = "`NOT met while autonomous implement / review / harden / verify / ship work remains.`"
+    assert planning_line in section and execute_line in section, (
+        "the swap flip-proof must find both canonical condition lines to swap"
+    )
+    # swap via sentinels so the two replacements don't interfere
+    swapped = (
+        section.replace(planning_line, "\x00PLAN\x00", 1)
+        .replace(execute_line, planning_line, 1)
+        .replace("\x00PLAN\x00", execute_line, 1)
+    )
+    assert swapped != section, "the condition-swap mutation matched nothing"
+    # totality is UNCHANGED by the swap (same stage tokens) — proving this pin bites on mapping
+    bullets = _LEG_BULLET_RE.findall(swapped)
+    covered = [t for sb, _c in bullets for t in _STAGE_TOK_RE.findall(sb)]
+    assert set(covered) == set(_STAGE_ENUM), "the swap must leave totality intact (mapping-only drift)"
+    with pytest.raises(AssertionError):
+        _assert_leg_condition_mapping(swapped)
+
+
+def test_ac12_mapping_pin_flips_on_wrong_leg_condition_copy():
+    """Flip-proof (mutate a COPY, never the real file): point the EXECUTE-leg row at the
+    PLANNING-leg condition in a COPY (a one-sided mis-map, not a clean swap) and assert the
+    SAME mapping pin RAISES — proving it catches a stage-set bound to the wrong leg's
+    condition, not only a symmetric swap."""
+    section = _leg_selector_section()
+    execute_line = "`NOT met while autonomous implement / review / harden / verify / ship work remains.`"
+    planning_line = "`NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.`"
+    # mis-map: overwrite the execute-leg condition with the planning-leg one (totality intact)
+    mismapped = section.replace(execute_line, planning_line, 1)
+    assert mismapped != section, "the wrong-leg mis-map mutation matched nothing"
+    bullets = _LEG_BULLET_RE.findall(mismapped)
+    covered = [t for sb, _c in bullets for t in _STAGE_TOK_RE.findall(sb)]
+    assert set(covered) == set(_STAGE_ENUM), "the mis-map must leave totality intact"
+    with pytest.raises(AssertionError):
+        _assert_leg_condition_mapping(mismapped)
 
 
 def test_ac12_total_selector_pin_flips_when_a_stage_is_dropped():
