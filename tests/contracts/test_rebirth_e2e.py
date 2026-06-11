@@ -168,6 +168,33 @@ def _atomic_write_json(path, obj):
     os.replace(tmp, path)
 
 
+def _perform_handoff(repo, rd, *, session_id=SID_OUT):
+    """The INTEGRATED both-modes handoff gate (drive.md § I1 step 3/4), exactly as the real
+    coordinator runs it: prove BOTH `--mode checkpoint` AND `--mode state-lint`, and ONLY
+    when BOTH are clean write `checkpoint-complete.marker` (carrying the checkpoint proof)
+    and set `state.waiting="rebirth"`. If EITHER mode is non-clean the handoff fails closed
+    — NO marker, NO waiting set — proving state-lint genuinely gates the handoff in the
+    integrated chain (not just in a separate side assertion).
+
+    Returns (handed_off: bool, checkpoint_proof: dict). `handed_off` is False when the
+    both-modes gate refused; the caller asserts the on-disk consequence either way."""
+    rc_c, proof_c = run_conformance(repo, rd, "checkpoint")
+    rc_l, _proof_l = run_conformance(repo, rd, "state-lint")
+    both_clean = (rc_c == 0 and proof_c.get("clean") is True
+                  and rc_l == 0 and _proof_l.get("clean") is True)
+    if not both_clean:
+        return False, proof_c  # fail closed: neither write happens
+
+    # Write #1: the durable, tip-bound proof RECORD (tmp+mv).
+    marker = rd / "checkpoint-complete.marker"
+    _atomic_write_json(marker, {"at": "now", "sessionId": session_id, "proof": proof_c})
+    # Write #2: the pause, set AFTER the marker is durable (fail-closed ordering).
+    st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    st["waiting"] = "rebirth"
+    _atomic_write_json(rd / "state.json", st)
+    return True, proof_c
+
+
 def mid_run_fixture(home, *, run_id="e2e-run", inflight=False, rebirth_pending=False):
     """Build a realistic coordinator mid-run under the fake HOME:
 
@@ -290,7 +317,8 @@ def test_step1_detect_emits_escalation_steer_when_pending(fake_home):
     assert ESCALATION_ANCHOR in d["reason"], "the post-flag escalation steer must fire"
     assert SET_FLAG_ANCHOR not in d["reason"], "must not re-emit the set-flag steer"
     assert 'state.waiting="rebirth"' in d["reason"]
-    assert "--mode checkpoint" in d["reason"]
+    # The steer names the BOTH-modes proof (per drive.md § I1), not a checkpoint-only surface.
+    assert "--mode checkpoint AND --mode state-lint" in d["reason"]
 
 
 # --- Step 2: PROVE — both modes clean on a checkpoint-complete state. -------- #
@@ -312,36 +340,29 @@ def test_step2_prove_both_modes_clean_on_resumable_state(fake_home):
 
 
 # --- Step 3: HANDOFF — the scriptable prove-then-pause writes are consistent. -- #
-def test_step3_handoff_writes_consistent_marker_then_waiting(fake_home):
-    """The harness performs the SCRIPTABLE coordinator handoff writes — write
-    `checkpoint-complete.marker` (tmp+mv) carrying the step-2 proof JSON, THEN set
-    `state.waiting="rebirth"` (atomic jq|mv-equivalent) — and asserts the on-disk pair is
-    consistent: the marker exists, parses, and its `proof.tip` == the drive/<runId> tip
-    BEFORE waiting=="rebirth" is asserted present. (The prose ORDERING rule is pinned by
-    test_rebirth_handshake.py; here the harness proves the WRITES produce a consistent pair.)"""
+def test_step3_handoff_gates_on_both_modes_then_writes_marker_and_waiting(fake_home):
+    """The harness performs the INTEGRATED both-modes handoff (drive.md § I1 step 3/4): it
+    proves BOTH `--mode checkpoint` AND `--mode state-lint` and ONLY then writes
+    `checkpoint-complete.marker` (tmp+mv, carrying the proof JSON) and sets
+    `state.waiting="rebirth"`. This proves the integrated gate end-to-end — the marker +
+    pause appear iff BOTH modes were clean — not just that the two modes each pass in
+    isolation. The prose ORDERING rule is pinned by test_rebirth_handshake.py; here the
+    harness proves the WRITES are produced by the both-modes gate."""
     repo, rd = mid_run_fixture(fake_home)
     tip = _rev(repo, "drive/e2e-run")
 
-    _rc, proof = run_conformance(repo, rd, "checkpoint")
-    assert proof["clean"] is True
+    handed_off, proof = _perform_handoff(repo, rd)
+    assert handed_off, "both modes clean -> the handoff must proceed"
 
-    # Coordinator write #1: the durable proof RECORD, tip-bound (D11/D17).
+    # The both-modes gate produced a consistent, tip-bound marker (D11/D17) …
     marker = rd / "checkpoint-complete.marker"
-    _atomic_write_json(marker, {"at": "now", "sessionId": SID_OUT, "proof": proof})
-
-    # Ordering on disk: the marker must be a valid, tip-matching proof record BEFORE we
-    # assert the pause is set (the fail-closed handoff sequence).
-    assert marker.is_file(), "marker must be written before the pause is set"
+    assert marker.is_file(), "marker must be written once both modes are clean"
     recorded = json.loads(marker.read_text(encoding="utf-8"))
     assert recorded["proof"]["tip"] == tip, "marker.proof.tip must equal the drive/<runId> tip"
-
-    # Coordinator write #2: set the pause AFTER the marker is durable.
-    st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
-    st["waiting"] = "rebirth"
-    _atomic_write_json(rd / "state.json", st)
-
+    assert proof["tip"] == tip
+    # … and the pause set AFTER it.
     st_after = json.loads((rd / "state.json").read_text(encoding="utf-8"))
-    assert st_after["waiting"] == "rebirth", "the pause must be set once the marker is durable"
+    assert st_after["waiting"] == "rebirth", "the pause must be set once both modes are clean"
 
 
 # --- Step 4: RECONSTRUCT — a fresh process resumes from the durable artifacts. - #
@@ -357,13 +378,10 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
     repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
     tip = _rev(repo, "drive/e2e-run")
 
-    # --- simulate the outgoing handoff (step 3) -----------------------------
-    _rc, proof = run_conformance(repo, rd, "checkpoint")
+    # --- simulate the outgoing handoff (step 3) — the INTEGRATED both-modes gate ---
+    handed_off, proof = _perform_handoff(repo, rd)
+    assert handed_off, "the outgoing handoff must gate on BOTH modes clean before writing"
     marker = rd / "checkpoint-complete.marker"
-    _atomic_write_json(marker, {"at": "now", "sessionId": SID_OUT, "proof": proof})
-    st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
-    st["waiting"] = "rebirth"
-    _atomic_write_json(rd / "state.json", st)
 
     # BEFORE the rebind: prove the sessionId rebind (D7) is the load-bearing variable, with
     # `waiting` controlled OUT of the picture. The continuation hook keeps a run driving only
@@ -551,6 +569,37 @@ def test_chainbreak_proof_severed_state_lint_fails(fake_home, mutate, expect_rea
     rc_c, obj_c = run_conformance(repo, rd, "checkpoint")
     assert rc_c == 0 and obj_c["clean"] is True, \
         "checkpoint must stay clean on a bad state.json (it never reads it) — state-lint is the gate"
+
+
+# --- Break HANDOFF GATE (integrated): state-lint fails -> the both-modes handoff does
+#     NOT proceed (no marker, no waiting=rebirth) even though checkpoint is clean. ---- #
+def test_chainbreak_handoff_state_lint_failure_blocks_marker_and_waiting(fake_home):
+    """The INTEGRATED both-modes gate, severed at the state-lint link: on a malformed routing
+    state.json `--mode checkpoint` STAYS clean (D8 — never reads state.json) but `--mode
+    state-lint` fails, so the integrated `_perform_handoff` refuses — NO
+    `checkpoint-complete.marker` is written and `state.waiting` is NEVER set to "rebirth".
+    This proves state-lint genuinely gates the handoff in the integrated chain, not merely in
+    a side assertion: checkpoint-alone would have written the marker."""
+    repo, rd = mid_run_fixture(fake_home)
+    sj = rd / "state.json"
+    st = json.loads(sj.read_text(encoding="utf-8"))
+    st.update(slices={"1.1": {"step": "bogus", "owns": ["x"], "deps": []}})  # state-lint reds
+    _atomic_write_json(sj, st)
+
+    # Sanity: checkpoint is clean, state-lint fails — exactly the divergence the gate exists for.
+    rc_c, obj_c = run_conformance(repo, rd, "checkpoint")
+    assert rc_c == 0 and obj_c["clean"] is True, "checkpoint clean (never reads state.json)"
+    rc_l, obj_l = run_conformance(repo, rd, "state-lint")
+    assert rc_l == 1 and obj_l["clean"] is False, "state-lint must red on the malformed routing"
+
+    handed_off, _proof = _perform_handoff(repo, rd)
+    assert handed_off is False, "a state-lint failure must fail the both-modes handoff closed"
+    # The fail-closed consequence: NEITHER write happened.
+    assert not (rd / "checkpoint-complete.marker").exists(), \
+        "no marker may be written when the both-modes gate refuses"
+    st_after = json.loads(sj.read_text(encoding="utf-8"))
+    assert st_after.get("waiting") != "rebirth", \
+        "waiting must NOT be set to rebirth when state-lint fails the handoff gate"
 
 
 # --- Break RESUME (marker consumption): a stale checkpoint marker whose proof.tip

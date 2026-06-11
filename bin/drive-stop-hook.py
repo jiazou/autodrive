@@ -121,9 +121,11 @@ def _rebirth_steer(run, payload):
     "" in either case. The branch is keyed on `run.rebirth_pending` (I7):
       - falsy  -> the phase-2 SET-FLAG steer ("set state.rebirth_pending=true now; do NOT
         hand off"). Signal-only: "set the flag", never "hand off".
-      - truthy -> the ESCALATION steer ("you have already signalled; checkpoint + set
-        waiting=rebirth at your NEXT safe boundary"). It steers the OUTGOING session to
-        hand off later; it does NOT itself checkpoint, write state, or pause.
+      - truthy -> the ESCALATION steer ("you have already signalled; perform the rebirth
+        checkpoint + handoff per the drive.md § I1 routine — proof = `--mode checkpoint`
+        AND `--mode state-lint`, both clean — and set waiting=rebirth at your NEXT safe
+        boundary"). It steers the OUTGOING session to hand off later; it does NOT itself
+        checkpoint, write state, or pause.
     """
     try:
         transcript_path = payload.get("transcript_path")
@@ -151,8 +153,9 @@ def _rebirth_steer(run, payload):
                 f" CONTEXT-PRESSURE: this run is over the rebirth high-water mark and "
                 f"state.rebirth_pending is already set (context ~{pct}% of the "
                 f"{window}-token window). At your NEXT safe boundary (no open "
-                f"inflight-*.marker), run the rebirth handoff per the contract: prove the "
-                f"checkpoint (bin/drive-conformance.sh --mode checkpoint), write "
+                f"inflight-*.marker), perform the rebirth checkpoint + handoff per the "
+                f"drive.md § I1 routine (proof = bin/drive-conformance.sh "
+                f"--mode checkpoint AND --mode state-lint, both clean), write "
                 f"checkpoint-complete.marker, set state.waiting=\"rebirth\", and present "
                 f"the handoff block. Until that boundary, keep driving — do NOT hand off "
                 f"mid-dispatch."

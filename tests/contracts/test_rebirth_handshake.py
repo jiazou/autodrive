@@ -1226,8 +1226,9 @@ def _escalation_steer_text(src=None):
 
 def test_hook_escalation_steer_directs_the_i1_handshake():
     """Cross-file invariant: the hook's ESCALATION steer (slice 3.2) names the SAME handshake
-    drive.md's I1 handler (slice 3.1) implements — at the NEXT safe boundary: prove the
-    checkpoint via `--mode checkpoint`, write `checkpoint-complete.marker`, set
+    drive.md's I1 handler (slice 3.1) implements — at the NEXT safe boundary: perform the
+    rebirth checkpoint + handoff per the I1 routine (proof = BOTH `--mode checkpoint` AND
+    `--mode state-lint`, both clean), write `checkpoint-complete.marker`, set
     `waiting="rebirth"`, present the handoff block. So the hook steers the coordinator to do
     precisely what the I1 contract specifies (the hook never enacts it itself)."""
     steer = _escalation_steer_text()
@@ -1237,8 +1238,17 @@ def test_hook_escalation_steer_directs_the_i1_handshake():
     # it defers to the coordinator's NEXT safe boundary — the I1 trigger condition
     assert "At your NEXT safe boundary (no open " in steer
     assert "inflight-*.marker" in steer
-    # and names each I1 step in order: prove → write marker → set waiting → present block
-    assert "bin/drive-conformance.sh --mode checkpoint" in steer, "steer must name the proof"
+    # it points at the I1 routine as the proof authority (not a hard-coded handoff sequence)
+    assert "I1 routine" in steer, "steer must defer to the drive.md § I1 routine"
+    # the proof it names is the BOTH-modes contract — NOT checkpoint-only. Both modes named.
+    assert "--mode checkpoint" in steer and "--mode state-lint" in steer, (
+        "the escalation steer must name BOTH proof modes (the both-modes contract), not "
+        "single out --mode checkpoint"
+    )
+    # NOT checkpoint-only: every `--mode checkpoint` mention is paired with state-lint.
+    assert "--mode checkpoint AND --mode state-lint" in steer, (
+        "the steer must present the both-modes proof, never a checkpoint-only proof surface"
+    )
     assert "checkpoint-complete.marker" in steer, "steer must name the durable marker write"
     # the hook source escapes the quotes in the steer literal, so the raw text reads
     # `state.waiting=\"rebirth\"` — match that source form.
@@ -1248,13 +1258,19 @@ def test_hook_escalation_steer_directs_the_i1_handshake():
     )
     # the proof step is steered BEFORE the waiting set (the I1 fail-closed ordering)
     assert steer.index("--mode checkpoint") < steer.index(r'state.waiting=\"rebirth\"'), (
-        "the escalation steer must order proof-then-pause (checkpoint before waiting set), "
+        "the escalation steer must order proof-then-pause (proof before waiting set), "
         "agreeing with I1's fail-closed ordering"
     )
 
 
 # `rebirth` appears in the source-escaped form `\"rebirth\"` in the steer literal.
-_SHARED_STEER_TOKENS = ("--mode checkpoint", "checkpoint-complete.marker", r'\"rebirth\"')
+# Both proof modes are load-bearing shared tokens — a checkpoint-only steer must red.
+_SHARED_STEER_TOKENS = (
+    "--mode checkpoint",
+    "--mode state-lint",
+    "checkpoint-complete.marker",
+    r'\"rebirth\"',
+)
 
 
 def _assert_steer_names_shared_tokens(steer):
@@ -1271,8 +1287,9 @@ def test_hook_escalation_and_i1_share_the_handshake_tokens():
     surfaces the cross-file drift."""
     _assert_steer_names_shared_tokens(_escalation_steer_text())
     i1 = _norm(_i1_section())
-    # the I1 handler names the conformance proof, the marker, and the rebirth waiting value
+    # the I1 handler names BOTH conformance proof modes, the marker, and the rebirth value
     assert "bin/drive-conformance.sh $RUN_DIR --mode checkpoint" in i1
+    assert "--mode state-lint" in i1
     assert "checkpoint-complete.marker" in i1
     assert 'set `waiting = "rebirth"`' in i1
 
@@ -1289,3 +1306,56 @@ def test_cross_file_invariant_flips_on_renamed_steer_token_copy():
     # … and the REAL accessor + pin, run over the drifted COPY, must RED.
     with pytest.raises(AssertionError):
         _assert_steer_names_shared_tokens(_escalation_steer_text(drifted_src))
+
+
+# --- AC7: cross-file /goal rebirth-pause clause consistency ----------------- #
+# The leg-2 `/goal` rebirth-pause clause must be present + byte-identical in BOTH
+# drive.md and drive-plan.md (AC7 / design-phase4.md edge-case 4): a one-sided edit
+# to either file's `/goal` clause must red this pin.
+_GOAL_REBIRTH_PAUSE_CLAUSE = (
+    'paused at a rebirth handoff (waiting="rebirth") awaiting my paste of the resume line'
+)
+
+
+def _assert_goal_rebirth_pause_consistent(drive_md, drive_plan_md):
+    """The cross-file AC7 pin, factored so the flip-proof runs the SAME assertion against a
+    mutated COPY. Both files (whitespace-normalized) must carry the SAME rebirth-pause `/goal`
+    clause, at its expected per-file count: drive.md carries it on BOTH legs (Gate A + Gate B
+    re-arm = 2 occurrences); drive-plan.md carries it once (its single leg-2 line). A one-sided
+    edit to EITHER file's clause — including dropping just ONE of drive.md's two — reds this.
+    Raises AssertionError if the clause is missing from, altered in, or mis-counted in either."""
+    assert _norm(drive_md).count(_GOAL_REBIRTH_PAUSE_CLAUSE) == 2, (
+        "drive.md must carry the SAME leg-2 /goal rebirth-pause clause on both legs (×2)"
+    )
+    assert _norm(drive_plan_md).count(_GOAL_REBIRTH_PAUSE_CLAUSE) == 1, (
+        "drive-plan.md must carry the SAME leg-2 /goal rebirth-pause clause (×1)"
+    )
+
+
+def test_goal_rebirth_pause_clause_consistent_across_drive_and_plan():
+    """AC7 cross-file consistency: the leg-2 `/goal` rebirth-pause clause
+    (`waiting="rebirth"` … awaiting my paste of the resume line) is present and identical in
+    BOTH drive.md and drive-plan.md, so the two `/goal` surfaces can't drift apart."""
+    _assert_goal_rebirth_pause_consistent(_drive_md(), _drive_plan_md())
+
+
+def test_goal_rebirth_pause_pin_reds_on_one_sided_edit_copy():
+    """Flip-proof (genuine — run the REAL pin against a one-sided mutated COPY): a one-sided
+    edit to EITHER file's clause — exactly the drift AC7 guards — must red the SAME pin.
+    Proves the consistency check is load-bearing, not coincidentally green."""
+    # (a) drop the clause from drive-plan.md ONLY -> count 1 -> 0 reds.
+    drifted_plan = _drive_plan_md().replace(_GOAL_REBIRTH_PAUSE_CLAUSE, "")
+    assert drifted_plan != _drive_plan_md(), (
+        "the rebirth-pause clause removal matched nothing in drive-plan.md"
+    )
+    with pytest.raises(AssertionError):
+        _assert_goal_rebirth_pause_consistent(_drive_md(), drifted_plan)
+
+    # (b) drop just ONE of drive.md's two clause occurrences -> count 2 -> 1 reds, proving the
+    # pin catches a one-sided edit on the drive.md side too (not only a wholesale removal).
+    drifted_drive = _drive_md().replace(_GOAL_REBIRTH_PAUSE_CLAUSE, "", 1)
+    assert drifted_drive != _drive_md(), (
+        "the one-occurrence removal matched nothing in drive.md"
+    )
+    with pytest.raises(AssertionError):
+        _assert_goal_rebirth_pause_consistent(drifted_drive, _drive_plan_md())

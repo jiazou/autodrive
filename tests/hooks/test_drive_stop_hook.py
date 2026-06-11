@@ -491,7 +491,11 @@ def test_already_pending_over_water_emits_escalation_steer(fake_home):
     # The escalation names the handoff sequence it defers to the coordinator's boundary.
     assert "next safe boundary" in d["reason"].lower()
     assert 'state.waiting="rebirth"' in d["reason"]
-    assert "--mode checkpoint" in d["reason"]
+    # The proof it names is the BOTH-modes contract (per drive.md § I1), NOT checkpoint-only.
+    assert "I1 routine" in d["reason"], "escalation must defer to the drive.md § I1 routine"
+    assert "--mode checkpoint AND --mode state-lint" in d["reason"], (
+        "escalation must name BOTH proof modes, never a checkpoint-only proof surface"
+    )
     # The base keep-driving steer is preserved.
     assert "Continue the pipeline" in d["reason"]
     assert "run-42" in d["reason"]
