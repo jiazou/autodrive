@@ -2,43 +2,54 @@
 
 This harness runs the REAL executable pieces of the lever-2 rebirth chain over hermetic
 git + RUN_DIR fixtures and asserts the detect -> prove -> handoff -> fresh-process-resume
-chain composes. It is the answer to the codex P1 "detect->handoff chain is advisory /
-unproven E2E": each link below is exercised by running the real script and asserting on
-its real output, and each chain-break negative SEVERS one link and proves the harness reds.
+chain composes over real artifacts. Each chain-break negative SEVERS one link and proves
+the harness reds on the severed link's REAL executable behaviour.
 
 ===========================================================================
 WHAT THIS HARNESS CAN AND CANNOT PROVE (honest scope — load-bearing, per D42)
 ===========================================================================
 The /drive coordinator is PROMPT-DRIVEN: `.claude/commands/drive.md` is INSTRUCTIONS
-executed by Claude, not a program. A literal "run the coordinator end-to-end" is therefore
-NOT a unit test — the prove-then-pause sequencing, the I1 handler ordering, and the resume
-reconciliation are PROSE contracts pinned by the slice-1.3 / 3.3 string/structural suites
-(`test_checkpoint_contract.py`, `test_rebirth_handshake.py`). This harness does NOT re-prove
-those (it would only re-grep the same prose) and does NOT "run the coordinator."
+executed by Claude, not a program. There is NO executable `/drive` resume consumer to
+invoke, so a literal "run the coordinator end-to-end" is NOT possible here. What the harness
+proves is precise: it runs the REAL EXECUTABLE artifacts at each step (the Stop hook,
+`--mode checkpoint`, `--mode state-lint`, git ref/marker tip checks) and proves the durable
+artifacts those produce are SUFFICIENT for a fresh process to reconstruct and re-prove the
+run. The resume ORCHESTRATION — the SEQUENCE of rebind -> consume-marker -> re-prove ->
+clear-waiting, plus the I1 prove-then-pause sequencing / handler ordering — is coordinator
+PROSE pinned by `test_checkpoint_contract.py` / `test_rebirth_handshake.py`; this harness
+does NOT re-prove that prose (it would only re-grep the same strings) and does NOT "run the
+coordinator." It executes that sequence's individual scriptable acts and proves the REAL
+proof passes on the result.
 
-What IS executable and what this harness DOES prove — the STATE-RECONSTRUCTION half of the
-cycle, run against the REAL scripts over REAL git + RUN_DIR artifacts:
-  1. DETECT/STEER  — the REAL `bin/drive-stop-hook.py` over a mid-run RUN_DIR + over-water
+Per step, what is REAL (a shipped executable runs) vs PROSE-pinned (sequenced in Python here,
+its ordering pinned by the sibling suites):
+  1. DETECT/STEER  — REAL. `bin/drive-stop-hook.py` over a mid-run RUN_DIR + over-water
      transcript emits the set-flag steer (pre-flag) and the ESCALATION steer (rebirth_pending
      set). The detection->steer link actually fires on real input.
-  2. PROVE         — the REAL `bin/drive-conformance.sh --mode checkpoint` AND `--mode
+  2. PROVE         — REAL. `bin/drive-conformance.sh --mode checkpoint` AND `--mode
      state-lint` both report clean on a checkpoint-complete (quiescent + well-formed) state,
      and BOTH fail closed on a deliberately-unresumable state (open in-flight marker /
      malformed routing state.json). The fail-closed gate actually gates.
-  3. HANDOFF       — the SCRIPTABLE prove-then-pause writes (write `checkpoint-complete.marker`
-     from the proof stdout via tmp+mv; set `state.waiting="rebirth"` via the same atomic
-     jq|mv the coordinator uses) produce a consistent on-disk pair: marker parses, its
-     `proof.tip` == the `drive/<runId>` tip, BEFORE `waiting=="rebirth"`.
-  4. RECONSTRUCT   — a FRESH read (the test, as the successor) performs the SCRIPTABLE resume
-     acts (rebind `sessionId`, reset `rebirth_pending`, validate+DELETE the single-use marker,
-     clear `waiting`) and asserts the run is continuable: the Stop hook now RE-ATTRIBUTES the
-     run to the successor session (blocks-to-continue), `--mode checkpoint` STILL passes, the
-     marker is consumed, and `--mode state-lint` is clean.
+  3. HANDOFF       — REAL artifacts, PROSE ordering. The marker/`waiting` WRITES use the real
+     proof stdout + the atomic tmp+mv discipline; the marker's `proof.tip` == the
+     `drive/<runId>` tip is checked against real `git rev-parse`. The marker-then-waiting
+     ORDER is pinned by test_rebirth_handshake.py, not enforced by a shipped resume program.
+  4. RECONSTRUCT   — REAL proof over a PROSE-sequenced resume. The test, acting as the
+     successor, performs the scriptable resume acts (rebind `sessionId`, reset
+     `rebirth_pending`, validate+DELETE the single-use marker, clear `waiting`) IN PYTHON —
+     their SEQUENCE is the prose contract — then proves the result with SHIPPED executables:
+     the REAL `--mode checkpoint` AND `--mode state-lint` both re-prove clean on the
+     post-handoff state, the REAL Stop hook RE-ATTRIBUTES the run to the successor
+     (blocks-to-continue) and, after the re-arm, emits the PRE-FLAG (not escalation) steer on
+     the next over-water crossing. The marker stale-detection negative moves the tip with a
+     REAL git commit and fails the marker against the REAL proof's emitted live tip — not a
+     python `tip == tip` self-compare.
 
-The prompt-driven coordinator STEPS (I1 prove-then-pause sequencing, the handoff-block
-presentation, the I1 handler ordering) are NOT executable and are NOT faked here — they stay
-pinned by `test_checkpoint_contract.py` / `test_rebirth_handshake.py`. This harness asserts
-ONLY what is executable/checkable.
+The prompt-driven coordinator STEPS (the resume act SEQUENCE, the I1 prove-then-pause
+sequencing, the handoff-block presentation, the handler ordering) are NOT executable and are
+NOT faked here — they stay pinned by `test_checkpoint_contract.py` / `test_rebirth_handshake.py`.
+This harness asserts ONLY what is executable/checkable; it does NOT claim each orchestration
+link runs a shipped program.
 """
 import json
 import os
@@ -336,7 +347,11 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
     (git refs + RUN_DIR marker + state.json) are SUFFICIENT for a fresh process to
     reconstruct and continue. The test, acting as the successor, performs the SCRIPTABLE
     resume acts and asserts the reconstructed run is continuable."""
-    repo, rd = mid_run_fixture(fake_home)
+    # The realistic handoff state: rebirth_pending is ALREADY set (the escalation steer fired
+    # because it was set, then the boundary checkpoint+pause ran). The resume re-arm must
+    # CLEAR it — so building the fixture with rebirth_pending=True makes the step-(2) reset
+    # below load-bearing (removing it leaves the field true and reds guard (v)).
+    repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
     tip = _rev(repo, "drive/e2e-run")
 
     # --- simulate the outgoing handoff (step 3) -----------------------------
@@ -396,6 +411,27 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
     # (iv) --mode state-lint is clean on the reconstructed state.
     rc_l2, obj_l2 = run_conformance(repo, rd, "state-lint")
     assert rc_l2 == 0 and obj_l2["clean"] is True, obj_l2
+
+    # (v) the rebirth_pending RE-ARM (D36) actually fired: the on-disk reconstructed state
+    #     has rebirth_pending cleared, AND the REAL Stop hook proves the consequence — when
+    #     the successor next crosses hard water, the hook emits the PRE-FLAG set-flag steer
+    #     (rebirth_pending unset), NOT the escalation steer. If step (2) above left
+    #     rebirth_pending true, the hook would spuriously re-fire the ESCALATION steer as if
+    #     a handoff were already signalled. (Removing the `rebirth_pending=False` reset above
+    #     reds this guard — see test_chainbreak_resume_severed_missing_rearm_refires.)
+    st_recon = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    assert st_recon["rebirth_pending"] is False, \
+        "the resume re-arm must clear rebirth_pending (D36) so the next cycle starts fresh"
+    cp_rearm = run_hook(
+        _hook_payload(fake_home, "e2e-run", OVER_WATER, session_id=SID_IN),
+        home=fake_home,
+    )
+    d_rearm = hook_decision(cp_rearm)
+    assert d_rearm is not None and d_rearm["decision"] == "block"
+    assert SET_FLAG_ANCHOR in d_rearm["reason"], \
+        "re-armed: a fresh over-water crossing must emit the PRE-FLAG set-flag steer"
+    assert ESCALATION_ANCHOR not in d_rearm["reason"], \
+        "re-armed: rebirth_pending was cleared, so the hook must NOT re-fire the escalation steer"
 
 
 # =========================================================================== #
@@ -503,9 +539,13 @@ def test_chainbreak_proof_severed_state_lint_fails(fake_home, mutate, expect_rea
 #     re-attribution that trusted the marker would be refused. ------------------ #
 def test_chainbreak_resume_severed_stale_marker_fails_validation(fake_home):
     """RESUME severed (the single-use marker stale-detection): the handoff writes a
-    tip-bound marker, then work advances drive/<runId> (the tip MOVES). On resume the
-    marker's `proof.tip` no longer equals the current tip, so the tip-match validation
-    FAILS — the resume must re-prove from scratch, never replay the stale marker (D17)."""
+    tip-bound marker, then work advances drive/<runId> with a REAL git commit (the tip
+    MOVES). On resume the live tip is re-derived by the REAL proof — `--mode checkpoint`'s
+    emitted `tip` (and, independently, `git rev-parse drive/<runId>`) — and the marker's
+    bound `proof.tip` no longer equals it, so the tip-match validation FAILS. The resume
+    must re-prove from scratch, never replay the stale marker (D17). The staleness here is
+    detected by the SHIPPED tip source (the real conformance proof + real git), not a
+    python `tip == tip` self-compare."""
     repo, rd = mid_run_fixture(fake_home)
     tip_then = _rev(repo, "drive/e2e-run")
     _rc, proof = run_conformance(repo, rd, "checkpoint")
@@ -513,15 +553,72 @@ def test_chainbreak_resume_severed_stale_marker_fails_validation(fake_home):
     _atomic_write_json(marker, {"at": "now", "sessionId": SID_OUT, "proof": proof})
     assert proof["tip"] == tip_then
 
-    # Work advances the feature branch AFTER the marker was written.
+    # Work advances the feature branch AFTER the marker was written (a REAL git commit). The
+    # phase integration ref is fast-forwarded onto the new tip too, so the run stays a
+    # well-formed, resumable D18 live-phase shape (drive/<runId> remains an ancestor of the
+    # phaseInt tip) — the marker is stale, but the RUN is not corrupt.
     _commit(repo, "more.sh", "echo more", "post-checkpoint work")
-    tip_now = _rev(repo, "drive/e2e-run")
-    assert tip_now != tip_then, "the tip must move so the marker goes stale"
+    _git(repo, "branch", "-f", "phaseInt/e2e-run/1", "drive/e2e-run")
 
+    # Re-derive the LIVE tip the way the resume consumer does: from the REAL proof's emitted
+    # `tip` (re-run `--mode checkpoint`), cross-checked against real `git rev-parse` — the
+    # SHIPPED tip source, not a python `tip == tip` self-compare.
+    _rc2, proof_now = run_conformance(repo, rd, "checkpoint")
+    assert proof_now["clean"] is True, "post-advance state is still resumable (re-prove passes)"
+    live_tip = proof_now["tip"]
+    assert live_tip == _rev(repo, "drive/e2e-run"), \
+        "the proof's emitted tip must equal the real git tip (the shipped tip source)"
+    assert live_tip != proof["tip"], "the real commit must have moved the live tip"
+
+    # The marker's bound proof.tip is validated against the LIVE tip from the real proof —
+    # it no longer matches, so the single-use marker fails tip-match validation.
     recorded = json.loads(marker.read_text(encoding="utf-8"))
-    marker_valid = recorded.get("proof", {}).get("tip") == tip_now
+    marker_valid = recorded.get("proof", {}).get("tip") == live_tip
     assert not marker_valid, \
-        "RESUME severed: a stale-tip marker must FAIL tip-match validation (no replay, D17)"
+        "RESUME severed: a stale-tip marker must FAIL tip-match validation against the " \
+        "real proof's live tip (no replay, D17)"
+
+
+def test_chainbreak_resume_severed_missing_rearm_refires(fake_home):
+    """RESUME severed (the rebirth_pending re-arm, D36): a successor that rebinds + clears
+    waiting but FORGETS to reset rebirth_pending leaves the run mis-armed. The detectable
+    wrong consequence — proven by the REAL Stop hook — is that the successor's next hard-water
+    crossing spuriously re-fires the ESCALATION steer (checkpoint + set waiting=rebirth) as if
+    a handoff were already signalled, instead of the fresh PRE-FLAG set-flag steer. This is the
+    chain-break that reds when the `rebirth_pending=False` reset in the resume acts is removed."""
+    repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
+    # Resume that rebinds + clears waiting but SKIPS the rebirth_pending reset.
+    st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    st["sessionId"] = SID_IN
+    st["waiting"] = None
+    # st["rebirth_pending"] is left True (the re-arm was skipped).
+    _atomic_write_json(rd / "state.json", st)
+
+    cp = run_hook(
+        _hook_payload(fake_home, "e2e-run", OVER_WATER, session_id=SID_IN),
+        home=fake_home,
+    )
+    d = hook_decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert ESCALATION_ANCHOR in d["reason"], \
+        "missing re-arm: a still-set rebirth_pending makes the hook spuriously re-fire the " \
+        "ESCALATION steer on the successor's first over-water crossing"
+    assert SET_FLAG_ANCHOR not in d["reason"]
+
+    # Control: WITH the re-arm applied, the SAME over-water crossing emits the PRE-FLAG
+    # set-flag steer instead — proving the spurious escalation above is caused by the
+    # missing reset, not by something else.
+    st["rebirth_pending"] = False
+    _atomic_write_json(rd / "state.json", st)
+    cp2 = run_hook(
+        _hook_payload(fake_home, "e2e-run", OVER_WATER, session_id=SID_IN),
+        home=fake_home,
+    )
+    d2 = hook_decision(cp2)
+    assert d2 is not None and d2["decision"] == "block"
+    assert SET_FLAG_ANCHOR in d2["reason"], \
+        "control: with the re-arm, the fresh crossing emits the set-flag steer"
+    assert ESCALATION_ANCHOR not in d2["reason"]
 
 
 def test_chainbreak_resume_severed_unrebound_session_does_not_block(fake_home):
