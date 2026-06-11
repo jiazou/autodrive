@@ -24,11 +24,23 @@ state.json contract /drive maintains (see drive.md):
   stage        — pipeline stage; "done" once the PR is open
   autoContinue — if exactly False, this hook is disabled for the run (kill-switch)
   waiting      — truthy while paused for the human (gate / STOP / question); else absent
+  rebirth_pending — truthy once context-pressure has been signalled (set by the
+                    coordinator, NOT this hook); suppresses the re-steer (idempotent)
+
+Context-pressure detection (signal-only, design phase 2 / I2 / D28): when the owned
+run's transcript token sum crosses the hard high-water mark, this hook APPENDS a
+signal-only steer to its block reason instructing the coordinator to set
+state.rebirth_pending=true. It NEVER writes state.json itself and NEVER hands off /
+checkpoints / pauses (that is Phase 3, at a safe boundary). The detection is fully
+fail-open: any error degrades to "no steer this turn", leaving the original
+continue-only reason unchanged.
 """
 import sys
 import os
 import json
 import glob
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # for rebirth_thresholds
 
 
 def _allow():
@@ -86,6 +98,47 @@ def _run_state_paths():
     return sorted(glob.glob(_runs_glob()))
 
 
+def _rebirth_steer(run, payload):
+    """A signal-only CONTEXT-PRESSURE sentence to APPEND to the block reason when the
+    owned run has crossed the hard high-water mark — or "" when it has not, or on ANY
+    error (fully fail-open, per I2). Never writes state.json, never inspects markers.
+
+    Steers ONLY when all hold (I2): the transcript token sum >= window * hard fraction,
+    run.rebirth_pending is not already truthy (idempotent — don't re-steer; the
+    coordinator may have already set it), and (already guaranteed by the caller's scan)
+    the run is not waiting. The wording is signal-only: "set the flag", never "hand off".
+    """
+    try:
+        if run.get("rebirth_pending"):
+            return ""  # idempotent: already signalled, don't re-steer
+        transcript_path = payload.get("transcript_path")
+        if not transcript_path or not os.path.isfile(transcript_path):
+            return ""  # no transcript -> no token sum -> skip (fail-open)
+
+        import rebirth_thresholds  # sibling bin/ module (slice 2.1 resolver)
+
+        tokens = rebirth_thresholds.latest_usage_tokens(transcript_path)
+        if not tokens or tokens <= 0:
+            return ""  # no usage line yet -> skip (a fresh transcript hits this)
+        model = rebirth_thresholds.latest_model(transcript_path)
+        thresholds = rebirth_thresholds.load_thresholds()
+        window, hard, _soft = rebirth_thresholds.resolve_thresholds(model, thresholds)
+        if tokens < hard:
+            return ""  # below the hard high-water mark -> no steer
+
+        pct = tokens * 100 // window
+        return (
+            f" CONTEXT-PRESSURE: this run has crossed the rebirth high-water mark "
+            f"(context ~{pct}% of the {window}-token window). Set "
+            f"state.rebirth_pending=true now (a plain field write — do NOT hand off, "
+            f"do NOT checkpoint, do NOT pause here). The handoff happens later at your "
+            f"next safe boundary per the rebirth contract; until then, keep driving the "
+            f"pipeline normally."
+        )
+    except Exception:
+        return ""  # any detection failure degrades to no steer this turn (fail-open)
+
+
 def main():
     try:
         payload = json.load(sys.stdin)
@@ -133,6 +186,8 @@ def main():
         "non-decision STOP, an AskUserQuestion, or the PR is open (stage=done) — "
         "and set state.waiting before pausing at any of those so this turn can end."
     )
+    # Additive, signal-only context-pressure steer (fail-open; "" on any error).
+    reason += _rebirth_steer(run, payload)
     print(json.dumps({"decision": "block", "reason": reason}))
     sys.exit(0)
 
