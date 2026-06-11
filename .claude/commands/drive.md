@@ -386,15 +386,25 @@ forgotten:
 
      /drive <runId>
 
-   Then re-arm the goal for the next autonomous leg:
+   Then re-arm the goal for the next autonomous leg (LEG-AWARE — emit the
+   `<leg-condition>` line that matches the SUCCESSOR's resume leg, selected by
+   `state.stage` per the table below):
 
      /goal The /drive run <runId> is resuming after a context-pressure rebirth and is
      driving the pipeline autonomously toward its next human gate (Gate A/B) or a
      non-decision STOP, OR is paused at a rebirth handoff (waiting="rebirth") awaiting my
-     paste of the resume line. NOT met while autonomous implement/review/harden/verify work remains.
+     paste of the resume line. <leg-condition>
 
    (This session can stop now; the fresh session owns the run once it resumes.)
    ```
+
+   **Select `<leg-condition>` by `state.stage`** — the successor resumes INTO the
+   current leg, so the goal's "NOT met while …" clause must match that leg (these mirror
+   the leg-goal definitions: Stage 0 leg-1 and the Gate A re-arm in `/drive-plan`):
+   - `stage == "plan"` (planning leg → Gate A):
+     `NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.`
+   - `stage` ∈ {`"execute"`, `"verify"`, `"ship"`} (execute leg → Gate B):
+     `NOT met while autonomous implement / review / harden / verify / ship work remains.`
 
    The `/drive <runId>` line is the EXACT resume invocation (the resume path keys on an
    existing-runId `$RUN_DIR/state.json`); the `/goal` line re-arms the SUCCESSOR's leg goal,
