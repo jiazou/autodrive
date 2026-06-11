@@ -186,6 +186,93 @@ def test_ac1_ordering_pin_flips_on_reordered_copy():
 
 
 # =========================================================================== #
+# P1-2 — I1 is ONE shared rebirth-checkpoint routine wired at EVERY claimed safe
+# boundary (Plan, Execute, Verify, Ship), not just Execute.
+# =========================================================================== #
+def _stage_section(heading):
+    """A `### Stage …` section body, bounded to the next `### `/`## ` heading."""
+    return _section(_drive_md(), heading, level="### ")
+
+
+def test_i1_preamble_claims_all_four_stage_boundaries():
+    """P1-2: the I1 handler's preamble enumerates ALL four autonomous stages as safe-boundary
+    sites that invoke the shared routine — Execute, Plan, Verify, AND Ship — so its scope
+    claim matches reality (it is no longer Execute-only)."""
+    i1 = _norm(_i1_section())
+    assert "ONE routine every safe-boundary site calls" in i1, (
+        "the I1 preamble must state it is the ONE shared routine every safe-boundary calls"
+    )
+    # the stage-agnostic detection rationale (why every stage must invoke it)
+    assert "stage-agnostic and can set `rebirth_pending` in ANY stage" in i1, (
+        "the I1 preamble must state detection is stage-agnostic across all stages"
+    )
+    for stage in ("**Execute**", "**Plan**", "**Verify**", "**Ship**"):
+        assert stage in i1, f"the I1 preamble must enumerate the {stage} boundary site"
+    # the Ship boundary description must match the real Stage-5 call site (BEFORE /drive-ship
+    # is dispatched, not "before Gate B"), and note Gate B precedence covers a post-dispatch
+    # rebirth — so the preamble and the call site do not contradict (no lost-handoff hole).
+    assert "BEFORE `/drive-ship` is dispatched" in i1, (
+        "the I1 Ship boundary must be described as BEFORE /drive-ship is dispatched (matching "
+        "the Stage-5 call site), not an inside-ship boundary that never fires"
+    )
+    assert "no post-dispatch rebirth is lost" in i1, (
+        "the I1 Ship description must state Gate B precedence covers a post-dispatch rebirth"
+    )
+
+
+# The shared-routine invocation each stage must carry: run the Coordinator soft-check then
+# the I1 Safe-boundary rebirth handler at that stage's safe boundary.
+_I1_INVOCATION = "the **Safe-boundary rebirth handler** (§ I1"
+
+
+@pytest.mark.parametrize(
+    "heading",
+    ["Stage 1 — Plan", "Stage 4b — Verify (optional)", "Stage 5 — Ship (once)"],
+)
+def test_i1_wired_into_plan_verify_ship_stage_sections(heading):
+    """P1-2: each non-Execute autonomous stage (Plan, Verify, Ship) actually INVOKES the
+    shared soft-check + I1 rebirth handler at its safe boundary — so a rebirth signalled in
+    that stage has a consumer (previously only Execute did, so Plan/Verify/Ship rebirths were
+    never handed off). The invocation is asserted INSIDE the stage's own section."""
+    section = _norm(_stage_section(heading))
+    assert "Coordinator soft-check" in section, (
+        f"{heading} must run the Coordinator soft-check at its safe boundary"
+    )
+    assert _I1_INVOCATION in section, (
+        f"{heading} must invoke the Safe-boundary rebirth handler (§ I1) at its safe boundary"
+    )
+
+
+def test_execute_loop_still_wires_i1():
+    """P1-2 regression: the Execute loop's existing soft-check + I1 wiring is preserved (the
+    fix ADDS the other stages, never drops Execute's)."""
+    md = _norm(_drive_md())
+    assert "the **Safe-boundary rebirth handler** (§ I1 above" in md, (
+        "the Execute loop must still wire the I1 handler (preserved alongside the new sites)"
+    )
+
+
+def test_p1_2_wiring_pin_flips_on_dropped_ship_invocation_copy():
+    """Flip-proof (mutate a COPY): removing the I1 invocation from the Ship stage in a COPY of
+    drive.md makes the per-stage wiring pin RED for Ship — proving it bites on the real call
+    site, not incidentally green on the preamble's claim alone."""
+    md = _drive_md()
+    ship = _section(md, "Stage 5 — Ship (once)", level="### ")
+    assert _I1_INVOCATION in _norm(ship), "fixture: Ship must carry the I1 invocation to drop"
+    # drop the whole leading I1-checkpoint paragraph from a COPY of the Ship section
+    drifted_ship = re.sub(
+        r"At the ship dispatch boundary.*?§ I1 Gate/STOP precedence\)\.\n\n",
+        "",
+        ship,
+        count=1,
+        flags=re.DOTALL,
+    )
+    assert _I1_INVOCATION not in _norm(drifted_ship), (
+        "dropping the Ship I1 invocation from a COPY must remove the wiring the pin requires"
+    )
+
+
+# =========================================================================== #
 # AC2/AC3 — run-graph ↻ REBIRTH node + the handoff block.
 # =========================================================================== #
 def test_run_graph_rebirth_anchor_node_and_legend():
@@ -303,17 +390,66 @@ def test_resume_rebirth_continue_bullet_after_rebind_and_marker():
 
 
 def test_resume_rebirth_continue_clause_is_continue_not_stop():
-    """AC4: the rebirth-continue bullet names CLEAR + CONTINUE + NOT-a-STOP as a contiguous
-    clause, so a drift to re-presenting it (treating it as a human pause) reds the pin."""
+    """AC4: the rebirth-continue bullet names a re-proven (fail-closed) CONTINUE — NOT a
+    STOP — as a contiguous clause, so a drift to re-presenting it (treating it as a human
+    pause) reds the pin. The CONTINUE is now gated on a fresh PASSING proof (P1-3 fail-closed)."""
     blob = _norm(_drive_md())
-    assert '`waiting == "rebirth"` → normal CONTINUE, NOT a STOP.' in blob, (
-        "the resume bullet must pin rebirth as a normal CONTINUE, NOT a STOP"
-    )
+    assert (
+        '`waiting == "rebirth"` → re-proven CONTINUE (fail closed), NOT a STOP.' in blob
+    ), "the resume bullet must pin rebirth as a re-proven (fail-closed) CONTINUE, NOT a STOP"
     assert "clear `state.waiting = null`" in blob, (
-        "the rebirth-continue bullet must CLEAR waiting and continue"
+        "the rebirth-continue bullet must CLEAR waiting and continue (on a passing proof)"
     )
     # explicit do-NOT-re-present (so a future edit can't quietly surface it as a pause)
     assert "do NOT surface it as a paused-for-human state, do NOT re-present the handoff" in blob
+
+
+def test_resume_rebirth_continue_is_fail_closed_re_proven():
+    """P1-3 (tightened per the adversarial review): the resume consumer RE-PROVES resumability
+    via `--mode checkpoint` BEFORE treating `waiting=="rebirth"` as a continue — it does NOT
+    trust the marker's tip alone (a tip-matching marker is *necessary, NOT sufficient*: an open
+    in-flight marker or mid-flight redesign span can postdate a tip-matching file). A failing/
+    erroring proof OR a missing/stale marker FAILS CLOSED with `stop:checkpoint-unprovable` —
+    never a silent continue. `waiting="rebirth"` is set ONLY by I1 after its own passing proof."""
+    blob = _norm(_drive_md())
+    # waiting=rebirth is set ONLY by I1 after a passing proof + marker (provenance claim)
+    assert (
+        '`waiting = "rebirth"` is set ONLY by the I1 handler AFTER a passing proof + a durable'
+        " `checkpoint-complete.marker`" in blob
+    ), "resume must state waiting=rebirth is set ONLY by I1 after a passing proof + marker"
+    # the resume consumer RE-PROVES (not trust-tip-alone) before continuing
+    assert "the resume consumer\nRE-PROVES resumability before continuing".replace("\n", " ") in blob, (
+        "the resume consumer must RE-PROVE resumability before continuing"
+    )
+    assert "RE-PROVE via\n`bin/drive-conformance.sh $RUN_DIR --mode checkpoint`".replace("\n", " ") in blob, (
+        "fail-closed must RE-PROVE via the checkpoint conformance mode"
+    )
+    # the marker's tip alone is NOT trusted (necessary-not-sufficient carve-out)
+    assert "it does NOT trust the marker's tip alone" in blob, (
+        "the resume must NOT trust the marker tip alone (necessary-not-sufficient)"
+    )
+    assert "`markerValid` is corroborating" in blob, (
+        "the marker validity must be corroborating-only, never the authorization"
+    )
+    # missing/stale marker OR failing proof FAILS CLOSED with the unprovable STOP
+    assert (
+        "A failing/erroring proof, or a missing/stale marker, FAILS CLOSED" in blob
+    ), "a failing proof OR a missing/stale marker must FAIL CLOSED"
+    assert "do NOT silently clear+continue" in blob, (
+        "fail-closed must explicitly forbid a silent clear+continue"
+    )
+    assert '`waiting = "stop:checkpoint-unprovable"`' in blob, (
+        "a failing re-prove must STOP with stop:checkpoint-unprovable"
+    )
+    # the rebirth re-prove is the SOLE carve-out from the marker-consume from-scratch rule
+    assert "SOLE carve-out from the marker-consume bullet" in blob, (
+        "the rebirth re-prove must be the SOLE carve-out from the 'reconcile from scratch' rule"
+    )
+    # the marker-consume bullet records the validity the rebirth bullet consults
+    assert "record this validity as `markerValid`" in blob, (
+        "the marker-consume bullet must record the validity (markerValid) the rebirth-continue "
+        "bullet consults (the marker is deleted there, so its validity must be captured)"
+    )
 
 
 # A `rebirth_pending` RESET assignment — `[state.]rebirth_pending = false` (optional
@@ -401,9 +537,9 @@ def test_single_reset_pin_flips_on_redundant_second_reset_copy():
     SAME `_assert_single_reset_structural` pin RAISES. Proves the negative is structural, not
     presence-only — the prose `SINGLE reset point` sentences stay intact in the copy."""
     drifted = _drive_md().replace(
-        "`state.waiting = null` (JSON-safe write) and continue autonomous",
-        "`state.waiting = null` (JSON-safe write), reset `state.rebirth_pending = false`, "
-        "and continue autonomous",
+        "clear `state.waiting = null` (JSON-safe write) and",
+        "clear `state.waiting = null` (JSON-safe write), reset `state.rebirth_pending = false`, "
+        "and",
         1,
     )
     # the injection must actually land (else the flip-proof is vacuous) …
@@ -455,13 +591,39 @@ def test_gate_precedence_neither_gate_emits_runid_resume():
 
 
 def test_gate_stop_wins_precedence_over_rebirth():
-    """AC9: at a boundary where both a rebirth and a gate/STOP are due, the gate/STOP wins
-    and rebirth_pending does NOT carry forward (re-derived on the fresh-session resume)."""
+    """AC9 / P1-1: at a boundary where both a rebirth and a gate/STOP are due, the gate/STOP
+    wins. `rebirth_pending` does NOT carry forward ACROSS the fresh-session resume (reset once
+    at the rebind), but DOES PERSIST within the same outgoing session — the two halves of the
+    ONE lifecycle story, pinned as contiguous clauses so the blanket-contradiction (a bare
+    'does NOT carry forward') cannot return."""
     blob = _norm(_drive_md())
     assert "the **gate/STOP wins**" in blob, "gate/STOP must win precedence over rebirth"
-    assert "`rebirth_pending` does NOT carry forward" in blob, (
-        "rebirth_pending must be pinned as not carrying forward across the gate/STOP pause"
+    # qualified: does NOT carry forward ACROSS the fresh-session resume (not a blanket claim)
+    assert "`rebirth_pending` does NOT carry forward ACROSS the fresh-session resume" in blob, (
+        "rebirth_pending must be pinned as not carrying forward ACROSS the fresh-session "
+        "resume (the qualified, non-contradictory claim — NOT a blanket 'does NOT carry "
+        "forward')"
     )
+    # the same-session PERSIST half, so the gate-precedence prose agrees with Leave-pending
+    assert "WITHIN the same outgoing session it does PERSIST" in blob, (
+        "gate-precedence prose must state the same-session PERSIST half (consistent with the "
+        "I1 Leave-pending semantics), so the lifecycle is ONE consistent story"
+    )
+
+
+def test_rebirth_pending_carry_forward_claim_is_qualified_not_blanket():
+    """P1-1 negative: the contradictory BLANKET claim — `rebirth_pending` 'does NOT carry
+    forward' NOT immediately qualified by 'ACROSS the fresh-session resume' — must NOT appear.
+    Pinned structurally: every `does NOT carry forward` occurrence for `rebirth_pending` is
+    followed by the `ACROSS the fresh-session resume` qualifier."""
+    blob = _norm(_drive_md())
+    for m in re.finditer(r"`rebirth_pending` does NOT carry forward", blob):
+        tail = blob[m.end(): m.end() + len(" ACROSS the fresh-session resume")]
+        assert tail == " ACROSS the fresh-session resume", (
+            "every `rebirth_pending` does-NOT-carry-forward claim must be QUALIFIED with "
+            "`ACROSS the fresh-session resume` (a blanket claim contradicts the same-session "
+            f"PERSIST lifecycle); found unqualified tail {tail!r}"
+        )
 
 
 # =========================================================================== #
@@ -501,13 +663,41 @@ def test_present_human_pause_step1_enumerates_rebirth_dual():
     assert (
         '`"gateA"`, `"gateB"`, `"stop:<short>"`, `"ask:<header>"`, or `"rebirth"`'
     ) in blob, "step-1's reason enumeration must include `\"rebirth\"`"
-    # …with its dual/continue semantics, contiguous (NOT just appended to the set)
+    # …with its dual/continue semantics, contiguous (NOT just appended to the set). The
+    # resume RE-PROVES before auto-clearing (P1-3 fail-closed), so the continue clause names it.
     assert (
-        '`"rebirth"` awaits a FRESH-SESSION RESUME: the resume path auto-clears it and '
-        "continues"
+        '`"rebirth"` awaits a FRESH-SESSION RESUME: the resume path re-proves then auto-clears '
+        "it and continues"
     ) in blob, (
         "step 1 must state rebirth's continue semantics (awaits a fresh-session resume; "
-        "the resume auto-clears it), not merely add it to the reason set"
+        "the resume re-proves then auto-clears it), not merely add it to the reason set"
+    )
+
+
+def test_present_human_pause_never_sets_rebirth_itself():
+    """P1-3 outbound fail-closed: Present-human-pause step 1 must state it NEVER sets
+    `waiting="rebirth"` itself — only the I1 handler sets it, AFTER its passing proof + durable
+    marker. So `rebirth` is not a generic caller-supplied pause reason a sibling path can pass
+    in to end a turn without I1's prove→marker→wait sequence (the outbound half of fail-closed)."""
+    blob = _norm(_drive_md())
+    assert "this routine NEVER sets `waiting = \"rebirth\"` itself" in blob, (
+        "Present-human-pause must state it NEVER sets waiting=rebirth itself"
+    )
+    assert 'Only the I1 handler sets `"rebirth"`' in blob, (
+        "Present-human-pause must name I1 as the SOLE setter of waiting=rebirth"
+    )
+    # the set-here list (step 1) must NOT include rebirth — only the human-pause reasons
+    assert (
+        'HUMAN-pause reason this routine is setting —\n   `"gateA"`, `"gateB"`, '
+        '`"stop:<short>"`, or `"ask:<header>"`'
+    ).replace("\n   ", " ") in blob, (
+        "step-1's SET-HERE list must enumerate only the four human-pause reasons (NOT rebirth)"
+    )
+    assert '`"rebirth"` is NOT in this set-here list' in blob, (
+        "step 1 must state rebirth is NOT in the set-here list"
+    )
+    assert "NOT a generic caller-supplied pause reason" in blob, (
+        "rebirth must be stated as NOT a generic caller-supplied pause reason"
     )
 
 

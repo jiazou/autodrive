@@ -36,17 +36,17 @@ pin "section header present" \
 pin "secondary surface / Stop hook primary" \
   "SECONDARY context-pressure detection surface (the Stop hook is primary)"
 
-# --- Fires at the enumerated safe boundaries --------------------------------
-pin "fires at safe boundaries" \
-  "At each **safe boundary** in the Execute loop"
-pin "per-slice review verdict boundary" \
-  "after each per-slice review verdict is recorded"
-pin "phase-integration review verdict boundary" \
-  "after the phase-integration review verdict"
-pin "HARDEN round verdict boundary" \
-  "after each HARDEN round verdict"
-pin "phase advance boundary" \
-  "after the phase advance"
+# --- Fires at the enumerated safe boundaries (now ALL autonomous stages, P1-2) ----
+pin "fires at safe boundaries (any autonomous stage)" \
+  "At each **safe boundary** in ANY autonomous stage"
+pin "Plan boundary enumerated" \
+  "Plan (between plan-stage steps / after each design-review round)"
+pin "Execute per-slice / phase-integration / harden / advance boundaries enumerated" \
+  "Execute (after each per-slice review verdict, the phase-integration review verdict, each HARDEN round verdict, the phase advance)"
+pin "Verify boundary enumerated" \
+  "Verify (after each QA/e2e attempt)"
+pin "Ship boundary enumerated" \
+  "Ship (the ship dispatch boundary)"
 
 # --- Reads the shared data-file threshold (no hardcoded number) -------------
 pin "reads the data file" \
