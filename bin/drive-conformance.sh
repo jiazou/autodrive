@@ -41,10 +41,13 @@ emit() {
 }
 
 # Build one violation object. $1=scope $2=reason [$3=expected_sha $4=found_sha]
+# jq (not printf) so a state.json-derived field (e.g. a corrupt slice-id KEY carrying a
+# `"`, `\`, or control char) is JSON-escaped — the envelope stays valid at the corrupt-state
+# path state-lint defends. Output is byte-identical to the old printf for metachar-free input.
 violation() {
   local scope="$1" reason="$2" exp="${3:-}" found="${4:-}"
-  printf '{"scope":"%s","reason":"%s","expected_sha":"%s","found_sha":"%s"}' \
-    "$scope" "$reason" "$exp" "$found"
+  jq -cn --arg scope "$scope" --arg reason "$reason" --arg exp "$exp" --arg found "$found" \
+    '{scope:$scope,reason:$reason,expected_sha:$exp,found_sha:$found}'
 }
 
 # --- arg parse ---
@@ -894,7 +897,9 @@ EOF_PHASES
     # routable —
     #   step  ∈ {queued, implementing, awaiting_review, needs_fix, converged, blocked}
     #   owns  = a NON-EMPTY array of strings
-    #   deps  = an array (possibly empty)
+    #   deps  = an array (possibly empty) of slice-id strings — each element must match the
+    #           same `^[0-9]+[a-z]?\.[0-9]+$` grammar as a slice-id KEY, since /drive
+    #           dispatches on CONVERGED deps to look up sibling slices.
     # The slice-id KEY must also be ref-safe: it forms `slice/<runId>/<id>` and a
     # conformance scope token, so it must match `^[0-9]+[a-z]?\.[0-9]+$` (phase-id `.`
     # slice number, e.g. `1.2`, `4.3`). A key with a space/slash/special char (`"1 bad"`)
@@ -919,6 +924,7 @@ EOF_PHASES
             or (($e.value.owns | length) == 0)
             or ([$e.value.owns[] | select(type != "string")] | length > 0)
             or (($e.value.deps | type) != "array")
+            or ([$e.value.deps[] | select((type != "string") or (test("^[0-9]+[a-z]?\\.[0-9]+$") | not))] | length > 0)
           )
         | $e.key' "$SJ")"
       while IFS= read -r sid; do

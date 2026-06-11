@@ -50,6 +50,15 @@ assert_eq() {
   fi
 }
 
+# Assert $OUT is valid JSON. $1=desc
+assert_valid_json() {
+  if printf '%s' "$OUT" | jq -e . >/dev/null 2>&1; then
+    echo "PASS: $1"; PASS=$((PASS+1))
+  else
+    echo "FAIL: $1 (not valid JSON) :: ${OUT:-}"; FAIL=$((FAIL+1))
+  fi
+}
+
 # Assert $OUT contains needle EXACTLY $3 times. $1=desc $2=needle $3=expected-count
 assert_out_count() {
   local n; n="$(printf '%s' "$OUT" | grep -o -- "$2" | wc -l | tr -d ' ')"
@@ -517,6 +526,24 @@ assert_out_contains "SL ref-safe epoch phase id clean envelope" '"clean":true,"m
 read -r repo rd < <(mk_state_lint slice_key_badref)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL slice key \"1 bad\" -> exit 1" 1 "$RC"
 assert_out_contains "SL non-ref-safe slice key -> slice-routing-malformed scoped to key" '{"scope":"1 bad","reason":"slice-routing-malformed"'
+# A slice-id KEY carrying a JSON metachar (`"`) is corruption-controlled and flows into the
+# violation `scope`: violation() must JSON-ESCAPE it so the envelope stays VALID JSON (the
+# old printf path emitted a syntactically-broken envelope -> downstream jq parse breaks).
+read -r repo rd < <(mk_state_lint slice_key_metachar)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL slice key with \" metachar -> exit 1" 1 "$RC"
+assert_valid_json "SL metachar slice key -> envelope is still VALID JSON (violation() escapes scope)"
+assert_out_contains "SL metachar slice key still fires slice-routing-malformed" '"reason":"slice-routing-malformed"'
+# deps elements must be slice-id strings (D-deps): a non-string (42) or non-grammar ("1 bad")
+# element is unroutable — /drive dispatches on CONVERGED deps to look up sibling slices.
+read -r repo rd < <(mk_state_lint deps_nonstring)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL deps:[42] (non-string) -> exit 1" 1 "$RC"
+assert_out_contains "SL non-string deps elem -> slice-routing-malformed scoped to slice" '{"scope":"1.1","reason":"slice-routing-malformed"'
+read -r repo rd < <(mk_state_lint deps_badref)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL deps:[\"1 bad\"] (non-grammar) -> exit 1" 1 "$RC"
+assert_out_contains "SL non-grammar deps elem -> slice-routing-malformed scoped to slice" '{"scope":"1.1","reason":"slice-routing-malformed"'
+read -r repo rd < <(mk_state_lint deps_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL valid deps [\"1.1\"] still clean (no over-rejection)" 0 "$RC"
+assert_out_contains "SL valid deps clean envelope" '"clean":true,"mode":"state-lint"'
 # missing state.json (no file, but drive/<runId> resolves) -> exit 2 (IO error, not a verdict).
 read -r repo rd < <(mk_state_lint no_state)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL absent state.json -> exit 2 (IO error)" 2 "$RC"

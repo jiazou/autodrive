@@ -897,6 +897,11 @@ mk_impl_presence() {
 #   ship_bad          -- ship missing the prUrl key -> ship-malformed                  -> exit 1
 #   multi_bad_slice   -- TWO malformed slices -> TWO slice-routing-malformed objects
 #                        (cardinality: one per malformed slice, D44)                   -> exit 1
+#   slice_key_metachar -- a slice-id KEY with a JSON metachar (`"`) -> envelope stays VALID
+#                        JSON (violation() escapes the scope) + violation fires           -> exit 1
+#   deps_nonstring    -- a deps element that isn't a string (42) -> slice-routing-malformed
+#   deps_badref       -- a deps element not matching slice-id grammar ("1 bad") -> same   -> exit 1
+#   deps_clean        -- valid deps ("1.1") still pass (no over-rejection)              -> exit 0
 #   no_state          -- a real drive/<runId> branch but NO state.json file -> exit 2 (IO)
 mk_state_lint() {
   local variant="$1" name="${2:-statelint-$1}"
@@ -1123,6 +1128,65 @@ JSON
   "phaseList": ["1"],
   "slices": {
     "1 bad": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_key_metachar)
+      # A slice-id KEY carrying a JSON metacharacter (`"`) — corruption-controlled and flows
+      # into the violation `scope`. The envelope must stay VALID JSON (violation() escapes it).
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.2\"x": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    deps_nonstring)
+      # A deps element that isn't a string (42) is unroutable -> slice-routing-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": [42]}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    deps_badref)
+      # A deps element that's a string but not slice-id grammar ("1 bad") is unroutable
+      # -> slice-routing-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": ["1 bad"]}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    deps_clean)
+      # A valid deps element ("1.1") still passes — the grammar check must not over-reject.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []},
+    "1.2": {"step": "implementing", "owns": ["bin/y.sh"], "deps": ["1.1"]}
   },
   "verify": {"attempts": []},
   "ship": {"suite": null, "conformance": null, "prUrl": null}
