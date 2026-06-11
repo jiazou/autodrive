@@ -19,10 +19,12 @@ Resolution contract (mirrors statusline's bash, restated in python — D24/D25/D
 
 Token sum (canonical, VERBATIM from statusline.sh L24 — D26): over the transcript
 JSONL, for each `assistant` line whose `.message.usage` is jq-truthy (an empty `{}`
-counts and sums to 0; `null`/absent is dropped), sum input_tokens +
+counts and sums to 0; `null`/absent/`false` is dropped), sum input_tokens +
 cache_creation_input_tokens + cache_read_input_tokens (each missing => 0); take the
-LAST such value (statusline's `tail -1`). jq halts at the first malformed line, so the
-scan stops there and keeps the prior value. None when no usage line exists.
+LAST such value (statusline's `tail -1`). A JSON *parse* error halts the whole stream
+(jq stops reading input), so the scan stops there and keeps the prior value; a per-line
+*runtime* error (a truthy non-object `usage`, or a non-object `message` indexed in the
+`select`) drops only that one line and the scan CONTINUES. None when no usage line exists.
 """
 import json
 import os
@@ -66,10 +68,15 @@ def latest_usage_tokens(transcript_path):
 
     Byte-for-behavior with statusline.sh's `jq ... | tail -1`:
       - jq's `select(... and .message.usage)` keeps a line whose `.message.usage` is
-        jq-truthy — an empty `{}` usage is PRESENT and sums to 0; an absent or `null`
-        usage is dropped. So `{}` counts as a 0-total line, `None`/absent does not.
-      - jq stops emitting at the FIRST malformed line and `tail -1` then takes the last
-        value emitted BEFORE it — so a parse error ENDS the scan (no skip-and-continue).
+        jq-truthy — an empty `{}` usage is PRESENT and sums to 0; an absent, `null`, or
+        `false` usage is jq-falsy and dropped. So `{}` counts as a 0-total line; the
+        falsy forms do not.
+      - A JSON PARSE error ENDS the stream (jq stops reading input); `tail -1` then takes
+        the last value emitted before it — so the scan stops and keeps the prior value.
+      - A per-line RUNTIME error (a truthy non-object `usage` like `5`/`"x"`, indexed by
+        `.input_tokens`; or a non-object `message` indexed by `.usage` inside `select`)
+        makes jq emit nothing for THAT line but keep going — so it drops only that line
+        and the scan CONTINUES. Distinct from the parse error, which halts.
     (Blank lines are not jq inputs and are skipped on both sides.)"""
     tokens = None
     with open(transcript_path, encoding="utf-8") as fh:
@@ -83,8 +90,14 @@ def latest_usage_tokens(transcript_path):
                 break  # jq halts at the first parse error; tail -1 keeps the prior value
             if obj.get("type") != "assistant":
                 continue
-            usage = obj.get("message", {}).get("usage")
-            if usage is None:  # null/absent is jq-falsy → dropped by select; `{}` is kept
+            message = obj.get("message")
+            if not isinstance(message, dict):
+                continue  # jq: `.message.usage` on a non-object errors → that line drops, scan continues
+            usage = message.get("usage")
+            if not isinstance(usage, dict):
+                # jq-falsy usage (null/absent/false) is dropped by select; a truthy
+                # non-object usage passes select but errors when indexed → that line
+                # drops. Either way the line contributes nothing and the scan continues.
                 continue
             tokens = ((usage.get("input_tokens") or 0)
                       + (usage.get("cache_creation_input_tokens") or 0)
@@ -97,7 +110,9 @@ def latest_model(transcript_path):
     `claude-opus-4-8`), or None — fed to resolve_window, which maps None to the default
     window. Takes the latest assistant line's model as-is: if that line omits model it
     yields None (NOT an older line's value), so an unmodeled latest line falls back to
-    the default window. Halts at the first malformed line, matching the token scan."""
+    the default window. Halts at the first parse-malformed line, matching the token scan;
+    a non-object `message` drops only that line (no crash), like the token scan's runtime
+    skip."""
     model = None
     with open(transcript_path, encoding="utf-8") as fh:
         for line in fh:
@@ -110,5 +125,8 @@ def latest_model(transcript_path):
                 break
             if obj.get("type") != "assistant":
                 continue
-            model = obj.get("message", {}).get("model")
+            message = obj.get("message")
+            if not isinstance(message, dict):
+                continue  # non-object message has no .model → skip this line, keep prior
+            model = message.get("model")
     return model

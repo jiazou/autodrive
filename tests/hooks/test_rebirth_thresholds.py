@@ -33,13 +33,19 @@ FIXTURES = Path(__file__).resolve().parent / "fixtures"
 OVER = FIXTURES / "transcript-over-water.jsonl"
 UNDER = FIXTURES / "transcript-under-water.jsonl"
 
-# statusline's jq token-sum filter — VERBATIM the canonical filter the resolver mirrors.
-JQ_TOKEN_FILTER = (
-    'select(.type=="assistant" and .message.usage) | '
-    '((.message.usage.input_tokens // 0) + '
-    '(.message.usage.cache_creation_input_tokens // 0) + '
-    '(.message.usage.cache_read_input_tokens // 0))'
-)
+def _statusline_token_filter():
+    """The LIVE jq token-sum filter, extracted from the `TOKENS=$(jq -r '...')` line in
+    bin/statusline.sh — so the anti-drift tests run statusline's REAL filter, not a copy.
+    A change to statusline's token jq pipeline therefore reds the anti-drift tests (the
+    same way the window test extracts statusline's live `case` block)."""
+    src = STATUSLINE.read_text(encoding="utf-8")
+    m = re.search(r"""TOKENS=\$\(jq -r '(.*?)' "\$TRANSCRIPT""", src, re.DOTALL)
+    assert m, "statusline.sh token `jq` filter not found — refactor changed its shape"
+    return m.group(1)
+
+
+# statusline's LIVE jq token-sum filter (extracted, not copied) — the resolver mirrors it.
+JQ_TOKEN_FILTER = _statusline_token_filter()
 
 
 @pytest.fixture(scope="module")
@@ -147,8 +153,9 @@ def test_json_window_matches_statusline_case(thresholds, model):
 @pytest.mark.skipif(shutil.which("jq") is None, reason="jq required")
 @pytest.mark.parametrize("fixture", [OVER, UNDER])
 def test_token_sum_matches_statusline_jq(fixture):
-    """The python canonical token sum equals statusline.sh's own jq filter (run
-    verbatim over the same fixture) — the AC6 token-sum no-drift pin."""
+    """The python canonical token sum equals statusline.sh's own jq filter — the LIVE
+    filter extracted from the script (not a copy) — run over the same fixture: the AC6
+    token-sum no-drift pin. Mutating statusline's token jq pipeline reds this."""
     out = subprocess.run(
         ["jq", "-r", JQ_TOKEN_FILTER, str(fixture)],
         capture_output=True, text=True, check=True,
@@ -212,6 +219,77 @@ def test_drift_malformed_line_halts_scan(tmp_path):
     bash = _statusline_token_sum(t)
     assert bash == 100  # value before the parse error, via tail -1
     assert rt.latest_usage_tokens(str(t)) == bash
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq required")
+def test_drift_usage_false_dropped_keeps_prior(tmp_path):
+    """P1(r2): a `usage:false` latest line is jq-falsy → dropped by `select`, so `tail -1`
+    keeps the prior line's 100 (not a crash). Resolver must match. (Pre-fix `usage.get`
+    raised AttributeError on the bool.)"""
+    t = tmp_path / "usage-false.jsonl"
+    t.write_text(
+        json.dumps({"type": "assistant",
+                    "message": {"usage": {"input_tokens": 100}}}) + "\n"
+        + json.dumps({"type": "assistant", "message": {"usage": False}}) + "\n",
+        encoding="utf-8",
+    )
+    bash = _statusline_token_sum(t)
+    assert bash == 100  # jq: false usage dropped by select, tail -1 keeps prior
+    assert rt.latest_usage_tokens(str(t)) == bash
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq required")
+def test_drift_usage_nonobject_truthy_line_dropped_scan_continues(tmp_path):
+    """P1(r2): a truthy non-object `usage` (e.g. `"x"`) PASSES `select` but errors when
+    indexed by `.input_tokens` — jq emits nothing for THAT line yet KEEPS GOING (a runtime
+    error, unlike a parse error). So a later valid 999 line still wins. Resolver must drop
+    the bad line and continue. (Pre-fix `"x".get(...)` raised AttributeError.)"""
+    t = tmp_path / "usage-nonobject.jsonl"
+    t.write_text(
+        json.dumps({"type": "assistant",
+                    "message": {"usage": {"input_tokens": 100}}}) + "\n"
+        + json.dumps({"type": "assistant", "message": {"usage": "x"}}) + "\n"
+        + json.dumps({"type": "assistant",
+                      "message": {"usage": {"input_tokens": 999}}}) + "\n",
+        encoding="utf-8",
+    )
+    bash = _statusline_token_sum(t)
+    assert bash == 999  # runtime error on the bad line, scan continues to 999
+    assert rt.latest_usage_tokens(str(t)) == bash
+
+
+@pytest.mark.skipif(shutil.which("jq") is None, reason="jq required")
+def test_drift_message_nonobject_line_dropped_scan_continues(tmp_path):
+    """P1(r2): a non-object `message` (e.g. `false`) makes `.message.usage` error inside
+    `select` — jq drops THAT line and CONTINUES (runtime, not parse, error). A later valid
+    999 line still wins. Resolver must drop and continue. (Pre-fix `.get("message",{}).get`
+    raised AttributeError on the bool message.)"""
+    t = tmp_path / "message-nonobject.jsonl"
+    t.write_text(
+        json.dumps({"type": "assistant",
+                    "message": {"usage": {"input_tokens": 100}}}) + "\n"
+        + json.dumps({"type": "assistant", "message": False}) + "\n"
+        + json.dumps({"type": "assistant",
+                      "message": {"usage": {"input_tokens": 999}}}) + "\n",
+        encoding="utf-8",
+    )
+    bash = _statusline_token_sum(t)
+    assert bash == 999  # runtime error on the bad-message line, scan continues to 999
+    assert rt.latest_usage_tokens(str(t)) == bash
+
+
+def test_drift_latest_model_nonobject_message_keeps_prior(tmp_path):
+    """P1(r2): latest_model on a non-object `message` (`false`) drops that line and keeps
+    the prior line's model (no crash), matching the token scan's runtime-skip. (Pre-fix
+    `.get("message",{}).get("model")` raised AttributeError on the bool.)"""
+    t = tmp_path / "model-nonobject.jsonl"
+    t.write_text(
+        json.dumps({"type": "assistant",
+                    "message": {"model": "claude-opus-4-8"}}) + "\n"
+        + json.dumps({"type": "assistant", "message": False}) + "\n",
+        encoding="utf-8",
+    )
+    assert rt.latest_model(str(t)) == "claude-opus-4-8"  # prior kept, no crash
 
 
 def test_drift_latest_model_none_when_latest_line_omits_it(tmp_path):
