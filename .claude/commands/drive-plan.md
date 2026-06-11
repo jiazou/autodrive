@@ -73,6 +73,18 @@ b) **Dual-voice design-review convergence** — run `/drive-review` scoped `desi
    own design. If either flags a P1, the planner subagent revises design.md and you
    re-run — loop until **converged** (neither voice has an open P1), capped at 8 rounds.
 
+**Rebirth checkpoint at the planning safe boundaries.** Detection is stage-agnostic, so a
+`rebirth_pending` may be set during planning (author / autoplan / a design-review round).
+At each planning safe boundary — between these steps and after each design-review round (the
+coordinator is between dispatch units with no open `inflight-*.marker`), and before presenting
+Gate A — run the **Coordinator soft-check** then the **Safe-boundary rebirth handler** per
+`~/.claude/commands/drive.md` § *Coordinator soft-check* + § *I1 — Safe-boundary rebirth
+handler* (the shared routine: with `rebirth_pending` set at a safe boundary, prove
+`bin/drive-conformance.sh $RUN_DIR --mode checkpoint` → write `checkpoint-complete.marker` →
+set `waiting="rebirth"` → Present human pause with the paste-ready `/drive <runId>`). Gate A
+precedence still holds (§ I1 Gate/STOP precedence). If `drive.md` is unreachable, skip the
+handler and continue (the Stop-hook backstop still steers).
+
 ## Gate A (the single human checkpoint for direction)
 
 Once autoplan has approved AND the design review has converged, present **Gate A**

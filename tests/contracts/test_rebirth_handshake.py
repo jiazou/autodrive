@@ -27,6 +27,7 @@ import pytest
 from _helpers import REPO_ROOT
 
 DRIVE_MD = REPO_ROOT / ".claude" / "commands" / "drive.md"
+DRIVE_PLAN_MD = REPO_ROOT / ".claude" / "commands" / "drive-plan.md"
 HOOK_PY = REPO_ROOT / "bin" / "drive-stop-hook.py"
 
 
@@ -45,6 +46,10 @@ def _drive_md():
 
 def _hook_py():
     return _text(HOOK_PY)
+
+
+def _drive_plan_md():
+    return _text(DRIVE_PLAN_MD)
 
 
 def _norm(text):
@@ -345,6 +350,57 @@ def test_p1_2_wiring_pin_flips_on_dropped_ship_invocation_copy():
     )
     assert _I1_INVOCATION not in _norm(drifted_ship), (
         "dropping the Ship I1 invocation from a COPY must remove the wiring the pin requires"
+    )
+
+
+# =========================================================================== #
+# P1-1 — the DELEGATED Plan runner (`.claude/commands/drive-plan.md`), where the real
+# autoplan + dual-voice design-review rounds run, INVOKES the shared rebirth handshake at
+# its planning safe boundary. drive.md's Stage-1 wiring is parent-prose; the actual
+# multi-round review context grows inside drive-plan.md, so a rebirth signalled during
+# planning has NO consumer until Gate A unless the delegated runner itself calls it.
+# =========================================================================== #
+_PLAN_REBIRTH_CLAUSE = (
+    "run the **Coordinator soft-check** then the **Safe-boundary rebirth handler**"
+)
+
+
+def test_drive_plan_invokes_rebirth_handshake_at_planning_boundary():
+    """P1-1: `.claude/commands/drive-plan.md` invokes the shared soft-check + rebirth handler
+    at its planning safe boundary — after each design-review round and before presenting Gate A
+    — referencing drive.md's § I1 routine, so a rebirth signalled during author/autoplan/review
+    is consumed rather than running on unhandled to Gate A."""
+    plan = _norm(_drive_plan_md())
+    assert _PLAN_REBIRTH_CLAUSE in plan, (
+        "drive-plan.md must invoke the Coordinator soft-check + Safe-boundary rebirth handler"
+    )
+    # it fires at the planning safe boundary (after each design-review round, before Gate A)
+    assert "after each design-review round" in plan, (
+        "the drive-plan.md handshake must run after each design-review round"
+    )
+    assert "before presenting\nGate A".replace("\n", " ") in plan, (
+        "the drive-plan.md handshake must run before presenting Gate A"
+    )
+    # it references drive.md's shared routine rather than duplicating the I1 prose
+    assert "§ *I1 — Safe-boundary rebirth\nhandler*".replace("\n", " ") in plan, (
+        "drive-plan.md must reference drive.md's § I1 routine (not duplicate it)"
+    )
+    # and names the load-bearing handshake steps (prove → marker → waiting → handoff)
+    assert "--mode checkpoint" in plan and "checkpoint-complete.marker" in plan
+    assert 'set `waiting="rebirth"`' in plan
+    assert "/drive <runId>" in plan, "the handoff must surface the paste-ready resume line"
+
+
+def test_drive_plan_rebirth_pin_flips_on_dropped_clause_copy():
+    """Flip-proof (mutate a COPY, never the real file): drop the soft-check + rebirth-handler
+    invocation clause from a COPY of drive-plan.md and assert the pin REDs — proving it bites on
+    the real call site, not on drive.md's parent claim alone (the pre-fix drive-plan.md had no
+    such clause, so this pin reds against it)."""
+    plan = _norm(_drive_plan_md())
+    assert _PLAN_REBIRTH_CLAUSE in plan, "fixture: the clause must be present to drop"
+    drifted = plan.replace(_PLAN_REBIRTH_CLAUSE, "", 1)
+    assert _PLAN_REBIRTH_CLAUSE not in drifted, (
+        "dropping the soft-check + rebirth-handler clause from a COPY must remove the call site"
     )
 
 
