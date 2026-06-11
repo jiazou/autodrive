@@ -49,10 +49,18 @@ verdict / merge / gate.
     resume (keyed on `state.sessionId != $CLAUDE_CODE_SESSION_ID`), NOT gated on a
     `rebirth` waiting. `rebirth_pending` is derived from the OUTGOING session's transcript
     growth, gone on a fresh resume, so the signal is stale and the successor re-derives it
-    from its own growth (the soft-check/hook re-set it). This is the SINGLE reset point
-    (never re-done in the `rebirth`-continue step below): a Gate A/B/STOP/crash run carrying
-    a stale `rebirth_pending = true` re-arms cleanly here, so the successor's safe-boundary
-    handler does not fire a spurious empty handoff at its first boundary.
+    from its own growth (the soft-check/hook re-set it). `rebirth_pending` is reset to `false`
+    by the RESUME consumer on exactly two scoped paths — the SAME logical re-arm (idempotent),
+    re-derived by the current driver's own detection: (a) HERE at the sessionId-rebind, on any
+    FRESH-session resume (`state.sessionId != $CLAUDE_CODE_SESSION_ID`), uniform over all
+    `waiting` values; (b) on the passing-proof `rebirth`-continue path below, which covers the
+    SAME-session re-paste the rebind skips. It is NOT reset on any other resume: a same-session
+    NON-`rebirth` resume (a Gate A/B/STOP run re-pasted in the same session) hits neither path,
+    so a legitimately-deferred `rebirth_pending` PERSISTS and I1 still hands off at the next
+    safe boundary (§ I1 Gate/STOP precedence). A Gate A/B/STOP/crash run resumed in a FRESH
+    session carrying a stale `rebirth_pending = true` re-arms cleanly here (path a), so the
+    successor's safe-boundary handler does not fire a spurious empty handoff at its first
+    boundary.
   - **Consume `checkpoint-complete.marker` (single-use):** if
     `$RUN_DIR/checkpoint-complete.marker` exists, validate it (JSON parses AND `proof.tip`
     equals the current `drive/<runId>` tip) — record this validity as `markerValid` — then
@@ -69,8 +77,16 @@ verdict / merge / gate.
     needing current safety MUST re-run `--mode checkpoint`). **RE-PROVE via
     `bin/drive-conformance.sh $RUN_DIR --mode checkpoint`** (the just-consumed marker's
     `markerValid` is corroborating evidence only, never the authorization): a passing proof
-    (exit 0) re-establishes resumability → clear `state.waiting = null` (JSON-safe write) and
-    continue autonomous reconciliation exactly as any resume. **A failing/erroring proof, or
+    (exit 0) re-establishes resumability → clear `state.waiting = null` AND reset
+    `state.rebirth_pending = false` (one JSON-safe write) and continue autonomous reconciliation
+    exactly as any resume. The `rebirth_pending` reset belongs ONLY on this passing-proof
+    CONTINUE branch (never before the re-prove, never on the fail-closed branch below — those
+    must leave the signal intact), and it is UNCONDITIONAL w.r.t. the sessionId-rebind: it does
+    NOT depend on the rebind having fired (a SAME-session re-paste of `/drive <runId>` keeps
+    `state.sessionId` unchanged, so the rebind-step reset is skipped, yet the run still drained
+    the outgoing handoff and must re-arm). A `rebirth`-continue resume re-detects fresh in
+    whoever drives now (same-session driver included), so the re-arm is guaranteed across both
+    resume paths. **A failing/erroring proof, or
     a missing/stale marker, FAILS CLOSED** — do NOT silently clear+continue (a
     `waiting="rebirth"` set by a bug/sibling path without I1's prove→marker→wait sequence has
     no proof of resumability): STOP via Present human pause with
@@ -78,9 +94,12 @@ verdict / merge / gate.
     contract, Prove-then-pause). On the passing-proof CONTINUE path do NOT surface it as a
     paused-for-human state, do NOT re-present the handoff. (Distinct from a
     `gateA`/`gateB`/`stop:`/`ask:` waiting found on resume, which is re-presented because the
-    human is back to an open question; `rebirth`'s "human action" was *starting this fresh
-    session*, which the resume itself proves happened.) The sessionId was already rebound and
-    `rebirth_pending` already reset to `false` in that same rebind step (above). This
+    human is back to an open question; `rebirth`'s "human action" was *starting this
+    session*, which the resume itself proves happened — whether a fresh session or a same-session
+    re-paste.) On a fresh-session resume the sessionId was already rebound and `rebirth_pending`
+    already reset in that rebind step; on a same-session re-paste the rebind reset is skipped, so
+    the unconditional reset above is the one that re-arms — either way `rebirth_pending` is `false`
+    by the time autonomous work resumes (the SAME logical re-arm). This
     re-prove is the SOLE carve-out from the marker-consume bullet's "missing/invalid →
     reconcile from scratch" rule: a `rebirth` waiting requires a passing proof, not a
     from-scratch reconcile. Reconcile phase / counters from git + artifacts as normal.
@@ -316,8 +335,11 @@ The detection (Stop hook + Coordinator soft-check) is stage-agnostic and can set
 `rebirth_pending` in ANY stage, so EVERY autonomous safe boundary must invoke this handler,
 not just Execute. It runs IMMEDIATELY AFTER the Coordinator soft-check at each such boundary
 (so the soft-check may set the flag and this handler consumes it in the same boundary):
-- **Execute** — after each per-slice review verdict, the phase-integration review verdict,
-  each HARDEN round verdict, and the phase advance (§ Stage 2–4.5).
+- **Execute** — after the per-phase detailed design converges (its `inflight-design-<P>.marker`
+  cleared, BEFORE freezing base + dispatching slices), after each per-slice review verdict, the
+  phase-integration review verdict, each HARDEN round verdict, and the phase advance
+  (§ Stage 2–4.5). The phase-design sub-stage runs MULTIPLE dual-voice review rounds, so a rebirth
+  signalled there is consumed at this boundary rather than running on into slice dispatch.
 - **Plan** — between plan-stage steps, after each design-review round (§ Stage 1).
 - **Verify** — after each QA/e2e attempt (§ Stage 4b).
 - **Ship** — at the ship dispatch boundary, BEFORE `/drive-ship` is dispatched (before the
@@ -365,8 +387,9 @@ with no open `inflight-*.marker`). Steps, in this exact order (this handler NEVE
 
 **Leave-pending semantics:** within the SAME (outgoing) session `rebirth_pending` STAYS SET
 through the pause — it is consumed at the next safe boundary (where this handshake fires)
-and is NEVER reset inside the outgoing session; it is reset to `false` exactly ONCE, at the
-sessionId-rebind step on a fresh-session resume (§ Run setup & resume). If the human ignores
+and is NEVER reset inside the outgoing session; it is reset to `false` only on RESUME, by the
+SAME logical re-arm whichever resume path runs — the sessionId-rebind step on a fresh-session
+resume, or the `rebirth`-continue path on a same-session re-paste (§ Run setup & resume). If the human ignores
 the handoff and the outgoing session keeps going, `waiting="rebirth"` +
 `checkpoint-complete.marker` persist; the next safe boundary re-observes `rebirth_pending`
 still true and re-presents (re-proving — the marker is record-not-authorization). No
@@ -385,8 +408,8 @@ pressure from its own transcript growth and hands off at the next safe boundary 
 handoff is lost). WITHIN the same outgoing session it does PERSIST (per Leave-pending
 semantics above): if the human ignores the gate/STOP and keeps driving in this session, a
 still-pressured run re-observes `rebirth_pending == true` at the next safe boundary and I1
-hands off there — the flag is reset only at the fresh-session rebind, never inside the
-outgoing session.
+hands off there — the flag is reset only on RESUME (the fresh-session rebind, or the
+same-session `rebirth`-continue re-arm), never inside the outgoing session.
 
 ## Present human pause (shared routine)
 
@@ -755,11 +778,11 @@ unexpanded command string, so a variable ref is invisible to it and silently byp
 the gate.
 
 For each PHASE in order (step 1 designs it, steps 2–5 build & review it, step 6 HARDENS
-it before it advances). At each safe boundary in this loop — after a per-slice review
-verdict (step 4), the phase-integration review verdict (step 5), a HARDEN round verdict and
-the phase advance (step 6) — run the **Coordinator soft-check** (§ above), then the
-**Safe-boundary rebirth handler** (§ I1 above — it consumes any `rebirth_pending` the
-soft-check just set), before proceeding:
+it before it advances). At each safe boundary in this loop — after the per-phase detailed
+design converges (step 1), after a per-slice review verdict (step 4), the phase-integration
+review verdict (step 5), a HARDEN round verdict and the phase advance (step 6) — run the
+**Coordinator soft-check** (§ above), then the **Safe-boundary rebirth handler** (§ I1 above —
+it consumes any `rebirth_pending` the soft-check just set), before proceeding:
 
 1. **Design the phase (detailed, against real code):** initialize
    `state.phaseDesign[<P>] = { "round": 0, "redesigns": 0, "status": "designing" }` if absent,
@@ -777,7 +800,11 @@ soft-check just set), before proceeding:
    gate; can't converge → STOP). Bracket the whole `/drive-design` unit with
    `inflight-design-<P>.marker` (write-before-dispatch, clear-after-record — § Durable
    checkpoint contract; the same discipline applies to EVERY dispatch below). Then
-   `git worktree remove --force $RUN_DIR/wt/design<P>`.
+   `git worktree remove --force $RUN_DIR/wt/design<P>`. This is a safe boundary (the design's
+   `inflight-design-<P>.marker` is cleared, no open `inflight-*.marker`): run the **Coordinator
+   soft-check** (§ above), then the **Safe-boundary rebirth handler** (§ I1 above — it consumes any
+   `rebirth_pending` the multi-round design review just accrued) BEFORE freezing base / dispatching
+   slices.
 2. **Freeze base:** `phaseBaseSha = git rev-parse <featureBranch>`; initialize
    `state.phaseReview[<P>] = { "round": 0 }` if absent.
 3. **Dispatch slices** whose `deps` are CONVERGED, ≤ `concurrencyCap` in flight.

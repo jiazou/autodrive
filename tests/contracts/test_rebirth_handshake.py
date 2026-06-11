@@ -218,6 +218,36 @@ def test_i1_preamble_claims_all_four_stage_boundaries():
     assert "no post-dispatch rebirth is lost" in i1, (
         "the I1 Ship description must state Gate B precedence covers a post-dispatch rebirth"
     )
+    # P1-1: the Execute bullet enumerates the per-phase DESIGN sub-stage boundary (after the
+    # phase design converges, before slices dispatch) — a multi-round review context consumer
+    # the round-1 fix missed, so a rebirth signalled during /drive-design has a consumer.
+    assert (
+        "after the per-phase detailed design converges (its `inflight-design-<P>.marker` "
+        "cleared, BEFORE freezing base + dispatching slices)"
+    ) in i1, (
+        "the I1 preamble's Execute bullet must enumerate the per-phase DESIGN safe boundary "
+        "(after the phase design converges, before slices dispatch)"
+    )
+    assert "running on into slice dispatch" in i1, (
+        "the I1 preamble must state the phase-design rebirth is consumed at that boundary "
+        "rather than running on into slice dispatch"
+    )
+
+
+def test_i1_preamble_phase_design_boundary_pin_flips_on_dropped_copy():
+    """Flip-proof (mutate a COPY): drop the phase-design boundary clause from the I1 preamble's
+    Execute bullet in a COPY and assert the preamble pin REDs — proving it bites on the real
+    enumeration, not an incidental match."""
+    i1 = _norm(_i1_section())
+    clause = (
+        "after the per-phase detailed design converges (its `inflight-design-<P>.marker` "
+        "cleared, BEFORE freezing base + dispatching slices), "
+    )
+    assert clause in i1, "fixture: the phase-design boundary clause must be present to drop"
+    drifted = i1.replace(clause, "", 1)
+    assert clause not in drifted, (
+        "dropping the phase-design boundary clause from a COPY must remove the enumeration"
+    )
 
 
 # The shared-routine invocation each stage must carry: run the Coordinator soft-check then
@@ -249,6 +279,52 @@ def test_execute_loop_still_wires_i1():
     md = _norm(_drive_md())
     assert "the **Safe-boundary rebirth handler** (§ I1 above" in md, (
         "the Execute loop must still wire the I1 handler (preserved alongside the new sites)"
+    )
+
+
+# The Execute step-1 (phase DESIGN) call site: bounded to the `1. **Design the phase` step,
+# from its number through the next top-level numbered step (`2. **Freeze base`).
+def _execute_step1_design():
+    md = _drive_md()
+    start = md.index("1. **Design the phase")
+    end = md.index("\n2. **Freeze base", start)
+    return md[start:end]
+
+
+def test_i1_wired_at_phase_design_call_site():
+    """P1-1: the real call site — Execute step 1 (`/drive-design phase`) actually INVOKES the
+    shared soft-check + I1 rebirth handler AFTER the design converges (its marker cleared)
+    and BEFORE freezing base / dispatching slices. So every boundary the I1 preamble
+    enumerates has a real call site, not just a claim."""
+    step1 = _norm(_execute_step1_design())
+    assert "Coordinator soft-check" in step1, (
+        "Execute step 1 must run the Coordinator soft-check after the design converges"
+    )
+    assert _I1_INVOCATION in step1, (
+        "Execute step 1 must invoke the Safe-boundary rebirth handler (§ I1) after the design "
+        "converges, BEFORE freezing base / dispatching slices"
+    )
+    # the call site is at the right boundary — after the design marker is cleared
+    assert "inflight-design-<P>.marker` is cleared" in step1, (
+        "the step-1 I1 call must sit at the design-converged safe boundary (marker cleared)"
+    )
+
+
+def test_phase_design_call_site_pin_flips_on_dropped_copy():
+    """Flip-proof (mutate a COPY): drop the soft-check + I1 invocation sentence from a COPY of
+    Execute step 1 and assert the call-site pin REDs — proving it bites on the real call site,
+    not on the preamble's enumeration alone."""
+    step1 = _execute_step1_design()
+    assert _I1_INVOCATION in _norm(step1), "fixture: step 1 must carry the I1 invocation to drop"
+    drifted = re.sub(
+        r" This is a safe boundary \(the design's\s+`inflight-design-<P>\.marker` is cleared.*?dispatching\s+slices\.",
+        "",
+        step1,
+        count=1,
+        flags=re.DOTALL,
+    )
+    assert _I1_INVOCATION not in _norm(drifted), (
+        "dropping the step-1 I1 invocation from a COPY must remove the call-site wiring"
     )
 
 
@@ -459,51 +535,88 @@ def test_resume_rebirth_continue_is_fail_closed_re_proven():
 _REBIRTH_RESET_RE = re.compile(r"`?(?:state\.)?rebirth_pending`?\s*=\s*`?false`?")
 
 
-def test_rebirth_pending_rearm_at_rebind_is_single_reset_point():
-    """AC4 (D36): the `rebirth_pending=false` re-arm lives at the sessionId-rebind step, in
-    the SAME write, on ANY fresh-session resume — and is the SINGLE reset point (NOT re-done
-    in the rebirth-continue step). Pinned as contiguous clauses so a second reset, or moving
-    it off the rebind step, reds the pin."""
+def test_rebirth_pending_rearm_on_resume_at_rebind_and_rebirth_continue():
+    """AC4 (D36, P1-2): the `rebirth_pending=false` re-arm fires on RESUME — at the
+    sessionId-rebind step (fresh-session resume) AND on the `rebirth`-continue path
+    (same-session re-paste), the SAME logical idempotent re-arm. Pinned as contiguous clauses
+    so dropping EITHER reset write, or re-coupling the re-arm to the sessionId-rebind alone
+    (which a same-session re-paste skips), reds the pin."""
     blob = _norm(_drive_md())
     # reset is AT the rebind step, in the same write, uniform over all waiting values
     assert "reset `state.rebirth_pending = false` — uniformly on ANY fresh-session" in blob, (
         "the rebirth_pending re-arm must sit at the sessionId-rebind step, on ANY "
         "fresh-session resume (uniform over all waiting values)"
     )
-    # it is the SINGLE reset point, explicitly not re-done in the rebirth-continue step
-    assert "This is the SINGLE reset point" in blob, (
-        "the re-arm must be pinned as the SINGLE reset point"
+    # it is the SAME logical re-arm fired by the resume consumer on EXACTLY TWO scoped paths
+    # (rebind for fresh-session; rebirth-continue for same-session re-paste) — NOT a blanket
+    # "whenever resumed" (which would clear a gate/STOP-deferred rebirth on a same-session
+    # non-rebirth resume), and NOT a single textual reset coupled to the rebind alone.
+    assert (
+        "`rebirth_pending` is reset to `false` by the RESUME consumer on exactly two scoped "
+        "paths — the SAME logical re-arm (idempotent)"
+    ) in blob, (
+        "the re-arm must be pinned as the SAME logical reset on exactly the two scoped resume "
+        "paths (rebind OR rebirth-continue), so a same-session re-paste that skips the rebind "
+        "still re-arms"
     )
-    assert "never re-done in the `rebirth`-continue step" in blob, (
-        "the re-arm must NOT be re-done in the rebirth-continue step"
+    # NEGATIVE pin (codex F1): a same-session NON-rebirth resume must NOT clear — the deferred
+    # rebirth_pending PERSISTS so I1 still hands off (gate/STOP precedence).
+    assert (
+        "It is NOT reset on any other resume: a same-session NON-`rebirth` resume (a Gate "
+        "A/B/STOP run re-pasted in the same session) hits neither path, so a legitimately-"
+        "deferred `rebirth_pending` PERSISTS"
+    ) in blob, (
+        "the prose must scope the reset to the two paths and state a same-session non-rebirth "
+        "resume does NOT clear (so a gate/STOP-deferred rebirth is not lost)"
+    )
+    # the rebirth-continue path performs the reset on the passing-proof CONTINUE branch,
+    # UNCONDITIONALLY w.r.t. the sessionId-rebind (the P1-2 fix) — and NOT before the re-prove
+    # nor on the fail-closed branch (codex F2).
+    assert (
+        "The `rebirth_pending` reset belongs ONLY on this passing-proof CONTINUE branch (never "
+        "before the re-prove, never on the fail-closed branch below — those must leave the "
+        "signal intact), and it is UNCONDITIONAL w.r.t. the sessionId-rebind"
+    ) in blob, (
+        "the rebirth-continue reset must be scoped to the passing-proof CONTINUE branch and "
+        "unconditional w.r.t. the rebind (the same-session re-paste hole), NOT before re-prove "
+        "or on fail-closed"
     )
 
 
-def _assert_single_reset_structural(drive_md):
-    """AC4 / D36 negative (design-phase3.md L533-534): the `rebirth_pending` reset write
-    appears EXACTLY ONCE in the resume reconciliation list and ONLY at the sessionId-rebind
-    bullet (index 0) — ABSENT from the rebirth-continue bullet (index 2) and from the I1
-    OUTGOING-session handler (where the flag must STAY SET). Factored so the flip-proof runs
-    the SAME structural pin against a mutated COPY; raises AssertionError on a second reset.
+def _assert_reset_on_resume_structural(drive_md):
+    """AC4 / D36 (design-phase3.md L533-534) + P1-2 LOGICAL contract: the `rebirth_pending`
+    reset is the reset-on-RESUME re-arm — it appears at the sessionId-rebind bullet (index 0,
+    fresh-session resume) AND the rebirth-continue bullet (index 2, same-session re-paste), and
+    is ABSENT from the I1 OUTGOING-session handler (where the flag must STAY SET). Factored so
+    the flip-proof runs the SAME structural pin against a mutated COPY; raises AssertionError
+    when a resume reset is dropped or the outgoing handler grows one.
+
+    This replaces the old "exactly ONCE, rebind-only" pin: a same-session re-paste keeps
+    `state.sessionId` unchanged and so skips the rebind reset, so the rebirth-continue path
+    MUST carry its own unconditional reset — the contract is reset-on-resume (both paths), not
+    a single textual write coupled to the rebind.
 
     `drive_md` is the RAW drive.md text (not `_norm`'d — the bullet bounding walks lines)."""
     section = _resume_section_of(drive_md)
     bodies = _resume_bullet_bodies(section)
     assert len(bodies) >= 3, f"expected the resume sub-bullets to enumerate; got {len(bodies)}"
 
-    # EXACTLY ONE reset write across the entire resume reconciliation list …
-    total = sum(len(_REBIRTH_RESET_RE.findall(b)) for b in bodies)
-    assert total == 1, (
-        f"`rebirth_pending = false` must be reset EXACTLY ONCE across the resume bullets; "
-        f"found {total} reset writes (a redundant second reset breaks the single-reset point)"
-    )
-    # … and that one reset lives ONLY at the sessionId-rebind bullet (index 0) …
+    # the sessionId-rebind bullet (index 0) resets on the fresh-session resume path …
     assert _REBIRTH_RESET_RE.search(bodies[0]), (
-        "the single `rebirth_pending = false` reset must live at the sessionId-rebind bullet"
+        "the sessionId-rebind bullet must reset `rebirth_pending = false` (fresh-session resume)"
     )
-    # … and is ABSENT from the rebirth-continue bullet (index 2 — must NOT re-reset).
-    assert not _REBIRTH_RESET_RE.search(bodies[2]), (
-        "the rebirth-continue bullet must NOT re-reset `rebirth_pending` (single reset point)"
+    # … and the rebirth-continue bullet (index 2) resets on the same-session re-paste path —
+    # the P1-2 fix: this is no longer absent (it MUST re-arm when the rebind reset is skipped).
+    assert _REBIRTH_RESET_RE.search(bodies[2]), (
+        "the rebirth-continue bullet must reset `rebirth_pending = false` (same-session "
+        "re-paste, where the sessionId-rebind reset is skipped) — the P1-2 unconditional re-arm"
+    )
+    # … but the marker-consume bullet (index 1, the same-session NON-rebirth reconcile path)
+    # must carry NO reset — a Gate/STOP-deferred rebirth_pending PERSISTS there (codex F1: the
+    # reset is scoped to exactly the two resume paths, never a blanket every-resume clear).
+    assert not _REBIRTH_RESET_RE.search(bodies[1]), (
+        "the marker-consume bullet (same-session non-rebirth reconcile) must NOT reset "
+        "`rebirth_pending` — a gate/STOP-deferred rebirth must PERSIST so I1 still hands off"
     )
 
     # The OUTGOING-session I1 handler must carry NO reset write — the flag STAYS SET there.
@@ -522,34 +635,34 @@ def _resume_section_of(drive_md):
     return drive_md[start:end]
 
 
-def test_single_reset_point_is_structural_not_prose_only():
-    """AC4 / D36 (design-phase3.md L533-534) negative: assert the `rebirth_pending` reset is
-    written EXACTLY ONCE and ONLY at the rebind step — ABSENT from the rebirth-continue
-    bullet and the I1 outgoing handler — over the REAL merged drive.md, not just the prose
-    CLAIM of single-reset."""
-    _assert_single_reset_structural(_drive_md())
+def test_reset_on_resume_is_structural_not_prose_only():
+    """AC4 / D36 (design-phase3.md L533-534) + P1-2: assert the `rebirth_pending` reset
+    structurally fires on BOTH resume paths — the sessionId-rebind bullet AND the
+    rebirth-continue bullet — and is ABSENT from the I1 outgoing handler, over the REAL merged
+    drive.md, not just the prose CLAIM."""
+    _assert_reset_on_resume_structural(_drive_md())
 
 
-def test_single_reset_pin_flips_on_redundant_second_reset_copy():
-    """Flip-proof (genuine — run the REAL structural pin against a mutated COPY): inject a
-    redundant SECOND `rebirth_pending = false` reset into the rebirth-continue bullet of a
-    COPY of drive.md (the exact double-reset drift D36/edge-case-9 prevents) and assert the
-    SAME `_assert_single_reset_structural` pin RAISES. Proves the negative is structural, not
-    presence-only — the prose `SINGLE reset point` sentences stay intact in the copy."""
+def test_reset_on_resume_pin_flips_on_dropped_rebirth_continue_reset_copy():
+    """Flip-proof (genuine — run the REAL structural pin against a mutated COPY): DROP the
+    rebirth-continue path's `rebirth_pending = false` reset from a COPY of drive.md (the exact
+    P1-2 same-session re-paste hole this fix closes) and assert the SAME
+    `_assert_reset_on_resume_structural` pin RAISES. Proves the contract bites on the
+    same-session re-arm's PRESENCE, not just the prose claim."""
     drifted = _drive_md().replace(
-        "clear `state.waiting = null` (JSON-safe write) and",
-        "clear `state.waiting = null` (JSON-safe write), reset `state.rebirth_pending = false`, "
-        "and",
+        "clear `state.waiting = null` AND reset\n    `state.rebirth_pending = false` (one "
+        "JSON-safe write)",
+        "clear `state.waiting = null` (one JSON-safe write)",
         1,
     )
-    # the injection must actually land (else the flip-proof is vacuous) …
-    assert drifted != _drive_md(), "the redundant-second-reset injection matched nothing"
-    # … the prose single-reset CLAIM is still present in the copy (so a presence-only pin
-    # would stay green — proving this pin bites on STRUCTURE) …
-    assert "This is the SINGLE reset point" in drifted
+    # the drop must actually land (else the flip-proof is vacuous) …
+    assert drifted != _drive_md(), "the rebirth-continue reset drop matched nothing"
+    # … the rebind reset stays present in the copy (so a presence-anywhere pin would stay
+    # green — proving this pin bites on the per-path STRUCTURE) …
+    assert "reset `state.rebirth_pending = false` — uniformly on ANY fresh-session" in _norm(drifted)
     # … and the REAL structural pin, run against the drifted COPY, must RED.
     with pytest.raises(AssertionError):
-        _assert_single_reset_structural(drifted)
+        _assert_reset_on_resume_structural(drifted)
 
 
 def test_ac4_resume_order_pin_flips_on_reordered_copy():
