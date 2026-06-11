@@ -22,6 +22,8 @@ mutated COPY of the relevant prose/code (never the real files) in the accompanyi
 """
 import re
 
+import pytest
+
 from _helpers import REPO_ROOT
 
 DRIVE_MD = REPO_ROOT / ".claude" / "commands" / "drive.md"
@@ -83,6 +85,16 @@ _RESUME_BULLET_RE = re.compile(r"^[ \t]+- \*\*(.+?)\*\*", re.MULTILINE)
 def _resume_bullet_labels(section):
     """Enumerated resume sub-bullet labels (trailing `:` stripped) in document order."""
     return [lbl.rstrip(":") for lbl in _RESUME_BULLET_RE.findall(section)]
+
+
+def _resume_bullet_bodies(section):
+    """The FULL text of each enumerated resume sub-bullet (its `- **…**` start line through
+    every following more-indented line, up to the next sibling sub-bullet), in document
+    order — same bounded `_RESUME_BULLET_RE` enumeration, sliced between match starts so a
+    negative pin ("X does NOT appear in bullet N") can scan one bullet's own span only."""
+    starts = [m.start() for m in _RESUME_BULLET_RE.finditer(section)]
+    bounds = starts + [len(section)]
+    return [section[bounds[i]: bounds[i + 1]] for i in range(len(starts))]
 
 
 def _i1_section():
@@ -269,6 +281,13 @@ def test_resume_rebirth_continue_clause_is_continue_not_stop():
     assert "do NOT surface it as a paused-for-human state, do NOT re-present the handoff" in blob
 
 
+# A `rebirth_pending` RESET assignment — `[state.]rebirth_pending = false` (optional
+# backticks/`state.` prefix, flexible inner whitespace). Deliberately matches the ASSIGNMENT
+# form (`= false`), NOT the JSON default `"rebirth_pending": false` (a `:` initializer) nor
+# bare prose, so the count reflects real reset *writes* of the flag.
+_REBIRTH_RESET_RE = re.compile(r"`?(?:state\.)?rebirth_pending`?\s*=\s*`?false`?")
+
+
 def test_rebirth_pending_rearm_at_rebind_is_single_reset_point():
     """AC4 (D36): the `rebirth_pending=false` re-arm lives at the sessionId-rebind step, in
     the SAME write, on ANY fresh-session resume — and is the SINGLE reset point (NOT re-done
@@ -287,6 +306,79 @@ def test_rebirth_pending_rearm_at_rebind_is_single_reset_point():
     assert "never re-done in the `rebirth`-continue step" in blob, (
         "the re-arm must NOT be re-done in the rebirth-continue step"
     )
+
+
+def _assert_single_reset_structural(drive_md):
+    """AC4 / D36 negative (design-phase3.md L533-534): the `rebirth_pending` reset write
+    appears EXACTLY ONCE in the resume reconciliation list and ONLY at the sessionId-rebind
+    bullet (index 0) — ABSENT from the rebirth-continue bullet (index 2) and from the I1
+    OUTGOING-session handler (where the flag must STAY SET). Factored so the flip-proof runs
+    the SAME structural pin against a mutated COPY; raises AssertionError on a second reset.
+
+    `drive_md` is the RAW drive.md text (not `_norm`'d — the bullet bounding walks lines)."""
+    section = _resume_section_of(drive_md)
+    bodies = _resume_bullet_bodies(section)
+    assert len(bodies) >= 3, f"expected the resume sub-bullets to enumerate; got {len(bodies)}"
+
+    # EXACTLY ONE reset write across the entire resume reconciliation list …
+    total = sum(len(_REBIRTH_RESET_RE.findall(b)) for b in bodies)
+    assert total == 1, (
+        f"`rebirth_pending = false` must be reset EXACTLY ONCE across the resume bullets; "
+        f"found {total} reset writes (a redundant second reset breaks the single-reset point)"
+    )
+    # … and that one reset lives ONLY at the sessionId-rebind bullet (index 0) …
+    assert _REBIRTH_RESET_RE.search(bodies[0]), (
+        "the single `rebirth_pending = false` reset must live at the sessionId-rebind bullet"
+    )
+    # … and is ABSENT from the rebirth-continue bullet (index 2 — must NOT re-reset).
+    assert not _REBIRTH_RESET_RE.search(bodies[2]), (
+        "the rebirth-continue bullet must NOT re-reset `rebirth_pending` (single reset point)"
+    )
+
+    # The OUTGOING-session I1 handler must carry NO reset write — the flag STAYS SET there.
+    i1 = _section(drive_md, "I1 — Safe-boundary rebirth handler", level="### ")
+    assert not _REBIRTH_RESET_RE.search(i1), (
+        "the I1 outgoing-session handler must NOT reset `rebirth_pending` — it STAYS SET "
+        "through the outgoing pause (reset happens only on the incoming resume)"
+    )
+
+
+def _resume_section_of(drive_md):
+    """The resume reconciliation bullet list of an arbitrary drive.md TEXT (the real file or a
+    mutated COPY) — same bounds as `_resume_section`, parameterized for the flip-proof."""
+    start = drive_md.index("- **Resume:**")
+    end = drive_md.index("\n## ", start)
+    return drive_md[start:end]
+
+
+def test_single_reset_point_is_structural_not_prose_only():
+    """AC4 / D36 (design-phase3.md L533-534) negative: assert the `rebirth_pending` reset is
+    written EXACTLY ONCE and ONLY at the rebind step — ABSENT from the rebirth-continue
+    bullet and the I1 outgoing handler — over the REAL merged drive.md, not just the prose
+    CLAIM of single-reset."""
+    _assert_single_reset_structural(_drive_md())
+
+
+def test_single_reset_pin_flips_on_redundant_second_reset_copy():
+    """Flip-proof (genuine — run the REAL structural pin against a mutated COPY): inject a
+    redundant SECOND `rebirth_pending = false` reset into the rebirth-continue bullet of a
+    COPY of drive.md (the exact double-reset drift D36/edge-case-9 prevents) and assert the
+    SAME `_assert_single_reset_structural` pin RAISES. Proves the negative is structural, not
+    presence-only — the prose `SINGLE reset point` sentences stay intact in the copy."""
+    drifted = _drive_md().replace(
+        "`state.waiting = null` (JSON-safe write) and continue autonomous",
+        "`state.waiting = null` (JSON-safe write), reset `state.rebirth_pending = false`, "
+        "and continue autonomous",
+        1,
+    )
+    # the injection must actually land (else the flip-proof is vacuous) …
+    assert drifted != _drive_md(), "the redundant-second-reset injection matched nothing"
+    # … the prose single-reset CLAIM is still present in the copy (so a presence-only pin
+    # would stay green — proving this pin bites on STRUCTURE) …
+    assert "This is the SINGLE reset point" in drifted
+    # … and the REAL structural pin, run against the drifted COPY, must RED.
+    with pytest.raises(AssertionError):
+        _assert_single_reset_structural(drifted)
 
 
 def test_ac4_resume_order_pin_flips_on_reordered_copy():
@@ -341,11 +433,9 @@ def test_gate_stop_wins_precedence_over_rebirth():
 # AC11 — canonical `waiting` definition enumerates `rebirth` with its DUAL nature in BOTH
 # drive.md sites AND the hook docstring.
 # =========================================================================== #
-def test_drive_md_autonomous_continuation_contract_enumerates_rebirth_dual():
-    """AC11: drive.md's Autonomous-continuation contract enumerates `rebirth` as the lone
-    CONTINUE exception with BOTH halves of its dual nature — set-to-pause in the OUTGOING
-    session AND auto-cleared-as-continue on resume — as a contiguous clause."""
-    blob = _norm(_drive_md())
+def _assert_ac11_dual_nature(blob):
+    """The AC11 dual-nature pin, factored so the flip-proof runs the SAME assertion against a
+    mutated COPY. `blob` is `_norm`'d drive.md text; raises AssertionError on any drift."""
     assert "`waiting = \"rebirth\"` is the lone CONTINUE exception" in blob, (
         "the Autonomous-continuation contract must name rebirth the lone CONTINUE exception"
     )
@@ -358,6 +448,13 @@ def test_drive_md_autonomous_continuation_contract_enumerates_rebirth_dual():
     )
     # the hook reads truthiness only (so this is a doc-contract amendment, not a behavior change)
     assert "The hook reads only `waiting`'s truthiness" in blob
+
+
+def test_drive_md_autonomous_continuation_contract_enumerates_rebirth_dual():
+    """AC11: drive.md's Autonomous-continuation contract enumerates `rebirth` as the lone
+    CONTINUE exception with BOTH halves of its dual nature — set-to-pause in the OUTGOING
+    session AND auto-cleared-as-continue on resume — as a contiguous clause."""
+    _assert_ac11_dual_nature(_norm(_drive_md()))
 
 
 def test_present_human_pause_step1_enumerates_rebirth_dual():
@@ -400,28 +497,42 @@ def test_hook_docstring_enumerates_rebirth_dual():
 
 
 def test_ac11_dual_nature_pin_flips_on_human_pause_only_copy():
-    """Flip-proof: a COPY of the Autonomous-continuation contract reverted to the pre-edit
-    human-pause-ONLY phrasing (the dual-nature clause stripped) must RED the AC11 pin —
-    proving the pin bites on the continue semantics, not just the literal token `rebirth`."""
-    blob = _norm(_drive_md())
-    stripped = blob.replace(
-        "auto-cleared-as-continue by the resume path in the INCOMING session", "STRIPPED"
+    """Flip-proof (genuine — run the REAL pin against a mutated COPY): revert a COPY of the
+    Autonomous-continuation contract to the pre-edit human-pause-ONLY phrasing (drop the
+    auto-clear-on-resume half — the exact way the contract would drift) and assert the SAME
+    `_assert_ac11_dual_nature` pin RAISES on it. This proves the pin bites on the continue
+    semantics, not just the literal token `rebirth`."""
+    drifted = _drive_md().replace(
+        "auto-cleared-as-continue by the resume path in the INCOMING session —\n"
+        "it is NOT a STOP awaiting a human answer.",
+        "a STOP awaiting a human answer like every other `waiting` value.",
     )
-    # the real text has the half; the stripped COPY must NOT satisfy the pin
-    assert "auto-cleared-as-continue by the resume path in the INCOMING session" not in stripped
+    # the mutation must actually change the source (else the flip-proof is vacuous) …
+    assert drifted != _drive_md(), "the human-pause-only drift mutation matched nothing"
+    # … and the REAL pin, run against the drifted COPY, must RED.
+    with pytest.raises(AssertionError):
+        _assert_ac11_dual_nature(_norm(drifted))
 
 
 # =========================================================================== #
 # AC12 — the rebirth-handoff `/goal <leg-condition>` selector is TOTAL over the stage enum
 # (premises, plan, execute, verify, ship) → exactly one leg-condition each.
 # =========================================================================== #
-# A leg-condition selector bullet: `- \`stage\` ∈ {…} (…): <condition>`. The braces list the
-# stages this bullet covers; we collect the covered stage tokens across all bullets and
-# assert they partition the full pipeline enum exactly once each.
+# A leg-condition selector bullet: a list item (`- `) keyed on `stage` that lists the stages
+# it covers in a `{…}` brace group and maps them to a leg-CONDITION body. Loosened from the
+# original (which hard-coded a 3-space indent, a `:`-terminated single line, and a 5-space
+# one-line body) to pin the MEANING — the stage-set → condition partition — not incidental
+# indentation/wrapping. Still bites on a real partition change: the braces capture is the
+# load-bearing selector, and `cond` must be non-empty (a stage moved/dropped reds the
+# total-coverage check below; a body-less bullet reds the non-empty check).
+#   - `stages`: everything inside the first `{…}` after `stage` (the covered stage tokens).
+#   - `cond`  : the bullet's remaining text after the brace group up to the next sibling
+#               `- ` bullet (or block end) — wrap-tolerant, so a reflowed multi-line
+#               condition still reads as one non-empty body.
 _STAGE_ENUM = ("premises", "plan", "execute", "verify", "ship")
 _LEG_BULLET_RE = re.compile(
-    r"^   - `stage` ∈ \{(?P<stages>[^}]*)\}.*?:\n     (?P<cond>.+)$",
-    re.MULTILINE,
+    r"^\s*- .*?`stage`.*?\{(?P<stages>[^}]*)\}(?P<cond>.*?)(?=^\s*- |\Z)",
+    re.MULTILINE | re.DOTALL,
 )
 _STAGE_TOK_RE = re.compile(r"`\"(\w+)\"`")
 
@@ -482,12 +593,16 @@ def test_ac12_total_selector_pin_flips_when_a_stage_is_dropped():
 # CROSS-FILE INVARIANT — the hook's escalation steer (3.2) and drive.md's I1 handshake
 # (3.1) agree: the hook steers the coordinator to do exactly what the I1 handler implements.
 # =========================================================================== #
-def _escalation_steer_text():
+def _escalation_steer_text(src=None):
     """The ESCALATION-branch return string from the hook's `_rebirth_steer` — the steer
     emitted when `rebirth_pending` is already set and the run is still over hard water. We
     bound it to the `if run.get("rebirth_pending"):` branch so the pre-flag set-flag steer
-    can't leak into the assertion."""
-    src = _hook_py()
+    can't leak into the assertion.
+
+    `src` defaults to the REAL merged hook source; the flip-proof passes a MUTATED COPY so
+    the SAME accessor runs against it (mutate-a-copy, never the real file)."""
+    if src is None:
+        src = _hook_py()
     start = src.index('if run.get("rebirth_pending"):')
     end = src.index("# PRE-FLAG", start)
     return _norm(src[start:end])
@@ -522,16 +637,24 @@ def test_hook_escalation_steer_directs_the_i1_handshake():
     )
 
 
+# `rebirth` appears in the source-escaped form `\"rebirth\"` in the steer literal.
+_SHARED_STEER_TOKENS = ("--mode checkpoint", "checkpoint-complete.marker", r'\"rebirth\"')
+
+
+def _assert_steer_names_shared_tokens(steer):
+    """The cross-file shared-token pin over the escalation steer, factored so the flip-proof
+    runs the SAME assertion against a mutated COPY. Raises AssertionError on a missing token."""
+    for token in _SHARED_STEER_TOKENS:
+        assert token in steer, f"the escalation steer must name `{token}`"
+
+
 def test_hook_escalation_and_i1_share_the_handshake_tokens():
     """Cross-file invariant (token agreement): every load-bearing token in the hook's
     escalation steer is the SAME token drive.md's I1 handler uses, so a rename on either
     side (e.g. the marker file, the conformance mode, the waiting value) reds this pin and
     surfaces the cross-file drift."""
-    steer = _escalation_steer_text()
+    _assert_steer_names_shared_tokens(_escalation_steer_text())
     i1 = _norm(_i1_section())
-    # `rebirth` appears in the source-escaped form `\"rebirth\"` in the steer literal.
-    for token in ("--mode checkpoint", "checkpoint-complete.marker", r'\"rebirth\"'):
-        assert token in steer, f"the escalation steer must name `{token}`"
     # the I1 handler names the conformance proof, the marker, and the rebirth waiting value
     assert "bin/drive-conformance.sh $RUN_DIR --mode checkpoint" in i1
     assert "checkpoint-complete.marker" in i1
@@ -539,11 +662,14 @@ def test_hook_escalation_and_i1_share_the_handshake_tokens():
 
 
 def test_cross_file_invariant_flips_on_renamed_steer_token_copy():
-    """Flip-proof: renaming the marker token in a COPY of the escalation steer breaks the
-    shared-token pin — proving the cross-file agreement check is load-bearing on the real
-    token, not coincidentally green."""
-    steer = _escalation_steer_text()
-    mutated = steer.replace("checkpoint-complete.marker", "some-other.marker")
-    assert "checkpoint-complete.marker" not in mutated, (
-        "renaming the marker in a COPY of the steer must drop the shared token"
-    )
+    """Flip-proof (genuine — run the REAL accessor + pin against a mutated COPY): rename the
+    marker token in a COPY of the whole hook SOURCE (the exact way a cross-file drift would
+    happen), re-extract the steer via the SAME `_escalation_steer_text` accessor, and assert
+    the SAME `_assert_steer_names_shared_tokens` pin RAISES. Proves the agreement check is
+    load-bearing on the real token, not coincidentally green."""
+    drifted_src = _hook_py().replace("checkpoint-complete.marker", "some-other.marker")
+    # the rename must actually change the source (else the flip-proof is vacuous) …
+    assert drifted_src != _hook_py(), "the marker-rename mutation matched nothing in the hook"
+    # … and the REAL accessor + pin, run over the drifted COPY, must RED.
+    with pytest.raises(AssertionError):
+        _assert_steer_names_shared_tokens(_escalation_steer_text(drifted_src))
