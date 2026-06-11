@@ -237,6 +237,35 @@ clear — indistinguishable on disk, treated the same):
 At resume, every open marker is stranded by definition (the dispatching session is
 gone). In-session, a marker the coordinator is not actively awaiting gets the same rule.
 
+## Coordinator soft-check (context-pressure, signal-only)
+
+The SECONDARY context-pressure detection surface (the Stop hook is primary). At each
+**safe boundary** in the Execute loop — after each per-slice review verdict is recorded,
+after the phase-integration review verdict, after each HARDEN round verdict, and after the
+phase advance — the coordinator reads its OWN latest transcript line and self-signals
+`rebirth_pending` if the SOFT threshold is crossed:
+
+1. Read the coordinator's own transcript (`$CLAUDE_CODE_SESSION_ID` → the project JSONL,
+   or the harness-exposed `transcript_path`). `tokens` = the canonical sum over that
+   transcript: the LAST assistant line's `input_tokens + cache_creation_input_tokens +
+   cache_read_input_tokens` (jq `// 0` per absent field). No completed assistant line with
+   `usage` → skip this boundary.
+2. `model` = that line's `.message.model`. Resolve `window` from `bin/rebirth-thresholds.json`
+   (the I1 substring rule over `model`; no `windows[].match` hit → `defaultWindow`).
+3. If `tokens >= window * softThresholdFraction` AND `state.rebirth_pending` is not already
+   `true`: set `state.rebirth_pending = true` (JSON-safe write) and append one event-log
+   line `{"event":"rebirth_pending","via":"coordinator-soft","pct":<tokens*100/window>}`.
+
+**SIGNAL-ONLY:** setting the flag does NOT checkpoint, hand off, or pause — the coordinator
+CONTINUES autonomous work normally. Phase 3's safe-boundary handler consumes
+`rebirth_pending` to checkpoint + pause; this surface only records the signal. **Idempotent:**
+never re-set an already-`true` flag and never log a duplicate (the Stop hook's steer and this
+self-check suppress each other once either fires).
+
+Honest-coverage residuals: a single catastrophic turn can overshoot the window before any
+boundary or Stop-hook firing; when the Stop hook is ABSENT this self-check is the ONLY
+detection surface, firing only when the coordinator reaches a boundary.
+
 ## Present human pause (shared routine)
 
 This is the **ONLY** way `/drive` pauses for the human — Gate A, Gate B, every
@@ -540,7 +569,9 @@ unexpanded command string, so a variable ref is invisible to it and silently byp
 the gate.
 
 For each PHASE in order (step 1 designs it, steps 2–5 build & review it, step 6 HARDENS
-it before it advances):
+it before it advances). At each safe boundary in this loop — after a per-slice review
+verdict (step 4), the phase-integration review verdict (step 5), a HARDEN round verdict and
+the phase advance (step 6) — run the **Coordinator soft-check** (§ above) before proceeding:
 
 1. **Design the phase (detailed, against real code):** initialize
    `state.phaseDesign[<P>] = { "round": 0, "redesigns": 0, "status": "designing" }` if absent,
