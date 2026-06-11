@@ -783,9 +783,11 @@ def test_harden_one_regress_per_fix_round():
 
 def test_harden_regress_no_round_increment_contract_pinned_both_voices():
     """AC10 (load-bearing): the harden-regress round-scheme contract that the rule-2
-    reconstruction depends on — pinned on BOTH prose voices as CONTIGUOUS clauses so a
-    drift to a DIFFERENT round/file scheme (a separate counter, a new file family, or an
-    incrementing harden-regress) breaks this test.
+    reconstruction depends on. The contract has TWO halves — (A) harden-regress does NOT
+    increment `phaseReview[<P>].round`, and (B) it writes into the SAME `review-phase<P>-N.md`
+    family — and BOTH halves are pinned on BOTH prose voices (drive.md and drive-review.md) as
+    CONTIGUOUS clauses, so a drift to a DIFFERENT round/file scheme (a separate counter, a new
+    file family, or an incrementing harden-regress) in EITHER voice breaks this test.
 
     The contract: a harden-regress review writes into the SAME `review-phase<P>-N.md`
     family WITHOUT incrementing the conformance `phaseReview[<P>].round`. That is the exact
@@ -807,17 +809,31 @@ def test_harden_regress_no_round_increment_contract_pinned_both_voices():
         "N.md` family without incrementing the round' clause — a drift to a different "
         "round/file scheme must break this pin"
     )
-    # 1b. drive-review.md — the harden-regress exception that operationalizes 'no round
-    # increment' at the review-write point: it must NOT read/increment/cap the conformance
-    # round. Pinned as a contiguous clause naming the SAME `phaseReview[<P>].round` counter.
+    # 1b. drive-review.md — BOTH halves of the contract at the review-write point, each a
+    # contiguous clause so a reword onto a different scheme/family fails:
+    #   half A (no round increment): the harden-regress exception must NOT read/increment/cap
+    #     the conformance round, naming the SAME `phaseReview[<P>].round` counter.
+    #   half B (same review-phase<P>-N.md family): harden-regress is the SAME review as
+    #     `phase <P>` with identical scope/mechanics — so it writes the SAME `review-<scope>-N.md`
+    #     file (`<scope>` = `phase<P>`), i.e. the `review-phase<P>-N.md` family — the ONLY
+    #     difference being the counter. A drift rerouting harden-regress to a DIFFERENT file
+    #     family must change this clause and red the test.
     review = _norm(_drive_review_md())
     assert (
         "Exception — `harden-regress`:** do NOT read, increment, or cap against the "
         "conformance `phaseReview[<P>].round`"
     ) in review, (
-        "drive-review.md must pin the harden-regress exception (do NOT increment the "
-        "conformance `phaseReview[<P>].round`) — the write-point half of the no-increment "
-        "contract"
+        "drive-review.md must pin the harden-regress no-round-increment half (do NOT "
+        "increment the conformance `phaseReview[<P>].round`) — the write-point half A"
+    )
+    assert (
+        "same review as `phase <P>`, but invoked by `/drive-harden` as its regression "
+        "guard. Identical scope/diff/mechanics; the ONLY difference is the counter"
+    ) in review, (
+        "drive-review.md must pin the harden-regress same-family half: harden-regress is the "
+        "SAME review as `phase <P>` with identical scope/mechanics, so it writes the SAME "
+        "`review-phase<P>-N.md` family (`<scope>` = `phase<P>` → `review-<scope>-N.md`) — a "
+        "drift rerouting it to a DIFFERENT file family must break this pin (half B)"
     )
 
     # 2. CROSS-CHECK prose ⇆ script describe the SAME contract. The script's rule-2 derives
