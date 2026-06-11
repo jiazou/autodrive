@@ -149,3 +149,43 @@ after slices converge the phase branch is **rebuilt idempotently from `phaseBase
 (de-slop / add tests / fix bugs, committed onto `phaseInt/<P>`); only then does `featureBranch`
 advance and worktrees GC. Resume reconciles worktrees from git truth. Full mechanics:
 `CLAUDE.md` invariants + the stage command files.
+
+## Context-pressure rebirth
+
+A long run can fill its context window before it reaches DONE. Rather than overrun
+silently, `/drive` detects the pressure and **hands the run off to a fresh session at a
+proven-safe boundary** — a continuation, not a restart.
+
+**Detection (signal-only).** Two surfaces watch the same token-sum the statusline computes
+(the latest assistant line's `input + cache_creation + cache_read` tokens ÷ the model's
+window, from `bin/rebirth-thresholds.json`):
+- The **Stop hook** (`bin/drive-stop-hook.py`) fires every turn and, past the **hard**
+  high-water mark, appends a steer to its block reason — first instructing the coordinator
+  to set `rebirth_pending`, then (once set) to run the handoff at its next safe boundary.
+- The **coordinator soft-check** runs at each safe boundary and sets `rebirth_pending` past
+  the **soft** threshold — the backstop when the hook is absent.
+
+Neither acts directly: both only *record* the `rebirth_pending` signal. Acting on it is
+separated out so the handoff happens at a boundary the run can actually resume from.
+
+**The handshake (safe-boundary, prove-then-pause).** When `rebirth_pending` is set and the
+coordinator reaches a safe boundary (no open `inflight-*.marker`), the shared **I1 rebirth
+handler** runs, in order:
+1. **Prove** resumability — both `bin/drive-conformance.sh $RUN_DIR --mode checkpoint` AND
+   `--mode state-lint` must be clean (fail-closed: a failing proof never sets the pause).
+2. **Write** `checkpoint-complete.marker` (durable, sha-bound, single-use).
+3. **Set** `waiting="rebirth"`, then present a human pause with a paste-ready `/drive
+   <runId>` resume line + a re-armed `/goal`, and end the turn.
+
+This is a **prompted human handshake, not a self-restart** — the harness has no
+programmatic session-spawn; a fresh session is started by the human pasting the resume line.
+Resume is a *continue*: the new session rebinds `state.sessionId` to itself, consumes the
+marker, re-proves (both modes), re-arms, clears `waiting`, and drives on.
+
+I1 fires at the safe boundaries of every autonomous stage — **Plan**, **per-phase design**,
+**Execute** (per-slice / phase-integration / harden / advance), **Verify**, and the **Ship**
+dispatch boundary. If a Gate (A/B) or a non-decision STOP and a rebirth are both due, the
+**gate/STOP wins** and the human resumes in a fresh session by pasting the runId themselves.
+
+Durable-checkpoint mechanics, the conformance modes, and the acknowledged residual limits:
+`docs/drive-enforcement.md` § "Durable checkpoint & rebirth".
