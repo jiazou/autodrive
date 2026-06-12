@@ -225,3 +225,81 @@ them, and the ship gate backstops. Log here as matcher-hardening, NOT closed:
   detection; this diff widens it to also run phasedesign-gate. SAFE direction (false-block, not a hole)
   and normal flow unaffected (`/drive` removes use `$RUN_DIR/wt/<id>` paths, no `slice/` token). Fix:
   match specifically `worktree add … -b slice/<runId>/<id>` (the `-b` VALUE), not any slice substring.
+
+
+## Run lever2-rebirth-20260610-145705 (2026-06-12) — proactive-rebirth trigger (lever 2)
+
+## Phase 1 detailed-design refinements (design-review P2s, non-blocking)
+- [P2] Stranded in-flight marker liveness: a process dying after marker-write but before dispatch leaves an open marker with nothing live. Fail-closed (reads "unsafe"), but Phase 1 must state the recovery: re-dispatch-or-STOP, not "wait for a worker." (codex-review-design.md)
+- [P2] `max(state, artifact-count)` vs "never read state.json": state is a resume-repair HINT, never a proof input. Phase 1 must say this explicitly so the two rules don't read as contradictory. (codex-review-design.md)
+
+## Phase 1 detailed design — out-of-scope discoveries
+- [P3] Legacy runs (artifacts predating phase 1) have no in-flight/epoch markers: marker absence reads as "safe" and `redesigns` falls back to the state hint. Acceptable residual (such runs never had marker discipline); document in docs/drive-enforcement.md in Phase 4.
+- [P3] design.md cites the stop-hook sessionId match as drive-stop-hook.py L97; in current code it is L116. Stale line reference only — behavior as described. Fix opportunistically in Phase 4 docs.
+- [P3] Pre-existing hole closed as a side effect of epoch-aware phasedesign-gate (slice 1.1): today a stale pre-redesign CONVERGED review-phasedesign<P>-N.md satisfies the gate after a REDESIGN invalidated that design. Worth a one-line callout in docs/drive-enforcement.md (Phase 4).
+- [P2] design-phase1 I2 vs I8: bind WHO writes `inflight-review-phasedesign<P>[-r<R>].marker` at the gate-deny remediation dispatch point (normal flow is bracketed by the outer `inflight-design-<P>` marker). One-sentence binding; slice 1.2 implementer should fold it in. (review-phasedesign1-3.md) **RESOLVED (slice 1.2, D20):** the coordinator writes/clears it around the remediation `/drive-review` call — bound in drive.md's Stage-2–4.5 gate paragraph.
+
+## Slice 1.2 review — out-of-scope discoveries
+- [P3] drive-review.md frontmatter `argument-hint` (`design | slice <id> | phase <P> [harden-regress]`) omits the `phase <P> design` invocation form the body documents (and which /drive-design uses). Pre-existing drift, not touched by slice 1.2. One-token fix.
+
+## Phase-1 integration review — MUST verify (cross-slice contract, codex-flagged at slice 1.2 review)
+- The prose in drive.md/drive-review.md (slice 1.2) describes `--mode checkpoint` and the epoch-aware `phasedesign-gate:<P>` (`phasedesign<P>-r<R>`). These are implemented in bin/drive-conformance.sh by slice 1.1. Slice-level review of 1.2 could NOT see 1.1's script (separate worktrees). At phase integration (both merged), CONFIRM prose ↔ script agree exactly: mode name, gate scope-token, violation names (epoch-unmarked, regress-mismatch, epoch-gap), and the checkpoint ref-ancestry contract. (codex-review-1.2 r3)
+
+## Harden phase — optional pin tightening (slice 1.3, codex r5 residual, non-blocking)
+- [P2] In test_checkpoint_contract.py, the drive-review.md half-B pin (harden-regress writes into the same review-phase<P>-N family) could bind the CONCRETE filename family token rather than a looser "same review" narrative — defense-in-depth. NOT a guard hole: Claude verified the family-reroute permutation reds the test, and the live-script behavioral cross-check guards the consequence. Tighten during harden if cheap. (codex-review-1.3 r5)
+
+## Pre-existing — impl-presence test-evidence path-segment check (codex phase-1 harden, OUT OF SCOPE)
+- [P1] `bin/drive-conformance.sh::is_test_path()` (~L247) rejects a dot-prefixed BASENAME but not a dot-prefixed path SEGMENT: `tests/.hidden/test_x.py` (or any hidden/nested-under-a-dotdir test) passes the `tests/**/test_*.py` pattern and counts as test evidence, yet pytest (`testpaths=["tests"]`) skips hidden directories — so it is NOT runnable coverage and the impl-presence gate false-passes. PRE-EXISTING: the impl-presence logic was added by `5870db5`, not this phase (the phase diff only added `checkpoint` to the usage line); routed here per the scope-creep gate, not touched in this harden. Fix: validate that NO path segment is dot-prefixed (e.g. reject `case "$p" in (*/.*/*|.*/*) return 1;; esac`), mirroring the existing dotfile-basename rejection, with a fixture asserting `tests/.hidden/test_x.py` → violation. (codex phase-1 harden)
+
+## Phase 4 (docs) — MUST update docs/drive-enforcement.md (codex phase-1 integration finding)
+- [P1→Phase4] docs/drive-enforcement.md (~L43, ~L91) is STALE vs the conformance script this run shipped: it omits `--mode checkpoint` and still documents the bare epoch-0 `phasedesign<P>` gate family instead of the current epoch-aware `phasedesign<P>[-r<R>]`. Phase 4's docs pass MUST bring it current (add checkpoint mode + the epoch-aware gate + the new violation names epoch-unmarked/regress-mismatch/epoch-gap). Out of phase-1 boundary (docs = phase 4). (codex-review-phase1 r2)
+
+## Phase-id naming constraint (harden phase-1 residual, by-design fail-closed)
+- [P2] The epoch naming scheme uses `-r<digits>` as the epoch delimiter, so a phase id ending in `-r<digits>` is ambiguous vs an epoch suffix. The conformance gate now fail-closes (flags) such ids rather than mis-handling them, making `-r<digits>`-suffixed phase ids effectively unsupported. Canonical fix = constrain/validate phase ids to exclude a trailing `-r<digits>` at the source (drive.md phaseList parse) + assert it once. Out of phase-1 harden scope. (harden-1-2, codex harden-regress)
+
+## Phase 2 (detection) — out-of-scope discoveries
+- [P3] Threshold tuning: hard 0.85 / soft 0.75 are safe defaults, not model/usage-optimal numbers (design.md L348). A real run should measure the typical per-turn growth between safe boundaries and tune the fractions so the headroom is "exactly one clean checkpoint" rather than conservative. Out of Phase 2 scope.
+- [P3] Window table completeness: an unknown model falls back to defaultWindow=200_000 (conservative — earlier-firing, never a missed limit). When a new large-window model ships, add one `windows[].match` entry to `bin/rebirth-thresholds.json`. Phase 4 docs should note this one-line maintenance point.
+- [P3] Acknowledged D6 residuals to DOCUMENT in Phase 4 (docs/drive-enforcement.md or a rebirth section): (i) single-catastrophic-turn overshoot — the Stop-hook steer fires at turn END, so one enormous turn can exhaust the window mid-turn before any steer/boundary; (ii) absent-hook degradation — with no Stop hook installed, detection = coordinator soft-check at safe boundaries only.
+- [P3] Phase 4: confirm no installer change is needed — `bin/rebirth-thresholds.json` is reached by sibling path from statusline.sh/drive-stop-hook.py (bin/ is canonical-by-reference). If a future deploy ever copies the hook to a non-sibling location, the data-file path resolution breaks; assert the sibling layout once.
+
+## Phase 4 — cross-command /goal rebirth-pause clause (slice 3.1 codex P1 residual)
+- [P1→Phase4] The /goal templates in drive-plan.md (Gate A leg-2, ~:96) and drive-ship.md (Gate B re-arm) must ALSO admit a rebirth pause as a satisfying state ("OR is paused at a rebirth handoff (waiting=\"rebirth\") awaiting my paste of the resume line"), matching the drive.md templates slice 3.1 fixed. Otherwise a user-pasted leg-2/Gate-B goal would force the session past a rebirth handoff. Out of slice-3.1 scope (owns drive.md only); Phase 4 (docs/install/cross-command wiring) owns these files. (codex-review-3.1)
+
+## Phase 4 detailed design — out-of-scope discoveries
+- [P3] Deep state.json validation (cross-checking every slice's `owns`/`deps` graph against git refs, verify-attempt/ship-field VALUE consistency) is out of `--mode state-lint` scope — state-lint validates parses + routing fields PRESENT + WELL-FORMED (type/shape) only, the subset resume actually keys on. Full graph cross-validation is a follow-up, not a blocker (D40).
+- [P3] Optional belt-and-suspenders: a one-sentence Gate-B cross-reference in drive-ship.md that a rebirth handoff during ship is governed by the leg-2 goal's rebirth-pause clause. Non-load-bearing (the leg-2 clause already covers it, D41); add only if a reviewer insists.
+- [P3] Threshold-value empirical tuning (hard 0.85 / soft 0.75 → measured one-clean-checkpoint headroom) remains a follow-up (carried from Phase 2 followups; documented in Phase 4 docs as a residual, not tuned here).
+
+## state-lint deps/owns GRAPH cross-validation (design-scoped out, D40)
+- [P2] --mode state-lint validates deps/owns SYNTACTICALLY (each element a valid slice-id string). It does NOT do deep GRAPH cross-validation: a dangling dep (deps:["9.9"] with no slice 9.9), a self-ref (deps:["1.1"] in slice 1.1), or an unresolvable owns graph passes state-lint. The phase-4 design (D40) explicitly scoped deep owns/deps graph cross-validation OUT of state-lint (the goal was present/well-formed routing fields, not full graph consistency). Add a deps/owns graph validator (resolve every dep to an existing sibling, no self-ref, acyclic) as a follow-up if the resume path needs it. (codex 4.2 r4)
+- [P3] test_rebirth_e2e.py honest-scope docstring: the resume-sequence narration still lists clear-waiting LAST, but the fix clears waiting BEFORE rebind. Reorder the narration. (codex 4.1 r3, harden)
+- [P2] stale docstring "via --mode checkpoint" at tests/contracts/test_rebirth_handshake.py:578 (the assertion below correctly pins both modes) — reword. (codex/claude phase4 r2, harden)
+- [P2] state-lint gained a `waiting-malformed` violation (harden phase4 P1-A): add this violation name to the drive-enforcement.md violation list (docs/ owned by another slice; the conformance script + tests carry it now). (harden 4 fix round)
+
+## Over-design audit — deferred "leaner-rebirth v2" cuts (lever2-rebirth, 2026-06-12)
+A dual-voice over-design audit (Claude: "mildly-to-moderately over-built"; codex: "massively
+over-designed") ran at pre-ship. The CORE (stop-hook detection, checkpoint proof, routable-state
+validation, fresh-session handoff) is load-bearing. Done in THIS PR: removed verified dead code
+(latest_usage_tokens delegated, latest_model deleted) + the decoupled-safe test trim (flip-proof
+twins, granular prose pins, jq-matrix-subsumed drift tests) — ~750 lines, behavior-preserving.
+DEFERRED here because each is coupled to a production-logic simplification or is a load-bearing
+executable proof — do them as one coherent pass that cuts logic AND its tests together:
+- [P2] Epoch-redesign machinery in drive-conformance.sh (redesign-<P>-r<R> markers, epoch-unmarked/
+  epoch-gap violations, highest-epoch reconstruction): edge-case hardening for redesign-DURING-rebirth,
+  a path with 0 real occurrences. Simplify to basic current-epoch awareness; cut its tests in
+  test_checkpoint_contract.py + mkfixture mk_checkpoint epoch cases together. ~140-250 logic + ~250 test.
+- [P2] state-lint deep validation drifts toward full-schema policing (verify/ship/per-slice grammar,
+  future-stage fields). Narrow to the routing fields resume actually keys on (parse+object, stage enum,
+  waiting grammar); cut mk_state_lint exhaustive fixtures (~408 lines) with it. ~80 logic + many fixtures.
+- [P2] Duplicate behavioral coverage of checkpoint/state-lint: both the bash suite (drive-conformance.test.sh
+  + mkfixture) AND the python contract tests exercise the same modes. Keep ONE executable layer. ~600-800,
+  but verify per-case overlap first (the bash suite is the pre-existing security-gate guard).
+- [P3] rebirth_thresholds.py jq/statusline byte-parity (~120 logic + ~250 test, the _DRIFT_SHAPES matrix):
+  exact-parity is rigor for a signal-only nudge. Claude DEFENDS it (AC6 keeps hook ↔ statusline numbers
+  identical so the user isn't shown two token counts). Decide intent before cutting.
+- [P3] e2e granularity (~400) — codex would cut to ~4 integrated tests; Claude calls it the single most
+  valuable test (the only executable proof of the chain). Lean KEEP; trim only redundant stepwise negatives.
+- [P3] Cross-file rebirth prose duplication across drive.md/drive-plan.md/drive-review.md (~150-250):
+  collapse into one authoritative section. Coupled to the prose-pin tests.
+Audit artifacts: $RUN_DIR/codex-overdesign-audit.log + the Claude audit in the session transcript.
