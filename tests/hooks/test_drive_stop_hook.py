@@ -627,7 +627,7 @@ def test_failopen_unknown_model_below_default_byte_exact(fake_home):
     anchor-absent). Pins the under-water unknown-model path to the strict contract."""
     baseline = _baseline_reason(fake_home)
     trans = fake_home / "unknown-under.jsonl"
-    # sum 100000 < 200000*0.85=170000 -> under water on the default window.
+    # sum 100000 < 1000000*0.85=850000 -> under water on the default (1M) window.
     trans.write_text(
         '{"type": "assistant", "message": {"model": "mystery-model-9", '
         '"usage": {"input_tokens": 100000, "cache_creation_input_tokens": 0, '
@@ -692,14 +692,15 @@ def test_failopen_steer_helper_unexpected_exception(fake_home, monkeypatch):
 
 
 def test_failopen_unknown_model_over_default_window_steers(fake_home):
-    """Sibling of the above: an unknown model resolving to the default 200_000 window
-    whose sum EXCEEDS 200_000*0.85=170_000 DOES steer — proving the default-window
-    branch is live (not a silent skip). Shows the unknown-model path is conservative
-    (earlier-firing), not broken."""
+    """Sibling of the above: an unknown model resolving to the default 1_000_000 window
+    whose sum EXCEEDS 1_000_000*0.85=850_000 DOES steer — proving the default-window
+    branch is live (not a silent skip). Unknown models default to 1M (the denylist covers
+    the known-200k families and the `[1m]` marker covers an active beta); a genuinely
+    unknown 200k-window model firing late is the accepted residual of the default-1M policy."""
     trans = fake_home / "unknown-model-hi.jsonl"
     trans.write_text(
         '{"type": "assistant", "message": {"model": "mystery-model-9", '
-        '"usage": {"input_tokens": 180000, "cache_creation_input_tokens": 0, '
+        '"usage": {"input_tokens": 900000, "cache_creation_input_tokens": 0, '
         '"cache_read_input_tokens": 0}}}\n',
         encoding="utf-8",
     )
@@ -709,8 +710,8 @@ def test_failopen_unknown_model_over_default_window_steers(fake_home):
     assert cp.returncode == 0
     d = decision(cp)
     assert d is not None and CONTEXT_PRESSURE_ANCHOR in d["reason"]
-    # PCT reported against the default window: 180000*100//200000 = 90.
-    assert "200000-token window" in d["reason"]
+    # PCT reported against the default window: 900000*100//1000000 = 90.
+    assert "1000000-token window" in d["reason"]
 
 
 def test_failopen_malformed_thresholds_file(fake_home, tmp_path):

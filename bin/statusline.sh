@@ -30,8 +30,8 @@ if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
 # mirrors): same windows as rebirth-thresholds.json, used only when the file is
 # unreadable. AC6 pins this `case` and the json to identical numbers.
 case "$MODEL" in
-    *"Opus 4.7"*|*"Opus 4.8"*)   WINDOW=1000000 ;;
-    *)                           WINDOW=200000 ;;
+    *"Haiku"*|*"Sonnet"*|*"Opus 4.6"*|*"Opus 4.5"*|*"Opus 4.1"*)   WINDOW=200000 ;;
+    *)                                                             WINDOW=1000000 ;;
 esac
 fi
 # The 1M-context beta is authoritative when active: Claude Code marks it as `[1m]` in

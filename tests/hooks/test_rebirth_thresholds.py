@@ -68,9 +68,19 @@ def test_resolve_window_model_id(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 1_000_000
 
 
-@pytest.mark.parametrize("model", ["claude-sonnet-4-5", "Sonnet 4.5", "", None])
-def test_resolve_window_default(thresholds, model):
+# Known-200k families are listed explicitly (the denylist); everything else — including
+# an unknown/future model and an absent model field — defaults to 1M.
+@pytest.mark.parametrize("model", [
+    "claude-sonnet-4-5", "Sonnet 4.5", "claude-haiku-4-5", "Haiku 4",
+    "claude-opus-4-1", "Opus 4.5",
+])
+def test_resolve_window_known_200k(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 200_000
+
+
+@pytest.mark.parametrize("model", ["Some Future Model", "claude-opus-9", "", None])
+def test_resolve_window_default_is_1m(thresholds, model):
+    assert rt.resolve_window(model, thresholds) == 1_000_000
 
 
 # --------------------------------------------------------------------------- #
@@ -289,7 +299,8 @@ def test_mutating_json_changes_resolution(tmp_path):
     mutated = tmp_path / "rebirth-thresholds.json"
     mutated.write_text(json.dumps(data), encoding="utf-8")
     t = rt.load_thresholds(str(mutated))
-    assert rt.resolve_window("Opus 4.8", t) == 42
-    assert rt.resolve_window("Sonnet 4.5", t) == 7
-    _w, hard, _s = rt.resolve_thresholds("Opus 4.8", t)
+    # windows[0] is the known-200k denylist (matches Sonnet/Haiku); Opus falls to default.
+    assert rt.resolve_window("Sonnet 4.5", t) == 42
+    assert rt.resolve_window("Opus 4.8", t) == 7
+    _w, hard, _s = rt.resolve_thresholds("Sonnet 4.5", t)
     assert hard == 42 * 0.5

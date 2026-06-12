@@ -160,11 +160,15 @@ check "installed (symlinked) statusline falls to the inline case -> Opus window 
 rm -rf "$LINK_DIR" "$TRANS_IL"
 
 # 4c. AC6 anti-drift: the inline `case` window numbers the install relies on MUST equal the
-#     json's, so the fallback yields the SAME answer as a source-tree json read. Pin the
-#     inline Opus window (1_000_000) and the json's matching Opus window are identical.
-inline_opus_window="$(grep -oE 'WINDOW=1000000' "$STATUSLINE" | head -1 | sed 's/WINDOW=//')"
-json_opus_window="$(jq -r '.windows[] | select(.match | index("Opus 4.8")) | .window' "$DATA")"
-check "AC6 anti-drift: inline Opus window == json Opus window (fallback matches)" "${inline_opus_window:-X}" "${json_opus_window:-Y}"
+#     json's, so the fallback yields the SAME answer as a source-tree json read. The table is
+#     a denylist (known-200k families listed; everything else defaults to 1M), so pin BOTH
+#     the default window (1_000_000, resolves Opus/unknown) and a denylist family (Sonnet, 200k).
+inline_default_window="$(grep -oE 'WINDOW=1000000' "$STATUSLINE" | head -1 | sed 's/WINDOW=//')"
+json_default_window="$(jq -r '.defaultWindow' "$DATA")"
+check "AC6 anti-drift: inline default window == json defaultWindow (1M, fallback matches)" "${inline_default_window:-X}" "${json_default_window:-Y}"
+inline_sonnet_window="$(grep -oE 'WINDOW=200000' "$STATUSLINE" | head -1 | sed 's/WINDOW=//')"
+json_sonnet_window="$(jq -r '.windows[] | select(.match | index("Sonnet")) | .window' "$DATA")"
+check "AC6 anti-drift: inline 200k window == json Sonnet window (denylist matches)" "${inline_sonnet_window:-X}" "${json_sonnet_window:-Y}"
 
 # --- 5. The installers deploy the rebirth files by REFERENCE, not by copy --
 # The installers register the hook in-place and symlink statusline; they must NOT

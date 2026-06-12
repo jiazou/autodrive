@@ -1,8 +1,10 @@
 {
   "windows": [
-    { "match": ["Opus 4.7", "Opus 4.8", "opus-4-7", "opus-4-8", "opus-4.7", "opus-4.8"], "window": 1000000 }
+    { "match": ["Haiku", "haiku", "Sonnet", "sonnet",
+                "Opus 4.6", "Opus 4.5", "Opus 4.1", "opus-4-6", "opus-4-5", "opus-4-1", "opus-4.6", "opus-4.5", "opus-4.1"],
+      "window": 200000 }
   ],
-  "defaultWindow": 200000,
+  "defaultWindow": 1000000,
   "hardHighWaterFraction": 0.85,
   "softThresholdFraction": 0.75
 }
