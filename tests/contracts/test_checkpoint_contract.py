@@ -1,40 +1,26 @@
-"""AC8 (test part), AC10, and the string pins named in AC4/5/6/7/9 — the durable
-cross-file contract between the lever-2 rebirth checkpoint PROSE (drive.md,
-drive-review.md, drive-harden.md) and the SCRIPT (bin/drive-conformance.sh).
+"""The durable cross-file contract between the lever-2 rebirth checkpoint PROSE
+(drive.md, drive-review.md, drive-harden.md) and the SCRIPT (bin/drive-conformance.sh)
+— AC8 (test part), AC10, and the string pins named in AC4/5/6/7/9. A drift on EITHER
+side (a renamed violation, a dropped reconstruction rule, a reordered harden Step 4)
+breaks a test here.
 
-Slice 1.3 owns ONLY this file; slices 1.1 (the script) and 1.2 (the prose) are merged
-into this worktree, so the assertions run against the REAL integrated text/behavior.
-A future drift on EITHER side — a renamed violation, a dropped reconstruction rule, a
-reordered harden Step 4 — breaks a test here.
-
-Two kinds of pin, deliberately chosen per the design's "prefer real behavior over
-string-matching where feasible" rule:
-
-  * SCRIPT-side contracts are asserted BEHAVIORALLY: we build a minimal git repo +
-    RUN_DIR fixture in a tempdir, run `drive-conformance.sh --mode checkpoint`, and
-    assert its JSON / exit code (the same shape test/drive-conformance.test.sh covers
-    in bash, re-pinned here so the python suite alone proves the mode name, the
-    `counters` derivation, and every violation NAME the prose references actually
-    resolve in the shipped script). This is the load-bearing cross-file contract:
-    the prose names `--mode checkpoint`, the `phasedesign<P>-r<R>` token form, and the
-    violations `epoch-unmarked`/`regress-mismatch`/`epoch-gap` — each must EXIST in the
-    script or the prose points at nothing.
-
-  * PROSE-ONLY coordinator contracts (the resume reconstruction rules, the REDESIGN
-    epoch-marker ordering, the sessionId rebind, the single-use marker, adopt-needs-
-    both-voices, and the read-only drive-harden.md Step-4 ordering that rule-2's
-    round-subtraction depends on) are NOT script-executable — they are pinned by
-    string assertions on the shipped prose so a later edit cannot silently drop them.
+Two kinds of pin: SCRIPT-side contracts are asserted BEHAVIORALLY (build a git +
+RUN_DIR fixture, run `drive-conformance.sh --mode checkpoint`, assert its JSON / exit
+code — the mode name, the `counters` derivation, and every violation NAME the prose
+references must resolve in the shipped script). PROSE-ONLY coordinator contracts (the
+reconstruction rules, the REDESIGN epoch-marker ordering, the sessionId rebind, the
+single-use marker, adopt-needs-both-voices, the read-only harden Step-4 ordering) are
+NOT script-executable — they are pinned by string assertions on the shipped prose so a
+later edit cannot silently drop them.
 """
 import json
-import os
 import re
 import shutil
 import subprocess
 
 import pytest
 
-from _helpers import REPO_ROOT
+from _helpers import REPO_ROOT, _git, _rev, _commit, _review, _codex
 
 CONFORMANCE = REPO_ROOT / "bin" / "drive-conformance.sh"
 DRIVE_MD = REPO_ROOT / ".claude" / "commands" / "drive.md"
@@ -84,36 +70,6 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _git(repo, *args):
-    subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
-         "-c", "commit.gpgsign=false", *args],
-        check=True, capture_output=True, text=True,
-    )
-
-
-def _rev(repo, ref):
-    """Resolve a ref to its full 40-char sha (for asserting expected/found_sha exactly)."""
-    return subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", ref],
-        check=True, capture_output=True, text=True,
-    ).stdout.strip()
-
-
-def _commit(repo, path, content, msg):
-    (repo / path).parent.mkdir(parents=True, exist_ok=True)
-    (repo / path).write_text(content + "\n", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", msg)
-
-
-def _review(rd, scope, n, sha="0" * 40, verdict="CONVERGED"):
-    (rd / f"review-{scope}-{n}.md").write_text(
-        f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\nreviewed-sha: {sha}\n",
-        encoding="utf-8",
-    )
-
-
 def _harden(rd, p, n, applied):
     (rd / f"harden-{p}-{n}.md").write_text(
         f"# Harden phase {p} {n}\n## Verdict: HARDENED\n## AppliedEdits: {applied}\n",
@@ -124,12 +80,6 @@ def _harden(rd, p, n, applied):
 def _redesign_marker(rd, p, r):
     (rd / f"redesign-{p}-r{r}.marker").write_text(
         json.dumps({"phase": p, "epoch": r}) + "\n", encoding="utf-8"
-    )
-
-
-def _codex(rd, scope):
-    (rd / f"codex-review-{scope}.md").write_text(
-        f"codex review for {scope}\nlooks fine\n", encoding="utf-8"
     )
 
 

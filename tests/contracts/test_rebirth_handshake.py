@@ -1,24 +1,20 @@
-"""Phase-3 rebirth-handshake cross-file contract pins (slice 3.3).
+"""Rebirth-handshake cross-file contract pins.
 
 The lever-2 rebirth pause/resume handshake is split across two files that MUST agree:
-  * `.claude/commands/drive.md` — the coordinator prose (slice 3.1): the I1 safe-boundary
-    handler, the `↻ REBIRTH` run-graph node, the handoff block, the resume rebirth-continue
-    + `rebirth_pending` re-arm, the canonical `waiting` amendment, and gate precedence.
-  * `bin/drive-stop-hook.py` — the Stop-hook escalation steer (slice 3.2): once
-    `rebirth_pending` is set and the run is still over hard water, the hook steers the
-    coordinator to perform the I1 handshake at its next safe boundary.
+  * `.claude/commands/drive.md` — the coordinator prose: the I1 safe-boundary handler, the
+    `↻ REBIRTH` run-graph node, the handoff block, the resume rebirth-continue +
+    `rebirth_pending` re-arm, the canonical `waiting` amendment, and gate precedence.
+  * `bin/drive-stop-hook.py` — the Stop-hook escalation steer: once `rebirth_pending` is set
+    and the run is still over hard water, the hook steers the coordinator to perform the I1
+    handshake at its next safe boundary.
 
-Slice 3.3 owns ONLY this file; slices 3.1 and 3.2 are merged into this worktree, so the
-assertions run against the REAL integrated text. A future drift on EITHER side — a
-reordered I1 step, a dropped legend glyph, a desynced canonical `waiting` definition, a
-hook steer that no longer names the handshake the prose implements — reds a pin here.
-
-The pins are STRUCTURAL/bounded, NOT loose substrings, per the slice-1.3
-(test_checkpoint_contract.py) precedent: section-bounded enumeration + by-index ordering
-(`_I1_STEP_RE`, `_RESUME_BULLET_RE`), contiguous-clause literals (whitespace-normalized),
-and a total-over-the-enum selector check. Each load-bearing pin is proven to RED against a
-mutated COPY of the relevant prose/code (never the real files) in the accompanying
-`test_*_flips_on_*` cases — a mutate-a-copy flip-proof, exactly as slice 1.3 does.
+A drift on EITHER side — a reordered I1 step, a dropped legend glyph, a desynced canonical
+`waiting` definition, a hook steer that no longer names the handshake the prose implements —
+reds a pin here. The pins are STRUCTURAL/bounded, NOT loose substrings: section-bounded
+enumeration + by-index ordering (`_I1_STEP_RE`, `_RESUME_BULLET_RE`), contiguous-clause
+literals (whitespace-normalized), and a total-over-the-enum selector check. Each load-bearing
+pin is proven to RED against a mutated COPY of the relevant prose/code (never the real files)
+in the accompanying `test_*_flips_on_*` cases.
 """
 import re
 
@@ -224,8 +220,8 @@ def test_i1_preamble_claims_all_four_stage_boundaries():
         "the I1 Ship description must state Gate B precedence covers a post-dispatch rebirth"
     )
     # P1-1: the Execute bullet enumerates the per-phase DESIGN sub-stage boundary (after the
-    # phase design converges, before slices dispatch) — a multi-round review context consumer
-    # the round-1 fix missed, so a rebirth signalled during /drive-design has a consumer.
+    # phase design converges, before slices dispatch), so a rebirth signalled during
+    # /drive-design has a consumer.
     assert (
         "after the per-phase detailed design converges (its `inflight-design-<P>.marker` "
         "cleared, BEFORE freezing base + dispatching slices)"
@@ -267,8 +263,7 @@ _I1_INVOCATION = "the **Safe-boundary rebirth handler** (§ I1"
 def test_i1_wired_into_plan_verify_ship_stage_sections(heading):
     """P1-2: each non-Execute autonomous stage (Plan, Verify, Ship) actually INVOKES the
     shared soft-check + I1 rebirth handler at its safe boundary — so a rebirth signalled in
-    that stage has a consumer (previously only Execute did, so Plan/Verify/Ship rebirths were
-    never handed off). The invocation is asserted INSIDE the stage's own section."""
+    that stage has a consumer. The invocation is asserted INSIDE the stage's own section."""
     section = _norm(_stage_section(heading))
     assert "Coordinator soft-check" in section, (
         f"{heading} must run the Coordinator soft-check at its safe boundary"
@@ -400,8 +395,7 @@ def test_drive_plan_invokes_rebirth_handshake_at_planning_boundary():
 def test_drive_plan_rebirth_pin_flips_on_dropped_clause_copy():
     """Flip-proof (mutate a COPY, never the real file): drop the soft-check + rebirth-handler
     invocation clause from a COPY of drive-plan.md and assert the pin REDs — proving it bites on
-    the real call site, not on drive.md's parent claim alone (the pre-fix drive-plan.md had no
-    such clause, so this pin reds against it)."""
+    the real call site, not on drive.md's parent claim alone."""
     plan = _norm(_drive_plan_md())
     assert _PLAN_REBIRTH_CLAUSE in plan, "fixture: the clause must be present to drop"
     drifted = plan.replace(_PLAN_REBIRTH_CLAUSE, "", 1)
@@ -461,8 +455,8 @@ def test_handoff_block_has_resume_line_and_rearmed_goal():
 def test_handoff_block_resumability_claim_names_both_proof_modes():
     """The handoff block's resumability claim must name BOTH proof modes — checkpoint AND
     state-lint — matching the both-modes resumability contract (proof = checkpoint AND
-    state-lint clean). A checkpoint-only claim (the pre-fix `(checkpoint passed)`) contradicts
-    the contract; this pin keeps the user-facing handoff surface from regressing to one mode."""
+    state-lint clean). A checkpoint-only claim contradicts the contract; this pin keeps the
+    user-facing handoff surface from regressing to one mode."""
     block = _norm(_handoff_block())
     start = block.index("Your run is proven resumable")
     # the resumability sentence runs to its closing parenthesis

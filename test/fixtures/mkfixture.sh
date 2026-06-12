@@ -537,10 +537,9 @@ mk_audit_multi_live() {
 #                        a regress-mismatch); `-e || -L` counts it (grep 'AppliedEdits:' fails)
 #                        -> unparseable-harden, exit 1.
 #   epoch_phaseid_dash_r_round -- a `-r`-containing phase id (`4-r1`) at epoch 0 with 2 round
-#                        files -> phaseDesignRound {"4-r1":2} (marker-anchored counter; the
-#                        pre-fix `${t##*-r}` split mis-keys to {"4":0}). exit 1 from the
-#                        epoch-unmarked detector's by-design residual on a terminal-`-r` id;
-#                        the assertion is on the counter VALUE, not cleanliness.
+#                        files -> phaseDesignRound {"4-r1":2} (marker-anchored counter). exit 1
+#                        from the epoch-unmarked detector's by-design residual on a terminal-`-r`
+#                        id; the assertion is on the counter VALUE, not cleanliness.
 mk_checkpoint() {
   local variant="$1" name="${2:-ckpt-$1}"
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -634,11 +633,10 @@ mk_checkpoint() {
       _write_dangling_dirent "$rd" "harden-1-2.md"
       ;;
     epoch_unmarked_phaseid_dash_r)
-      # FIX 1: a phase id that itself contains `-r` (`4-r1`). A markerless epoch artifact for
-      # this phase (review+codex for epoch r1 of phase `4-r1`, NO redesign-4-r1-r1.marker) must
-      # be flagged epoch-unmarked under the CORRECT scope `phasedesign4-r1`. The pre-fix
-      # `%%-r*` phase split mis-truncates the id to `4` (wrong scope, wrong epoch glob); the
-      # anchored-suffix parse keeps `4-r1`.
+      # a phase id that itself contains `-r` (`4-r1`). A markerless epoch artifact for this
+      # phase (review+codex for epoch r1 of phase `4-r1`, NO redesign-4-r1-r1.marker) must be
+      # flagged epoch-unmarked under the CORRECT scope `phasedesign4-r1` — the anchored-suffix
+      # phase-id parse keeps the full `4-r1` (not a `4` truncation).
       _gitc "$repo" checkout -q -b "phaseInt/$name/4-r1"
       _commit "$repo" "p.sh" "echo p" "phase 4-r1 integration" >/dev/null
       _write_review "$rd" "phasedesign4-r1-r1" 1 "$zeros"

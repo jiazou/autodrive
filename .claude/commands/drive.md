@@ -495,16 +495,11 @@ forgotten:
    ```
 
    **Select `<leg-condition>` by `state.stage`** — the successor resumes INTO the
-   current leg, so the goal's "NOT met while …" clause must match that leg (these mirror
-   the leg-goal definitions: Stage 0 leg-1 and the Gate A re-arm in `/drive-plan`):
+   current leg, so the goal's "NOT met while …" clause must match that leg:
    - `stage` ∈ {`"premises"`, `"plan"`} (planning leg → Gate A; premises is pre-Gate-A):
      `NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.`
    - `stage` ∈ {`"execute"`, `"verify"`, `"ship"`} (execute leg → Gate B):
      `NOT met while autonomous implement / review / harden / verify / ship work remains.`
-
-   The `/drive <runId>` line is the EXACT resume invocation (the resume path keys on an
-   existing-runId `$RUN_DIR/state.json`); the `/goal` line re-arms the SUCCESSOR's leg goal,
-   mirroring the Gate A/B re-arm.
 
 **Pre-run exception:** the **preconditions** STOPs (gstack missing, dirty tree) fire *before*
 a run exists — there is no `$RUN_DIR`/`state.json` to render, so they STOP plainly (no graph).

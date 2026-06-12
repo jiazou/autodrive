@@ -453,8 +453,8 @@ EOF
     seen_phase=" "
     for f in "$RUN_DIR"/review-phase*-*.md; do
       # This scan only discovers WHICH phase scopes exist; the counting verdict for each is
-      # re-derived via highest_review_file (now -L-hardened). A DANGLING dirent here is safe
-      # to skip (fail-CLOSED): ship requires a POSITIVE existential R, so dropping a candidate
+      # re-derived via highest_review_file. A DANGLING dirent here is safe to skip
+      # (fail-CLOSED): ship requires a POSITIVE existential R, so dropping a candidate
       # can only WITHHOLD a candidate → ship blocks, never passes. Skipping strictly tightens.
       [ -e "$f" ] || continue
       base="${f##*/}"                       # review-phase<P>-<N>.md
@@ -690,9 +690,8 @@ EOF
     # epoch-unmarked: an epoch-suffixed phasedesign artifact (review or codex sibling)
     # with NO matching redesign-<P>-r<R>.marker (corruption / partial sweep / deleted
     # marker). Without this, highest_epoch() would fall back to a LOWER epoch and the
-    # round counts on stale artifacts — the same fail-OPEN this phase closes for the
-    # gate. Derive the phase set from BOTH artifact families (a markerless codex-only
-    # sibling is still corruption to flag).
+    # round counts would run on stale artifacts (a fail-OPEN). Derive the phase set from
+    # BOTH artifact families (a markerless codex-only sibling is still corruption to flag).
     pdr_phases=""
     for f in "$RUN_DIR"/review-phasedesign*-r*-*.md "$RUN_DIR"/codex-review-phasedesign*-r*.md; do
       # -e || -L: a DANGLING epoch-suffixed dirent still belongs to a phase whose markerless

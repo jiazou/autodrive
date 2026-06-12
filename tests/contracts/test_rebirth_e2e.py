@@ -1,58 +1,18 @@
 """EXECUTABLE end-to-end rebirth-cycle harness (slice 4.1, AC1 + AC2).
 
-This harness runs the REAL executable pieces of the lever-2 rebirth chain over hermetic
-git + RUN_DIR fixtures and asserts the detect -> prove -> handoff -> fresh-process-resume
-chain composes over real artifacts. Each chain-break negative SEVERS one link and proves
-the harness reds on the severed link's REAL executable behaviour.
+Runs the REAL executable pieces of the lever-2 rebirth chain (the Stop hook,
+`--mode checkpoint`, `--mode state-lint`, git ref/marker tip checks) over hermetic
+git + RUN_DIR fixtures, and asserts the durable artifacts they produce are SUFFICIENT
+for a fresh process to reconstruct and re-prove the run. Each chain-break negative severs
+one link and proves the harness reds on the severed link's real behaviour.
 
-===========================================================================
-WHAT THIS HARNESS CAN AND CANNOT PROVE (honest scope — load-bearing, per D42)
-===========================================================================
-The /drive coordinator is PROMPT-DRIVEN: `.claude/commands/drive.md` is INSTRUCTIONS
-executed by Claude, not a program. There is NO executable `/drive` resume consumer to
-invoke, so a literal "run the coordinator end-to-end" is NOT possible here. What the harness
-proves is precise: it runs the REAL EXECUTABLE artifacts at each step (the Stop hook,
-`--mode checkpoint`, `--mode state-lint`, git ref/marker tip checks) and proves the durable
-artifacts those produce are SUFFICIENT for a fresh process to reconstruct and re-prove the
-run. The resume ORCHESTRATION — the SEQUENCE of rebind -> consume-marker -> re-prove ->
-clear-waiting, plus the I1 prove-then-pause sequencing / handler ordering — is coordinator
-PROSE pinned by `test_checkpoint_contract.py` / `test_rebirth_handshake.py`; this harness
-does NOT re-prove that prose (it would only re-grep the same strings) and does NOT "run the
-coordinator." It executes that sequence's individual scriptable acts and proves the REAL
-proof passes on the result.
-
-Per step, what is REAL (a shipped executable runs) vs PROSE-pinned (sequenced in Python here,
-its ordering pinned by the sibling suites):
-  1. DETECT/STEER  — REAL. `bin/drive-stop-hook.py` over a mid-run RUN_DIR + over-water
-     transcript emits the set-flag steer (pre-flag) and the ESCALATION steer (rebirth_pending
-     set). The detection->steer link actually fires on real input.
-  2. PROVE         — REAL. `bin/drive-conformance.sh --mode checkpoint` AND `--mode
-     state-lint` both report clean on a checkpoint-complete (quiescent + well-formed) state,
-     and the TWO-MODE GATE (proven-resumable = BOTH clean) fails closed on a
-     deliberately-unresumable state: an OPEN in-flight marker reds `--mode checkpoint`; a
-     malformed routing state.json reds `--mode state-lint` while `--mode checkpoint` stays
-     CLEAN (D8 — checkpoint never reads state.json), so it is state-lint that catches it.
-     Either way one mode fails, so the both-clean gate fails closed.
-  3. HANDOFF       — REAL artifacts, PROSE ordering. The marker/`waiting` WRITES use the real
-     proof stdout + the atomic tmp+mv discipline; the marker's `proof.tip` == the
-     `drive/<runId>` tip is checked against real `git rev-parse`. The marker-then-waiting
-     ORDER is pinned by test_rebirth_handshake.py, not enforced by a shipped resume program.
-  4. RECONSTRUCT   — REAL proof over a PROSE-sequenced resume. The test, acting as the
-     successor, performs the scriptable resume acts (rebind `sessionId`, reset
-     `rebirth_pending`, validate+DELETE the single-use marker, clear `waiting`) IN PYTHON —
-     their SEQUENCE is the prose contract — then proves the result with SHIPPED executables:
-     the REAL `--mode checkpoint` AND `--mode state-lint` both re-prove clean on the
-     post-handoff state, the REAL Stop hook RE-ATTRIBUTES the run to the successor
-     (blocks-to-continue) and, after the re-arm, emits the PRE-FLAG (not escalation) steer on
-     the next over-water crossing. The marker stale-detection negative moves the tip with a
-     REAL git commit and fails the marker against the REAL proof's emitted live tip — not a
-     python `tip == tip` self-compare.
-
-The prompt-driven coordinator STEPS (the resume act SEQUENCE, the I1 prove-then-pause
-sequencing, the handoff-block presentation, the handler ordering) are NOT executable and are
-NOT faked here — they stay pinned by `test_checkpoint_contract.py` / `test_rebirth_handshake.py`.
-This harness asserts ONLY what is executable/checkable; it does NOT claim each orchestration
-link runs a shipped program.
+Honest scope (load-bearing, per D42): the /drive coordinator is PROMPT-DRIVEN prose, not a
+program, so there is no executable `/drive` resume consumer to invoke — this harness does NOT
+"run the coordinator." The resume ORCHESTRATION sequence (the I1 prove-then-pause ordering,
+the handoff-block presentation) is coordinator prose pinned by `test_checkpoint_contract.py` /
+`test_rebirth_handshake.py`; here the test acts as the successor and performs those scriptable
+acts in Python, then proves the result with the SHIPPED executables. It asserts ONLY what is
+executable/checkable.
 """
 import json
 import os
@@ -62,7 +22,7 @@ import sys
 
 import pytest
 
-from _helpers import REPO_ROOT
+from _helpers import REPO_ROOT, _git, _rev, _commit, _review, _codex
 
 CONFORMANCE = REPO_ROOT / "bin" / "drive-conformance.sh"
 STOP_HOOK = REPO_ROOT / "bin" / "drive-stop-hook.py"
@@ -84,46 +44,13 @@ pytestmark = pytest.mark.skipif(
 
 # --------------------------------------------------------------------------- #
 # Hermetic git + RUN_DIR fixture builder (real git, fake HOME).
-# Mirrors test_checkpoint_contract.py::_base_run (a real `drive/<runId>` branch + a
-# `phaseInt/<runId>/1` live ref descending it) and test_drive_stop_hook.py's fake-HOME
-# layout: the RUN_DIR lives at <home>/.claude/harness-runs/<runId>/ so the Stop hook's
-# glob finds its state.json. runId = basename(RUN_DIR) so featureBranch = drive/<runId>.
+# The git/review helpers (_git/_rev/_commit/_review/_codex) are shared with
+# test_checkpoint_contract.py via tests/_helpers.py. Mirrors test_checkpoint_contract.py::
+# _base_run (a real `drive/<runId>` branch + a `phaseInt/<runId>/1` live ref descending it)
+# and test_drive_stop_hook.py's fake-HOME layout: the RUN_DIR lives at
+# <home>/.claude/harness-runs/<runId>/ so the Stop hook's glob finds its state.json.
+# runId = basename(RUN_DIR) so featureBranch = drive/<runId>.
 # --------------------------------------------------------------------------- #
-def _git(repo, *args):
-    subprocess.run(
-        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
-         "-c", "commit.gpgsign=false", *args],
-        check=True, capture_output=True, text=True,
-    )
-
-
-def _rev(repo, ref):
-    return subprocess.run(
-        ["git", "-C", str(repo), "rev-parse", ref],
-        check=True, capture_output=True, text=True,
-    ).stdout.strip()
-
-
-def _commit(repo, path, content, msg):
-    (repo / path).parent.mkdir(parents=True, exist_ok=True)
-    (repo / path).write_text(content + "\n", encoding="utf-8")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-q", "-m", msg)
-
-
-def _review(rd, scope, n, sha="0" * 40, verdict="CONVERGED"):
-    (rd / f"review-{scope}-{n}.md").write_text(
-        f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\nreviewed-sha: {sha}\n",
-        encoding="utf-8",
-    )
-
-
-def _codex(rd, scope):
-    (rd / f"codex-review-{scope}.md").write_text(
-        f"codex review for {scope}\nlooks fine\n", encoding="utf-8"
-    )
-
-
 SID_OUT = "outgoing-sess"
 SID_IN = "incoming-sess"
 
@@ -277,7 +204,7 @@ def run_conformance(repo, rd, mode):
     return proc.returncode, json.loads(proc.stdout)
 
 
-def _hook_payload(home, run_id, transcript, *, session_id):
+def _hook_payload(transcript, *, session_id):
     return {"session_id": session_id, "transcript_path": str(transcript)}
 
 
@@ -291,7 +218,7 @@ def test_step1_detect_emits_set_flag_steer_over_water(fake_home):
     UNSET -> BLOCKS with the pre-flag SET-FLAG steer (the detection->steer link fires)."""
     mid_run_fixture(fake_home, rebirth_pending=False)
     cp = run_hook(
-        _hook_payload(fake_home, "e2e-run", OVER_WATER, session_id=SID_OUT),
+        _hook_payload(OVER_WATER, session_id=SID_OUT),
         home=fake_home,
     )
     assert cp.returncode == 0
@@ -308,7 +235,7 @@ def test_step1_detect_emits_escalation_steer_when_pending(fake_home):
     one — the over-the-hard-water handoff steer the rebirth is due on."""
     mid_run_fixture(fake_home, rebirth_pending=True)
     cp = run_hook(
-        _hook_payload(fake_home, "e2e-run", OVER_WATER, session_id=SID_OUT),
+        _hook_payload(OVER_WATER, session_id=SID_OUT),
         home=fake_home,
     )
     assert cp.returncode == 0
@@ -397,7 +324,7 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
     st["waiting"] = None
     _atomic_write_json(rd / "state.json", st)
     cp_before = run_hook(
-        _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_IN),
+        _hook_payload(UNDER_WATER, session_id=SID_IN),
         home=fake_home,
     )
     assert hook_decision(cp_before) is None, \
@@ -435,7 +362,7 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
     # (i) the Stop hook now RE-ATTRIBUTES the run to the successor and blocks-to-continue
     #     (the D7 multi-rebirth rebind, proven executably).
     cp_after = run_hook(
-        _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_IN),
+        _hook_payload(UNDER_WATER, session_id=SID_IN),
         home=fake_home,
     )
     d_after = hook_decision(cp_after)
@@ -460,7 +387,7 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
     assert st_recon["rebirth_pending"] is False, \
         "the resume re-arm must clear rebirth_pending (D36) so the next cycle starts fresh"
     cp_rearm = run_hook(
-        _hook_payload(fake_home, "e2e-run", OVER_WATER, session_id=SID_IN),
+        _hook_payload(OVER_WATER, session_id=SID_IN),
         home=fake_home,
     )
     d_rearm = hook_decision(cp_rearm)
@@ -505,7 +432,7 @@ def test_step4b_waiting_rebirth_is_a_continue_not_a_human_pause(fake_home):
     #     a rebirth pause ends the outgoing turn just like a human pause. (Same session id
     #     SID_OUT that owns the run — the allow is driven by `waiting`, not by ownership.)
     cp_out = run_hook(
-        _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_OUT),
+        _hook_payload(UNDER_WATER, session_id=SID_OUT),
         home=fake_home,
     )
     assert hook_decision(cp_out) is None, \
@@ -539,7 +466,7 @@ def test_step4b_waiting_rebirth_is_a_continue_not_a_human_pause(fake_home):
     # The successor now blocks-to-continue: the pipeline AUTO-RESUMES (no human answer was
     # ever required — that is the rebirth-continue semantics).
     cp_in = run_hook(
-        _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_IN),
+        _hook_payload(UNDER_WATER, session_id=SID_IN),
         home=fake_home,
     )
     d_in = hook_decision(cp_in)
@@ -571,7 +498,7 @@ def test_chainbreak_detection_severed_no_steer(fake_home, tmp_path):
     (bindir / "rebirth-thresholds.json").write_text(json.dumps(data), encoding="utf-8")
 
     cp = run_hook(
-        _hook_payload(fake_home, "e2e-run", OVER_WATER, session_id=SID_OUT),
+        _hook_payload(OVER_WATER, session_id=SID_OUT),
         home=fake_home, bindir=bindir,
     )
     assert cp.returncode == 0
@@ -587,7 +514,7 @@ def test_chainbreak_detection_severed_under_water_no_steer(fake_home):
     hook emits no rebirth steer. The detect link only fires over the hard mark."""
     mid_run_fixture(fake_home, rebirth_pending=True)
     cp = run_hook(
-        _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_OUT),
+        _hook_payload(UNDER_WATER, session_id=SID_OUT),
         home=fake_home,
     )
     d = hook_decision(cp)
@@ -740,7 +667,7 @@ def test_chainbreak_resume_severed_missing_rearm_refires(fake_home):
     _atomic_write_json(rd / "state.json", st)
 
     cp = run_hook(
-        _hook_payload(fake_home, "e2e-run", OVER_WATER, session_id=SID_IN),
+        _hook_payload(OVER_WATER, session_id=SID_IN),
         home=fake_home,
     )
     d = hook_decision(cp)
@@ -756,7 +683,7 @@ def test_chainbreak_resume_severed_missing_rearm_refires(fake_home):
     st["rebirth_pending"] = False
     _atomic_write_json(rd / "state.json", st)
     cp2 = run_hook(
-        _hook_payload(fake_home, "e2e-run", OVER_WATER, session_id=SID_IN),
+        _hook_payload(OVER_WATER, session_id=SID_IN),
         home=fake_home,
     )
     d2 = hook_decision(cp2)
@@ -779,7 +706,7 @@ def test_chainbreak_resume_severed_unrebound_session_does_not_block(fake_home):
     _atomic_write_json(rd / "state.json", st)
 
     cp = run_hook(
-        _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_IN),
+        _hook_payload(UNDER_WATER, session_id=SID_IN),
         home=fake_home,
     )
     assert hook_decision(cp) is None, \
@@ -789,7 +716,7 @@ def test_chainbreak_resume_severed_unrebound_session_does_not_block(fake_home):
     st["sessionId"] = SID_IN
     _atomic_write_json(rd / "state.json", st)
     cp2 = run_hook(
-        _hook_payload(fake_home, "e2e-run", UNDER_WATER, session_id=SID_IN),
+        _hook_payload(UNDER_WATER, session_id=SID_IN),
         home=fake_home,
     )
     d2 = hook_decision(cp2)

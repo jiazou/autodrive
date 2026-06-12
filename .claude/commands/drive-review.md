@@ -48,8 +48,7 @@ If N > 8, STOP — not converging; summarize each side.
 **Exception — `harden-regress`:** do NOT read, increment, or cap against the
 conformance `phaseReview[<P>].round`. The harden loop already bounds the number of
 these passes (its 3-fix-round cap), so there is no N>8 STOP here; just run the review
-and report CONVERGED/FINDINGS. (This is what lets harden re-review a phase whose
-integration already used 6–8 conformance rounds without false-STOPping.)
+and report CONVERGED/FINDINGS.
 
 ## Step 1 — Claude reviewer (passive, separation-preserving)
 
