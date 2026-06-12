@@ -769,3 +769,46 @@ def test_docstring_waiting_contract_enumerates_rebirth_dual_nature():
         "the docstring must state the outgoing session sets waiting=rebirth to hand off"
     # The hook acts on truthiness only (it does not distinguish the value).
     assert "truthiness" in low
+
+
+# --------------------------------------------------------------------------- #
+# The DRIVE_STOP_HOOK_PATHS scan-order seam is honored ONLY under pytest.
+# --------------------------------------------------------------------------- #
+def _two_blockable_runs(home):
+    """Two owned, blockable runs whose SORTED-glob order is a-first then z-second.
+    Returns (a_path, z_path). The hook blocks on the FIRST blockable run in scan order,
+    naming its runId in the reason — so which runId appears reveals the scan order used."""
+    a = write_run(home, "run-a-first", _block_state(runId="run-a-first"))
+    z = write_run(home, "run-z-second", _block_state(runId="run-z-second"))
+    return a, z
+
+
+def test_path_seam_honored_under_pytest(fake_home):
+    """Sanity anchor: under pytest, the override order IS honored — feeding [z, a] makes
+    z scanned first, so the block names run-z-second (not the production-sorted a-first)."""
+    a, z = _two_blockable_runs(fake_home)
+    cp = run_hook(
+        {"session_id": SID},
+        home=fake_home,
+        env={"DRIVE_STOP_HOOK_PATHS": json.dumps([str(z), str(a)])},
+    )
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert "run-z-second" in d["reason"], "override order should win under pytest"
+
+
+def test_path_seam_is_noop_outside_pytest(fake_home):
+    """Outside pytest the seam is a COMPLETE no-op: even with DRIVE_STOP_HOOK_PATHS=[z, a],
+    production falls back to sorted(glob) -> a-first scanned first -> block names run-a-first.
+    PYTEST_CURRENT_TEST="" is falsy, so the hook ignores the override (production behavior),
+    proving a foreign parent-env value can never alter the real scan order."""
+    a, z = _two_blockable_runs(fake_home)
+    cp = run_hook(
+        {"session_id": SID},
+        home=fake_home,
+        env={"DRIVE_STOP_HOOK_PATHS": json.dumps([str(z), str(a)]), "PYTEST_CURRENT_TEST": ""},
+    )
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert "run-a-first" in d["reason"], "outside pytest the override must be ignored (sorted glob wins)"
+    assert "run-z-second" not in d["reason"]

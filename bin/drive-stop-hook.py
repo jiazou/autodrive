@@ -66,13 +66,9 @@ def _runs_glob():
 
 
 def _override_state_paths():
-    """Parse + validate the DRIVE_STOP_HOOK_PATHS test seam, or None to fall back.
-
-    Returns the override path list ONLY when it is genuinely a test pin: a JSON
-    list[str] whose every entry sits under ~/.claude/harness-runs/*/state.json (the
-    same shape _runs_glob() produces). Any other value — unset, not JSON, not a
-    list, a non-str element, or a path outside that root — returns None so the
-    caller falls back to sorted(glob(...)). Never raises."""
+    """The DRIVE_STOP_HOOK_PATHS scan-order seam: a JSON list[str], or None to fall back.
+    Honored only under pytest (see _run_state_paths), so the test controls the value and the
+    path shape is not re-validated. Never raises."""
     raw = os.environ.get("DRIVE_STOP_HOOK_PATHS")
     if not raw:
         return None
@@ -80,30 +76,15 @@ def _override_state_paths():
         paths = json.loads(raw)
     except Exception:
         return None
-    if not isinstance(paths, list) or not all(isinstance(p, str) for p in paths):
-        return None
-    runs_root = os.path.join(os.path.expanduser("~"), ".claude", "harness-runs")
-    for p in paths:
-        # Must be <runs_root>/<run>/state.json — directly under runs_root, one dir deep.
-        if os.path.basename(p) != "state.json":
-            return None
-        rundir = os.path.dirname(p)
-        if os.path.dirname(rundir) != runs_root:
-            return None
-    return paths
+    if isinstance(paths, list) and all(isinstance(p, str) for p in paths):
+        return paths
+    return None
 
 
 def _run_state_paths():
-    """The state.json paths to scan, in deterministic order.
-
-    Production: ALWAYS sorted(glob(...)) — a stable order that never depends on the
-    filesystem's incidental glob order, and never on the parent environment. The
-    DRIVE_STOP_HOOK_PATHS env var is a TEST-ONLY scan-order seam: it is honored ONLY
-    when running under pytest (PYTEST_CURRENT_TEST is set) AND its value validates as
-    a JSON list[str] of run-glob-shaped paths (see _override_state_paths). Outside a
-    test, or for any invalid value, it is a complete no-op — production behavior is
-    identical to sorted(glob(...)), so a foreign/empty parent-env value can never
-    suppress a real block (fail-open)."""
+    """The state.json paths to scan, in deterministic order. Production is ALWAYS
+    sorted(glob(...)); the DRIVE_STOP_HOOK_PATHS seam is honored ONLY under pytest, so a
+    parent-env value can never alter production behavior (fail-open to the glob)."""
     if os.environ.get("PYTEST_CURRENT_TEST"):
         override = _override_state_paths()
         if override is not None:
@@ -213,9 +194,12 @@ def main():
 
     # Positive evidence of autonomous work remaining -> block and steer the next turn.
     # The reason explicitly defers to gates/STOPs so the agent never barrels past one.
+    # `phase` is only meaningful once execution begins, so omit it for early stages rather
+    # than print a bare `phase=?` next to a real stage.
+    phase = run.get("phase")
+    loc = f"stage={run.get('stage', '?')}" + (f", phase={phase}" if phase else "")
     reason = (
-        f"/drive run {run.get('runId', '?')}: autonomous work remains "
-        f"(stage={run.get('stage', '?')}, phase={run.get('phase', '?')}). "
+        f"/drive run {run.get('runId', '?')}: autonomous work remains ({loc}). "
         "Continue the pipeline. Do NOT stop until you reach Gate A, Gate B, a "
         "non-decision STOP, an AskUserQuestion, or the PR is open (stage=done) — "
         "and set state.waiting before pausing at any of those so this turn can end."

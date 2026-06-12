@@ -189,3 +189,35 @@ def test_mark_strips_md_suffix(mc_env, vault):
     rc = mc_env.done.mark("trailing-md.md")
     assert rc == 0
     assert "status: done" in path.read_text(encoding="utf-8")
+
+
+# --- CLI / main() arg parsing (was untested) ---------------------------------------
+def test_main_status_flag_without_value_errors(mc_env, monkeypatch):
+    """`mc done <slug> --status` with no value -> usage error rc 1, no write."""
+    monkeypatch.setattr(mc_env.done.sys, "argv", ["done", "myslug", "--status"])
+    monkeypatch.setattr(mc_env.done, "mark", lambda *a, **k: (_ for _ in ()).throw(AssertionError("mark called")))
+    assert mc_env.done.main() == 1
+
+
+def test_main_status_with_newline_rejected_before_mark(mc_env, monkeypatch):
+    """A multi-line --status (frontmatter-injection shape) is refused before mark()."""
+    called = []
+    monkeypatch.setattr(mc_env.done, "mark", lambda *a, **k: called.append(a) or 0)
+    monkeypatch.setattr(mc_env.done.sys, "argv", ["done", "myslug", "--status", "done\nx: y"])
+    assert mc_env.done.main() == 1
+    assert called == [], "a newline-bearing status must be rejected before mark()"
+
+
+def test_main_no_slug_errors(mc_env, monkeypatch):
+    monkeypatch.setattr(mc_env.done.sys, "argv", ["done"])
+    assert mc_env.done.main() == 1
+
+
+def test_main_percent_encoded_slug_is_decoded(mc_env, monkeypatch):
+    """The SwiftBar menu passes the slug percent-encoded; main() unquotes before mark()."""
+    seen = {}
+    monkeypatch.setattr(mc_env.done, "mark",
+                        lambda slug, status="done": seen.update(slug=slug, status=status) or 0)
+    monkeypatch.setattr(mc_env.done.sys, "argv", ["done", "a%20b", "--status", "doing"])
+    assert mc_env.done.main() == 0
+    assert seen == {"slug": "a b", "status": "doing"}

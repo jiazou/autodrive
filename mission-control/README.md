@@ -91,7 +91,7 @@ Three things run on their own after install, with nothing open:
 
 | Always-on (automatic) | What it does | You do |
 |---|---|---|
-| **SwiftBar menu bar** | Shows `☀N` + today's tasks + live sessions; refreshes every 5 min; auto-launches at login. | Glance at it. This is your always-visible surface — no terminal required. |
+| **SwiftBar menu bar** | Shows `☀N` + today's tasks + live sessions; refreshes every minute; auto-launches at login. | Glance at it. This is your always-visible surface — no terminal required. |
 | **6:45am launchd job** | Writes today's plan (`mc standup --draft`) + session digest (`mc harvest --log --summarize`) into the daily note before you wake. | Wake up, open the daily note, read the plan. |
 | **Passive hooks** | Every Claude session reports its status; a session flips to ⏸ "waiting on you" the moment it pings you. | Nothing. It just keeps the menu bar honest. |
 
@@ -135,7 +135,7 @@ commands are there for when you want more than a glance.
 | `mc standup [--draft\|--json]` | Plan the day for parallelism; `--draft` writes a self-contained `Today's Focus` + `Parallel Plan` into the daily note, while `--json` prints machine-readable output and takes precedence over `--draft` (suppresses the draft write). |
 | `mc today [--swiftbar]` | Today's tasks in one glance — terminal or SwiftBar menu-bar format. |
 | `mc weekly [--json]` | Weekly review agenda (clear Needs Review, sweep By Project, reset the week). `--json` prints machine-readable output. |
-| `mc tasks` | Vault task buckets (overdue / due / waiting). |
+| `mc tasks` | Vault task buckets (overdue / due-today / due ≤7d). |
 | `mc bind <id> --project "<P>" [--task <slug>] [--tab <name>]` | Bind a session ↔ task. |
 
 Automated: SwiftBar menu bar (auto-launch at login) · 6:45am `mc standup --draft` + `mc harvest
