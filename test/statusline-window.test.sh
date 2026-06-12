@@ -109,6 +109,27 @@ assert_eq "AC6 mutating defaultWindow changes the rendered PCT (no hardcode)" \
   "909" "$mut_pct"
 rm -rf "$MUT_DIR"
 
+# --- [1m] beta marker is AUTHORITATIVE: forces the 1M window over the table ---
+# CC marks the active 1M-context beta as `[1m]` in the model name/id; the statusline
+# honors it (a per-session beta the table can't know). An unknown model normally
+# resolves to defaultWindow 200000 -> PCT 454; with the marker -> 1000000 -> PCT 90.
+onem_name_pct="$(printf '%s' "$(payload "Some Unknown Model [1m]" "$TRANS")" | bash "$STATUSLINE" \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "[1m] marker in display_name forces 1M even for an unknown model (PCT 90)" \
+  "90" "$onem_name_pct"
+# The marker can arrive in the model.id field instead — honor it there too.
+onem_id_pct="$(jq -n --arg t "$TRANS" \
+  '{model:{display_name:"Mystery", id:"future-model[1m]"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+  | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "[1m] marker in model.id also forces 1M (PCT 90)" "90" "$onem_id_pct"
+# MODEL_ID matching: a model whose DISPLAY name doesn't match the table but whose ID
+# does still resolves from the table (id forms live in windows[].match).
+id_match_pct="$(jq -n --arg t "$TRANS" \
+  '{model:{display_name:"Brand X", id:"claude-opus-4-8"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+  | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "MODEL_ID matches the table when display_name does not (opus-4-8 -> 1M, PCT 90)" \
+  "90" "$id_match_pct"
+
 # --- Fallback (I3): a malformed data file falls back to the inline default window ---
 # so the statusline never breaks on a bad file (still renders a correct PCT).
 BAD_DIR="$(mktemp -d)"
