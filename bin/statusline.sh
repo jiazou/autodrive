@@ -2,6 +2,7 @@
 input=$(cat)
 
 MODEL=$(echo "$input" | jq -r '.model.display_name')
+MODEL_ID=$(echo "$input" | jq -r '.model.id // empty')
 DIR=$(echo "$input" | jq -r '.workspace.current_dir')
 TRANSCRIPT=$(echo "$input" | jq -r '.transcript_path // empty')
 
@@ -17,11 +18,11 @@ RESET='\033[0m'
 # assistant message in the transcript, divide by the model's actual window.
 # The window-by-model table lives in ONE place — bin/rebirth-thresholds.json (the
 # shared source of truth the rebirth Stop-hook also reads). Resolve $WINDOW by the
-# first windows[].match substring of $MODEL, else defaultWindow. A missing/malformed
-# data file falls back to the inline default so the statusline never breaks.
+# first windows[].match substring of $MODEL or $MODEL_ID, else defaultWindow. A
+# missing/malformed data file falls back to the inline default so it never breaks.
 THRESHOLDS_FILE="$(dirname "${BASH_SOURCE[0]}")/rebirth-thresholds.json"
-WINDOW=$(jq -r --arg model "$MODEL" '
-    (.windows[] | select(.match | any(. as $m | $model | contains($m))) | .window) // .defaultWindow
+WINDOW=$(jq -r --arg model "$MODEL" --arg modelid "$MODEL_ID" '
+    (.windows[] | select(.match | any(. as $m | ($model | contains($m)) or ($modelid | contains($m)))) | .window) // .defaultWindow
     | first(., empty)
 ' "$THRESHOLDS_FILE" 2>/dev/null | head -1)
 if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
@@ -29,10 +30,14 @@ if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
 # mirrors): same windows as rebirth-thresholds.json, used only when the file is
 # unreadable. AC6 pins this `case` and the json to identical numbers.
 case "$MODEL" in
-    *"Opus 4.7"*|*"Opus 4.8"*)   WINDOW=1000000 ;;
-    *)                           WINDOW=200000 ;;
+    *"Haiku"*|*"Sonnet"*|*"Opus 4.6"*|*"Opus 4.5"*|*"Opus 4.1"*)   WINDOW=200000 ;;
+    *)                                                             WINDOW=1000000 ;;
 esac
 fi
+# The 1M-context beta is authoritative when active: Claude Code marks it as `[1m]` in
+# the model name/id. Honor that over the table — a per-session beta the table can't know.
+# (Statusline-only: the rebirth Stop-hook reads the transcript, which carries no [1m].)
+case "$MODEL_ID:$MODEL" in (*"[1m]"*) WINDOW=1000000 ;; esac
 CTX_STATUS=""
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     TOKENS=$(jq -r 'select(.type=="assistant" and .message.usage) | ((.message.usage.input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0) + (.message.usage.cache_read_input_tokens // 0))' "$TRANSCRIPT" 2>/dev/null | tail -1)
@@ -75,8 +80,8 @@ if [ -n "$CCUSAGE_BIN" ] && [ -x "$CCUSAGE_BIN" ]; then
 fi
 
 # block% / week% straight from the CC payload (Pro/Max only, present after the first API call).
-BLOCK=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty' 2>/dev/null)
-WEEK=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty' 2>/dev/null)
+BLOCK=$(printf '%s' "$input" | jq -r '(.rate_limits.five_hour.used_percentage | select(. != null) | round) // empty' 2>/dev/null)
+WEEK=$(printf '%s' "$input" | jq -r '(.rate_limits.seven_day.used_percentage | select(. != null) | round) // empty' 2>/dev/null)
 LIMIT_SEG=""
 [ -n "$BLOCK" ] && LIMIT_SEG="block $(printf "$(pct_color "$BLOCK")%s%%${RESET}" "$BLOCK")"
 [ -n "$WEEK" ]  && LIMIT_SEG="${LIMIT_SEG:+$LIMIT_SEG · }week $(printf "$(pct_color "$WEEK")%s%%${RESET}" "$WEEK")"

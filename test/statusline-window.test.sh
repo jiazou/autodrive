@@ -26,7 +26,7 @@ cat > "$TRANS" <<'EOF'
 {"type": "user", "message": {"role": "user", "content": "x"}}
 {"type": "assistant", "message": {"model": "claude-opus-4-8", "usage": {"input_tokens": 4200, "cache_creation_input_tokens": 15000, "cache_read_input_tokens": 890000}}}
 EOF
-# token sum = 909200; window(Opus 4.8)=1_000_000 -> PCT 90; window(default)=200_000 -> PCT 454
+# token sum = 909200; window(Opus 4.8 / default)=1_000_000 -> PCT 90; window(Sonnet/Haiku 200k)=200_000 -> PCT 454
 
 # Payload for a given display_name + transcript.
 payload() {  # <display_name> <transcript>
@@ -47,8 +47,8 @@ payload() {  # <display_name> <transcript>
 # part (what this refactor touches) is golden — a FIXED non-git current_dir (empty
 # git segment), an empty $HOME + ccusage-free $PATH (empty cost segment), and a
 # payload with no rate_limits (empty limit segment). \033[36m=cyan dir, \033[31m=red
-# ctx (PCT>=80), \033[0m=reset. token sum 909200: window(Opus)=1_000_000 -> 90%,
-# window(default)=200_000 -> 454%.
+# ctx (PCT>=80), \033[0m=reset. token sum 909200: window(Opus / default)=1_000_000 -> 90%,
+# window(Sonnet/Haiku 200k)=200_000 -> 454%.
 GOLDEN_DIR="/zzz-not-a-git-repo/golden/statusline-dir"
 GE="$(printf '\033')"  # ESC
 golden_for() {  # <model> — the exact line statusline.sh must print (no trailing \n)
@@ -57,7 +57,7 @@ golden_for() {  # <model> — the exact line statusline.sh must print (no traili
     "Opus 4.7")           printf '%s[36m%s%s[0m [Opus 4.7] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
     "Sonnet 4.5")         printf '%s[36m%s%s[0m [Sonnet 4.5] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
     "Haiku 4")            printf '%s[36m%s%s[0m [Haiku 4] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
-    "Some Unknown Model") printf '%s[36m%s%s[0m [Some Unknown Model] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
+    "Some Unknown Model") printf '%s[36m%s%s[0m [Some Unknown Model] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
   esac
 }
 golden_payload() {  # <display_name> <transcript> — uses the FIXED non-git dir
@@ -102,12 +102,34 @@ MUT_DIR="$(mktemp -d)"
 cp -R "$REPO/bin" "$MUT_DIR/bin"
 # Point the copy's statusline at the copy's data file by editing defaultWindow there.
 jq '.defaultWindow = 100000' "$THRESHOLDS" > "$MUT_DIR/bin/rebirth-thresholds.json"
-mut_pct="$(printf '%s' "$(payload "Sonnet 4.5" "$TRANS")" | bash "$MUT_DIR/bin/statusline.sh" \
+mut_pct="$(printf '%s' "$(payload "Some Unknown Model" "$TRANS")" | bash "$MUT_DIR/bin/statusline.sh" \
   | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
 # tokens 909200 / window 100000 -> PCT 909
 assert_eq "AC6 mutating defaultWindow changes the rendered PCT (no hardcode)" \
   "909" "$mut_pct"
 rm -rf "$MUT_DIR"
+
+# --- [1m] beta marker is AUTHORITATIVE: forces the 1M window over the table ---
+# CC marks the active 1M-context beta as `[1m]` in the model name/id; the statusline
+# honors it (a per-session beta the table can't know). Use a DENYLIST (200k) model so the
+# override is load-bearing: Sonnet normally -> 200000 -> PCT 454; with [1m] -> 1M -> PCT 90.
+onem_name_pct="$(printf '%s' "$(payload "Sonnet 4.5 [1m]" "$TRANS")" | bash "$STATUSLINE" \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "[1m] marker in display_name overrides a 200k model to 1M (PCT 90)" \
+  "90" "$onem_name_pct"
+# The marker can arrive in the model.id field instead — honor it there too.
+onem_id_pct="$(jq -n --arg t "$TRANS" \
+  '{model:{display_name:"Sonnet 4.5", id:"claude-sonnet-4-5[1m]"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+  | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "[1m] marker in model.id overrides a 200k model to 1M (PCT 90)" "90" "$onem_id_pct"
+# MODEL_ID matching: a model whose DISPLAY name does not match the denylist but whose ID
+# does still resolves to 200k from the table (id forms live in windows[].match). Brand X
+# alone -> default 1M -> 90; with the opus-4-1 id -> 200k -> 454, so the id does the work.
+id_match_pct="$(jq -n --arg t "$TRANS" \
+  '{model:{display_name:"Brand X", id:"claude-opus-4-1"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+  | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "MODEL_ID matches the denylist when display_name does not (opus-4-1 -> 200k, PCT 454)" \
+  "454" "$id_match_pct"
 
 # --- Fallback (I3): a malformed data file falls back to the inline default window ---
 # so the statusline never breaks on a bad file (still renders a correct PCT).
