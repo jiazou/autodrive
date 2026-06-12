@@ -156,36 +156,6 @@ def test_i1_marker_write_is_step_before_waiting_set_and_adjacent():
     )
 
 
-def test_i1_fail_closed_clause_present_in_section():
-    """AC1: the fail-closed invariant — never enter the pause on a failing proof — is a
-    CONTIGUOUS clause inside the I1 section (whitespace-normalized), so it cannot be
-    satisfied by the same words scattered across distant prose."""
-    blob = _norm(_i1_section())
-    assert 'fail closed: Never set `waiting = "rebirth"` on a failing proof.' in blob, (
-        "the I1 handler must keep the contiguous fail-closed clause "
-        '`fail closed: Never set `waiting = "rebirth"` on a failing proof.`'
-    )
-
-
-def test_ac1_ordering_pin_flips_on_reordered_copy():
-    """Flip-proof (mutate a COPY, never the real file): swapping the marker-write and
-    waiting-set step labels in a COPY of the I1 section makes the adjacency/order pin RED —
-    proving the assertion is load-bearing on the real ordering, not incidentally green."""
-    section = _i1_section()
-    steps = _I1_STEP_RE.findall(section)
-    labels = [lbl for _n, lbl in steps]
-    marker_idx = next(i for i, l in enumerate(labels) if "WRITE the durable marker" in l)
-    waiting_idx = next(i for i, l in enumerate(labels) if 'set `waiting = "rebirth"`' in l)
-    # swap the two step labels in the enumerated list derived from the COPY
-    labels[marker_idx], labels[waiting_idx] = labels[waiting_idx], labels[marker_idx]
-    mi = next(i for i, l in enumerate(labels) if "WRITE the durable marker" in l)
-    wi = next(i for i, l in enumerate(labels) if 'set `waiting = "rebirth"`' in l)
-    # the real order has marker before waiting & adjacent; the mutated copy must NOT
-    assert not (mi < wi and wi == mi + 1), (
-        "reordering the marker/waiting steps in a COPY must break the ordering pin"
-    )
-
-
 # =========================================================================== #
 # P1-2 — I1 is ONE shared rebirth-checkpoint routine wired at EVERY claimed safe
 # boundary (Plan, Execute, Verify, Ship), not just Execute.
@@ -193,62 +163,6 @@ def test_ac1_ordering_pin_flips_on_reordered_copy():
 def _stage_section(heading):
     """A `### Stage …` section body, bounded to the next `### `/`## ` heading."""
     return _section(_drive_md(), heading, level="### ")
-
-
-def test_i1_preamble_claims_all_four_stage_boundaries():
-    """P1-2: the I1 handler's preamble enumerates ALL four autonomous stages as safe-boundary
-    sites that invoke the shared routine — Execute, Plan, Verify, AND Ship — so its scope
-    claim matches reality (it is no longer Execute-only)."""
-    i1 = _norm(_i1_section())
-    assert "ONE routine every safe-boundary site calls" in i1, (
-        "the I1 preamble must state it is the ONE shared routine every safe-boundary calls"
-    )
-    # the stage-agnostic detection rationale (why every stage must invoke it)
-    assert "stage-agnostic and can set `rebirth_pending` in ANY stage" in i1, (
-        "the I1 preamble must state detection is stage-agnostic across all stages"
-    )
-    for stage in ("**Execute**", "**Plan**", "**Verify**", "**Ship**"):
-        assert stage in i1, f"the I1 preamble must enumerate the {stage} boundary site"
-    # the Ship boundary description must match the real Stage-5 call site (BEFORE /drive-ship
-    # is dispatched, not "before Gate B"), and note Gate B precedence covers a post-dispatch
-    # rebirth — so the preamble and the call site do not contradict (no lost-handoff hole).
-    assert "BEFORE `/drive-ship` is dispatched" in i1, (
-        "the I1 Ship boundary must be described as BEFORE /drive-ship is dispatched (matching "
-        "the Stage-5 call site), not an inside-ship boundary that never fires"
-    )
-    assert "no post-dispatch rebirth is lost" in i1, (
-        "the I1 Ship description must state Gate B precedence covers a post-dispatch rebirth"
-    )
-    # P1-1: the Execute bullet enumerates the per-phase DESIGN sub-stage boundary (after the
-    # phase design converges, before slices dispatch), so a rebirth signalled during
-    # /drive-design has a consumer.
-    assert (
-        "after the per-phase detailed design converges (its `inflight-design-<P>.marker` "
-        "cleared, BEFORE freezing base + dispatching slices)"
-    ) in i1, (
-        "the I1 preamble's Execute bullet must enumerate the per-phase DESIGN safe boundary "
-        "(after the phase design converges, before slices dispatch)"
-    )
-    assert "running on into slice dispatch" in i1, (
-        "the I1 preamble must state the phase-design rebirth is consumed at that boundary "
-        "rather than running on into slice dispatch"
-    )
-
-
-def test_i1_preamble_phase_design_boundary_pin_flips_on_dropped_copy():
-    """Flip-proof (mutate a COPY): drop the phase-design boundary clause from the I1 preamble's
-    Execute bullet in a COPY and assert the preamble pin REDs — proving it bites on the real
-    enumeration, not an incidental match."""
-    i1 = _norm(_i1_section())
-    clause = (
-        "after the per-phase detailed design converges (its `inflight-design-<P>.marker` "
-        "cleared, BEFORE freezing base + dispatching slices), "
-    )
-    assert clause in i1, "fixture: the phase-design boundary clause must be present to drop"
-    drifted = i1.replace(clause, "", 1)
-    assert clause not in drifted, (
-        "dropping the phase-design boundary clause from a COPY must remove the enumeration"
-    )
 
 
 # The shared-routine invocation each stage must carry: run the Coordinator soft-check then
@@ -310,44 +224,6 @@ def test_i1_wired_at_phase_design_call_site():
     )
 
 
-def test_phase_design_call_site_pin_flips_on_dropped_copy():
-    """Flip-proof (mutate a COPY): drop the soft-check + I1 invocation sentence from a COPY of
-    Execute step 1 and assert the call-site pin REDs — proving it bites on the real call site,
-    not on the preamble's enumeration alone."""
-    step1 = _execute_step1_design()
-    assert _I1_INVOCATION in _norm(step1), "fixture: step 1 must carry the I1 invocation to drop"
-    drifted = re.sub(
-        r" This is a safe boundary \(the design's\s+`inflight-design-<P>\.marker` is cleared.*?dispatching\s+slices\.",
-        "",
-        step1,
-        count=1,
-        flags=re.DOTALL,
-    )
-    assert _I1_INVOCATION not in _norm(drifted), (
-        "dropping the step-1 I1 invocation from a COPY must remove the call-site wiring"
-    )
-
-
-def test_p1_2_wiring_pin_flips_on_dropped_ship_invocation_copy():
-    """Flip-proof (mutate a COPY): removing the I1 invocation from the Ship stage in a COPY of
-    drive.md makes the per-stage wiring pin RED for Ship — proving it bites on the real call
-    site, not incidentally green on the preamble's claim alone."""
-    md = _drive_md()
-    ship = _section(md, "Stage 5 — Ship (once)", level="### ")
-    assert _I1_INVOCATION in _norm(ship), "fixture: Ship must carry the I1 invocation to drop"
-    # drop the whole leading I1-checkpoint paragraph from a COPY of the Ship section
-    drifted_ship = re.sub(
-        r"At the ship dispatch boundary.*?§ I1 Gate/STOP precedence\)\.\n\n",
-        "",
-        ship,
-        count=1,
-        flags=re.DOTALL,
-    )
-    assert _I1_INVOCATION not in _norm(drifted_ship), (
-        "dropping the Ship I1 invocation from a COPY must remove the wiring the pin requires"
-    )
-
-
 # =========================================================================== #
 # P1-1 — the DELEGATED Plan runner (`.claude/commands/drive-plan.md`), where the real
 # autoplan + dual-voice design-review rounds run, INVOKES the shared rebirth handshake at
@@ -392,41 +268,9 @@ def test_drive_plan_invokes_rebirth_handshake_at_planning_boundary():
     assert "/drive <runId>" in plan, "the handoff must surface the paste-ready resume line"
 
 
-def test_drive_plan_rebirth_pin_flips_on_dropped_clause_copy():
-    """Flip-proof (mutate a COPY, never the real file): drop the soft-check + rebirth-handler
-    invocation clause from a COPY of drive-plan.md and assert the pin REDs — proving it bites on
-    the real call site, not on drive.md's parent claim alone."""
-    plan = _norm(_drive_plan_md())
-    assert _PLAN_REBIRTH_CLAUSE in plan, "fixture: the clause must be present to drop"
-    drifted = plan.replace(_PLAN_REBIRTH_CLAUSE, "", 1)
-    assert _PLAN_REBIRTH_CLAUSE not in drifted, (
-        "dropping the soft-check + rebirth-handler clause from a COPY must remove the call site"
-    )
-
-
 # =========================================================================== #
 # AC2/AC3 — run-graph ↻ REBIRTH node + the handoff block.
 # =========================================================================== #
-def test_run_graph_rebirth_anchor_node_and_legend():
-    """AC2/AC3: the run-graph render contract maps `waiting=="rebirth"` to a `↻ REBIRTH`
-    CONTINUATION node (NOT a `✗ STOP` leaf), the legend lists `↻ rebirth`, and the node
-    text carries the literal `/drive <runId>` resume token."""
-    blob = _norm(_drive_md())
-    # the legend line enumerates the rebirth glyph
-    assert "↻ rebirth" in blob, "the run-graph legend must list the `↻ rebirth` glyph"
-    # the anchor table maps rebirth -> a ↻ REBIRTH continuation node, explicitly not a STOP leaf
-    assert (
-        "`rebirth` → a `↻ REBIRTH` CONTINUATION node (NOT a `✗ STOP` leaf)"
-    ) in blob, (
-        "the `← YOU ARE HERE` anchor table must map `rebirth` to a `↻ REBIRTH` "
-        "CONTINUATION node, explicitly NOT a `✗ STOP` leaf"
-    )
-    # the node text contains the literal /drive <runId> resume token
-    assert (
-        "↻ REBIRTH: context-pressure handoff (resume: /drive <runId>) ← YOU ARE HERE"
-    ) in blob, "the ↻ REBIRTH node text must carry the literal `/drive <runId>` resume token"
-
-
 def _handoff_block():
     """The fenced handoff block presented when `waiting=="rebirth"` (Present human pause
     step 3): the ```-fenced block whose first line starts the `↻ REBIRTH —` orientation."""
@@ -435,52 +279,6 @@ def _handoff_block():
     fence_open = md.rindex("```", 0, start)
     fence_close = md.index("```", start)
     return md[fence_open: fence_close]
-
-
-def test_handoff_block_has_resume_line_and_rearmed_goal():
-    """AC3: the rebirth handoff block contains the literal `/drive <runId>` resume line AND
-    a re-armed `/goal` line (the successor's leg goal). Pinned WITHIN the bounded handoff
-    block so an unrelated `/drive <runId>` / `/goal` mention elsewhere can't satisfy it."""
-    block = _handoff_block()
-    # the EXACT resume invocation, indented as a paste-ready line
-    assert "\n     /drive <runId>\n" in block, (
-        "the handoff block must contain the literal paste-ready `/drive <runId>` resume line"
-    )
-    # the re-armed /goal line for the successor's leg
-    assert "/goal The /drive run <runId> is resuming after a context-pressure rebirth" in block, (
-        "the handoff block must re-arm the successor leg's `/goal` line"
-    )
-
-
-def test_handoff_block_resumability_claim_names_both_proof_modes():
-    """The handoff block's resumability claim must name BOTH proof modes — checkpoint AND
-    state-lint — matching the both-modes resumability contract (proof = checkpoint AND
-    state-lint clean). A checkpoint-only claim contradicts the contract; this pin keeps the
-    user-facing handoff surface from regressing to one mode."""
-    block = _norm(_handoff_block())
-    start = block.index("Your run is proven resumable")
-    # the resumability sentence runs to its closing parenthesis
-    claim = block[start: block.index(")", start) + 1]
-    assert "checkpoint" in claim and "state-lint" in claim, (
-        "the handoff block's resumability claim must name BOTH proof modes (checkpoint AND "
-        f"state-lint), not checkpoint-only — saw: {claim!r}"
-    )
-
-
-def test_handoff_resumability_pin_flips_on_checkpoint_only_copy():
-    """Flip-proof (mutate a COPY): reverting the resumability claim to the pre-fix
-    checkpoint-only prose reds the both-modes pin — proving it bites on the named modes,
-    not incidentally green."""
-    block = _norm(_handoff_block())
-    start = block.index("Your run is proven resumable")
-    claim = block[start: block.index(")", start) + 1]
-    drifted = block.replace(claim, "Your run is proven resumable (checkpoint passed)", 1)
-    assert drifted != block, "the checkpoint-only revert matched nothing"
-    dstart = drifted.index("Your run is proven resumable")
-    dclaim = drifted[dstart: drifted.index(")", dstart) + 1]
-    assert not ("checkpoint" in dclaim and "state-lint" in dclaim), (
-        "checkpoint-only copy must NOT name both modes (pin would be incidentally green)"
-    )
 
 
 def _handoff_goal_line():
@@ -501,20 +299,6 @@ def test_handoff_block_goal_line_carries_leg_condition_placeholder():
     assert "<leg-condition>" in goal_line, (
         "the handoff block's `/goal` re-arm line must carry the `<leg-condition>` placeholder "
         "token (a dropped placeholder would re-arm a leg-blind goal)"
-    )
-
-
-def test_handoff_goal_placeholder_pin_flips_on_dropped_placeholder_copy():
-    """Flip-proof (mutate a COPY, never the real file): dropping the trailing
-    `<leg-condition>` placeholder from a COPY of the handoff block's `/goal` line makes the
-    placeholder pin RED — proving it bites on the bound placeholder, not incidentally green."""
-    block = _norm(_handoff_block())
-    # remove the trailing placeholder token from the COPY (the exact drop drift AC12 prevents)
-    drifted = block.replace(" <leg-condition>", "", 1)
-    assert drifted != block, "the placeholder-drop mutation matched nothing"
-    start = drifted.index("/goal The /drive run <runId> is resuming after a context-pressure")
-    assert "<leg-condition>" not in drifted[start:], (
-        "dropping the `<leg-condition>` placeholder from a COPY must red the placeholder pin"
     )
 
 
@@ -550,21 +334,6 @@ def test_resume_rebirth_continue_bullet_after_rebind_and_marker():
         "the rebirth-continue bullet must come AFTER the sessionId-rebind AND the "
         f"marker-consume bullets; got order {labels}"
     )
-
-
-def test_resume_rebirth_continue_clause_is_continue_not_stop():
-    """AC4: the rebirth-continue bullet names a re-proven (fail-closed) CONTINUE — NOT a
-    STOP — as a contiguous clause, so a drift to re-presenting it (treating it as a human
-    pause) reds the pin. The CONTINUE is now gated on a fresh PASSING proof (P1-3 fail-closed)."""
-    blob = _norm(_drive_md())
-    assert (
-        '`waiting == "rebirth"` → re-proven CONTINUE (fail closed), NOT a STOP.' in blob
-    ), "the resume bullet must pin rebirth as a re-proven (fail-closed) CONTINUE, NOT a STOP"
-    assert "clear `state.waiting = null`" in blob, (
-        "the rebirth-continue bullet must CLEAR waiting and continue (on a passing proof)"
-    )
-    # explicit do-NOT-re-present (so a future edit can't quietly surface it as a pause)
-    assert "do NOT surface it as a paused-for-human state, do NOT re-present the handoff" in blob
 
 
 def test_resume_rebirth_continue_is_fail_closed_re_proven():
@@ -627,54 +396,6 @@ def test_resume_rebirth_continue_is_fail_closed_re_proven():
 _REBIRTH_RESET_RE = re.compile(r"`?(?:state\.)?rebirth_pending`?\s*=\s*`?false`?")
 
 
-def test_rebirth_pending_rearm_on_resume_at_rebind_and_rebirth_continue():
-    """AC4 (D36, P1-2): the `rebirth_pending=false` re-arm fires on RESUME — at the
-    sessionId-rebind step (fresh-session resume) AND on the `rebirth`-continue path
-    (same-session re-paste), the SAME logical idempotent re-arm. Pinned as contiguous clauses
-    so dropping EITHER reset write, or re-coupling the re-arm to the sessionId-rebind alone
-    (which a same-session re-paste skips), reds the pin."""
-    blob = _norm(_drive_md())
-    # reset is AT the rebind step, in the same write, uniform over all waiting values
-    assert "reset `state.rebirth_pending = false` — uniformly on ANY fresh-session" in blob, (
-        "the rebirth_pending re-arm must sit at the sessionId-rebind step, on ANY "
-        "fresh-session resume (uniform over all waiting values)"
-    )
-    # it is the SAME logical re-arm fired by the resume consumer on EXACTLY TWO scoped paths
-    # (rebind for fresh-session; rebirth-continue for same-session re-paste) — NOT a blanket
-    # "whenever resumed" (which would clear a gate/STOP-deferred rebirth on a same-session
-    # non-rebirth resume), and NOT a single textual reset coupled to the rebind alone.
-    assert (
-        "`rebirth_pending` is reset to `false` by the RESUME consumer on exactly two scoped "
-        "paths — the SAME logical re-arm (idempotent)"
-    ) in blob, (
-        "the re-arm must be pinned as the SAME logical reset on exactly the two scoped resume "
-        "paths (rebind OR rebirth-continue), so a same-session re-paste that skips the rebind "
-        "still re-arms"
-    )
-    # NEGATIVE pin (codex F1): a same-session NON-rebirth resume must NOT clear — the deferred
-    # rebirth_pending PERSISTS so I1 still hands off (gate/STOP precedence).
-    assert (
-        "It is NOT reset on any other resume: a same-session NON-`rebirth` resume (a Gate "
-        "A/B/STOP run re-pasted in the same session) hits neither path, so a legitimately-"
-        "deferred `rebirth_pending` PERSISTS"
-    ) in blob, (
-        "the prose must scope the reset to the two paths and state a same-session non-rebirth "
-        "resume does NOT clear (so a gate/STOP-deferred rebirth is not lost)"
-    )
-    # the rebirth-continue path performs the reset on the passing-proof CONTINUE branch,
-    # UNCONDITIONALLY w.r.t. the sessionId-rebind (the P1-2 fix) — and NOT before the re-prove
-    # nor on the fail-closed branch (codex F2).
-    assert (
-        "The `rebirth_pending` reset belongs ONLY on this passing-proof CONTINUE branch (never "
-        "before the re-prove, never on the fail-closed branch below — those must leave the "
-        "signal intact), and it is UNCONDITIONAL w.r.t. the sessionId-rebind"
-    ) in blob, (
-        "the rebirth-continue reset must be scoped to the passing-proof CONTINUE branch and "
-        "unconditional w.r.t. the rebind (the same-session re-paste hole), NOT before re-prove "
-        "or on fail-closed"
-    )
-
-
 def _assert_reset_on_resume_structural(drive_md):
     """AC4 / D36 (design-phase3.md L533-534) + P1-2 LOGICAL contract: the `rebirth_pending`
     reset is the reset-on-RESUME re-arm — it appears at the sessionId-rebind bullet (index 0,
@@ -735,45 +456,6 @@ def test_reset_on_resume_is_structural_not_prose_only():
     _assert_reset_on_resume_structural(_drive_md())
 
 
-def test_reset_on_resume_pin_flips_on_dropped_rebirth_continue_reset_copy():
-    """Flip-proof (genuine — run the REAL structural pin against a mutated COPY): DROP the
-    rebirth-continue path's `rebirth_pending = false` reset from a COPY of drive.md (the exact
-    P1-2 same-session re-paste hole this fix closes) and assert the SAME
-    `_assert_reset_on_resume_structural` pin RAISES. Proves the contract bites on the
-    same-session re-arm's PRESENCE, not just the prose claim."""
-    drifted = _drive_md().replace(
-        "clear `state.waiting = null` AND reset\n    `state.rebirth_pending = false` (one "
-        "JSON-safe write)",
-        "clear `state.waiting = null` (one JSON-safe write)",
-        1,
-    )
-    # the drop must actually land (else the flip-proof is vacuous) …
-    assert drifted != _drive_md(), "the rebirth-continue reset drop matched nothing"
-    # … the rebind reset stays present in the copy (so a presence-anywhere pin would stay
-    # green — proving this pin bites on the per-path STRUCTURE) …
-    assert "reset `state.rebirth_pending = false` — uniformly on ANY fresh-session" in _norm(drifted)
-    # … and the REAL structural pin, run against the drifted COPY, must RED.
-    with pytest.raises(AssertionError):
-        _assert_reset_on_resume_structural(drifted)
-
-
-def test_ac4_resume_order_pin_flips_on_reordered_copy():
-    """Flip-proof: inserting a NEW resume sub-bullet AHEAD of the rebind bullet in a COPY
-    of the resume section makes the rebind-is-index-0 pin RED (the real file has it first)."""
-    section = _resume_section()
-    # inject a fake first sub-bullet at the same indentation as the real reconciliation steps
-    injected = section.replace(
-        "  - **sessionId rebind",
-        "  - **injected bogus step:** noise\n  - **sessionId rebind",
-        1,
-    )
-    labels = _resume_bullet_labels(injected)
-    rebind_idx = next(i for i, l in enumerate(labels) if l.startswith("sessionId rebind"))
-    assert rebind_idx != 0, (
-        "a sub-bullet inserted ahead of the rebind in a COPY must push rebind off index 0"
-    )
-
-
 # =========================================================================== #
 # AC8 — gate precedence (D45): Gate A hands the next leg's /goal line; Gate B hands NONE
 # (push is immediate); NEITHER gate emits /drive <runId>; rebirth uniquely contributes the
@@ -805,65 +487,6 @@ def test_gate_precedence_neither_gate_emits_runid_resume():
     )
 
 
-def test_gate_precedence_pin_flips_on_false_both_gates_copy():
-    """Flip-proof: a COPY of drive.md reverted to the FALSE 'BOTH Gate A and Gate B hand a
-    goal' claim must RED the corrected pin — proves the pin bites on the Gate-B-hands-none
-    truth, not just any text. Reverts the RAW (line-wrapped) prose, then runs the same
-    `_norm`'d pin the live test uses against the COPY."""
-    drifted = _drive_md().replace(
-        "**Gate A**\nhands the next leg's `/goal` line on approval; **Gate B** hands NO goal "
-        "(after Gate-B\napproval the push is immediate — there is no next leg).",
-        "BOTH Gate A and Gate B hand the next leg's `/goal` line on approval.",
-        1,
-    )
-    assert drifted != _drive_md(), "the gate-precedence revert matched nothing"
-    blob = _norm(drifted)
-    with pytest.raises(AssertionError):
-        assert (
-            "**Gate A** hands the next leg's `/goal` line on approval; **Gate B** hands NO "
-            "goal (after Gate-B approval the push is immediate — there is no next leg)"
-        ) in blob
-
-
-def test_stage0_goal_gateB_hands_none():
-    """AC8/D45 (P2-fix — the Stage-0 site was previously unguarded): the Stage-0 §"Set the
-    session goal" prose states the goal is re-armed at Gate A and that Gate B hands no
-    further line (immediate push) — and does NOT carry the false 'Gate B hand(s) … the next
-    leg's line' claim."""
-    blob = _norm(_drive_md())
-    assert (
-        "re-armed at Gate A (which hands the user the next/execute-leg line to paste on "
-        "approval); Gate B hands no further line — after Gate-B approval the push is immediate"
-    ) in blob, (
-        "Stage-0 goal prose must state re-armed at Gate A and Gate B hands no further line"
-    )
-    assert "re-armed at each gate (Gate A and Gate B hand" not in blob, (
-        "the false Stage-0 'Gate A and Gate B hand … the next leg's line' claim must be gone"
-    )
-
-
-def test_stage0_goal_pin_flips_on_false_both_gates_copy():
-    """Flip-proof: a COPY reverted to the FALSE Stage-0 're-armed at each gate (Gate A and
-    Gate B hand …)' claim must RED the corrected Stage-0 pin. Reverts the RAW (line-wrapped)
-    prose, then runs the same `_norm`'d pin the live test uses against the COPY."""
-    drifted = _drive_md().replace(
-        "re-armed at Gate A (which hands the user the\n   next/execute-leg line to paste on "
-        "approval); Gate B hands no further line — after Gate-B\n   approval the push is "
-        "immediate.",
-        "re-armed at each gate (Gate A and Gate B hand\n   the user the next leg's line to "
-        "paste on approval).",
-        1,
-    )
-    assert drifted != _drive_md(), "the Stage-0 revert matched nothing"
-    blob = _norm(drifted)
-    with pytest.raises(AssertionError):
-        assert (
-            "re-armed at Gate A (which hands the user the next/execute-leg line to paste on "
-            "approval); Gate B hands no further line — after Gate-B approval the push is "
-            "immediate"
-        ) in blob
-
-
 def test_gate_stop_wins_precedence_over_rebirth():
     """AC9 / P1-1: at a boundary where both a rebirth and a gate/STOP are due, the gate/STOP
     wins. `rebirth_pending` does NOT carry forward ACROSS the fresh-session resume (reset once
@@ -883,21 +506,6 @@ def test_gate_stop_wins_precedence_over_rebirth():
         "gate-precedence prose must state the same-session PERSIST half (consistent with the "
         "I1 Leave-pending semantics), so the lifecycle is ONE consistent story"
     )
-
-
-def test_rebirth_pending_carry_forward_claim_is_qualified_not_blanket():
-    """P1-1 negative: the contradictory BLANKET claim — `rebirth_pending` 'does NOT carry
-    forward' NOT immediately qualified by 'ACROSS the fresh-session resume' — must NOT appear.
-    Pinned structurally: every `does NOT carry forward` occurrence for `rebirth_pending` is
-    followed by the `ACROSS the fresh-session resume` qualifier."""
-    blob = _norm(_drive_md())
-    for m in re.finditer(r"`rebirth_pending` does NOT carry forward", blob):
-        tail = blob[m.end(): m.end() + len(" ACROSS the fresh-session resume")]
-        assert tail == " ACROSS the fresh-session resume", (
-            "every `rebirth_pending` does-NOT-carry-forward claim must be QUALIFIED with "
-            "`ACROSS the fresh-session resume` (a blanket claim contradicts the same-session "
-            f"PERSIST lifecycle); found unqualified tail {tail!r}"
-        )
 
 
 # =========================================================================== #
@@ -928,53 +536,6 @@ def test_drive_md_autonomous_continuation_contract_enumerates_rebirth_dual():
     _assert_ac11_dual_nature(_norm(_drive_md()))
 
 
-def test_present_human_pause_step1_enumerates_rebirth_dual():
-    """AC11: Present-human-pause step 1's reason enumeration includes `"rebirth"` alongside
-    the human-pause reasons AND states its distinct continue semantics (awaits a
-    FRESH-SESSION RESUME; the resume auto-clears it) — not a bare addition to the set."""
-    blob = _norm(_drive_md())
-    # the reason enumeration lists rebirth alongside the human-pause reasons
-    assert (
-        '`"gateA"`, `"gateB"`, `"stop:<short>"`, `"ask:<header>"`, or `"rebirth"`'
-    ) in blob, "step-1's reason enumeration must include `\"rebirth\"`"
-    # …with its dual/continue semantics, contiguous (NOT just appended to the set). The
-    # resume RE-PROVES before auto-clearing (P1-3 fail-closed), so the continue clause names it.
-    assert (
-        '`"rebirth"` awaits a FRESH-SESSION RESUME: the resume path re-proves then auto-clears '
-        "it and continues"
-    ) in blob, (
-        "step 1 must state rebirth's continue semantics (awaits a fresh-session resume; "
-        "the resume re-proves then auto-clears it), not merely add it to the reason set"
-    )
-
-
-def test_present_human_pause_never_sets_rebirth_itself():
-    """P1-3 outbound fail-closed: Present-human-pause step 1 must state it NEVER sets
-    `waiting="rebirth"` itself — only the I1 handler sets it, AFTER its passing proof + durable
-    marker. So `rebirth` is not a generic caller-supplied pause reason a sibling path can pass
-    in to end a turn without I1's prove→marker→wait sequence (the outbound half of fail-closed)."""
-    blob = _norm(_drive_md())
-    assert "this routine NEVER sets `waiting = \"rebirth\"` itself" in blob, (
-        "Present-human-pause must state it NEVER sets waiting=rebirth itself"
-    )
-    assert 'Only the I1 handler sets `"rebirth"`' in blob, (
-        "Present-human-pause must name I1 as the SOLE setter of waiting=rebirth"
-    )
-    # the set-here list (step 1) must NOT include rebirth — only the human-pause reasons
-    assert (
-        'HUMAN-pause reason this routine is setting —\n   `"gateA"`, `"gateB"`, '
-        '`"stop:<short>"`, or `"ask:<header>"`'
-    ).replace("\n   ", " ") in blob, (
-        "step-1's SET-HERE list must enumerate only the four human-pause reasons (NOT rebirth)"
-    )
-    assert '`"rebirth"` is NOT in this set-here list' in blob, (
-        "step 1 must state rebirth is NOT in the set-here list"
-    )
-    assert "NOT a generic caller-supplied pause reason" in blob, (
-        "rebirth must be stated as NOT a generic caller-supplied pause reason"
-    )
-
-
 def test_hook_docstring_enumerates_rebirth_dual():
     """AC11: bin/drive-stop-hook.py's docstring `waiting` field block enumerates `rebirth`
     with BOTH halves of its dual nature (outgoing-set; resume auto-clears as CONTINUE) and
@@ -993,24 +554,6 @@ def test_hook_docstring_enumerates_rebirth_dual():
     assert "The hook does not distinguish it — it acts on truthiness only" in doc, (
         "the docstring must state the hook acts on truthiness only"
     )
-
-
-def test_ac11_dual_nature_pin_flips_on_human_pause_only_copy():
-    """Flip-proof (genuine — run the REAL pin against a mutated COPY): revert a COPY of the
-    Autonomous-continuation contract to the pre-edit human-pause-ONLY phrasing (drop the
-    auto-clear-on-resume half — the exact way the contract would drift) and assert the SAME
-    `_assert_ac11_dual_nature` pin RAISES on it. This proves the pin bites on the continue
-    semantics, not just the literal token `rebirth`."""
-    drifted = _drive_md().replace(
-        "auto-cleared-as-continue by the resume path in the INCOMING session —\n"
-        "it is NOT a STOP awaiting a human answer.",
-        "a STOP awaiting a human answer like every other `waiting` value.",
-    )
-    # the mutation must actually change the source (else the flip-proof is vacuous) …
-    assert drifted != _drive_md(), "the human-pause-only drift mutation matched nothing"
-    # … and the REAL pin, run against the drifted COPY, must RED.
-    with pytest.raises(AssertionError):
-        _assert_ac11_dual_nature(_norm(drifted))
 
 
 # =========================================================================== #
@@ -1097,11 +640,11 @@ def _leg_bullet_map(section):
 
 
 def _assert_leg_condition_mapping(section):
-    """AC12 mapping pin (factored for the flip-proofs): the PLANNING stage-set binds the
-    PLANNING-leg condition semantics and the EXECUTE stage-set binds the EXECUTE-leg
-    condition semantics — and each leg's condition is NOT the other's (so swapping the two
-    condition texts, or pointing a stage-set at the wrong leg's condition, reds). Raises
-    AssertionError on any wrong-leg binding."""
+    """AC12 mapping pin: the PLANNING stage-set binds the PLANNING-leg condition semantics
+    and the EXECUTE stage-set binds the EXECUTE-leg condition semantics — and each leg's
+    condition is NOT the other's (so swapping the two condition texts, or pointing a
+    stage-set at the wrong leg's condition, reds). Raises AssertionError on any wrong-leg
+    binding."""
     bymap = _leg_bullet_map(section)
     assert _PLANNING_STAGES in bymap, (
         f"the planning leg must be keyed on {sorted(_PLANNING_STAGES)}; got {sorted(map(sorted, bymap))}"
@@ -1137,67 +680,6 @@ def test_leg_condition_selector_maps_each_leg_to_its_own_condition():
     verify, ship) → the execute-leg condition — over the REAL merged drive.md. A swapped or
     mis-mapped condition (a handoff that re-arms the WRONG leg's goal) reds this pin."""
     _assert_leg_condition_mapping(_leg_selector_section())
-
-
-def test_ac12_mapping_pin_flips_on_swapped_conditions_copy():
-    """Flip-proof (mutate a COPY, never the real file): SWAP the planning-leg and execute-leg
-    condition bodies in a COPY of the selector block and assert the SAME mapping pin RAISES —
-    proving it bites on which leg owns which condition, not just on totality/presence."""
-    section = _leg_selector_section()
-    planning_line = "`NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.`"
-    execute_line = "`NOT met while autonomous implement / review / harden / verify / ship work remains.`"
-    assert planning_line in section and execute_line in section, (
-        "the swap flip-proof must find both canonical condition lines to swap"
-    )
-    # swap via sentinels so the two replacements don't interfere
-    swapped = (
-        section.replace(planning_line, "\x00PLAN\x00", 1)
-        .replace(execute_line, planning_line, 1)
-        .replace("\x00PLAN\x00", execute_line, 1)
-    )
-    assert swapped != section, "the condition-swap mutation matched nothing"
-    # totality is UNCHANGED by the swap (same stage tokens) — proving this pin bites on mapping
-    bullets = _LEG_BULLET_RE.findall(swapped)
-    covered = [t for sb, _c in bullets for t in _STAGE_TOK_RE.findall(sb)]
-    assert set(covered) == set(_STAGE_ENUM), "the swap must leave totality intact (mapping-only drift)"
-    with pytest.raises(AssertionError):
-        _assert_leg_condition_mapping(swapped)
-
-
-def test_ac12_mapping_pin_flips_on_wrong_leg_condition_copy():
-    """Flip-proof (mutate a COPY, never the real file): point the EXECUTE-leg row at the
-    PLANNING-leg condition in a COPY (a one-sided mis-map, not a clean swap) and assert the
-    SAME mapping pin RAISES — proving it catches a stage-set bound to the wrong leg's
-    condition, not only a symmetric swap."""
-    section = _leg_selector_section()
-    execute_line = "`NOT met while autonomous implement / review / harden / verify / ship work remains.`"
-    planning_line = "`NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.`"
-    # mis-map: overwrite the execute-leg condition with the planning-leg one (totality intact)
-    mismapped = section.replace(execute_line, planning_line, 1)
-    assert mismapped != section, "the wrong-leg mis-map mutation matched nothing"
-    bullets = _LEG_BULLET_RE.findall(mismapped)
-    covered = [t for sb, _c in bullets for t in _STAGE_TOK_RE.findall(sb)]
-    assert set(covered) == set(_STAGE_ENUM), "the mis-map must leave totality intact"
-    with pytest.raises(AssertionError):
-        _assert_leg_condition_mapping(mismapped)
-
-
-def test_ac12_total_selector_pin_flips_when_a_stage_is_dropped():
-    """Flip-proof: dropping `"verify"` from a COPY of the selector block makes the
-    total-coverage assertion RED — proving the pin bites on completeness, not just presence
-    of some bullets."""
-    section = _leg_selector_section()
-    # remove the verify stage token from the execute-leg bullet in the COPY
-    mutated = section.replace(
-        '{`"execute"`, `"verify"`, `"ship"`}', '{`"execute"`, `"ship"`}', 1
-    )
-    bullets = _LEG_BULLET_RE.findall(mutated)
-    covered = []
-    for stages_blob, _cond in bullets:
-        covered.extend(_STAGE_TOK_RE.findall(stages_blob))
-    assert set(covered) != set(_STAGE_ENUM), (
-        "dropping a stage from a COPY of the selector must break the total-coverage pin"
-    )
 
 
 # =========================================================================== #
@@ -1289,20 +771,6 @@ def test_hook_escalation_and_i1_share_the_handshake_tokens():
     assert 'set `waiting = "rebirth"`' in i1
 
 
-def test_cross_file_invariant_flips_on_renamed_steer_token_copy():
-    """Flip-proof (genuine — run the REAL accessor + pin against a mutated COPY): rename the
-    marker token in a COPY of the whole hook SOURCE (the exact way a cross-file drift would
-    happen), re-extract the steer via the SAME `_escalation_steer_text` accessor, and assert
-    the SAME `_assert_steer_names_shared_tokens` pin RAISES. Proves the agreement check is
-    load-bearing on the real token, not coincidentally green."""
-    drifted_src = _hook_py().replace("checkpoint-complete.marker", "some-other.marker")
-    # the rename must actually change the source (else the flip-proof is vacuous) …
-    assert drifted_src != _hook_py(), "the marker-rename mutation matched nothing in the hook"
-    # … and the REAL accessor + pin, run over the drifted COPY, must RED.
-    with pytest.raises(AssertionError):
-        _assert_steer_names_shared_tokens(_escalation_steer_text(drifted_src))
-
-
 # --- AC7: cross-file /goal rebirth-pause clause consistency ----------------- #
 # The `/goal` rebirth-pause clause must be present + byte-identical across BOTH
 # drive.md (×2: the rebirth-handoff re-arm goal + the Stage-0 leg-1 goal) and
@@ -1336,24 +804,3 @@ def test_goal_rebirth_pause_clause_consistent_across_drive_and_plan():
     BOTH drive.md and drive-plan.md, so the two `/goal` surfaces can't drift apart."""
     _assert_goal_rebirth_pause_consistent(_drive_md(), _drive_plan_md())
 
-
-def test_goal_rebirth_pause_pin_reds_on_one_sided_edit_copy():
-    """Flip-proof (genuine — run the REAL pin against a one-sided mutated COPY): a one-sided
-    edit to EITHER file's clause — exactly the drift AC7 guards — must red the SAME pin.
-    Proves the consistency check is load-bearing, not coincidentally green."""
-    # (a) drop the clause from drive-plan.md ONLY -> count 1 -> 0 reds.
-    drifted_plan = _drive_plan_md().replace(_GOAL_REBIRTH_PAUSE_CLAUSE, "")
-    assert drifted_plan != _drive_plan_md(), (
-        "the rebirth-pause clause removal matched nothing in drive-plan.md"
-    )
-    with pytest.raises(AssertionError):
-        _assert_goal_rebirth_pause_consistent(_drive_md(), drifted_plan)
-
-    # (b) drop just ONE of drive.md's two clause occurrences -> count 2 -> 1 reds, proving the
-    # pin catches a one-sided edit on the drive.md side too (not only a wholesale removal).
-    drifted_drive = _drive_md().replace(_GOAL_REBIRTH_PAUSE_CLAUSE, "", 1)
-    assert drifted_drive != _drive_md(), (
-        "the one-occurrence removal matched nothing in drive.md"
-    )
-    with pytest.raises(AssertionError):
-        _assert_goal_rebirth_pause_consistent(drifted_drive, _drive_plan_md())

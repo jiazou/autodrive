@@ -93,68 +93,11 @@ def _jq_token(usage, field):
 
 
 def latest_usage_tokens(transcript_path):
-    """The canonical token sum: the LAST assistant line's input + cache_creation +
-    cache_read usage in the transcript JSONL, or None when no usage line exists.
-
-    Byte-for-behavior with statusline.sh's `jq ... | tail -1` via the two-mode guard
-    (see the module docstring): `json.loads` failure BREAKs (parse error halts the
-    stream); any exception in the per-line extract/sum DROPS the line and CONTINUEs
-    (runtime error). `{}` usage sums to 0 (present); `null`/absent/`false` usage and a
-    `null`/scalar top-level line contribute nothing. Blank lines are skipped on both
-    sides (not jq inputs)."""
-    tokens = None
-    with open(transcript_path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except Exception:
-                break  # mode 1: parse error halts the stream; tail -1 keeps the prior value
-            try:
-                # mode 2: any indexing/arithmetic error here mirrors jq emitting nothing
-                # for this line while the stream keeps going → drop the line, continue.
-                usage = obj["message"]["usage"]  # raises on non-object obj/message
-                # jq's `select(.message.usage)` truthiness: only null/false (and absent,
-                # already a KeyError above) are falsy — `{}` is jq-truthy and sums to 0.
-                if obj.get("type") != "assistant" or usage is None or usage is False:
-                    continue
-                tokens = (_jq_token(usage, "input_tokens")
-                          + _jq_token(usage, "cache_creation_input_tokens")
-                          + _jq_token(usage, "cache_read_input_tokens"))
-            except Exception:
-                continue
-    return tokens
-
-
-def latest_model(transcript_path):
-    """The LAST assistant line's `.message.model` VERBATIM (a model id, e.g.
-    `claude-opus-4-8`), or None — fed to resolve_window, which maps None to the default
-    window. Takes the latest assistant line's model as-is: if that line omits model it
-    yields None (NOT an older line's value), so an unmodeled latest line falls back to
-    the default window. Same two-mode guard as the token scan: a parse error BREAKs
-    (halts); any runtime error (non-object top-level line or `message`) DROPS that line
-    and CONTINUEs."""
-    model = None
-    with open(transcript_path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                obj = json.loads(line)
-            except Exception:
-                break  # mode 1: parse error halts the stream
-            try:
-                if obj.get("type") != "assistant":
-                    continue
-                # jq `.message.model`: a missing `model` key yields null (sets None on
-                # THIS line), but indexing a non-object `message` is a runtime error.
-                model = obj["message"].get("model")
-            except Exception:
-                continue  # mode 2: runtime error drops this line, scan continues (keeps prior)
-    return model
+    """The canonical token sum (the LAST usage-bearing assistant line's input +
+    cache_creation + cache_read), or None when no usage line exists — a token-only view
+    of `latest_usage_model_and_tokens` (the single scanner). Kept as the surface the AC6
+    anti-drift suite pins against statusline.sh's jq token pipeline."""
+    return latest_usage_model_and_tokens(transcript_path)[1]
 
 
 def latest_usage_model_and_tokens(transcript_path):
