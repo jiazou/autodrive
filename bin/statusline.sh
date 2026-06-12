@@ -80,8 +80,8 @@ if [ -n "$CCUSAGE_BIN" ] && [ -x "$CCUSAGE_BIN" ]; then
 fi
 
 # block% / week% straight from the CC payload (Pro/Max only, present after the first API call).
-BLOCK=$(printf '%s' "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty' 2>/dev/null)
-WEEK=$(printf '%s' "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty' 2>/dev/null)
+BLOCK=$(printf '%s' "$input" | jq -r '(.rate_limits.five_hour.used_percentage | select(. != null) | round) // empty' 2>/dev/null)
+WEEK=$(printf '%s' "$input" | jq -r '(.rate_limits.seven_day.used_percentage | select(. != null) | round) // empty' 2>/dev/null)
 LIMIT_SEG=""
 [ -n "$BLOCK" ] && LIMIT_SEG="block $(printf "$(pct_color "$BLOCK")%s%%${RESET}" "$BLOCK")"
 [ -n "$WEEK" ]  && LIMIT_SEG="${LIMIT_SEG:+$LIMIT_SEG · }week $(printf "$(pct_color "$WEEK")%s%%${RESET}" "$WEEK")"
