@@ -73,6 +73,18 @@ b) **Dual-voice design-review convergence** — run `/drive-review` scoped `desi
    own design. If either flags a P1, the planner subagent revises design.md and you
    re-run — loop until **converged** (neither voice has an open P1), capped at 8 rounds.
 
+**Rebirth checkpoint at the planning safe boundaries.** Detection is stage-agnostic, so a
+`rebirth_pending` may be set during planning (author / autoplan / a design-review round).
+At each planning safe boundary — between these steps and after each design-review round (the
+coordinator is between dispatch units with no open `inflight-*.marker`), and before presenting
+Gate A — run the **Coordinator soft-check** then the **Safe-boundary rebirth handler** per
+`~/.claude/commands/drive.md` § *Coordinator soft-check* + § *I1 — Safe-boundary rebirth
+handler* (the shared routine: with `rebirth_pending` set at a safe boundary, prove the
+checkpoint → write `checkpoint-complete.marker` → set `waiting="rebirth"` → Present human
+pause with the paste-ready `/drive <runId>`; the I1 routine is the authority for the proof
+modes). Gate A precedence still holds (§ I1 Gate/STOP precedence). If `drive.md` is unreachable, skip the
+handler and continue (the Stop-hook backstop still steers).
+
 ## Gate A (the single human checkpoint for direction)
 
 Once autoplan has approved AND the design review has converged, present **Gate A**
@@ -93,7 +105,7 @@ me the **leg-2** goal to paste *alongside* my approval — it keeps the execute 
 > Paste this with your approval to drive the execute half up to Gate B:
 >
 > ```
-> /goal The /drive run for "<task>" has opened its PR (Gate B passed, stage=done), OR is paused awaiting my input at Gate B, a non-decision STOP, or an AskUserQuestion. NOT met while autonomous implement / review / harden / verify / ship work remains.
+> /goal The /drive run for "<task>" has opened its PR (Gate B passed, stage=done), OR is paused awaiting my input at Gate B, a non-decision STOP, or an AskUserQuestion, OR is paused at a rebirth handoff (waiting="rebirth") awaiting my paste of the resume line. NOT met while autonomous implement / review / harden / verify / ship work remains.
 > ```
 
 (If the user skips it, the execute half still runs — it just won't auto-continue

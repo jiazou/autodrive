@@ -40,8 +40,11 @@ Three shifts make the check independent of coordinator-writable state:
 `bin/drive-conformance.sh` is a pure function over git + the run dir:
 
 ```
-drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit
+drive-conformance.sh <RUN_DIR> --mode plan-gate | phasedesign-gate:<P> | slice-merge:<id> | phase-merge:<P> | impl-presence:<id> | ship | audit | checkpoint | state-lint
 ```
+
+The `checkpoint` and `state-lint` modes back the **context-pressure rebirth** handoff
+(§ "Durable checkpoint & rebirth"); the others gate the review/test chain below.
 
 A review artifact **counts** iff: the highest-N `review-<scope>-N.md` has
 `## Verdict: CONVERGED` **and** a `reviewed-sha:` line equal to the git tip the mode
@@ -88,11 +91,23 @@ and the gate's `deny` must still win).
 | Gate | Fires on (command match) | Mode | Blocks until | Exit-2 |
 |------|--------------------------|------|--------------|--------|
 | **plan-gate** | `git worktree add … -b slice/<runId>/<id>` (any slice worktree) | `plan-gate` | `review-design-*` CONVERGED + `codex-review-design` present — implementation cannot begin until the whole-run **design** review converged | **fail-CLOSED** (deny) |
-| **phasedesign-gate** | the SAME `git worktree add … -b slice/<runId>/<id>` — for each slice's phase `P` (= the id prefix before the first `.`) | `phasedesign-gate:<P>` | `review-phasedesign<P>-*` CONVERGED + `codex-review-phasedesign<P>` present — a phase's slices cannot be built until its **detailed (Tier-2) design** review converged. Like plan-gate, audits a design DOC (no `reviewed-sha`) | **fail-CLOSED** (deny) |
+| **phasedesign-gate** | the SAME `git worktree add … -b slice/<runId>/<id>` — for each slice's phase `P` (= the id prefix before the first `.`) | `phasedesign-gate:<P>` | the **current-epoch** `review-phasedesign<P>[-r<R>]-*` CONVERGED + `codex-review-phasedesign<P>[-r<R>]` present — a phase's slices cannot be built until its **detailed (Tier-2) design** review converged. Like plan-gate, audits a design DOC (no `reviewed-sha`) | **fail-CLOSED** (deny) |
 | **slice-merge** | `git merge … slice/<runId>/<id>` (each slice token in the command) | `slice-merge:<id>` | SHA-bound CONVERGED review for the slice tip | fail-OPEN (silent) |
 | **impl-presence** | same `git merge … slice/<runId>/<id>` boundary — runs *alongside* the review check, per slice token | `impl-presence:<id>` | the slice diff makes **any non-deletion change** (add, modify, rename-into, copy-into, type-change — `--diff-filter=d`, i.e. exclude deletions only) to a runnable test path **OR** a commit carries a real `Drive-Test-Waiver:` trailer (a DELETED test path does **not** count — and since `--name-only` prints only a rename's destination, a rename *away from* a test path also does not count while a rename *into* one does; a dotfile basename like `test/.x.test.sh` never counts — the real runners skip dotfiles) | **fail-CLOSED** (deny) |
 | **phase-merge** | `git branch -f drive/<runId> phaseInt/<runId>/<P>` or `git merge … phaseInt/<runId>/<P>` | `phase-merge:<P>` | SHA-bound CONVERGED review for the phase-integration tip (naturally requires the post-harden review, since HARDEN re-emits `reviewed-sha`) | fail-OPEN (silent) |
 | **ship** | `gh pr create`, `glab mr create`, or any `git push` whose head is the drive branch (incl. bare `git push`, `git push -u origin HEAD`) | `ship` | all shipped code covered by a counting review (ledger-only `R..tip` tolerated) | **fail-CLOSED** (deny) |
+
+**Epoch-aware phasedesign gate.** A phase can be **redesigned** (a slice's assumption check
+finds the Tier-2 design stale → REDESIGN). Each redesign opens a durable **epoch** marker
+`redesign-<P>-r<R>.marker`, and that epoch's design reviews are scoped
+`review-phasedesign<P>-r<R>-N.md` (epoch 0 keeps the bare `phasedesign<P>` token). The
+phasedesign-gate and `--mode checkpoint` resolve the **current** epoch `R` (highest backing
+marker) and require *that* epoch's CONVERGED review — so a stale **pre-redesign** CONVERGED
+review no longer satisfies the gate after a REDESIGN. The checkpoint proof adds three
+epoch-integrity violations: `epoch-unmarked` (an epoch-suffixed review/codex artifact with
+**no** backing `redesign-<P>-r<R>.marker` — fail-closed, the resolved scope is untrustworthy),
+`epoch-gap` (the `r1..rR` marker set is not gapless), and `regress-mismatch` (more
+`AppliedEdits: yes` harden files than phase-review files).
 
 **Asymmetric fail mode (D4):** the **run-/phase-boundary** gates — `plan-gate` (run start),
 `phasedesign-gate` (phase start), and `ship` (end) — fail **closed** on a checker/git error
@@ -153,6 +168,62 @@ platform overrides and the run surfaces to the human (correct escalation, not in
 persistence). It exists to catch the narrow window where hooks were installed mid-run
 inside an in-flight phase; the merge → advance → ship gate chain is the actual
 guarantee.
+
+## Durable checkpoint & rebirth
+
+A long run can fill its context window before DONE. `/drive` detects the pressure and hands
+the run off to a fresh session at a **proven-safe boundary** (the flow-level walkthrough is
+`docs/flow.md` § "Context-pressure rebirth"). The handoff is irreversible, so it is gated on
+a **narrator-independent proof of resumability** — the same git-is-truth posture as the
+review gates above.
+
+**The proof = `--mode checkpoint` AND `--mode state-lint`, both clean** (fail-closed: a
+failing proof never opens the pause; resume **re-proves** before continuing). The two modes
+are deliberately separate:
+
+- **`--mode checkpoint`** is a pure function over **git refs + durable `$RUN_DIR` markers** —
+  it **NEVER reads `state.json`**, so the proof can be re-run by any successor or external
+  auditor to the same answer. It is clean iff: no open `inflight-*.marker`; every
+  `phaseInt/<runId>/<P>` ref resolves and relates to `drive/<runId>` by ancestry (else
+  `phaseInt-divergent`); every `slice/<runId>/<id>` ref resolves; and every counter artifact
+  is well-formed (`unparseable-review` / `unparseable-harden` / `epoch-gap` /
+  `regress-mismatch` / `epoch-unmarked` otherwise). An open in-flight marker → `inflight-open`.
+  Its envelope carries a `counters` key — the single artifact-derived computation point the
+  resume-repair path consumes. Markers:
+  - **In-flight dispatch markers** (`inflight-<kind>-<scope>.marker`) — one per coordinator
+    dispatch unit, written before dispatch and cleared only after the result is fully
+    recorded. Any open marker at the proof = "not a safe boundary".
+  - **Redesign-epoch markers** (`redesign-<P>-r<R>.marker`) — append-only, written before the
+    epoch's state mutation; they make `redesigns` reconstructable from disk.
+  - **`checkpoint-complete.marker`** — the proof RECORD (not an authorization). Its `proof.tip`
+    must equal the `drive/<runId>` tip — necessary, **not sufficient** (later work can postdate
+    a tip-matching file), so any consumer needing current safety re-runs the proof. It is
+    **single-use**: the resume path validates then deletes it as its first act.
+- **`--mode state-lint`** is the **ONLY** mode that reads `state.json`. It sanity-checks the
+  load-bearing **routing fields** the successor's resume reads — `state.json` parses as a JSON
+  object (`unparseable-state` otherwise); `stage` is a real pipeline stage (`stage-malformed`);
+  `phaseList` is a non-empty array of phase ids each matching `^[0-9]+[a-z]?$` (digits + an
+  optional single lowercase-letter epoch suffix, e.g. `1`, `2`, `4a`) — empty only while
+  `stage` ∈ {premises, plan} (`phaselist-malformed` otherwise); each slice-id KEY matches
+  `^[0-9]+[a-z]?\.[0-9]+$` (phase id `.` slice number, e.g. `1.2`, `4.3`), its `step` is in
+  the 6-value enum, `owns` is a non-empty string array, and `deps` is an array whose every
+  element matches the same slice-id grammar (`slice-routing-malformed`, one per offending
+  slice, or `slices-malformed` for a non-object container past plan); `verify`/`ship` are well-shaped
+  (`verify-malformed` / `ship-malformed`); and `waiting` is `null` or a known pause token
+  (`gateA`|`gateB`|`rebirth`|`stop:<…>`|`ask:<…>`) the resume/Stop-hook branch on
+  (`waiting-malformed` otherwise). It validates **routing-field presence + meaningful
+  routability only** — never value cross-checks against git.
+
+**sessionId rebind on resume.** The Stop hook attributes a run by exact
+`state.sessionId == payload.session_id` match (`bin/drive-stop-hook.py`). So the resume path
+rewrites `state.sessionId` to the live session **first**, before anything else — otherwise
+the continuation hook never re-attaches and the run could rebirth at most once.
+
+**Detection data file.** Window-by-model thresholds live in `bin/rebirth-thresholds.json`,
+read by both the statusline and the Stop hook. It is **canonical-by-reference** — installers
+symlink `bin/`, never copy it, so the data file + its resolver (`bin/rebirth_thresholds.py`)
+resolve by sibling path with **no install or sync step** (§ Installation). To support a new
+large-window model, add one `windows[].match` entry there.
 
 ## Installation
 
@@ -351,3 +422,41 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
   PreToolUse matcher. The **authoritative** ship guarantee is therefore the in-prose
   `--mode ship` conformance check in `drive-ship.md` plus the single canonical push form
   `/drive` actually emits — the matcher is the fast path, not the sole guard.
+
+### Rebirth residuals (acknowledged limits)
+
+The context-pressure rebirth (§ "Durable checkpoint & rebirth") makes honest, bounded claims —
+these are its known limits, stated rather than overclaimed:
+
+- **Single-catastrophic-turn overshoot.** Detection fires at a turn END (the Stop hook steer)
+  or at a safe boundary (the coordinator soft-check). One enormous single turn can exhaust the
+  window mid-turn before either fires — no check can interrupt a turn already in flight.
+- **Absent-hook degradation.** With **no** Stop hook installed, detection degrades to the
+  coordinator soft-check at safe boundaries ONLY (no per-turn surface).
+- **Gate/STOP-collision human-restart edge.** When a Gate (A/B) or non-decision STOP and a
+  rebirth are both due, the **gate/STOP wins** and `rebirth_pending` is re-derived in the
+  successor (not carried). The rebirth handoff's paste-ready `/drive <runId>` line (carrying
+  its own re-armed `/goal`) is the resume path — NOT a gate-emitted goal: Gate B emits none
+  (its push is immediate), and only the rebirth handoff and Gate A's leg-2 hand a `/goal`.
+- **"Lossless" is precise.** A resume reconstructs from **git + durable artifacts** (refs,
+  markers, review/harden files) — those are authoritative. `state.json` is a best-effort
+  **routing HINT**: written atomically (temp + `mv`, never a torn in-place write) and
+  sanity-checked by `--mode state-lint` for routing-field *shape*, but its values (the
+  counters) are never a proof input — the load-bearing position is always re-derived from
+  artifacts. **Out of scope (followup):** deep cross-validation of each slice's `owns`/`deps`
+  GRAPH against git truth — state-lint validates presence + routability, not graph correctness.
+- **Prompted, not programmatic.** The rebirth handshake is a HUMAN handshake — the harness has
+  no programmatic self-restart/session-spawn; a fresh session is started by the human pasting
+  the `/drive <runId>` resume line. The handoff only *proves + presents*; re-entry is external.
+- **Legacy-run residual.** Runs whose artifacts predate Phase 1 have no in-flight/epoch
+  markers; marker-absence reads as "safe" and `redesigns` falls back to the `state.json` hint.
+  Acceptable — such runs never had marker discipline.
+- **Stale pre-redesign CONVERGED review residual (now closed).** The epoch-aware
+  phasedesign-gate now rejects a stale pre-redesign CONVERGED `review-phasedesign<P>-N.md`
+  after a REDESIGN (it resolves the current epoch) — a hole closed as a side effect.
+- **Window-table maintenance.** An unknown model falls back to `defaultWindow=200000`
+  (conservative — earlier-firing). A new large-window model needs one `windows[].match` entry
+  in `bin/rebirth-thresholds.json`.
+- **`-r<digits>`-suffixed phase id.** The epoch delimiter `-r<digits>` makes a phase id that
+  itself ends in `-r<digits>` ambiguous against an epoch token; the conformance gate
+  fail-closes (flags) such ids, so they are effectively unsupported.

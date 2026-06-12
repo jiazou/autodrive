@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 # Plain-bash test runner for bin/drive-conformance.sh.
-# Asserts acceptance criteria 0,1,2,3,4,4b,4c,5,10 and Item-C C1..C4b. Prints PASS/FAIL per case and
-# exits nonzero if any fail. Builds hermetic throwaway repos via test/fixtures/mkfixture.sh.
+# Asserts acceptance criteria 0,1,2,3,4,4b,4c,5,10, Item-C C1..C4b, and the Phase-1
+# checkpoint criteria (CK1..CK6: --mode checkpoint, epoch-aware phasedesign-gate, audit
+# ancestry, the epoch-unmarked fail-closed check, the dangling-symlink inflight marker,
+# and audit cross-live-ref dedup). Prints PASS/FAIL per case and exits nonzero if any fail. Builds hermetic
+# throwaway repos via test/fixtures/mkfixture.sh.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -30,7 +33,43 @@ assert_rc() {
   fi
 }
 
-# Assert OUT (the JSON verdict) contains a substring. $1=desc $2=needle
+# Assert $OUT contains substring. $1=desc $2=needle
+assert_out_contains() {
+  case "$OUT" in
+    *"$2"*) echo "PASS: $1"; PASS=$((PASS+1)) ;;
+    *)      echo "FAIL: $1 (missing '$2') :: ${OUT:-}"; FAIL=$((FAIL+1)) ;;
+  esac
+}
+
+# Assert two strings are equal. $1=desc $2=expected $3=actual
+assert_eq() {
+  if [ "$2" = "$3" ]; then
+    echo "PASS: $1"; PASS=$((PASS+1))
+  else
+    echo "FAIL: $1 (expected '$2', got '$3')"; FAIL=$((FAIL+1))
+  fi
+}
+
+# Assert $OUT is valid JSON. $1=desc
+assert_valid_json() {
+  if printf '%s' "$OUT" | jq -e . >/dev/null 2>&1; then
+    echo "PASS: $1"; PASS=$((PASS+1))
+  else
+    echo "FAIL: $1 (not valid JSON) :: ${OUT:-}"; FAIL=$((FAIL+1))
+  fi
+}
+
+# Assert $OUT contains needle EXACTLY $3 times. $1=desc $2=needle $3=expected-count
+assert_out_count() {
+  local n; n="$(printf '%s' "$OUT" | grep -o -- "$2" | wc -l | tr -d ' ')"
+  if [ "$n" = "$3" ]; then
+    echo "PASS: $1"; PASS=$((PASS+1))
+  else
+    echo "FAIL: $1 (expected $3 '$2', got $n) :: ${OUT:-}"; FAIL=$((FAIL+1))
+  fi
+}
+
+# Assert OUT (the JSON verdict) contains a substring. $1=desc $2=needle (from PR #38)
 assert_out() {
   if printf '%s' "${OUT:-}" | grep -q "$2"; then
     echo "PASS: $1"; PASS=$((PASS+1))
@@ -38,7 +77,6 @@ assert_out() {
     echo "FAIL: $1 (output missing '$2') :: ${OUT:-}"; FAIL=$((FAIL+1))
   fi
 }
-
 echo "=== AC0: plan-gate (design review omission-proof) ==="
 read -r repo rd < <(mk_plan clean)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0 plan-gate clean" 0 "$RC"
@@ -59,6 +97,16 @@ read -r repo rd < <(mk_plan clean)
   echo "### [BLOCKING] unresolved item"; echo;
   echo "Round 1 had been:"; echo "## Verdict: CONVERGED"; } > "$rd/review-design-1.md"
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0b later standalone CONVERGED line in FINDINGS still blocked" 1 "$RC"
+
+# AC0d: highest_review_file fail-closed on a DANGLING higher-N review symlink. A CONVERGED
+# review-design-1.md plus a DANGLING (broken) review-design-2.md is corruption at the real
+# highest round; an `-e`-only scan skips the broken link and drops to the N=1 CONVERGED round,
+# so plan-gate PASSES (fail-OPEN). `-e || -L` counts N=2 as `best`; it is unreadable so
+# verdict_converged fails -> block. Regression validity: against tip 109c0ed highest_review_file
+# was `-e`-only, so this exits 0 (false clean); the assertion below flips to rc 1.
+read -r repo rd < <(mk_plan dangling_highest)
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC0d dangling higher-N review drops to lower CONVERGED round -> blocked (fail closed)" 1 "$RC"
+assert_out_contains "AC0d dangling highest-N reads as verdict-not-converged" '"reason":"verdict-not-converged"'
 
 echo "=== AC0c: phasedesign-gate (per-phase Tier-2 design review, omission-proof) ==="
 read -r repo rd < <(mk_phasedesign clean 1)
@@ -92,13 +140,15 @@ run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc "AC2 slice-merge m
 read -r repo rd < <(mk_slice_no_codex)
 run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc "AC2 slice-merge no codex" 1 "$RC"
 
-echo "=== AC3: codex marker behavioral — anchored token vs buried substring vs empty ==="
-# Anchored first-line CODEX_UNAVAILABLE = degraded-but-satisfied -> clean.
+echo "=== AC3: codex_present rule — ANY non-empty codex file satisfies; empty does not ==="
+# The gate does NOT parse the marker: a first-line CODEX_UNAVAILABLE degradation file is
+# non-empty -> clean.
 read -r repo rd < <(mk_plan codex_unavailable)
-run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 anchored CODEX_UNAVAILABLE satisfies codex" 0 "$RC"
-# A real review whose body merely buries the substring = non-empty real review -> clean.
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 non-empty CODEX_UNAVAILABLE file satisfies codex" 0 "$RC"
+# A real review whose body merely mentions the word is just a non-empty file -> clean
+# (identical to the degradation file: codex_present() inspects only non-emptiness).
 read -r repo rd < <(mk_plan codex_buried)
-run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 buried substring still a real present codex file (clean)" 0 "$RC"
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 non-empty real codex file satisfies (marker not parsed)" 0 "$RC"
 # EMPTY codex file (bare touch) does NOT satisfy -> plan-gate blocks (exit 1).
 read -r repo rd < <(mk_plan codex_empty)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 empty codex file does NOT satisfy (blocked)" 1 "$RC"
@@ -251,6 +301,331 @@ run_conf "$repo" "$rd" --mode impl-presence:3a;     assert_rc "AC-C(dot) tests/m
 read -r repo rd < <(mk_impl_presence test impl-empty-id)
 OUT="$(cd "$repo" && "$CONF" "$rd" --mode "impl-presence:" 2>/dev/null)"; RC=$?
 assert_rc "AC-C empty impl-presence id -> exit 2" 2 "$RC"
+
+echo "=== CK1: --mode checkpoint — safe-boundary proof + artifact-derived counters ==="
+# Regression-guard validity: every CK case expecting exit 0/1 FAILS against the
+# pre-change script — `--mode checkpoint` did not exist (usage exit 2).
+read -r repo rd < <(mk_checkpoint clean)
+run_conf "$repo" "$rd" --mode checkpoint
+assert_rc "CK1 quiescent well-formed fixture clean (state.json corrupt — never read)" 0 "$RC"
+assert_out_contains "CK1 clean envelope" '"clean":true,"mode":"checkpoint"'
+# All five I3 rules in one assertion: reviewCount from pure-integer-N counts (the
+# review-1.1-final.md non-round file does NOT count); phaseReviewRound = 3 review-phase1
+# files MINUS the 1 AppliedEdits:yes regress marker (regress files don't overcount the
+# round); hardenRound counts ONLY yes (one yes + one no -> 1); phaseDesignRound epoch-0.
+assert_out_contains "CK1 counters per I3" \
+  '"counters":{"redesigns":{},"phaseDesignRound":{"1":1},"phaseReviewRound":{"1":2},"hardenRound":{"1":1},"reviewCount":{"1.1":2}}'
+
+# (a) an open in-flight marker fails the checkpoint — never probe, never wait.
+read -r repo rd < <(mk_checkpoint inflight)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 open in-flight marker -> exit 1" 1 "$RC"
+assert_out_contains "CK1 inflight-open violation" '"reason":"inflight-open"'
+# (a) a DANGLING symlink named inflight-*.marker still reads as open (fail closed). The
+# `-e` glob guard follows the link and fails, so the marker-only glob would skip it and
+# read clean; the `-L` guard fails it closed. Regression validity: pre-change had only
+# `-e`, so this exits 0 (false clean); the assertion below flips to rc 1.
+read -r repo rd < <(mk_checkpoint inflight_symlink)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 dangling-symlink inflight marker -> exit 1 (not clean)" 1 "$RC"
+assert_out_contains "CK1 dangling-symlink reads as inflight-open" '"reason":"inflight-open"'
+
+# (c) artifact well-formedness violations
+read -r repo rd < <(mk_checkpoint unparseable_review)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 round file w/o verdict -> exit 1" 1 "$RC"
+assert_out_contains "CK1 unparseable-review violation" '"reason":"unparseable-review"'
+read -r repo rd < <(mk_checkpoint unparseable_harden)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 harden file w/o AppliedEdits -> exit 1" 1 "$RC"
+assert_out_contains "CK1 unparseable-harden violation" '"reason":"unparseable-harden"'
+# (c) DANGLING review/harden dirents are corruption, not absence: the round scans must COUNT
+# them present-but-unparseable (fail closed), never skip them (which would undercount the I3
+# counters the resume path reads and read CLEAN on corruption). Regression validity: against
+# tip 109c0ed both scans were `-e`-only, so the broken symlink is skipped and the otherwise-
+# quiescent fixture reads clean (rc 0); the assertions below flip to rc 1.
+read -r repo rd < <(mk_checkpoint dangling_review)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 dangling review-*.md symlink -> exit 1 (counted, not skipped)" 1 "$RC"
+assert_out_contains "CK1 dangling review reads as unparseable-review" '"reason":"unparseable-review"'
+read -r repo rd < <(mk_checkpoint dangling_harden)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 dangling harden-*.md symlink -> exit 1 (counted, not skipped)" 1 "$RC"
+assert_out_contains "CK1 dangling harden reads as unparseable-harden" '"reason":"unparseable-harden"'
+
+# (b) divergent phaseInt (related to drive/<runId> in neither direction)
+read -r repo rd < <(mk_checkpoint divergent)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 divergent phaseInt -> exit 1" 1 "$RC"
+assert_out_contains "CK1 phaseInt-divergent violation" '"reason":"phaseInt-divergent"'
+
+# (b) non-numeric phase id accepted by the ancestry rule (no numeric ordering anywhere)
+read -r repo rd < <(mk_checkpoint fourA)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 non-numeric phaseInt 4a accepted (clean)" 0 "$RC"
+
+# usage/IO: a run dir with no drive/<runId> branch -> exit 2
+read -r repo rd < <(mk_slice_clean ckpt-nodrive)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 absent featureBranch -> exit 2" 2 "$RC"
+
+echo "=== CK2: counters — regress subtraction edge + epoch-scoped design rounds ==="
+# yes-count exceeding the review-file count is malformed: regress-mismatch, value 0.
+read -r repo rd < <(mk_checkpoint regress_mismatch)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 yes-count > review count -> exit 1" 1 "$RC"
+assert_out_contains "CK2 regress-mismatch violation" '"reason":"regress-mismatch"'
+assert_out_contains "CK2 phaseReviewRound reported 0" '"phaseReviewRound":{"1":0}'
+assert_out_contains "CK2 hardenRound counts both yes files" '"hardenRound":{"1":2}'
+# phaseDesignRound counts ONLY the current epoch's files once an r1 marker exists.
+read -r repo rd < <(mk_checkpoint epoch_files)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 epoch_files fixture clean" 0 "$RC"
+assert_out_contains "CK2 epoch-0 round file does not count under r1" '"phaseDesignRound":{"1":2}'
+assert_out_contains "CK2 redesigns from marker" '"redesigns":{"1":1}'
+# Markerless epoch artifact: epoch-r1 review+codex present, redesign-1-r1.marker MISSING.
+# highest_epoch() falls back to 0 and the run reads clean — the proof must fail closed.
+# Regression validity: pre-change has no epoch-unmarked check, resolves epoch 0, and the
+# fixture is otherwise quiescent/well-formed -> exit 0 (false clean); this flips to rc 1.
+read -r repo rd < <(mk_checkpoint epoch_unmarked)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 markerless epoch artifact -> exit 1 (fail closed, not clean)" 1 "$RC"
+assert_out_contains "CK2 epoch-unmarked violation" '"reason":"epoch-unmarked"'
+# Dangling redesign-1-r1.marker (broken symlink) + a stale well-formed epoch-0 review;
+# otherwise quiescent. An `-e`-only marker scan follows the broken link, fails `-e`, SKIPS it,
+# sees no redesign marker, and reads clean (fail-OPEN). `-e || -L` counts it -> highest_epoch=1
+# and the gapless epoch check's `-e` probe of the broken r1 marker fails -> epoch-gap. Regression
+# validity: against the pre-fix tip 77a7476 the marker scan's `-e`-only guard skips the symlink
+# and the run reads clean (rc 0); this flips to rc 1.
+read -r repo rd < <(mk_checkpoint epoch_marker_dangling)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 dangling epoch marker counts -> exit 1 (fail closed, not clean)" 1 "$RC"
+assert_out_contains "CK2 dangling epoch marker reports epoch-gap" '"reason":"epoch-gap"'
+
+# FIX 1: a phase id containing `-r` (`4-r1`) with a markerless epoch artifact must be flagged
+# epoch-unmarked under the CORRECT scope `phasedesign4-r1`. The pre-fix `%%-r*` phase-id split
+# truncates to `4` and emits the violation under the WRONG scope `phasedesign4` (and resolves
+# the wrong epoch glob). Regression validity: against the pre-fix script the violation object
+# carries `"scope":"phasedesign4"` — the exact-scope assertion below flips with the fix.
+read -r repo rd < <(mk_checkpoint epoch_unmarked_phaseid_dash_r)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 markerless epoch on a -r-containing phase id -> exit 1 (fail closed)" 1 "$RC"
+assert_out_contains "CK2 epoch-unmarked attributed to the FULL phase id phasedesign4-r1 (not mis-truncated to phasedesign4)" \
+  '{"scope":"phasedesign4-r1","reason":"epoch-unmarked",'
+# FIX 2: the codex-half of the epoch-unmarked scan, exercised INDEPENDENTLY — ONLY a codex
+# sibling (codex-review-phasedesign1-r1.md) with no review file and no r1 marker. A regression
+# dropping the codex glob from unmarked_epochs()/the phase-derivation loop would otherwise stay
+# green (every other epoch-unmarked fixture also seeds a review file that masks the codex path).
+read -r repo rd < <(mk_checkpoint epoch_unmarked_codex_only)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 codex-only markerless epoch -> exit 1 (codex-half fails closed)" 1 "$RC"
+assert_out_contains "CK2 codex-only epoch-unmarked violation" '{"scope":"phasedesign1","reason":"epoch-unmarked",'
+
+# FIX 3: the phaseDesignRound COUNTER on a `-r`-containing phase id (`4-r1`) at epoch 0. The
+# pd_key is `4-r1`; the pre-fix `${t##*-r}` split mis-keys the counter to phase `4` with count 0
+# ('"phaseDesignRound":{"4":0}'). The marker-anchored phase_of_pd_key keeps the literal phase id,
+# so the counter is '"phaseDesignRound":{"4-r1":2}'. Regression validity: against the pre-fix tip
+# f5c8f25 the output carries {"4":0}; the {"4-r1":2} assertion below flips with the fix. (The run
+# is exit 1 from the epoch-unmarked detector's by-design fail-closed residual on a terminal-`-r`
+# phase id — that is the corruption-detector site, deliberately NOT marker-anchored; the counter
+# value is the thing under test here.)
+read -r repo rd < <(mk_checkpoint epoch_phaseid_dash_r_round)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 -r-phase-id counter run -> exit 1 (detector residual)" 1 "$RC"
+assert_out_contains "CK2 phaseDesignRound counts the FULL -r phase id 4-r1 (not mis-keyed to 4)" \
+  '"phaseDesignRound":{"4-r1":2}'
+
+echo "=== CK3/CK4: epoch-gap + dropped-increment recovery; state.json never read ==="
+# Markers r1+r3 with state.json claiming redesigns:2 — the dropped 3rd increment is
+# recovered from the artifact (highest-R wins), the gap is flagged for a human.
+read -r repo rd < <(mk_checkpoint epoch_gap)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK3 gapped epoch markers -> exit 1" 1 "$RC"
+assert_out_contains "CK3 epoch-gap violation" '"reason":"epoch-gap"'
+assert_out_contains "CK3 redesigns = highest R (3), not state's 2 or the file count 2" '"redesigns":{"1":3}'
+OUT_WITH_STATE="$OUT"
+rm -f "$rd/state.json"
+run_conf "$repo" "$rd" --mode checkpoint
+assert_rc "CK4 state.json deleted -> same exit" 1 "$RC"
+assert_eq "CK4 output byte-identical without state.json (state never a proof input)" \
+  "$OUT_WITH_STATE" "$OUT"
+
+echo "=== CK5: epoch-aware phasedesign-gate ==="
+# Regression-guard validity: pre-change the gate had no epoch concept — epoch1_stale's
+# stale epoch-0 CONVERGED pair PASSED (exit 0), and epoch1_clean's r1-scoped files were
+# invisible to the bare-token glob (exit 1). Both assertions flip on the pre-change script.
+read -r repo rd < <(mk_phasedesign epoch1_clean 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 current-epoch (r1) CONVERGED pair satisfies the gate" 0 "$RC"
+read -r repo rd < <(mk_phasedesign epoch1_stale 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 stale epoch-0 pair does NOT satisfy after a redesign" 1 "$RC"
+assert_out_contains "CK5 stale epoch reports no-review for the current epoch" '"reason":"no-review"'
+# Markerless epoch artifact (corruption / deleted marker): r1 review+codex present but
+# redesign-1-r1.marker MISSING. highest_epoch() falls back to bare phasedesign1 and the
+# seeded CONVERGED epoch-0 pair would PASS — the gate must instead fail closed. Regression
+# validity: pre-change the gate has no markerless-epoch check, resolves epoch 0, and PASSES
+# (rc 0); the assertion below flips to rc 1.
+read -r repo rd < <(mk_phasedesign epoch1_unmarked 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 markerless r1 artifact fails the gate closed (not a stale epoch-0 PASS)" 1 "$RC"
+assert_out_contains "CK5 markerless epoch reports epoch-unmarked" '"reason":"epoch-unmarked"'
+# Dangling r1 marker (broken symlink) + ONLY a stale epoch-0 CONVERGED pair. An `-e`-only
+# highest_epoch() follows the broken link, fails the `-e` test, SKIPS it, resolves epoch 0,
+# and the stale epoch-0 pair PASSES (fail-OPEN). `-e || -L` counts the dangling marker ->
+# epoch 1 -> scope phasedesign1-r1 has no review -> fail closed. Regression validity: against
+# the pre-fix tip 77a7476 highest_epoch's `-e`-only guard skips the symlink and the gate
+# PASSES (rc 0); this flips to rc 1.
+read -r repo rd < <(mk_phasedesign epoch1_marker_dangling 1)
+run_conf "$repo" "$rd" --mode phasedesign-gate:1;   assert_rc "CK5 dangling r1 marker counts -> gate fails closed (not a stale epoch-0 PASS)" 1 "$RC"
+assert_out_contains "CK5 dangling-marker epoch resolves r1 -> no-review for current epoch" '"reason":"no-review"'
+
+echo "=== CK6: audit live-phase selection by ancestry (criterion 11) ==="
+# Regression-guard validity: pre-change audit picked the live phase by highest
+# pure-NUMERIC <P> — the 4a fixture was skipped entirely (false clean, exit 0) and the
+# completed-phase fixture was picked as live (false flag, exit 1). Both flip pre-change.
+read -r repo rd < <(mk_audit_4a)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 non-numeric live phaseInt 4a IS audited (unreviewed slice flagged)" 1 "$RC"
+read -r repo rd < <(mk_audit_completed)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 completed phaseInt (STRICT ancestor of drive) skipped -> clean" 0 "$RC"
+# Equality (advance done, drive not yet past) classifies LIVE — still audited; this is
+# the pre-retrofit behavior for a just-advanced phase and what the stop-guard relies on.
+read -r repo rd < <(mk_audit_equal_tip)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 equal-tip phaseInt audits as live" 1 "$RC"
+# Dedup: one unreviewed slice s1 merged into TWO live refs (the just-advanced equal-tip
+# phaseInt/1 AND the descending phaseInt/2) is flagged ONCE, not twice (the raw violations
+# JSON is the human-facing STOP evidence). The dedup is load-bearing ONLY under the
+# ancestry audit (multiple live refs) — the same ancestry code with the seen_slice dedup
+# removed emits TWO identical slice:s1 objects on this fixture, so the exact-1 assertions
+# below flip (2 -> 1) against a no-dedup regression. (Two live refs sharing the slice are a
+# precondition, asserted via the pair of phaseInt branches the fixture builds.)
+read -r repo rd < <(mk_audit_multi_live)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "CK6 slice merged into two live refs -> exit 1" 1 "$RC"
+assert_out_count "CK6 shared slice flagged once (deduped across live refs)" 'slice:s1' 1
+assert_out_count "CK6 exactly one violation object (no-dedup regression would emit 2)" '"reason":"no-review"' 1
+
+echo "=== SL: --mode state-lint (routing-field validator; the ONLY mode that reads state.json) ==="
+# Regression-guard validity: every SL case expecting exit 0/1 FAILS against the pre-change
+# script — `--mode state-lint` did not exist (usage exit 2).
+read -r repo rd < <(mk_state_lint clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL well-formed executing state.json clean" 0 "$RC"
+assert_out_contains "SL clean envelope" '"clean":true,"mode":"state-lint"'
+# stage-aware: a premises run with empty phaseList + empty slices is well-formed-empty.
+read -r repo rd < <(mk_state_lint early_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL early (stage=premises) empty phaseList clean" 0 "$RC"
+# corrupt state.json is a VERDICT (exit 1 unparseable-state), NOT a usage error (exit 2).
+read -r repo rd < <(mk_state_lint unparseable)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL corrupt state.json -> exit 1 (verdict, not usage)" 1 "$RC"
+assert_out_contains "SL unparseable-state violation" '"reason":"unparseable-state"'
+# the strengthened (meaningful-routability) checks bite, not just bare types:
+# phaseList:[] WHILE executing is unroutable -> fail.
+read -r repo rd < <(mk_state_lint phaselist_empty_executing)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL phaseList:[] while executing -> exit 1" 1 "$RC"
+assert_out_contains "SL phaselist-malformed violation" '"reason":"phaselist-malformed"'
+# an out-of-enum slice step is unroutable -> slice-routing-malformed (scoped to the slice id).
+read -r repo rd < <(mk_state_lint step_bogus)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL step:\"bogus\" -> exit 1" 1 "$RC"
+assert_out_contains "SL slice-routing-malformed scoped to the slice id" '{"scope":"1.1","reason":"slice-routing-malformed"'
+# empty owns is unroutable -> slice-routing-malformed.
+read -r repo rd < <(mk_state_lint owns_empty)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL empty owns -> exit 1" 1 "$RC"
+assert_out_contains "SL empty-owns slice-routing-malformed" '"reason":"slice-routing-malformed"'
+# a non-object slice VALUE (scalar) must emit a NAMED violation, not crash jq (exit 5).
+read -r repo rd < <(mk_state_lint slice_scalar)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL non-object slice value -> exit 1 (not a jq crash)" 1 "$RC"
+assert_out_contains "SL non-object slice value slice-routing-malformed scoped to id" '{"scope":"1.1","reason":"slice-routing-malformed"'
+# a non-object .slices CONTAINER (array) while executing must NOT false-clean -> slices-malformed.
+read -r repo rd < <(mk_state_lint slices_array)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL non-object .slices container -> exit 1" 1 "$RC"
+assert_out_contains "SL non-object .slices container slices-malformed" '{"scope":"slices","reason":"slices-malformed"'
+# stage-aware: an EMPTY slices object ({}) is legitimate mid-design -> must PASS even at execute.
+read -r repo rd < <(mk_state_lint slices_empty_executing)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL empty slices {} at execute (pre-design) clean" 0 "$RC"
+assert_out_contains "SL empty slices {} clean envelope" '"clean":true,"mode":"state-lint"'
+# malformed verify -> verify-malformed.
+read -r repo rd < <(mk_state_lint verify_bad)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL malformed verify -> exit 1" 1 "$RC"
+assert_out_contains "SL verify-malformed violation" '"reason":"verify-malformed"'
+# ship missing a required key -> ship-malformed.
+read -r repo rd < <(mk_state_lint ship_bad)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL ship missing prUrl key -> exit 1" 1 "$RC"
+assert_out_contains "SL ship-malformed violation" '"reason":"ship-malformed"'
+# cardinality (D44): TWO malformed slices -> TWO slice-routing-malformed objects.
+read -r repo rd < <(mk_state_lint multi_bad_slice)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL two malformed slices -> exit 1" 1 "$RC"
+assert_out_count "SL one slice-routing-malformed object PER malformed slice (D44)" '"reason":"slice-routing-malformed"' 2
+# P1-A: a parseable-but-non-object ROOT (JSON array / scalar) must NOT crash jq (exit 5,
+# no envelope) — it is unparseable-state (exit 1). NEVER-crashes invariant at the root.
+read -r repo rd < <(mk_state_lint toplevel_array)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL top-level array root -> exit 1 (not a jq crash 5)" 1 "$RC"
+assert_out_contains "SL top-level array root -> unparseable-state" '"reason":"unparseable-state"'
+assert_out_contains "SL top-level array root still emits the envelope" '"mode":"state-lint"'
+read -r repo rd < <(mk_state_lint toplevel_scalar)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL top-level scalar root -> exit 1 (not a jq crash 5)" 1 "$RC"
+assert_out_contains "SL top-level scalar root -> unparseable-state" '"reason":"unparseable-state"'
+# P1-B: stage itself must be in the real enum — an out-of-enum stage is unroutable.
+read -r repo rd < <(mk_state_lint stage_bogus)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL stage:\"bogus\" -> exit 1" 1 "$RC"
+assert_out_contains "SL out-of-enum stage -> stage-malformed" '{"scope":"stage","reason":"stage-malformed"'
+read -r repo rd < <(mk_state_lint stage_done_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL stage:\"done\" (real stage) clean" 0 "$RC"
+assert_out_contains "SL real stage clean envelope" '"clean":true,"mode":"state-lint"'
+# P1-C: phaseList element must be a REF-SAFE phase id — a value with spaces forms an
+# invalid phaseInt/<runId>/<P> ref.
+read -r repo rd < <(mk_state_lint phaselist_badref)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL phaseList element \"bad ref name\" -> exit 1" 1 "$RC"
+assert_out_contains "SL non-ref-safe phaseList element -> phaselist-malformed" '"reason":"phaselist-malformed"'
+read -r repo rd < <(mk_state_lint phaselist_epoch_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL phaseList epoch id \"4a\" (ref-safe) clean" 0 "$RC"
+assert_out_contains "SL ref-safe epoch phase id clean envelope" '"clean":true,"mode":"state-lint"'
+# P1-C: slice-id KEY must be ref-safe — a key with a space forms an invalid slice/<runId>/<id>
+# ref; scoped to the offending key.
+read -r repo rd < <(mk_state_lint slice_key_badref)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL slice key \"1 bad\" -> exit 1" 1 "$RC"
+assert_out_contains "SL non-ref-safe slice key -> slice-routing-malformed scoped to key" '{"scope":"1 bad","reason":"slice-routing-malformed"'
+# A slice-id KEY carrying a JSON metachar (`"`) is corruption-controlled and flows into the
+# violation `scope`: violation() must JSON-ESCAPE it so the envelope stays VALID JSON (the
+# old printf path emitted a syntactically-broken envelope -> downstream jq parse breaks).
+read -r repo rd < <(mk_state_lint slice_key_metachar)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL slice key with \" metachar -> exit 1" 1 "$RC"
+assert_valid_json "SL metachar slice key -> envelope is still VALID JSON (violation() escapes scope)"
+assert_out_contains "SL metachar slice key still fires slice-routing-malformed" '"reason":"slice-routing-malformed"'
+# deps elements must be slice-id strings (D-deps): a non-string (42) or non-grammar ("1 bad")
+# element is unroutable — /drive dispatches on CONVERGED deps to look up sibling slices.
+read -r repo rd < <(mk_state_lint deps_nonstring)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL deps:[42] (non-string) -> exit 1" 1 "$RC"
+assert_out_contains "SL non-string deps elem -> slice-routing-malformed scoped to slice" '{"scope":"1.1","reason":"slice-routing-malformed"'
+read -r repo rd < <(mk_state_lint deps_badref)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL deps:[\"1 bad\"] (non-grammar) -> exit 1" 1 "$RC"
+assert_out_contains "SL non-grammar deps elem -> slice-routing-malformed scoped to slice" '{"scope":"1.1","reason":"slice-routing-malformed"'
+read -r repo rd < <(mk_state_lint deps_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL valid deps [\"1.1\"] still clean (no over-rejection)" 0 "$RC"
+assert_out_contains "SL valid deps clean envelope" '"clean":true,"mode":"state-lint"'
+# P1-final: an EMPTY-STRING slice-id KEY ("") is unroutable but jq emits an empty token for
+# it — the OLD newline-split loop did `[ -n "$sid" ] || continue` and DROPPED it (false-clean).
+# The NUL-delimited loop must fire slice-routing-malformed instead of silently passing.
+read -r repo rd < <(mk_state_lint slice_key_empty)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL empty-string slice key -> exit 1 (not false-clean)" 1 "$RC"
+assert_valid_json "SL empty-string slice key -> envelope is still VALID JSON"
+assert_out_contains "SL empty-string slice key fires slice-routing-malformed" '"reason":"slice-routing-malformed"'
+# A slice-id KEY containing a NEWLINE must be consumed losslessly (NUL-delimited) — a
+# newline-split loop would shred it; exactly one slice-routing-malformed fires.
+read -r repo rd < <(mk_state_lint slice_key_newline)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL newline slice key -> exit 1" 1 "$RC"
+assert_valid_json "SL newline slice key -> envelope is still VALID JSON"
+assert_out_count "SL newline slice key -> exactly one slice-routing-malformed (no shredding)" '"reason":"slice-routing-malformed"' 1
+# `waiting` validation: resume AND the stop hook BRANCH on this field, so a malformed value
+# misroutes both -> it must fail closed. Canonical shape: null / gateA / gateB / rebirth /
+# stop:<short> / ask:<header>. A non-null-non-string OR an off-grammar string is malformed.
+read -r repo rd < <(mk_state_lint waiting_bad_type)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:42 (non-string) -> exit 1" 1 "$RC"
+assert_out_contains "SL non-string waiting -> waiting-malformed" '{"scope":"waiting","reason":"waiting-malformed"'
+read -r repo rd < <(mk_state_lint waiting_bad_string)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:\"frobnicate\" (off-grammar) -> exit 1" 1 "$RC"
+assert_out_contains "SL off-grammar waiting string -> waiting-malformed" '{"scope":"waiting","reason":"waiting-malformed"'
+# The rebirth-CONTINUE value (and other valid shapes) must NOT be over-rejected.
+read -r repo rd < <(mk_state_lint waiting_rebirth_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:\"rebirth\" (the continue value) clean" 0 "$RC"
+assert_out_contains "SL rebirth waiting clean envelope" '"clean":true,"mode":"state-lint"'
+read -r repo rd < <(mk_state_lint waiting_stop_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:\"stop:...\" (prefixed reason) clean" 0 "$RC"
+assert_out_contains "SL stop: waiting clean envelope" '"clean":true,"mode":"state-lint"'
+read -r repo rd < <(mk_state_lint waiting_null_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL waiting:null (explicit) clean" 0 "$RC"
+assert_out_contains "SL explicit-null waiting clean envelope" '"clean":true,"mode":"state-lint"'
+# missing state.json (no file, but drive/<runId> resolves) -> exit 2 (IO error, not a verdict).
+read -r repo rd < <(mk_state_lint no_state)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL absent state.json -> exit 2 (IO error)" 2 "$RC"
+
+echo "=== SL/CK4: checkpoint is UNCHANGED — a state-lint FAILURE still passes checkpoint ==="
+# A state.json that FAILS state-lint (phaseList:[] while executing) must still PASS
+# --mode checkpoint on a quiescent fixture: the two modes are independent (D8 — checkpoint
+# never reads state.json). Reuse the quiescent checkpoint `clean` fixture (its state.json is
+# corrupt garbage) and confirm checkpoint clean while state-lint fails on the same dir.
+read -r repo rd < <(mk_checkpoint clean slck4-ckpt)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "SL/CK4 checkpoint clean despite a state-lint-failing state.json" 0 "$RC"
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL/CK4 the SAME dir's corrupt state.json FAILS state-lint" 1 "$RC"
+assert_out_contains "SL/CK4 corrupt state.json -> unparseable-state" '"reason":"unparseable-state"'
 
 echo
 echo "=== usage/error guards ==="

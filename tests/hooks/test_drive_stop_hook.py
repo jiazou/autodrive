@@ -25,6 +25,18 @@ import pytest
 import _helpers  # noqa: E402  (tests/ on sys.path via conftest)
 
 STOP_HOOK = _helpers.REPO_ROOT / "bin" / "drive-stop-hook.py"
+FIXTURES = _helpers.REPO_ROOT / "tests" / "hooks" / "fixtures"
+OVER_WATER = FIXTURES / "transcript-over-water.jsonl"    # Opus-4.8, sum 909200 (>= 850000)
+UNDER_WATER = FIXTURES / "transcript-under-water.jsonl"  # Opus-4.8, sum 315000 (< 850000)
+
+# The pre-flag set-flag steer's stable anchor (the exact sentence the hook appends, I2).
+CONTEXT_PRESSURE_ANCHOR = "CONTEXT-PRESSURE: this run has crossed the rebirth high-water mark"
+# The post-flag ESCALATION steer's stable anchor (I7: flag already set, steer the handoff).
+ESCALATION_ANCHOR = (
+    "this run is over the rebirth high-water mark and state.rebirth_pending is already set"
+)
+# Words the signal-only set-flag wording must NEVER use (it sets a flag, never enacts now).
+FORBIDDEN_HANDOFF_WORDS = ("hand off now", "checkpoint now", "pause here now")
 
 
 def run_hook(payload, *, home, env=None):
@@ -325,6 +337,438 @@ def test_disabled_owned_run_before_active_owned_run_still_blocks(fake_home):
     assert d is not None and d["decision"] == "block", \
         "scan must continue past the disabled owned run and block the active owned run"
     assert "run-active" in d["reason"]
+
+
+# --------------------------------------------------------------------------- #
+# Context-pressure detection (signal-only): AC1/AC2/AC3/AC4/AC7.
+#
+# The hook computes context% from the OWNED run's transcript (payload.transcript_path)
+# and, when it crosses the hard high-water mark, APPENDS a signal-only steer to its
+# block reason instructing the coordinator to set state.rebirth_pending=true. It never
+# writes state.json (AC4), is idempotent (AC2/AC3), and fails open (AC7).
+#
+# `payload(transcript=...)` adds transcript_path; the block decision is otherwise the
+# same keep-driving path the tests above exercise.
+# --------------------------------------------------------------------------- #
+def _payload(transcript=None, **extra):
+    p = {"session_id": SID}
+    if transcript is not None:
+        p["transcript_path"] = str(transcript)
+    p.update(extra)
+    return p
+
+
+def _read_state_bytes(path):
+    return path.read_bytes()
+
+
+# --- AC1: hard-water crossing appends the signal-only steer ---------------- #
+def test_over_water_appends_rebirth_steer(fake_home):
+    """An owned, not-done, not-waiting run with rebirth_pending != true and a transcript
+    whose latest assistant usage sum >= window*0.85 -> the block reason CONTAINS the
+    CONTEXT-PRESSURE sentence instructing state.rebirth_pending=true (AC1)."""
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=OVER_WATER), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert CONTEXT_PRESSURE_ANCHOR in d["reason"], "expected the hard-water steer appended"
+    assert "state.rebirth_pending=true" in d["reason"]
+    # The pre-flag case emits the SET-FLAG steer, NOT the post-flag escalation (AC6).
+    assert ESCALATION_ANCHOR not in d["reason"], "pre-flag must not emit the escalation steer"
+    # The original continue steer is PRESERVED (still drives the pipeline).
+    assert "Continue the pipeline" in d["reason"]
+    assert "run-42" in d["reason"]
+    # Signal-only wording: it says set the flag, NOT "hand off / checkpoint / pause" now.
+    low = d["reason"].lower()
+    for forbidden in FORBIDDEN_HANDOFF_WORDS:
+        assert forbidden not in low, f"signal-only wording leaked an enact verb: {forbidden!r}"
+    # It tells the coordinator explicitly NOT to hand off / checkpoint / pause here.
+    assert "do NOT hand off" in d["reason"]
+    assert "do NOT checkpoint" in d["reason"]
+    assert "do NOT pause here" in d["reason"]
+
+
+# --- AC2: below-water -> no steer ------------------------------------------ #
+def test_under_water_no_rebirth_steer(fake_home):
+    """Same run, transcript sum < window*0.85 -> the block reason does NOT contain the
+    CONTEXT-PRESSURE sentence; the original continue steer is present & unchanged, and
+    the hook still blocks-to-continue exactly as today (AC2)."""
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=UNDER_WATER), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"], "no steer expected below water"
+    assert ESCALATION_ANCHOR not in d["reason"], "no escalation steer expected below water"
+    assert "Continue the pipeline" in d["reason"]
+    assert "run-42" in d["reason"]
+
+
+# --- AC1/AC2 boundary: tokens EXACTLY at window*0.85 steers (>=, not >) ----- #
+@pytest.mark.parametrize(
+    "tokens, steers",
+    [(850_000, True), (849_999, False)],
+    ids=["exactly-at-hard", "one-below-hard"],
+)
+def test_hard_water_boundary_is_inclusive(fake_home, tokens, steers):
+    """The hard-water comparison is `tokens >= window * fraction` (D27: compared on the
+    raw token count vs the fractional byte threshold, no integer-pct rounding). For the
+    default Opus window 1_000_000 * 0.85 = 850_000, a sum of EXACTLY 850_000 must steer
+    and 849_999 must not — pins the inclusive boundary the whole detection pivots on."""
+    trans = fake_home / f"boundary-{tokens}.jsonl"
+    trans.write_text(
+        '{"type": "assistant", "message": {"model": "claude-opus-4-8", '
+        f'"usage": {{"input_tokens": {tokens}, "cache_creation_input_tokens": 0, '
+        '"cache_read_input_tokens": 0}}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert (CONTEXT_PRESSURE_ANCHOR in d["reason"]) is steers
+
+
+# --- P1-1: model + tokens come from the SAME usage-bearing line ------------ #
+def test_window_uses_model_of_latest_usage_line_not_a_later_usageless_line(fake_home):
+    """Regression for the model/token line mismatch: the window must be resolved from the
+    model on the SAME line the token sum came from (the last usage-bearing assistant
+    line), NOT from a later usage-less/synthetic line whose model differs or is absent.
+
+    Transcript: a usage-bearing Opus-4.8 line at 909_200 tokens (>= 1M*0.85 -> over its
+    1M window), then a LATER usage-less assistant line with a DIFFERENT model
+    (`claude-haiku-4`, no usage). Pre-fix the hook read the model from the latest line
+    (haiku -> default 200_000 window) while the tokens came from the opus line, so the
+    %/window in the steer described the wrong window. Post-fix both come from the opus
+    line: the steer fires (909_200 >= 850_000) and reports the 1_000_000-token window."""
+    trans = fake_home / "model-token-mismatch.jsonl"
+    trans.write_text(
+        '{"type": "assistant", "message": {"model": "claude-opus-4-8", '
+        '"usage": {"input_tokens": 909200, "cache_creation_input_tokens": 0, '
+        '"cache_read_input_tokens": 0}}}\n'
+        # a later usage-less assistant line with a DIFFERENT model -> must be ignored
+        '{"type": "assistant", "message": {"model": "claude-haiku-4"}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert CONTEXT_PRESSURE_ANCHOR in d["reason"], \
+        "must steer: tokens 909200 >= 1M*0.85 using the opus line's own window"
+    # The window in the steer is the opus line's 1M, NOT the later haiku line's default.
+    assert "1000000-token window" in d["reason"]
+    assert "200000-token window" not in d["reason"]
+
+
+# --- AC5: post-flag over-water -> ESCALATION steer (not the set-flag steer) -- #
+def test_already_pending_over_water_emits_escalation_steer(fake_home):
+    """A run with rebirth_pending == true and a transcript OVER water -> the block reason
+    contains the ESCALATION sentence (checkpoint + set waiting="rebirth" at the next safe
+    boundary) and NOT the phase-2 set-flag sentence (don't re-emit "set the flag"; the
+    coordinator already set it). The base continue steer is still emitted (AC5).
+
+    Replaces the phase-2 idempotency test: that pre-change behavior (return "" when the
+    flag was set) is now the two-branch split — the post-flag branch emits the escalation
+    instead of nothing."""
+    write_run(fake_home, "run-42", _block_state(rebirth_pending=True))
+    cp = run_hook(_payload(transcript=OVER_WATER), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    # Escalation steer IS present; the set-flag steer is ABSENT (the split, AC5).
+    assert ESCALATION_ANCHOR in d["reason"], "expected the post-flag escalation steer"
+    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"], \
+        "must not re-emit the set-flag steer once the flag is already set"
+    # The escalation names the handoff sequence it defers to the coordinator's boundary.
+    assert "next safe boundary" in d["reason"].lower()
+    assert 'state.waiting="rebirth"' in d["reason"]
+    # The proof it names is the BOTH-modes contract (per drive.md § I1), NOT checkpoint-only.
+    assert "I1 routine" in d["reason"], "escalation must defer to the drive.md § I1 routine"
+    assert "--mode checkpoint AND --mode state-lint" in d["reason"], (
+        "escalation must name BOTH proof modes, never a checkpoint-only proof surface"
+    )
+    # The base keep-driving steer is preserved.
+    assert "Continue the pipeline" in d["reason"]
+    assert "run-42" in d["reason"]
+
+
+# --- AC7: post-flag BELOW water -> neither steer ---------------------------- #
+def test_already_pending_below_water_no_steer(fake_home):
+    """A run with rebirth_pending == true but a transcript UNDER water -> neither the
+    set-flag NOR the escalation steer (escalation is hard-water gated, AC7). The base
+    continue steer is present + unchanged."""
+    write_run(fake_home, "run-42", _block_state(rebirth_pending=True))
+    cp = run_hook(_payload(transcript=UNDER_WATER), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert ESCALATION_ANCHOR not in d["reason"], "escalation is hard-water gated"
+    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"]
+    assert "Continue the pipeline" in d["reason"]
+
+
+# --- AC8: signal-only — the hook NEVER writes state.json or pauses --------- #
+@pytest.mark.parametrize(
+    "transcript, pending",
+    [(OVER_WATER, False), (UNDER_WATER, False), (OVER_WATER, True)],
+    ids=["set-flag", "under-water", "escalation"],
+)
+def test_hook_leaves_state_byte_unchanged(fake_home, transcript, pending):
+    """Across the set-flag / no-steer / ESCALATION cases (AC5-8), the hook prints ONLY a
+    block decision, exits 0, and leaves state.json BYTE-UNCHANGED — detection is signal
+    only; ONLY the coordinator writes rebirth_pending/waiting. No waiting/checkpoint/handoff
+    is performed by the hook, including on the escalation (rebirth_pending=true) path
+    (AC8)."""
+    state = _block_state(**({"rebirth_pending": True} if pending else {}))
+    path = write_run(fake_home, "run-42", state)
+    before = _read_state_bytes(path)
+
+    cp = run_hook(_payload(transcript=transcript), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and set(d.keys()) == {"decision", "reason"}, \
+        "the hook must print ONLY {decision, reason} — no waiting/marker field"
+    assert d["decision"] == "block"
+    assert _read_state_bytes(path) == before, "the hook must NOT mutate state.json"
+
+
+# --- AC7: fail-open everywhere — detection error -> pre-change behavior ----- #
+# The fail-open CONTRACT is byte-strict: on ANY detection error the steer helper must
+# return "" so the hook's reason is the EXACT string it would emit with the extension
+# absent (the original continue-only reason). Asserting merely "the anchor is absent"
+# is too weak — a partial/garbled steer fragment could also lack the anchor. So every
+# error path below asserts d["reason"] == the pre-change baseline, byte for byte.
+
+# The ORIGINAL continue-only reason for run "run-42" — captured by running the hook
+# with NO transcript_path (the no-transcript guard returns "" first, so this IS the
+# pre-extension reason). Every error-path test below pins reason to THIS exact string.
+def _baseline_reason(fake_home):
+    """The hook's original continue-only block reason for run-42 (no steer appended).
+    The byte-exact string a fully fail-open detection must degrade back to."""
+    path = write_run(fake_home, "run-42", _block_state())
+    cp = run_hook({"session_id": SID}, home=fake_home)  # no transcript_path -> no steer
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"]
+    path.unlink()  # clear so each caller re-materializes its own run-42 state
+    return d["reason"]
+
+
+def _assert_failopen(cp, baseline):
+    """A fail-open error path: exit 0, no traceback, and reason BYTE-IDENTICAL to the
+    pre-change baseline (steer helper returned "")."""
+    assert cp.returncode == 0
+    assert cp.stderr == ""
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert CONTEXT_PRESSURE_ANCHOR not in d["reason"]
+    assert d["reason"] == baseline, "fail-open must restore the byte-exact pre-change reason"
+
+
+def test_failopen_missing_transcript_path(fake_home):
+    """No transcript_path in the payload -> token sum unavailable -> rebirth check
+    SKIPPED, the hook emits its byte-exact original continue reason, exit 0 (AC7)."""
+    baseline = _baseline_reason(fake_home)
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook({"session_id": SID}, home=fake_home)  # no transcript_path
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_escalation_path_missing_transcript(fake_home):
+    """AC8 fail-open on the ESCALATION (rebirth_pending=true) branch: a missing
+    transcript_path with the flag already set degrades to the byte-exact original
+    continue-only reason (NO escalation sentence) — the escalation branch is fail-open
+    just like the set-flag branch."""
+    baseline = _baseline_reason(fake_home)
+    write_run(fake_home, "run-42", _block_state(rebirth_pending=True))
+    cp = run_hook({"session_id": SID}, home=fake_home)  # no transcript_path, flag set
+    assert ESCALATION_ANCHOR not in baseline  # sanity: baseline carries no steer
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_nonexistent_transcript_file(fake_home):
+    """transcript_path points at a file that does not exist -> rebirth check skipped,
+    byte-exact original reason, exit 0, no traceback (AC7)."""
+    baseline = _baseline_reason(fake_home)
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=fake_home / "nope.jsonl"), home=fake_home)
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_no_usage_transcript(fake_home):
+    """A transcript with no completed assistant usage line -> token sum unavailable ->
+    SKIP the rebirth check (a fresh transcript is exactly this case -> no false steer);
+    byte-exact original reason (AC7)."""
+    baseline = _baseline_reason(fake_home)
+    trans = fake_home / "fresh.jsonl"
+    trans.write_text(
+        '{"type": "user", "message": {"role": "user", "content": "hi"}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_unknown_model_below_default_byte_exact(fake_home):
+    """An unknown model resolving to the default window whose sum is BELOW water -> no
+    steer -> reason is byte-identical to the pre-change baseline (not merely
+    anchor-absent). Pins the under-water unknown-model path to the strict contract."""
+    baseline = _baseline_reason(fake_home)
+    trans = fake_home / "unknown-under.jsonl"
+    # sum 100000 < 200000*0.85=170000 -> under water on the default window.
+    trans.write_text(
+        '{"type": "assistant", "message": {"model": "mystery-model-9", '
+        '"usage": {"input_tokens": 100000, "cache_creation_input_tokens": 0, '
+        '"cache_read_input_tokens": 0}}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_resolver_import_failure(fake_home):
+    """`import rebirth_thresholds` inside the steer's try FAILS (the sibling module is
+    absent from the bin/ the hook imports from) -> ImportError is swallowed -> byte-exact
+    original reason, exit 0, no traceback (AC7). Run a COPY of bin/ WITHOUT the resolver
+    module so the real `import rebirth_thresholds` raises on the live import path."""
+    import shutil
+    baseline = _baseline_reason(fake_home)
+    bindir = fake_home / "bin-no-resolver"
+    shutil.copytree(_helpers.REPO_ROOT / "bin", bindir)
+    (bindir / "rebirth_thresholds.py").unlink()  # remove the sibling resolver
+
+    write_run(fake_home, "run-42", _block_state())
+    cp = subprocess.run(
+        [sys.executable, str(bindir / "drive-stop-hook.py")],
+        input=json.dumps(_payload(transcript=OVER_WATER)),
+        env={**os.environ, "HOME": str(fake_home)},
+        capture_output=True, text=True, timeout=30,
+    )
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_steer_helper_unexpected_exception(fake_home, monkeypatch):
+    """ANY unexpected exception inside the steer helper degrades to no steer (the
+    catch-all `except Exception: return ""`). Force it by making the resolver's
+    latest_usage_model_and_tokens raise a generic RuntimeError mid-detection (a path none
+    of the typed guards cover) -> byte-exact original reason, exit 0, no traceback (AC7).
+
+    Run a COPY of bin/ whose rebirth_thresholds.py raises in latest_usage_model_and_tokens
+    (the function the steer helper calls), so the real steer hits its catch-all."""
+    import shutil
+    baseline = _baseline_reason(fake_home)
+    bindir = fake_home / "bin-raising-resolver"
+    shutil.copytree(_helpers.REPO_ROOT / "bin", bindir)
+    resolver = bindir / "rebirth_thresholds.py"
+    src = resolver.read_text(encoding="utf-8")
+    # Make the resolver call the hook uses raise a generic (non-IO, non-Import) error.
+    src += (
+        "\n\ndef latest_usage_model_and_tokens(*_a, **_k):\n"
+        "    raise RuntimeError('boom: unexpected steer-helper failure')\n"
+    )
+    resolver.write_text(src, encoding="utf-8")
+
+    write_run(fake_home, "run-42", _block_state())
+    cp = subprocess.run(
+        [sys.executable, str(bindir / "drive-stop-hook.py")],
+        input=json.dumps(_payload(transcript=OVER_WATER)),
+        env={**os.environ, "HOME": str(fake_home)},
+        capture_output=True, text=True, timeout=30,
+    )
+    _assert_failopen(cp, baseline)
+
+
+def test_failopen_unknown_model_over_default_window_steers(fake_home):
+    """Sibling of the above: an unknown model resolving to the default 200_000 window
+    whose sum EXCEEDS 200_000*0.85=170_000 DOES steer — proving the default-window
+    branch is live (not a silent skip). Shows the unknown-model path is conservative
+    (earlier-firing), not broken."""
+    trans = fake_home / "unknown-model-hi.jsonl"
+    trans.write_text(
+        '{"type": "assistant", "message": {"model": "mystery-model-9", '
+        '"usage": {"input_tokens": 180000, "cache_creation_input_tokens": 0, '
+        '"cache_read_input_tokens": 0}}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and CONTEXT_PRESSURE_ANCHOR in d["reason"]
+    # PCT reported against the default window: 180000*100//200000 = 90.
+    assert "200000-token window" in d["reason"]
+
+
+def test_failopen_malformed_thresholds_file(fake_home, tmp_path):
+    """A malformed bin/rebirth-thresholds.json -> the resolver's load raises -> the
+    rebirth check is swallowed and the hook emits its original continue reason, exit 0,
+    no crash (AC7). Exercised by running a COPY of bin/ whose data file is corrupt, so
+    the real owned data file is untouched."""
+    import shutil
+    baseline = _baseline_reason(fake_home)
+    bindir = tmp_path / "bin"
+    shutil.copytree(_helpers.REPO_ROOT / "bin", bindir)
+    (bindir / "rebirth-thresholds.json").write_text("not json {{{", encoding="utf-8")
+
+    write_run(fake_home, "run-42", _block_state())
+    cp = subprocess.run(
+        [sys.executable, str(bindir / "drive-stop-hook.py")],
+        input=json.dumps(_payload(transcript=OVER_WATER)),
+        env={**os.environ, "HOME": str(fake_home)},
+        capture_output=True, text=True, timeout=30,
+    )
+    _assert_failopen(cp, baseline)
+
+
+# --------------------------------------------------------------------------- #
+# AC11: the hook's module docstring `waiting` contract enumerates `rebirth`
+# with its dual nature (I6/D37). The hook BEHAVIOUR is unchanged (truthiness
+# only); this pins the documentation-contract amendment by reading the module's
+# own __doc__ so it no longer reads as "human-pause only".
+# --------------------------------------------------------------------------- #
+def _hook_doc():
+    """Load bin/drive-stop-hook.py's module __doc__ without executing main().
+    The module only runs main() under `if __name__ == "__main__"`, so importing
+    it by spec is side-effect free."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("_drive_stop_hook_doc", str(STOP_HOOK))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod.__doc__ or ""
+
+
+def test_docstring_waiting_contract_enumerates_rebirth_dual_nature():
+    """The hook docstring's `waiting` contract enumerates `rebirth` AND states its dual
+    nature (set-to-pause in the outgoing session; auto-cleared-as-continue on resume),
+    consistent with drive.md's canonical definition (AC11, I6/D37). A docstring that adds
+    `rebirth` to the set but omits the continue/auto-clear semantics — or omits it — flips
+    this test."""
+    doc = _hook_doc()
+    low = doc.lower()
+    assert "rebirth" in low, "the docstring `waiting` contract must enumerate rebirth"
+    # Dual nature: it is a CONTINUE on resume (auto-cleared), not a human pause.
+    assert "continue-on-resume" in low or "auto-clear" in low or "auto-clears" in low, \
+        "the docstring must state rebirth's continue/auto-clear-on-resume semantics"
+    # And that the outgoing session SETS it to hand off (the set-to-pause half).
+    assert "outgoing session sets" in low or "outgoing session" in low, \
+        "the docstring must state the outgoing session sets waiting=rebirth to hand off"
+    # The hook acts on truthiness only (it does not distinguish the value).
+    assert "truthiness" in low
 
 
 # --------------------------------------------------------------------------- #

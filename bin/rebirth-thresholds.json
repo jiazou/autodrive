@@ -1,0 +1,8 @@
+{
+  "windows": [
+    { "match": ["Opus 4.7", "Opus 4.8", "opus-4-7", "opus-4-8", "opus-4.7", "opus-4.8"], "window": 1000000 }
+  ],
+  "defaultWindow": 200000,
+  "hardHighWaterFraction": 0.85,
+  "softThresholdFraction": 0.75
+}

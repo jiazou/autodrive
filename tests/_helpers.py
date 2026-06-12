@@ -33,6 +33,42 @@ def run_script(args, *, home, cwd=None, env=None, timeout=30):
     )
 
 
+def _git(repo, *args):
+    subprocess.run(
+        ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+         "-c", "commit.gpgsign=false", *args],
+        check=True, capture_output=True, text=True,
+    )
+
+
+def _rev(repo, ref):
+    """Resolve a ref to its full 40-char sha (for asserting expected/found_sha exactly)."""
+    return subprocess.run(
+        ["git", "-C", str(repo), "rev-parse", ref],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+
+
+def _commit(repo, path, content, msg):
+    (repo / path).parent.mkdir(parents=True, exist_ok=True)
+    (repo / path).write_text(content + "\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-q", "-m", msg)
+
+
+def _review(rd, scope, n, sha="0" * 40, verdict="CONVERGED"):
+    (rd / f"review-{scope}-{n}.md").write_text(
+        f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\nreviewed-sha: {sha}\n",
+        encoding="utf-8",
+    )
+
+
+def _codex(rd, scope):
+    (rd / f"codex-review-{scope}.md").write_text(
+        f"codex review for {scope}\nlooks fine\n", encoding="utf-8"
+    )
+
+
 def seed_mc_home(home):
     """Create the data dirs that mc-bind.sh / mc-hook.py assume already exist.
 

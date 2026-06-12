@@ -23,20 +23,10 @@ _init_repo() {
   _gitc "$r" config user.email t@t
 }
 
-# Commit a file. $1=repo $2=path $3=content $4=msg ; echoes resulting tip sha
+# Commit a file. The message $4 is passed verbatim to `commit -m`, so a multi-line message
+# (a real `Drive-Test-Waiver:` trailer block or body prose) is preserved exactly.
+# $1=repo $2=path $3=content $4=msg ; echoes resulting tip sha
 _commit() {
-  local r="$1" p="$2" c="$3" m="$4"
-  mkdir -p "$r/$(dirname "$p")"
-  printf '%s\n' "$c" > "$r/$p"
-  _gitc "$r" add -A
-  _gitc "$r" commit -q -m "$m"
-  _gitc "$r" rev-parse HEAD
-}
-
-# Commit a file with an EXPLICIT multi-line message (for trailer fixtures). The message
-# is passed verbatim so a real `Drive-Test-Waiver:` trailer block (or body prose) is
-# preserved exactly. $1=repo $2=path $3=content $4=msg ; echoes resulting tip sha
-_commit_msg() {
   local r="$1" p="$2" c="$3" m="$4"
   mkdir -p "$r/$(dirname "$p")"
   printf '%s\n' "$c" > "$r/$p"
@@ -78,14 +68,17 @@ _write_codex() {
   { echo "codex review for $scope"; echo "looks fine"; } > "$rd/codex-review-$scope.md"
 }
 
-# Write a codex file with the anchored first-line CODEX_UNAVAILABLE token. $1=rd $2=scope
+# Write a degradation codex file: first-line CODEX_UNAVAILABLE marker (convention).
+# Non-empty, so it satisfies codex_present(). $1=rd $2=scope
 _write_codex_unavailable() {
   local rd="$1" scope="$2"
   mkdir -p "$rd"
   { echo "CODEX_UNAVAILABLE"; echo "codex CLI not installed"; } > "$rd/codex-review-$scope.md"
 }
 
-# Write a codex file that merely MENTIONS the word elsewhere (not anchored). $1=rd $2=scope
+# Write a real codex review that merely mentions the word in its body. Non-empty, so it
+# satisfies codex_present() exactly like any review (the gate does not parse the marker).
+# $1=rd $2=scope
 _write_codex_word_buried() {
   local rd="$1" scope="$2"
   mkdir -p "$rd"
@@ -97,6 +90,52 @@ _write_codex_empty() {
   local rd="$1" scope="$2"
   mkdir -p "$rd"
   : > "$rd/codex-review-$scope.md"
+}
+
+# Write a harden audit file (drive-harden.md template shape). $1=rd $2=P $3=N $4=yes|no
+_write_harden() {
+  local rd="$1" P="$2" n="$3" applied="$4"
+  mkdir -p "$rd"
+  {
+    echo "# Harden phase $P $n"
+    echo "## Verdict: HARDENED"
+    echo "## AppliedEdits: $applied"
+  } > "$rd/harden-$P-$n.md"
+}
+
+# Write a redesign epoch marker (I1 — the file NAME is the load-bearing data). $1=rd $2=P $3=R
+_write_redesign_marker() {
+  local rd="$1" P="$2" R="$3"
+  mkdir -p "$rd"
+  printf '{"phase":"%s","epoch":%s}\n' "$P" "$R" > "$rd/redesign-$P-r$R.marker"
+}
+
+# Write a DANGLING redesign epoch marker (a broken symlink). The dirent NAME still encodes
+# the epoch, so highest_epoch()/the checkpoint marker scan must COUNT it (forcing the higher
+# epoch) — the `-e` glob test follows the link and fails, so an `-e`-only guard would skip it
+# and fall back to a LOWER epoch (fail-OPEN). $1=rd $2=P $3=R
+_write_redesign_marker_dangling() {
+  local rd="$1" P="$2" R="$3"
+  mkdir -p "$rd"
+  ln -s /nonexistent/redesign-target "$rd/redesign-$P-r$R.marker"
+}
+
+# Write a DANGLING artifact symlink (a broken symlink) at $rd/$2. The dirent NAME still
+# parses (round N / scope), so the dirent loops must COUNT it as present-but-unparseable
+# and fail closed — the `-e` glob test follows the link and fails, so an `-e`-only guard
+# would skip it (fail-OPEN: a dropped highest-N round / undercounted counter). $1=rd $2=name
+_write_dangling_dirent() {
+  local rd="$1" name="$2"
+  mkdir -p "$rd"
+  ln -s /nonexistent/artifact-target "$rd/$name"
+}
+
+# Write an open in-flight dispatch marker (I2). $1=rd $2=kind-scope (e.g. review-phase1)
+_write_inflight() {
+  local rd="$1" ks="$2"
+  mkdir -p "$rd"
+  printf '{"kind":"x","scope":"x","runId":"x","sessionId":null,"startedAt":"now"}\n' \
+    > "$rd/inflight-$ks.marker"
 }
 
 # ---------------------------------------------------------------------------------
@@ -171,7 +210,13 @@ mk_slice_findings() {
 }
 
 # plan-gate fixtures. RUN_DIR holds review-design-N.md + codex-review-design.md.
-# variant: clean | findings | nodesign | nocodex | codex_unavailable | codex_buried | codex_empty
+# variant: clean | findings | nodesign | nocodex | codex_unavailable | codex_buried |
+#          codex_empty | dangling_highest
+#   dangling_highest -- a CONVERGED review-design-1.md + a DANGLING review-design-2.md
+#                       symlink (broken) + codex. highest_review_file's `-e`-only guard
+#                       skips the broken higher-N link and drops to the N=1 CONVERGED
+#                       round -> plan-gate PASSES (fail-OPEN). `-e || -L` counts N=2 as
+#                       `best`; it is unreadable so verdict_converged() fails -> block.
 mk_plan() {
   local variant="$1" name="${2:-plan-$1}"
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -203,13 +248,34 @@ mk_plan() {
       # for AC3 negative: an EMPTY codex file (bare `touch`) does NOT satisfy.
       _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
       _write_codex_empty "$rd" design ;;
+    dangling_highest)
+      # N=1 CONVERGED + a DANGLING higher-N (N=2) review symlink + codex. The dangling
+      # N=2 is the real highest round; an -e-only highest_review_file drops to N=1 and
+      # PASSES. -e||-L counts N=2 (unreadable -> verdict-not-converged) -> block.
+      _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
+      _write_dangling_dirent "$rd" "review-design-2.md"
+      _write_codex "$rd" design ;;
   esac
   echo "$repo $rd"
 }
 
 # Per-phase design-gate fixtures (Tier 2). RUN_DIR holds review-phasedesign<P>-N.md +
 # codex-review-phasedesign<P>.md. Mirrors mk_plan, scoped to phasedesign<P>. Like plan-gate,
-# no git tip (it audits a design DOC). $1=variant (clean|nodesign|nocodex|findings) $2=P.
+# no git tip (it audits a design DOC). Epoch variants exercise the redesign-epoch scope
+# token (phasedesign<P>-r<R>, R = highest redesign-<P>-r*.marker):
+#   epoch1_clean    -- r1 marker + CONVERGED review-phasedesign<P>-r1-1.md + codex sibling
+#   epoch1_stale    -- r1 marker + ONLY a stale epoch-0 CONVERGED pair (must NOT satisfy)
+#   epoch1_unmarked -- r1 CONVERGED review + codex sibling but the redesign-<P>-r1.marker
+#                      is MISSING (corruption / deleted marker). highest_epoch() would
+#                      fall back to bare phasedesign<P> and PASS on the stale epoch-0 pair;
+#                      the gate must instead fail closed with epoch-unmarked. An epoch-0
+#                      CONVERGED pair is seeded too, so a marker-only check would PASS.
+#   epoch1_marker_dangling -- a DANGLING redesign-<P>-r1.marker symlink + ONLY a stale
+#                      epoch-0 CONVERGED pair (no r1 review/codex). An `-e`-only highest_epoch()
+#                      skips the broken symlink, resolves epoch 0, and PASSES on the stale
+#                      pair (fail-OPEN); `-e || -L` counts the dangling marker -> epoch 1 ->
+#                      scope phasedesign<P>-r1 has no review -> fail closed (no-review).
+# $1=variant (clean|nodesign|nocodex|findings|epoch1_clean|epoch1_stale|epoch1_unmarked|epoch1_marker_dangling) $2=P.
 mk_phasedesign() {
   local variant="$1"
   local P="${2:-1}"
@@ -231,6 +297,28 @@ mk_phasedesign() {
       _write_codex "$rd" "$scope" ;;
     nocodex)
       _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})" ;;
+    epoch1_clean)
+      _write_redesign_marker "$rd" "$P" 1
+      _write_review "$rd" "$scope-r1" 1 "$(printf '0%.0s' {1..40})"
+      _write_codex "$rd" "$scope-r1" ;;
+    epoch1_stale)
+      _write_redesign_marker "$rd" "$P" 1
+      _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})"   # stale epoch-0 pair
+      _write_codex "$rd" "$scope" ;;
+    epoch1_unmarked)
+      # r1 artifacts present, marker MISSING — plus a CONVERGED epoch-0 pair so a
+      # marker-only gate would resolve epoch 0 and PASS. Must fail closed (epoch-unmarked).
+      _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})"   # stale epoch-0 pair
+      _write_codex "$rd" "$scope"
+      _write_review "$rd" "$scope-r1" 1 "$(printf '0%.0s' {1..40})"
+      _write_codex "$rd" "$scope-r1" ;;
+    epoch1_marker_dangling)
+      # dangling r1 marker (broken symlink) + ONLY a stale epoch-0 CONVERGED pair. An
+      # -e-only highest_epoch() skips the broken link, resolves epoch 0, and PASSES on the
+      # stale pair; -e||-L counts the marker -> epoch 1 -> phasedesign<P>-r1 has no review.
+      _write_redesign_marker_dangling "$rd" "$P" 1
+      _write_review "$rd" "$scope" 1 "$(printf '0%.0s' {1..40})"   # stale epoch-0 pair
+      _write_codex "$rd" "$scope" ;;
   esac
   echo "$repo $rd"
 }
@@ -361,13 +449,15 @@ mk_phase_harden() {
   echo "$repo $rd"
 }
 
-# Audit fixture: a live phaseInt/<runId>/<P> with one slice merged in.
+# Audit fixture: a live phaseInt/<runId>/<P> with one slice merged in. drive/<runId>
+# sits at the base, so the phaseInt tip descends from it (live, per the ancestry rule).
 # variant: reviewed (slice has a counting review) | unreviewed (slice merged, no review)
 mk_audit() {
   local variant="$1" name="${2:-audit-$1}" P=1
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
   _init_repo "$repo"
   _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
   # slice branch with work
   _gitc "$repo" checkout -q -b "slice/$name/4a"
   local stip; stip="$(_commit "$repo" "feature.sh" "echo hi" "slice 4a")"
@@ -385,6 +475,257 @@ mk_audit() {
       _gitc "$repo" checkout -q -b "slice/$name/4b" main
       _commit "$repo" "f4b.sh" "echo 4b" "slice 4b unreviewed, NOT merged into phaseInt" >/dev/null
       _gitc "$repo" checkout -q "phaseInt/$name/$P" ;;
+  esac
+  echo "$repo $rd"
+}
+
+# Audit ancestry fixture (criterion 11): the ONLY live ref is the NON-NUMERIC
+# phaseInt/<runId>/4a (tip descends from drive/<runId>) with a merged-but-UNREVIEWED
+# slice — audit must flag it. Pre-retrofit the numeric filter skipped `4a` entirely
+# (false clean). Echoes "REPO RUN_DIR".
+mk_audit_4a() {
+  local name="${1:-audit-4a}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
+  _gitc "$repo" checkout -q -b "slice/$name/s1"
+  _commit "$repo" "feature.sh" "echo hi" "slice s1" >/dev/null
+  _gitc "$repo" checkout -q -b "phaseInt/$name/4a"   # at slice tip -> merged, live
+  mkdir -p "$rd"   # no review-s1-*.md -> audit must flag
+  echo "$repo $rd"
+}
+
+# Audit ancestry fixture (criterion 11): a COMPLETED phaseInt (tip is a STRICT ancestor
+# of drive/<runId> — the step-6 advance moved drive to it and later work moved drive
+# past it) containing a merged unreviewed slice must be SKIPPED (clean). Pre-retrofit
+# the numeric pick audited it (false flag).
+mk_audit_completed() {
+  local name="${1:-audit-completed}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
+  _gitc "$repo" checkout -q -b "slice/$name/s1"
+  _commit "$repo" "feature.sh" "echo hi" "slice s1" >/dev/null
+  _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+  _gitc "$repo" branch -f "drive/$name" "phaseInt/$name/1"   # the advance
+  _gitc "$repo" checkout -q "drive/$name"
+  _commit "$repo" "next.sh" "echo next" "post-advance work moves drive past" >/dev/null
+  mkdir -p "$rd"   # no review for s1 — flagged only if the completed ref were audited
+  echo "$repo $rd"
+}
+
+# Audit ancestry fixture: drive/<runId> EQUAL to the phaseInt tip (advance done, drive
+# not yet moved past). Equality classifies LIVE — the merged unreviewed slice is flagged.
+mk_audit_equal_tip() {
+  local name="${1:-audit-equal}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
+  _gitc "$repo" checkout -q -b "slice/$name/s1"
+  _commit "$repo" "feature.sh" "echo hi" "slice s1" >/dev/null
+  _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+  _gitc "$repo" branch -f "drive/$name" "phaseInt/$name/1"   # equal tips
+  mkdir -p "$rd"
+  echo "$repo $rd"
+}
+
+# Audit dedup fixture: ONE unreviewed slice s1 merged into TWO live phaseInt refs — an
+# equal-tip just-advanced phaseInt/<runId>/1 (live per D20) AND a later live
+# phaseInt/<runId>/2 descending from drive. The slice must be flagged ONCE, not twice
+# (the raw violations JSON is the human-facing STOP evidence). Pre-dedup emits two
+# identical slice:s1 objects. Echoes "REPO RUN_DIR".
+mk_audit_multi_live() {
+  local name="${1:-audit-multi-live}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
+  _gitc "$repo" checkout -q -b "slice/$name/s1"
+  _commit "$repo" "feature.sh" "echo hi" "slice s1" >/dev/null
+  _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+  _gitc "$repo" branch -f "drive/$name" "phaseInt/$name/1"   # equal tip -> live
+  _gitc "$repo" checkout -q -b "phaseInt/$name/2"
+  _commit "$repo" "more.sh" "echo more" "phase 2 extra" >/dev/null   # descends drive -> live
+  mkdir -p "$rd"   # no review for s1 -> flagged (once)
+  echo "$repo $rd"
+}
+
+# ---------------------------------------------------------------------------------
+# --mode checkpoint fixtures (I4). All have a real drive/<runId> branch; artifacts per
+# variant. Echoes "REPO RUN_DIR".
+#
+# variant:
+#   clean             -- quiescent well-formed run: live phaseInt, no inflight markers,
+#                        counter artifacts covering all five I3 rules; state.json is
+#                        CORRUPT garbage (proves the mode never reads it).
+#                        Expected counters: reviewCount {"1.1":2} (review-1.1-final.md
+#                        is not a round file), phaseReviewRound {"1":2} (3 review-phase1
+#                        files MINUS 1 AppliedEdits:yes regress marker), hardenRound
+#                        {"1":1} (one yes + one no), phaseDesignRound {"1":1} (epoch 0),
+#                        redesigns {}.
+#   inflight          -- clean-shaped + one open inflight-*.marker        -> inflight-open
+#   unparseable_review-- a round file with NO '## Verdict:' line          -> unparseable-review
+#   unparseable_harden-- a harden file with NO 'AppliedEdits:' line       -> unparseable-harden
+#   epoch_gap         -- markers r1+r3 (r2 missing) + a VALID state.json claiming
+#                        redesigns:2 -> counters.redesigns {"1":3} (highest-R; state
+#                        never read) + epoch-gap violation
+#   regress_mismatch  -- 1 review-phase1 file but 2 AppliedEdits:yes harden files
+#                        -> regress-mismatch, phaseReviewRound {"1":0}
+#   divergent         -- phaseInt cut from main with its own commit while drive moved on
+#                        -> related in NEITHER direction -> phaseInt-divergent
+#   fourA             -- only ref is the non-numeric phaseInt/<runId>/4a descending from
+#                        drive -> accepted by the ancestry rule (clean)
+#   epoch_files       -- r1 marker + 1 epoch-0 round file + 2 epoch-r1 round files
+#                        -> phaseDesignRound {"1":2} (current epoch only), redesigns {"1":1}
+#   epoch_unmarked    -- epoch-r1 review + codex sibling but NO redesign-1-r1.marker
+#                        (corruption / deleted marker) -> epoch-unmarked, exit 1. Without
+#                        the check highest_epoch() falls back to 0 and the run reads clean.
+#   inflight_symlink  -- clean-shaped + a DANGLING symlink named inflight-*.marker: the
+#                        `-e` glob guard follows the link and fails, so a marker-only
+#                        glob would read clean; `-L` must fail it closed -> inflight-open.
+#   epoch_marker_dangling -- a DANGLING redesign-1-r1.marker symlink (broken) + a stale,
+#                        well-formed epoch-0 phasedesign review; otherwise quiescent. An
+#                        `-e`-only marker scan skips the broken link, sees no redesign, and
+#                        reads clean (fail-OPEN); `-e || -L` counts it -> highest_epoch=1 and
+#                        the r1 marker fails the `-e` existence probe in the gapless check
+#                        -> epoch-gap, exit 1.
+#   dangling_review   -- a DANGLING review-1.1-2.md symlink (broken), otherwise quiescent.
+#                        The `-e`-only review-* scan skips it (undercounting reviewCount and
+#                        reading clean on corruption); `-e || -L` counts it present-but-
+#                        unparseable (grep '## Verdict:' fails) -> unparseable-review, exit 1.
+#   dangling_harden   -- a DANGLING harden-1-2.md symlink (broken), otherwise quiescent. The
+#                        `-e`-only harden-* scan skips it (erasing a fix round / suppressing
+#                        a regress-mismatch); `-e || -L` counts it (grep 'AppliedEdits:' fails)
+#                        -> unparseable-harden, exit 1.
+#   epoch_phaseid_dash_r_round -- a `-r`-containing phase id (`4-r1`) at epoch 0 with 2 round
+#                        files -> phaseDesignRound {"4-r1":2} (marker-anchored counter). exit 1
+#                        from the epoch-unmarked detector's by-design residual on a terminal-`-r`
+#                        id; the assertion is on the counter VALUE, not cleanliness.
+mk_checkpoint() {
+  local variant="$1" name="${2:-ckpt-$1}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  local zeros; zeros="$(printf '0%.0s' {1..40})"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$name"
+  _commit "$repo" "drive.sh" "echo drive" "drive work" >/dev/null
+  mkdir -p "$rd"
+  case "$variant" in
+    clean)
+      _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+      _commit "$repo" "phase.sh" "echo p1" "phase 1 integration" >/dev/null
+      _write_review "$rd" design 1 "$zeros"
+      _write_review "$rd" "1.1" 1 "$zeros"
+      _write_review "$rd" "1.1" 2 "$zeros"
+      printf 'notes, not a round file\n' > "$rd/review-1.1-final.md"  # non-integer N
+      _write_review "$rd" phase1 1 "$zeros"
+      _write_review "$rd" phase1 2 "$zeros"
+      _write_review "$rd" phase1 3 "$zeros"
+      _write_harden "$rd" 1 1 yes
+      _write_harden "$rd" 1 2 no
+      _write_review "$rd" phasedesign1 1 "$zeros"
+      printf 'CORRUPT-NOT-JSON{{{\n' > "$rd/state.json"   # never a proof input
+      ;;
+    inflight)
+      _write_review "$rd" phase1 1 "$zeros"
+      _write_inflight "$rd" "review-phase1"
+      ;;
+    unparseable_review)
+      { echo "# half-written review"; echo "no verdict line here"; } > "$rd/review-2.2-1.md"
+      ;;
+    unparseable_harden)
+      { echo "# Harden phase 1 1"; echo "## Verdict: HARDENED"; } > "$rd/harden-1-1.md"
+      ;;
+    epoch_gap)
+      _write_redesign_marker "$rd" 1 1
+      _write_redesign_marker "$rd" 1 3   # r2 lost
+      printf '{"phaseDesign":{"1":{"redesigns":2,"round":0}}}\n' > "$rd/state.json"
+      ;;
+    regress_mismatch)
+      _write_review "$rd" phase1 1 "$zeros"
+      _write_harden "$rd" 1 1 yes
+      _write_harden "$rd" 1 2 yes
+      ;;
+    divergent)
+      _gitc "$repo" checkout -q main
+      _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+      _commit "$repo" "px.sh" "echo px" "divergent phase work" >/dev/null
+      ;;
+    fourA)
+      _gitc "$repo" checkout -q -b "phaseInt/$name/4a"
+      _commit "$repo" "p4a.sh" "echo 4a" "phase 4a integration" >/dev/null
+      ;;
+    epoch_files)
+      _write_redesign_marker "$rd" 1 1
+      _write_review "$rd" phasedesign1 1 "$zeros"        # epoch 0: must NOT count
+      _write_review "$rd" "phasedesign1-r1" 1 "$zeros"
+      _write_review "$rd" "phasedesign1-r1" 2 "$zeros"
+      ;;
+    epoch_unmarked)
+      # r1 review + codex artifacts, marker MISSING. A marker-only check falls back to
+      # epoch 0 and reads clean; must fail closed with epoch-unmarked.
+      _write_review "$rd" phasedesign1 1 "$zeros"        # epoch-0 pair (looks complete)
+      _write_review "$rd" "phasedesign1-r1" 1 "$zeros"
+      _write_codex "$rd" "phasedesign1-r1"
+      ;;
+    inflight_symlink)
+      _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+      _commit "$repo" "phase.sh" "echo p1" "phase 1 integration" >/dev/null
+      _write_review "$rd" phase1 1 "$zeros"
+      ln -s /nonexistent/target "$rd/inflight-review-phase1.marker"   # dangling symlink
+      ;;
+    epoch_marker_dangling)
+      # dangling r1 marker + stale well-formed epoch-0 review; otherwise quiescent. An
+      # -e-only marker scan skips the broken link and reads clean; -e||-L counts it ->
+      # highest_epoch=1 and the gapless check's `-e` probe of the broken r1 marker fails
+      # -> epoch-gap.
+      _write_redesign_marker_dangling "$rd" 1 1
+      _write_review "$rd" phasedesign1 1 "$zeros"   # stale epoch-0 review (well-formed)
+      ;;
+    dangling_review)
+      # a DANGLING review-1.1-2.md symlink, otherwise quiescent. The -e-only review-* scan
+      # skips it (undercount + clean-on-corruption); -e||-L counts it present-but-unparseable
+      # (grep '## Verdict:' fails on the broken link) -> unparseable-review.
+      _write_dangling_dirent "$rd" "review-1.1-2.md"
+      ;;
+    dangling_harden)
+      # a DANGLING harden-1-2.md symlink, otherwise quiescent. The -e-only harden-* scan skips
+      # it (erasing a fix round); -e||-L counts it (grep 'AppliedEdits:' fails) -> unparseable-harden.
+      _write_dangling_dirent "$rd" "harden-1-2.md"
+      ;;
+    epoch_unmarked_phaseid_dash_r)
+      # a phase id that itself contains `-r` (`4-r1`). A markerless epoch artifact for this
+      # phase (review+codex for epoch r1 of phase `4-r1`, NO redesign-4-r1-r1.marker) must be
+      # flagged epoch-unmarked under the CORRECT scope `phasedesign4-r1` — the anchored-suffix
+      # phase-id parse keeps the full `4-r1` (not a `4` truncation).
+      _gitc "$repo" checkout -q -b "phaseInt/$name/4-r1"
+      _commit "$repo" "p.sh" "echo p" "phase 4-r1 integration" >/dev/null
+      _write_review "$rd" "phasedesign4-r1-r1" 1 "$zeros"
+      _write_codex "$rd" "phasedesign4-r1-r1"
+      ;;
+    epoch_phaseid_dash_r_round)
+      # phaseDesignRound counter: a phase id that itself contains `-r` (`4-r1`) at EPOCH 0
+      # (no redesign markers). Its round files are review-phasedesign4-r1-N.md, so the pd_key
+      # is `4-r1`. The pre-fix `${t##*-r}` split mis-keys the counter to phase `4` (count 0);
+      # the marker-anchored phase_of_pd_key keeps `4-r1` (count 2). The epoch-unmarked detector
+      # still fires on `phasedesign4` (its by-design fail-closed residual on a terminal-`-r`
+      # phase id) so the run is exit 1 — the assertion is on the COUNTER value, not cleanliness.
+      _gitc "$repo" checkout -q -b "phaseInt/$name/4-r1"
+      _commit "$repo" "p.sh" "echo p" "phase 4-r1 integration" >/dev/null
+      _write_review "$rd" "phasedesign4-r1" 1 "$zeros"
+      _write_review "$rd" "phasedesign4-r1" 2 "$zeros"
+      ;;
+    epoch_unmarked_codex_only)
+      # FIX 2: ONLY the codex sibling of an epoch artifact (codex-review-phasedesign1-r1.md),
+      # NO review file and NO redesign-1-r1.marker. Exercises the codex-half of the
+      # epoch-unmarked scan independently — a regression dropping the codex glob from
+      # unmarked_epochs()/the phase-derivation loop would otherwise stay green (every other
+      # epoch-unmarked fixture also seeds a review file). Must fail closed: epoch-unmarked.
+      _write_codex "$rd" "phasedesign1-r1"
+      ;;
   esac
   echo "$repo $rd"
 }
@@ -445,6 +786,7 @@ mk_audit_git_error() {
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
   _init_repo "$repo"
   _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$name"
   _gitc "$repo" checkout -q -b "phaseInt/$name/$P"
   local tip; tip="$(_commit "$repo" "phase.sh" "echo phase" "phase $P integration")"
   mkdir -p "$rd"
@@ -558,12 +900,12 @@ mk_impl_presence() {
     waiver)
       _commit "$repo" "src.sh" "echo hi" "slice 3a code only" >/dev/null
       # real trailing trailer block: blank line then Key: val at end of message
-      _commit_msg "$repo" "doc.md" "docs" \
+      _commit "$repo" "doc.md" "docs" \
         "$(printf 'doc slice work\n\nDrive-Test-Waiver: pure documentation slice, no testable surface')" >/dev/null ;;
     waiver_prose)
       _commit "$repo" "src.sh" "echo hi" "slice 3a code only" >/dev/null
       # waiver string MID-BODY with non-Key:val prose AFTER it -> NOT a trailer block
-      _commit_msg "$repo" "doc.md" "docs" \
+      _commit "$repo" "doc.md" "docs" \
         "$(printf 'explain the policy\n\nWe reference Drive-Test-Waiver: here as an example.\nMore prose follows so this is body text, not a trailer.')" >/dev/null ;;
     pred_helpers)
       _commit "$repo" "tests/_helpers.py" "X = 1" "slice 3a touches helpers only" >/dev/null ;;
@@ -591,6 +933,449 @@ mk_impl_presence() {
   echo "$repo $rd"
 }
 
+# ---------------------------------------------------------------------------------
+# --mode state-lint fixtures (D40). state-lint is the ONLY mode that reads state.json; it
+# validates the routing fields resume keys on. Each fixture builds a real drive/<runId>
+# branch (so `rev featureBranch` resolves and `tip` is recorded) + a state.json per variant.
+# Echoes "REPO RUN_DIR".
+#
+# variant:
+#   clean             -- well-formed executing state.json: non-empty phaseList, slices with
+#                        valid step/owns/deps, well-formed verify/ship                -> exit 0
+#   early_clean       -- stage=premises with EMPTY phaseList + empty slices (well-formed-
+#                        empty early run) — must PASS (stage-aware)                    -> exit 0
+#   unparseable       -- state.json is corrupt non-JSON -> unparseable-state           -> exit 1
+#   phaselist_empty_executing -- stage=execute but phaseList:[] (unroutable)
+#                        -> phaselist-malformed                                         -> exit 1
+#   step_bogus        -- a slice with step:"bogus" (out of enum) -> slice-routing-malformed
+#   owns_empty        -- a slice with owns:[] (empty) -> slice-routing-malformed       -> exit 1
+#   slice_scalar      -- a slice VALUE is a non-object scalar (string) -> must emit a named
+#                        slice-routing-malformed (exit 1), NOT crash jq                  -> exit 1
+#   slices_array      -- the .slices CONTAINER is an array (non-object) while executing —
+#                        unroutable -> slices-malformed (must NOT false-clean)           -> exit 1
+#   slices_empty_executing -- stage=execute with slices:{} (empty object, mid-design):
+#                        legitimate pre-design -> must PASS (empty {} is always OK)      -> exit 0
+#   verify_bad        -- verify is not an object-with-attempts-array -> verify-malformed
+#   ship_bad          -- ship missing the prUrl key -> ship-malformed                  -> exit 1
+#   multi_bad_slice   -- TWO malformed slices -> TWO slice-routing-malformed objects
+#                        (cardinality: one per malformed slice, D44)                   -> exit 1
+#   slice_key_metachar -- a slice-id KEY with a JSON metachar (`"`) -> envelope stays VALID
+#                        JSON (violation() escapes the scope) + violation fires           -> exit 1
+#   deps_nonstring    -- a deps element that isn't a string (42) -> slice-routing-malformed
+#   deps_badref       -- a deps element not matching slice-id grammar ("1 bad") -> same   -> exit 1
+#   deps_clean        -- valid deps ("1.1") still pass (no over-rejection)              -> exit 0
+#   slice_key_empty   -- an EMPTY-STRING slice-id KEY ("") -> slice-routing-malformed, must
+#                        NOT be skipped (false-clean) by the key loop                   -> exit 1
+#   slice_key_newline -- a slice-id KEY containing a newline ("1\n2") -> one
+#                        slice-routing-malformed, consumed losslessly (no shredding)    -> exit 1
+#   no_state          -- a real drive/<runId> branch but NO state.json file -> exit 2 (IO)
+mk_state_lint() {
+  local variant="$1" name="${2:-statelint-$1}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "drive/$name"
+  _commit "$repo" "drive.sh" "echo drive" "drive work" >/dev/null
+  mkdir -p "$rd"
+  local sj="$rd/state.json"
+  case "$variant" in
+    clean)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1", "2"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []},
+    "1.2": {"step": "implementing", "owns": ["bin/y.sh", "test/y.test.sh"], "deps": ["1.1"]}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    early_clean)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "premises",
+  "phaseList": [],
+  "slices": {},
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    unparseable)
+      printf 'CORRUPT-NOT-JSON{{{\n' > "$sj"
+      ;;
+    phaselist_empty_executing)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": [],
+  "slices": {},
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    step_bogus)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "bogus", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    owns_empty)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": [], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_scalar)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": "notanobject"
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slices_array)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": [],
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slices_empty_executing)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {},
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    verify_bad)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": "not-an-object",
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    ship_bad)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null}
+}
+JSON
+      ;;
+    multi_bad_slice)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "bogus", "owns": ["bin/x.sh"], "deps": []},
+    "1.2": {"step": "converged", "owns": [], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    toplevel_array)
+      # A parseable-but-non-object ROOT (valid JSON array) must NOT crash jq (exit 5) —
+      # it is unparseable-state (exit 1), like a scalar root.
+      printf '[1,2,3]\n' > "$sj"
+      ;;
+    toplevel_scalar)
+      # A parseable scalar ROOT — same fail-closed verdict, never a crash.
+      printf '42\n' > "$sj"
+      ;;
+    stage_bogus)
+      # An out-of-enum stage is an unroutable hint -> stage-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "bogus",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    stage_done_clean)
+      # `done` is a real stage -> must still pass.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "done",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    phaselist_badref)
+      # A phaseList element that isn't ref-safe (spaces) forms an invalid
+      # phaseInt/<runId>/<P> ref -> phaselist-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["bad ref name"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    phaselist_epoch_clean)
+      # A `4a` epoch phase id is ref-safe -> must pass (with its matching `4a.1` slice).
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1", "4a"],
+  "slices": {
+    "4a.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_key_badref)
+      # A slice-id KEY that isn't ref-safe (spaces) forms an invalid slice/<runId>/<id>
+      # ref -> slice-routing-malformed, scoped to the offending key.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1 bad": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_key_metachar)
+      # A slice-id KEY carrying a JSON metacharacter (`"`) — corruption-controlled and flows
+      # into the violation `scope`. The envelope must stay VALID JSON (violation() escapes it).
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.2\"x": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    deps_nonstring)
+      # A deps element that isn't a string (42) is unroutable -> slice-routing-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": [42]}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    deps_badref)
+      # A deps element that's a string but not slice-id grammar ("1 bad") is unroutable
+      # -> slice-routing-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": ["1 bad"]}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    deps_clean)
+      # A valid deps element ("1.1") still passes — the grammar check must not over-reject.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []},
+    "1.2": {"step": "implementing", "owns": ["bin/y.sh"], "deps": ["1.1"]}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_key_empty)
+      # An EMPTY-STRING slice-id KEY ("": {...}) fails the slice-id grammar and is
+      # unroutable. A newline-split loop would emit an empty line for it and skip it
+      # (false-clean); the NUL-delimited loop must still fire slice-routing-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    slice_key_newline)
+      # A slice-id KEY containing a newline ("1\n2") fails the grammar and is unroutable.
+      # A newline-split loop would shred it into fragments; the NUL-delimited loop must
+      # consume it losslessly and fire exactly one slice-routing-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1\n2": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
+    waiting_bad_type)
+      # A non-null-non-string `waiting` (here a number) is unroutable: resume + the stop
+      # hook both BRANCH on this field -> waiting-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": 42
+}
+JSON
+      ;;
+    waiting_bad_string)
+      # A STRING `waiting` outside the canonical grammar ("frobnicate") would mis-branch the
+      # resume/stop-hook consumers (it is neither null, a bare gateA|gateB|rebirth, nor a
+      # stop:/ask: prefixed reason) -> waiting-malformed.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": "frobnicate"
+}
+JSON
+      ;;
+    waiting_rebirth_clean)
+      # `rebirth` is the lone CONTINUE waiting value (the resume-as-continue this feature is
+      # about) — it is a valid bare reason and must pass.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": "rebirth"
+}
+JSON
+      ;;
+    waiting_stop_clean)
+      # A prefixed human-pause reason ("stop:checkpoint-unprovable") is valid -> must pass.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": "stop:checkpoint-unprovable"
+}
+JSON
+      ;;
+    waiting_null_clean)
+      # An EXPLICIT null `waiting` (the autonomous, not-paused state) is valid -> must pass.
+      # (The base `clean` fixture omits the key entirely; absent ≡ null. This pins the
+      # explicit-null form too.)
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null},
+  "waiting": null
+}
+JSON
+      ;;
+  esac
+  echo "$repo $rd"
+}
+
 # Two concurrent runs in ONE repo (AC10): run-keyed phaseInt/R1/1 and phaseInt/R2/1.
 # Echoes "REPO R1_RUN_DIR R2_RUN_DIR".
 mk_two_concurrent() {
@@ -600,6 +1385,8 @@ mk_two_concurrent() {
   local rd1="$FIXROOT/$r1" rd2="$FIXROOT/$r2"
   _init_repo "$repo"
   _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" branch "drive/$r1"
+  _gitc "$repo" branch "drive/$r2"
   # R1 phase1: reviewed & clean
   _gitc "$repo" checkout -q -b "phaseInt/$r1/1"
   local t1; t1="$(_commit "$repo" "r1.sh" "echo r1" "R1 phase1")"

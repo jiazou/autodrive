@@ -15,10 +15,24 @@ RESET='\033[0m'
 
 # Context % — sum input + cache_creation + cache_read from the latest
 # assistant message in the transcript, divide by the model's actual window.
+# The window-by-model table lives in ONE place — bin/rebirth-thresholds.json (the
+# shared source of truth the rebirth Stop-hook also reads). Resolve $WINDOW by the
+# first windows[].match substring of $MODEL, else defaultWindow. A missing/malformed
+# data file falls back to the inline default so the statusline never breaks.
+THRESHOLDS_FILE="$(dirname "${BASH_SOURCE[0]}")/rebirth-thresholds.json"
+WINDOW=$(jq -r --arg model "$MODEL" '
+    (.windows[] | select(.match | any(. as $m | $model | contains($m))) | .window) // .defaultWindow
+    | first(., empty)
+' "$THRESHOLDS_FILE" 2>/dev/null | head -1)
+if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
+# Inline fallback (kept at column 0 so it is the same `case` shape the data file
+# mirrors): same windows as rebirth-thresholds.json, used only when the file is
+# unreadable. AC6 pins this `case` and the json to identical numbers.
 case "$MODEL" in
     *"Opus 4.7"*|*"Opus 4.8"*)   WINDOW=1000000 ;;
     *)                           WINDOW=200000 ;;
 esac
+fi
 CTX_STATUS=""
 if [ -n "$TRANSCRIPT" ] && [ -f "$TRANSCRIPT" ]; then
     TOKENS=$(jq -r 'select(.type=="assistant" and .message.usage) | ((.message.usage.input_tokens // 0) + (.message.usage.cache_creation_input_tokens // 0) + (.message.usage.cache_read_input_tokens // 0))' "$TRANSCRIPT" 2>/dev/null | tail -1)
