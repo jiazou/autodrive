@@ -50,7 +50,7 @@ verdict / merge / gate.
     resume (keyed on `state.sessionId != $CLAUDE_CODE_SESSION_ID`), NOT gated on a
     `rebirth` waiting. `rebirth_pending` is derived from the OUTGOING session's transcript
     growth, gone on a fresh resume, so the signal is stale and the successor re-derives it
-    from its own growth (the soft-check/hook re-set it). `rebirth_pending` is reset to `false`
+    from its own growth (the Stop hook's steer re-sets it). `rebirth_pending` is reset to `false`
     by the RESUME consumer on exactly two scoped paths — the SAME logical re-arm (idempotent),
     re-derived by the current driver's own detection: (a) HERE at the sessionId-rebind, on any
     FRESH-session resume (`state.sessionId != $CLAUDE_CODE_SESSION_ID`), uniform over all
@@ -353,44 +353,33 @@ clear — indistinguishable on disk, treated the same):
 At resume, every open marker is stranded by definition (the dispatching session is
 gone). In-session, a marker the coordinator is not actively awaiting gets the same rule.
 
-## Coordinator soft-check (context-pressure, signal-only)
+## Context-pressure detection (Stop hook only)
 
-The SECONDARY context-pressure detection surface (the Stop hook is primary). At each
-**safe boundary** in ANY autonomous stage — Plan (between plan-stage steps / after each
-design-review round), Execute (after each per-slice review verdict, the phase-integration
-review verdict, each HARDEN round verdict, the phase advance), Verify (after each QA/e2e
-attempt), and Ship (the ship dispatch boundary) — the coordinator reads its OWN latest
-transcript line and self-signals `rebirth_pending` if the SOFT threshold is crossed:
+Context-pressure detection is the **deterministic Stop hook** (`bin/drive-stop-hook.py`)
+alone. The coordinator NEVER measures its own transcript to self-signal — eyeballing "this
+session feels long" systematically over-triggers (subagent/codex volume lives in OTHER
+contexts; the coordinator's own transcript grows far slower than the visible churn suggests).
+The hook computes the real number: `tokens >= window * hardHighWaterFraction` over the actual
+transcript via `bin/rebirth_thresholds.py` + `bin/rebirth-thresholds.json`, and APPENDS a steer
+to its Stop block reason.
 
-1. Read the coordinator's own transcript (`$CLAUDE_CODE_SESSION_ID` → the project JSONL,
-   or the harness-exposed `transcript_path`). `tokens` = the canonical sum over that
-   transcript: the LAST assistant line's `input_tokens + cache_creation_input_tokens +
-   cache_read_input_tokens` (jq `// 0` per absent field). No completed assistant line with
-   `usage` → skip this boundary.
-2. `model` = that line's `.message.model`. Resolve `window` from `bin/rebirth-thresholds.json`
-   (the I1 substring rule over `model`; no `windows[].match` hit → `defaultWindow`).
-3. If `tokens >= window * softThresholdFraction` AND `state.rebirth_pending` is not already
-   `true`: set `state.rebirth_pending = true` (JSON-safe write) and append one event-log
-   line `{"event":"rebirth_pending","via":"coordinator-soft","pct":<tokens*100/window>}`.
+When the hook's steer instructs it, the coordinator sets `state.rebirth_pending = true` (a
+plain JSON-safe field write — **signal-only:** do NOT checkpoint, hand off, or pause) and
+appends one event-log line `{"event":"rebirth_pending","via":"stop-hook","pct":<the pct from
+the steer>}`. The § I1 Safe-boundary rebirth handler consumes the flag at the next safe
+boundary. **Idempotent:** never re-set an already-`true` flag, never log a duplicate.
 
-**SIGNAL-ONLY:** setting the flag does NOT checkpoint, hand off, or pause — the coordinator
-CONTINUES autonomous work normally. Phase 3's safe-boundary handler consumes
-`rebirth_pending` to checkpoint + pause; this surface only records the signal. **Idempotent:**
-never re-set an already-`true` flag and never log a duplicate (the Stop hook's steer and this
-self-check suppress each other once either fires).
+Honest-coverage residual: the Stop hook is the SOLE detector — if it is not installed
+(`bin/install-operating-rules.sh`), context-pressure rebirth does not trigger; and a single
+catastrophic turn can overshoot the window before the hook fires at turn end.
 
-Honest-coverage residuals: a single catastrophic turn can overshoot the window before any
-boundary or Stop-hook firing; when the Stop hook is ABSENT this self-check is the ONLY
-detection surface, firing only when the coordinator reaches a boundary.
-
-### I1 — Safe-boundary rebirth handler (consume `rebirth_pending`)
+## I1 — Safe-boundary rebirth handler (consume `rebirth_pending`)
 
 The single shared **rebirth-checkpoint routine** that CONSUMES `rebirth_pending` and ACTS —
 ONE routine every safe-boundary site calls (stated here once, referenced from each stage).
-The detection (Stop hook + Coordinator soft-check) is stage-agnostic and can set
-`rebirth_pending` in ANY stage, so EVERY autonomous safe boundary must invoke this handler,
-not just Execute. It runs IMMEDIATELY AFTER the Coordinator soft-check at each such boundary
-(so the soft-check may set the flag and this handler consumes it in the same boundary):
+The detection (Stop hook) is stage-agnostic and can set `rebirth_pending` in ANY stage, so
+EVERY autonomous safe boundary must invoke this handler, not just Execute. It runs at each
+such boundary, consuming any `rebirth_pending` the hook's steer has set:
 - **Execute** — after the per-phase detailed design converges (its `inflight-design-<P>.marker`
   cleared, BEFORE freezing base + dispatching slices), after each per-slice review verdict, the
   phase-integration review verdict, each HARDEN round verdict, and the phase advance
@@ -462,7 +451,12 @@ double-handoff: the marker is single-use, consumed only by a `/drive <runId>` re
 
 **Gate/STOP precedence over rebirth.** At a boundary where BOTH `rebirth_pending == true`
 AND the next pipeline action is a Gate A / Gate B / a non-decision STOP: the **gate/STOP
-wins** — present the gate/STOP (its own `waiting` value), NOT `waiting="rebirth"`. The
+wins** — present the gate/STOP (its own `waiting` value), NOT `waiting="rebirth"`.
+(Detection is hook-only: the Stop hook does NOT steer a turn that ends in a human pause —
+`main()` skips a run with truthy `waiting` — so `rebirth_pending` is `true` at a gate/STOP
+boundary only when a PRIOR turn's Stop already armed it. A rebirth that would FIRST arise on
+the very turn that ends in the gate/STOP is therefore armed at the next autonomous, non-pause
+Stop instead — deferred by at most one turn, never lost.) The
 human is present at that pause and can resume in a fresh session if they wish: **Gate A**
 hands the next leg's `/goal` line on approval; **Gate B** hands NO goal (after Gate-B
 approval the push is immediate — there is no next leg). The user, knowing the runId,
@@ -820,7 +814,7 @@ step 1) produces and records its own slices, in detail, against the real prior-p
 
 At each Plan safe boundary — between plan-stage steps and after each design-review round
 (the coordinator is between dispatch units with no open `inflight-*.marker`) — run the
-**Coordinator soft-check** (§ above), then the **Safe-boundary rebirth handler** (§ I1) so a
+**Safe-boundary rebirth handler** (§ I1) so a
 rebirth signalled during planning is consumed and handed off (Gate A precedence still holds —
 § I1 Gate/STOP precedence).
 
@@ -860,8 +854,8 @@ For each PHASE in order (step 1 designs it, steps 2–5 build & review it, step 
 it before it advances). At each safe boundary in this loop — after the per-phase detailed
 design converges (step 1), after a per-slice review verdict (step 4), the phase-integration
 review verdict (step 5), a HARDEN round verdict and the phase advance (step 6) — run the
-**Coordinator soft-check** (§ above), then the **Safe-boundary rebirth handler** (§ I1 above —
-it consumes any `rebirth_pending` the soft-check just set), before proceeding:
+**Safe-boundary rebirth handler** (§ I1 above —
+it consumes any `rebirth_pending` the hook's steer set), before proceeding:
 
 1. **Design the phase (detailed, against real code):** initialize
    `state.phaseDesign[<P>] = { "round": 0, "redesigns": 0, "status": "designing" }` if absent,
@@ -880,9 +874,9 @@ it consumes any `rebirth_pending` the soft-check just set), before proceeding:
    `inflight-design-<P>.marker` (write-before-dispatch, clear-after-record — § Durable
    checkpoint contract; the same discipline applies to EVERY dispatch below). Then
    `git worktree remove --force $RUN_DIR/wt/design<P>`. This is a safe boundary (the design's
-   `inflight-design-<P>.marker` is cleared, no open `inflight-*.marker`): run the **Coordinator
-   soft-check** (§ above), then the **Safe-boundary rebirth handler** (§ I1 above — it consumes any
-   `rebirth_pending` the multi-round design review just accrued) BEFORE freezing base / dispatching
+   `inflight-design-<P>.marker` is cleared, no open `inflight-*.marker`): run the
+   **Safe-boundary rebirth handler** (§ I1 above — it consumes any
+   `rebirth_pending` the hook's steer set during the multi-round design review) BEFORE freezing base / dispatching
    slices.
 2. **Freeze base:** `phaseBaseSha = git rev-parse <featureBranch>`; initialize
    `state.phaseReview[<P>] = { "round": 0 }` if absent.
@@ -991,12 +985,12 @@ SHA-bound review artifact the ship gate consumes** (`review-finalize-N.md` with
 
 At the finalize dispatch boundary — BEFORE `inflight-finalize.marker` is written, so the
 coordinator is between dispatch units with no open `inflight-*.marker` — run the
-**Coordinator soft-check** (§ above), then the **Safe-boundary rebirth handler** (§ I1) so
+**Safe-boundary rebirth handler** (§ I1) so
 a rebirth signalled before finalize is consumed and handed off. Once `/drive-finalize` is
 dispatched its `inflight-finalize.marker` is open → there is no safe boundary INSIDE a
 finalize round until it returns; after each finalize round verdict (CONVERGED / FINDINGS /
 STOP) is recorded the marker is cleared, which is again a safe boundary → run the
-soft-check + I1 handler there too.
+**Safe-boundary rebirth handler** (§ I1) there too.
 
 1. **Worktree precondition.** Finalize runs in `$RUN_DIR/wt/finalize` checked out at
    `featureBranch`. The last phase already advanced (step 6), so `featureBranch` is
@@ -1037,14 +1031,14 @@ Append each e2e/QA attempt's outcome to `state.verify.attempts`
 (`{result:"PASS"|"FAIL"}`) — the ordered array is the run graph's Verify source and its
 false-negative → re-verify saga.
 After each QA/e2e attempt — a Verify safe boundary (between dispatch units, no open
-`inflight-*.marker`) — run the **Coordinator soft-check** (§ above), then the **Safe-boundary
+`inflight-*.marker`) — run the **Safe-boundary
 rebirth handler** (§ I1) so a rebirth signalled during Verify is consumed and handed off.
 → `stage = ship`
 
 ### Stage 5 — Ship (once)
 At the ship dispatch boundary — before the `inflight-ship.marker` is written, so the
 coordinator is between dispatch units with no open `inflight-*.marker` — run the
-**Coordinator soft-check** (§ above), then the **Safe-boundary rebirth handler** (§ I1) so a
+**Safe-boundary rebirth handler** (§ I1) so a
 rebirth signalled before ship is consumed and handed off (Gate B precedence still holds —
 § I1 Gate/STOP precedence).
 

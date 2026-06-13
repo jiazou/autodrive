@@ -433,11 +433,13 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
 The context-pressure rebirth (§ "Durable checkpoint & rebirth") makes honest, bounded claims —
 these are its known limits, stated rather than overclaimed:
 
-- **Single-catastrophic-turn overshoot.** Detection fires at a turn END (the Stop hook steer)
-  or at a safe boundary (the coordinator soft-check). One enormous single turn can exhaust the
-  window mid-turn before either fires — no check can interrupt a turn already in flight.
-- **Absent-hook degradation.** With **no** Stop hook installed, detection degrades to the
-  coordinator soft-check at safe boundaries ONLY (no per-turn surface).
+- **Single-catastrophic-turn overshoot.** Detection fires at a turn END (the Stop hook steer).
+  One enormous single turn can exhaust the window mid-turn before the steer fires — no check
+  can interrupt a turn already in flight.
+- **Absent-hook degradation.** The Stop hook is the SOLE detector; with **no** Stop hook
+  installed there is NO context-pressure detection at all (the prior coordinator soft-check
+  fallback was removed — eyeballed self-measurement over-triggered false handoffs). Install
+  the hook via `bin/install-operating-rules.sh`.
 - **Gate/STOP-collision human-restart edge.** When a Gate (A/B) or non-decision STOP and a
   rebirth are both due, the **gate/STOP wins** and `rebirth_pending` is re-derived in the
   successor (not carried). The rebirth handoff's paste-ready `/drive <runId>` line (carrying
