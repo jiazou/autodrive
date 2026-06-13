@@ -77,8 +77,8 @@ b) **Dual-voice design-review convergence** — run `/drive-review` scoped `desi
 `rebirth_pending` may be set during planning (author / autoplan / a design-review round).
 At each planning safe boundary — between these steps and after each design-review round (the
 coordinator is between dispatch units with no open `inflight-*.marker`), and before presenting
-Gate A — run the **Coordinator soft-check** then the **Safe-boundary rebirth handler** per
-`~/.claude/commands/drive.md` § *Coordinator soft-check* + § *I1 — Safe-boundary rebirth
+Gate A — run the **Safe-boundary rebirth handler** per
+`~/.claude/commands/drive.md` § *I1 — Safe-boundary rebirth
 handler* (the shared routine: with `rebirth_pending` set at a safe boundary, prove the
 checkpoint → write `checkpoint-complete.marker` → set `waiting="rebirth"` → Present human
 pause with the paste-ready `/drive <runId>`; the I1 routine is the authority for the proof

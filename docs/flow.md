@@ -156,17 +156,19 @@ A long run can fill its context window before it reaches DONE. Rather than overr
 silently, `/drive` detects the pressure and **hands the run off to a fresh session at a
 proven-safe boundary** — a continuation, not a restart.
 
-**Detection (signal-only).** Two surfaces watch the same token-sum the statusline computes
-(the latest assistant line's `input + cache_creation + cache_read` tokens ÷ the model's
-window, from `bin/rebirth-thresholds.json`):
-- The **Stop hook** (`bin/drive-stop-hook.py`) fires every turn and, past the **hard**
-  high-water mark, appends a steer to its block reason — first instructing the coordinator
-  to set `rebirth_pending`, then (once set) to run the handoff at its next safe boundary.
-- The **coordinator soft-check** runs at each safe boundary and sets `rebirth_pending` past
-  the **soft** threshold — the backstop when the hook is absent.
+**Detection (signal-only).** The **Stop hook** (`bin/drive-stop-hook.py`) is the SOLE detector.
+It watches the same token-sum the statusline computes (the latest assistant line's `input +
+cache_creation + cache_read` tokens ÷ the model's window, from `bin/rebirth-thresholds.json`):
+it fires every turn and, past the **hard** high-water mark, appends a steer to its block
+reason — first instructing the coordinator to set `rebirth_pending`, then (once set) to run
+the handoff at its next safe boundary. There is NO coordinator-side self-measurement — the
+coordinator eyeballing its own context pressure over-triggers (subagent/codex volume lives in
+other contexts, so the coordinator's own transcript grows far slower than the visible churn).
+The coordinator sets `rebirth_pending` only when the hook steers it.
 
-Neither acts directly: both only *record* the `rebirth_pending` signal. Acting on it is
-separated out so the handoff happens at a boundary the run can actually resume from.
+The hook does not act directly — it only steers the coordinator to *record* the
+`rebirth_pending` signal. Acting on it is separated out so the handoff happens at a boundary
+the run can actually resume from.
 
 **The handshake (safe-boundary, prove-then-pause).** When `rebirth_pending` is set and the
 coordinator reaches a safe boundary — no open `inflight-*.marker` AND no partial multi-step

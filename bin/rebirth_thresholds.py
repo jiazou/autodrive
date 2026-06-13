@@ -66,10 +66,16 @@ def resolve_window(model, thresholds):
 
 def resolve_thresholds(model, thresholds):
     """(window, hard_bytes, soft_bytes) for `model` — the fractional byte thresholds
-    the consumers compare the raw token sum against (no integer-pct rounding)."""
+    the consumers compare the raw token sum against (no integer-pct rounding).
+
+    `soft_bytes` (and the `softThresholdFraction` it derives from) is LEGACY/UNUSED: it
+    backed the coordinator soft-check, the secondary detection surface removed for
+    over-triggering false handoffs. The only live detector — the Stop hook — uses `hard`
+    alone. `soft` is retained here (and in the data file) for backward compatibility; do
+    NOT reintroduce an eyeballed soft-threshold detector."""
     window = resolve_window(model, thresholds)
     hard = window * thresholds["hardHighWaterFraction"]
-    soft = window * thresholds["softThresholdFraction"]
+    soft = window * thresholds["softThresholdFraction"]  # legacy/unused (see docstring)
     return window, hard, soft
 
 

@@ -99,7 +99,7 @@ def _resume_bullet_bodies(section):
 
 
 def _i1_section():
-    return _section(_drive_md(), "I1 — Safe-boundary rebirth handler")
+    return _section(_drive_md(), "I1 — Safe-boundary rebirth handler", level="## ")
 
 
 def _resume_section():
@@ -118,7 +118,7 @@ def _resume_section():
 # =========================================================================== #
 def _i1_steps():
     """The I1 handler's numbered steps as an ordered [(num, label)] list, bounded to the
-    `### I1 …` section so a step elsewhere in drive.md cannot leak in."""
+    `## I1 …` section so a step elsewhere in drive.md cannot leak in."""
     return [(int(n), lbl) for n, lbl in _I1_STEP_RE.findall(_i1_section())]
 
 
@@ -165,8 +165,9 @@ def _stage_section(heading):
     return _section(_drive_md(), heading, level="### ")
 
 
-# The shared-routine invocation each stage must carry: run the Coordinator soft-check then
-# the I1 Safe-boundary rebirth handler at that stage's safe boundary.
+# The shared-routine invocation each stage must carry: run the I1 Safe-boundary rebirth
+# handler at that stage's safe boundary (detection is the Stop hook; this handler consumes
+# the `rebirth_pending` the hook's steer set).
 _I1_INVOCATION = "the **Safe-boundary rebirth handler** (§ I1"
 
 
@@ -176,19 +177,16 @@ _I1_INVOCATION = "the **Safe-boundary rebirth handler** (§ I1"
 )
 def test_i1_wired_into_plan_verify_ship_stage_sections(heading):
     """P1-2: each non-Execute autonomous stage (Plan, Verify, Ship) actually INVOKES the
-    shared soft-check + I1 rebirth handler at its safe boundary — so a rebirth signalled in
+    shared I1 rebirth handler at its safe boundary — so a rebirth signalled in
     that stage has a consumer. The invocation is asserted INSIDE the stage's own section."""
     section = _norm(_stage_section(heading))
-    assert "Coordinator soft-check" in section, (
-        f"{heading} must run the Coordinator soft-check at its safe boundary"
-    )
     assert _I1_INVOCATION in section, (
         f"{heading} must invoke the Safe-boundary rebirth handler (§ I1) at its safe boundary"
     )
 
 
 def test_execute_loop_still_wires_i1():
-    """P1-2 regression: the Execute loop's existing soft-check + I1 wiring is preserved (the
+    """P1-2 regression: the Execute loop's existing I1 wiring is preserved (the
     fix ADDS the other stages, never drops Execute's)."""
     md = _norm(_drive_md())
     assert "the **Safe-boundary rebirth handler** (§ I1 above" in md, (
@@ -207,13 +205,10 @@ def _execute_step1_design():
 
 def test_i1_wired_at_phase_design_call_site():
     """P1-1: the real call site — Execute step 1 (`/drive-design phase`) actually INVOKES the
-    shared soft-check + I1 rebirth handler AFTER the design converges (its marker cleared)
+    shared I1 rebirth handler AFTER the design converges (its marker cleared)
     and BEFORE freezing base / dispatching slices. So every boundary the I1 preamble
     enumerates has a real call site, not just a claim."""
     step1 = _norm(_execute_step1_design())
-    assert "Coordinator soft-check" in step1, (
-        "Execute step 1 must run the Coordinator soft-check after the design converges"
-    )
     assert _I1_INVOCATION in step1, (
         "Execute step 1 must invoke the Safe-boundary rebirth handler (§ I1) after the design "
         "converges, BEFORE freezing base / dispatching slices"
@@ -232,18 +227,18 @@ def test_i1_wired_at_phase_design_call_site():
 # planning has NO consumer until Gate A unless the delegated runner itself calls it.
 # =========================================================================== #
 _PLAN_REBIRTH_CLAUSE = (
-    "run the **Coordinator soft-check** then the **Safe-boundary rebirth handler**"
+    "run the **Safe-boundary rebirth handler**"
 )
 
 
 def test_drive_plan_invokes_rebirth_handshake_at_planning_boundary():
-    """P1-1: `.claude/commands/drive-plan.md` invokes the shared soft-check + rebirth handler
+    """P1-1: `.claude/commands/drive-plan.md` invokes the shared rebirth handler
     at its planning safe boundary — after each design-review round and before presenting Gate A
     — referencing drive.md's § I1 routine, so a rebirth signalled during author/autoplan/review
     is consumed rather than running on unhandled to Gate A."""
     plan = _norm(_drive_plan_md())
     assert _PLAN_REBIRTH_CLAUSE in plan, (
-        "drive-plan.md must invoke the Coordinator soft-check + Safe-boundary rebirth handler"
+        "drive-plan.md must invoke the Safe-boundary rebirth handler"
     )
     # it fires at the planning safe boundary (after each design-review round, before Gate A)
     assert "after each design-review round" in plan, (
@@ -433,7 +428,7 @@ def _assert_reset_on_resume_structural(drive_md):
     )
 
     # The OUTGOING-session I1 handler must carry NO reset write — the flag STAYS SET there.
-    i1 = _section(drive_md, "I1 — Safe-boundary rebirth handler", level="### ")
+    i1 = _section(drive_md, "I1 — Safe-boundary rebirth handler", level="## ")
     assert not _REBIRTH_RESET_RE.search(i1), (
         "the I1 outgoing-session handler must NOT reset `rebirth_pending` — it STAYS SET "
         "through the outgoing pause (reset happens only on the incoming resume)"
