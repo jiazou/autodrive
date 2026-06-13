@@ -113,13 +113,18 @@ verdict / merge / gate.
     ancestors → the run is PAST Execute; distinguish **finalize** (Stage 4c) from
     **verify** (Stage 4b) by the finalize ARTIFACT, NOT `state.stage` alone (the run's
     git-truth discipline): finalize has CONVERGED iff the highest-N `review-finalize-*.md`
-    exists, its first `## Verdict:` line is `CONVERGED`, AND its `reviewed-sha` (call it
+    exists, its first `## Verdict:` line is `CONVERGED`, AND a NON-EMPTY
+    `$RUN_DIR/codex-review-finalize.md` exists (the codex sibling — matching
+    `bin/drive-conformance.sh`'s `--mode ship` `codex_present` check and `drive-ship.md`
+    precondition #3, so all three finalize-CONVERGED surfaces use the IDENTICAL criterion),
+    AND its `reviewed-sha` (call it
     `R`) is an ANCESTOR of the current `featureBranch` tip with `R..tip` ⊆ the 3-file
     `SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`}
     and ≤ 1 commit — the SAME tolerant (a)(b)(c) ancestor + allowlist + `≤ 1 commit`
     criterion the `--mode ship` gate uses, NOT strict `reviewed-sha == tip`. Finalize
     CONVERGED → `stage = verify`; otherwise (no finalize artifact, a FINDINGS terminal
-    artifact, or a `reviewed-sha` that is not such a tolerant ancestor of the tip) →
+    artifact, a missing/empty `codex-review-finalize.md` sibling, or a `reviewed-sha` that
+    is not such a tolerant ancestor of the tip) →
     `stage = finalize`. **The tolerant test (not strict `==`) is load-bearing at resume**
     because ship commits the ledger BEFORE its suite-red STOP and BEFORE Gate B — so a
     resume CAN land post-ledger-commit. It covers BOTH cases: the just-converged
