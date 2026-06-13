@@ -15,14 +15,20 @@ main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR
    its harden pass completed) and no slice left non-`converged` in `state.slices`.
    Gate on state, not review files.
 3. **Finalize CONVERGED:** the run's terminal `$RUN_DIR/review-finalize-N.md`
-   (highest-N) is `## Verdict: CONVERGED` with `reviewed-sha` == the current
-   `featureBranch` tip, and a non-empty `$RUN_DIR/codex-review-finalize.md` exists.
-   (This precondition runs at ship START, BEFORE the ledger-promotion commit, so
-   strict `== tip` is correct HERE. The downstream `--mode ship` conformance gate
-   runs AFTER the ledger commit and uses the ancestor + `R..tip ≤1 allowlisted
-   commit` test on the SAME finalize artifact — same artifact, tolerant test for
-   the one ledger commit; do not impose strict `==` there.) Missing/non-converged →
-   STOP: "run `/drive-finalize` so its reviewed-sha covers the shipped tip."
+   (highest-N) is `## Verdict: CONVERGED`, a non-empty
+   `$RUN_DIR/codex-review-finalize.md` exists, AND its `reviewed-sha R` is an
+   ANCESTOR of the current `featureBranch` tip with `R..tip` ≤1 commit ⊆ the 3-file
+   ledger allowlist `{.harness/decisions.md, .harness/followups.md, TODO.md}` — i.e.
+   `R == tip` (first ship entry, pre-ledger) OR `R..tip` is exactly the single ledger
+   commit (a resume after ship's ledger commit). This precondition must TOLERATE the
+   one ledger commit because a resumed ship re-enters this check AFTER the
+   ledger-promotion commit — /drive-ship makes that commit BEFORE the suite-red STOP
+   and BEFORE Gate B, so a run resumed past either re-arrives here with the tip one
+   commit ahead of finalize's reviewed-sha; strict `== tip` would FALSE-STOP a
+   legitimately-finalized resumed ship. This is the SAME criterion the downstream
+   `--mode ship` conformance gate applies to this SAME finalize artifact. Missing /
+   non-converged / R not an allowlisted-≤1 ancestor → STOP: "run `/drive-finalize` so
+   its reviewed-sha covers the shipped tip."
 4. **`featureBranch` exists** with each phase's integration merged in.
 5. **Tooling:** git remote, `gh` (or `glab`), `jq`, a runnable test runner.
 
