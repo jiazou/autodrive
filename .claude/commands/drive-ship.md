@@ -14,8 +14,17 @@ main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR
    terminal per-phase state — a phase reaches it only after its review converged AND
    its harden pass completed) and no slice left non-`converged` in `state.slices`.
    Gate on state, not review files.
-3. **`featureBranch` exists** with each phase's integration merged in.
-4. **Tooling:** git remote, `gh` (or `glab`), `jq`, a runnable test runner.
+3. **Finalize CONVERGED:** the run's terminal `$RUN_DIR/review-finalize-N.md`
+   (highest-N) is `## Verdict: CONVERGED` with `reviewed-sha` == the current
+   `featureBranch` tip, and a non-empty `$RUN_DIR/codex-review-finalize.md` exists.
+   (This precondition runs at ship START, BEFORE the ledger-promotion commit, so
+   strict `== tip` is correct HERE. The downstream `--mode ship` conformance gate
+   runs AFTER the ledger commit and uses the ancestor + `R..tip ≤1 allowlisted
+   commit` test on the SAME finalize artifact — same artifact, tolerant test for
+   the one ledger commit; do not impose strict `==` there.) Missing/non-converged →
+   STOP: "run `/drive-finalize` so its reviewed-sha covers the shipped tip."
+4. **`featureBranch` exists** with each phase's integration merged in.
+5. **Tooling:** git remote, `gh` (or `glab`), `jq`, a runnable test runner.
 
 If any fails → STOP with which one + what to do, **via the Present human pause routine**:
 set `state.waiting="stop:<reason>"`, then emit the run graph — read
@@ -28,14 +37,23 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
 - `git worktree add $RUN_DIR/wt/ship <featureBranch>` and work there (cwd).
 - **Promote the run ledgers into the repo's committed ones:** append this run's
   `$RUN_DIR/decisions.md` + `$RUN_DIR/followups.md` entries to the repo's
-  `.harness/decisions.md` + `.harness/followups.md` (the cross-task ledgers), then
-  `git commit` that on `featureBranch`. (Slice subagents wrote to `$RUN_DIR`; this
-  is where it lands in the repo.) **This commit MUST touch EXACTLY those two files
-  and nothing else, as a single commit** — they are the ship gate's ledger allowlist
-  (`SHIP_LEDGER_ALLOWLIST` in `bin/drive-conformance.sh`). The ship invariant tolerates
-  one post-review commit only if `R..tip` is a subset of that allowlist; staging any
-  other file (incl. other `.harness/*`), or splitting into >1 commit, makes the ship
-  conformance check fail. Keep this in sync with the allowlist constant.
+  `.harness/decisions.md` + `.harness/followups.md` (the cross-task ledgers). Then,
+  **if** `$RUN_DIR/finalize-todo.md` is non-empty (finalize produced architectural
+  findings), promote it into the driven project's repo-root `TODO.md` (append under
+  its dated run heading; if `TODO.md` does not exist, create it from the
+  finalize-todo content) and `git add TODO.md`. If `$RUN_DIR/finalize-todo.md` is
+  absent/empty (no architectural findings), promote nothing — `TODO.md` is untouched
+  and stays out of the commit. `git commit` all of the above on `featureBranch` as a
+  SINGLE commit. (Slice subagents wrote to `$RUN_DIR`; this is where it lands in the
+  repo.) **This commit MUST touch EXACTLY the ledger files — `.harness/decisions.md`,
+  `.harness/followups.md`, and repo-root `TODO.md` when finalize produced
+  architectural findings — and nothing else, as a single commit.** Those three paths
+  are the ship gate's ledger allowlist (`SHIP_LEDGER_ALLOWLIST` in
+  `bin/drive-conformance.sh`, now 3 entries: `{.harness/decisions.md,
+  .harness/followups.md, TODO.md}`). The ship invariant tolerates one post-review
+  commit only if `R..tip` is a subset of that allowlist; staging any other file
+  (incl. other `.harness/*`), or splitting into >1 commit, makes the ship conformance
+  check fail. Keep this in sync with the `SHIP_LEDGER_ALLOWLIST` constant.
 
 ## Run the full suite (flaky-retry)
 
@@ -51,6 +69,9 @@ routine** — set `state.waiting="stop:suite-red"`, then emit the run graph (rea
 
 - Surface a one-line summary of every decision promoted this run (with
   Classification) + any followups added.
+- If `$RUN_DIR/finalize-todo.md` exists, surface its architectural follow-ups (from
+  the durable `$RUN_DIR` copy — NOT from the worktree) so the user sees what finalize
+  deferred to `TODO.md` before approving the push at Gate B.
 - Propose a commit/PR title + body from `$RUN_DIR/design.md` + the
   `git diff <baseRef>..<featureBranch>`.
 
@@ -58,11 +79,14 @@ routine** — set `state.waiting="stop:suite-red"`, then emit the run graph (rea
 
 Before surfacing the PR for approval, run `bin/drive-conformance.sh $RUN_DIR --mode
 ship` and proceed only if it reports clean — it verifies all shipped **code** was
-covered by a converged, SHA-bound review (∃ a counting phase review with `reviewed-sha
-R` s.t. `R` is an ancestor of `featureBranch`'s tip and `R..tip` is ≤1 commit touching
-only the two allowlisted ledger files). On a violation, run `/drive-review phase <P>` for
-the final phase so its reviewed-sha covers the shipped tip (ship-mode reads `review-phase*`
-artifacts; it has no `ship` scope), then retry. The PreToolUse hook enforces this
+covered by a converged, SHA-bound review (∃ the CONVERGED finalize review with
+`reviewed-sha R` that is an ancestor of tip with `R..tip` ≤1 commit ⊆ the 3-file
+ledger allowlist — NOT strict `R == tip`, since ship's own ledger commit sits one
+commit past finalize's reviewed-sha — AND ≥1 counting phase-integration review as a
+precondition). On a violation, run `/drive-finalize` so its `reviewed-sha` covers the
+shipped tip (ship-mode's terminal candidate-R is the `review-finalize-N.md` artifact,
+not a phase review — a phase review's reviewed-sha is an ancestor of, but no longer
+equal to, the post-finalize tip), then retry. The PreToolUse hook enforces this
 same gate (fail-CLOSED) on the push/PR; running it in-prose first makes enforcement
 degrade gracefully where the hooks aren't installed. Record the conformance result to
 `state.ship.conformance` (e.g. "clean").
