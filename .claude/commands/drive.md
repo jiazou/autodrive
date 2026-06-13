@@ -113,17 +113,21 @@ verdict / merge / gate.
     ancestors → the run is PAST Execute; distinguish **finalize** (Stage 4c) from
     **verify** (Stage 4b) by the finalize ARTIFACT, NOT `state.stage` alone (the run's
     git-truth discipline): finalize has CONVERGED iff the highest-N `review-finalize-*.md`
-    exists, its first `## Verdict:` line is `CONVERGED`, AND its `reviewed-sha` equals the
-    current `featureBranch` tip. Finalize CONVERGED → `stage = verify`; otherwise (no
-    finalize artifact, a FINDINGS terminal artifact, or a `reviewed-sha` that does not
-    match the tip) → `stage = finalize`. **NOTE this resume check uses strict
-    `reviewed-sha == tip`** because at resume time finalize has just CONVERGED and NO
-    ship-ledger commit exists yet (tip == finalize R), so it is valid pre-ledger-commit.
-    This is NOT the `--mode ship` candidate-R test, which runs AFTER ship's single ledger
-    commit and therefore uses the tolerant (a)(b)(c) ancestor + `R..tip ≤ 1 allowlisted
-    commit` rule (tip is then one commit past finalize R) — do NOT impose strict `==` at
-    ship, or a legitimate post-ledger-commit ship false-stops. They COINCIDE at finalize
-    time (R == tip → `R..tip` empty).
+    exists, its first `## Verdict:` line is `CONVERGED`, AND its `reviewed-sha` (call it
+    `R`) is an ANCESTOR of the current `featureBranch` tip with `R..tip` ⊆ the 3-file
+    `SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`}
+    and ≤ 1 commit — the SAME tolerant (a)(b)(c) ancestor + allowlist + `≤ 1 commit`
+    criterion the `--mode ship` gate uses, NOT strict `reviewed-sha == tip`. Finalize
+    CONVERGED → `stage = verify`; otherwise (no finalize artifact, a FINDINGS terminal
+    artifact, or a `reviewed-sha` that is not such a tolerant ancestor of the tip) →
+    `stage = finalize`. **The tolerant test (not strict `==`) is load-bearing at resume**
+    because ship commits the ledger BEFORE its suite-red STOP and BEFORE Gate B — so a
+    resume CAN land post-ledger-commit. It covers BOTH cases: the just-converged
+    pre-ledger case (`R == tip`, `R..tip` empty) AND a resume after ship's single ledger
+    commit (suite-red STOP or Gate-B pause, where `R..tip` is the lone allowlisted ledger
+    commit). Strict `==` would misroute that post-ledger resume back to `stage = finalize`
+    and re-run finalize on an already-ledger-committed tree. This determination stays
+    derived from artifacts, not `state.stage`.
   - **Derived phase-design status:** the current phase's design counts as converged ONLY if
     the epoch-aware `bin/drive-conformance.sh $RUN_DIR --mode phasedesign-gate:<P>` passes
     for the CURRENT epoch — `phaseDesign[<P>].status` is a hint, never the trigger. Gate
