@@ -24,6 +24,24 @@ run_conf() {
   RC=$?
 }
 
+# Seed a CONVERGED finalize artifact (the ship gate's terminal tip-binding candidate-R).
+# A finalize review carries a Verdict, an AppliedEdits marker, and a reviewed-sha, plus a
+# non-empty codex sibling. $1=run_dir $2=N $3=reviewed-sha $4=applied(yes|no, default no).
+# Mirrors mkfixture.sh's _write_review/_write_codex shape for the `finalize` scope.
+seed_finalize() {
+  local rd="$1" n="$2" sha="$3" applied="${4:-no}"
+  mkdir -p "$rd"
+  {
+    echo "# Review finalize round $n"
+    echo
+    echo "## Verdict: CONVERGED"
+    echo "## AppliedEdits: $applied"
+    echo
+    echo "reviewed-sha: $sha"
+  } > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
+}
+
 # Assert exit code. $1=desc $2=expected-rc $3=actual-rc
 assert_rc() {
   if [ "$2" = "$3" ]; then
@@ -154,7 +172,13 @@ read -r repo rd < <(mk_plan codex_empty)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 empty codex file does NOT satisfy (blocked)" 1 "$RC"
 
 echo "=== AC4: ship ledger-tolerance + tight allowlist + ≤1-commit ==="
+# Ship's terminal tip-binding candidate-R is now the CONVERGED finalize artifact (the phase
+# review is demoted to a no-phase-review precondition). The mk_ship `clean` fixture already
+# seeds a counting phase1 review (the precondition); add a CONVERGED review-finalize bound to
+# R = the phase code commit (parent of the ledger tip), so R..tip = the single ledger commit
+# ⊆ the allowlist -> clean. Without a finalize artifact the gate now blocks (no-review).
 read -r repo rd < <(mk_ship clean)
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
 run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.i ship ledger-only clean" 0 "$RC"
 read -r repo rd < <(mk_ship code_past_r)
 run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.ii ship code past R blocked" 1 "$RC"
@@ -164,7 +188,12 @@ read -r repo rd < <(mk_ship two_ledger_commits)
 run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.iv(≤1) ship two ledger commits blocked" 1 "$RC"
 
 echo "=== AC4b: multi-phase existential R (no highest-N false-block) ==="
+# The terminal tip-binding R is now the finalize artifact (not a phase R); the multi-phase
+# phase1/phase2 reviews now satisfy ONLY the no-phase-review precondition (≥1 counting phase
+# review). Seed a CONVERGED finalize bound to R2 = the phase2 code commit (parent of the
+# ledger tip), whose R2..tip = the single ledger commit ⊆ allowlist -> clean.
 read -r repo rd < <(mk_ship_multiphase)
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
 run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4b multi-phase existential picks phase2 R (clean)" 0 "$RC"
 
 echo "=== W1(audit): ship must NOT count a phasedesign DESIGN review as the integration review ==="
@@ -224,7 +253,12 @@ echo "=== AC5b: induced git/IO error (corrupt object) -> exit 2, never a clean/v
 # ship: R resolves + is ancestor + R..tip=1 commit, but the tip's TREE is corrupt so the
 # `git diff --name-only R..tip` allowlist check ERRORS. That git/IO error MUST surface as
 # exit 2 (fail-closed) -- proc-substitution would have swallowed it into a false-clean.
+# Ship now short-circuits to no-review (empty candidate_R) BEFORE the git diff when there is
+# no CONVERGED finalize artifact; to still exercise the git-error path the fixture must seed a
+# finalize R (= the phase code commit, parent of the corrupt tip; its tree is intact) so
+# candidate_R is non-empty and the (a)(b)(c) loop reaches the failing diff against the corrupt tip.
 read -r repo rd < <(mk_ship_git_error)
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
 run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC5b ship git-error (corrupt tree -> diff fails) exit 2" 2 "$RC"
 # audit: live phaseInt ref enumerates but its tip object is corrupt -> exit 2,
 # NOT exit 0 clean (which would swallow a broken repo into 'nothing to audit').
@@ -309,12 +343,14 @@ read -r repo rd < <(mk_checkpoint clean)
 run_conf "$repo" "$rd" --mode checkpoint
 assert_rc "CK1 quiescent well-formed fixture clean (state.json corrupt — never read)" 0 "$RC"
 assert_out_contains "CK1 clean envelope" '"clean":true,"mode":"checkpoint"'
-# All five I3 rules in one assertion: reviewCount from pure-integer-N counts (the
+# All six I3 rules in one assertion: reviewCount from pure-integer-N counts (the
 # review-1.1-final.md non-round file does NOT count); phaseReviewRound = 3 review-phase1
 # files MINUS the 1 AppliedEdits:yes regress marker (regress files don't overcount the
-# round); hardenRound counts ONLY yes (one yes + one no -> 1); phaseDesignRound epoch-0.
+# round); hardenRound counts ONLY yes (one yes + one no -> 1); phaseDesignRound epoch-0;
+# finalizeRound = 0 (a bare integer — the run-singleton 6th counter — this fixture seeds no
+# review-finalize-*.md, so the AppliedEdits:yes count over that family is 0).
 assert_out_contains "CK1 counters per I3" \
-  '"counters":{"redesigns":{},"phaseDesignRound":{"1":1},"phaseReviewRound":{"1":2},"hardenRound":{"1":1},"reviewCount":{"1.1":2}}'
+  '"counters":{"redesigns":{},"phaseDesignRound":{"1":1},"phaseReviewRound":{"1":2},"hardenRound":{"1":1},"reviewCount":{"1.1":2},"finalizeRound":0}'
 
 # (a) an open in-flight marker fails the checkpoint — never probe, never wait.
 read -r repo rd < <(mk_checkpoint inflight)
