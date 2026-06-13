@@ -75,9 +75,12 @@ followups/TODO, not edited.
    over-abstraction, redundant narration comments, copy-paste duplication (now visible
    across phases), inconsistent naming. **De-slop MUST be behavior-preserving:** a de-slop
    edit that reds a test is a REAL REGRESSION → **REVERT** that edit; do NOT reconcile it
-   by changing the test (the Step-4 regression-guard rule). Also **fold in every `slop
-   (deferred to finalize)` note** the per-phase harden passes recorded in
-   `$RUN_DIR/followups.md` — finalize is where those deferred notes are finally applied. A
+   by changing the test (the Step-4 regression-guard rule). **Seed lens 1 from
+   `$RUN_DIR/followups.md`'s `## slop (deferred to finalize)` section** (the per-phase
+   harden deferred-slop handoff, one line per item as `file:line — description`) IN
+   ADDITION to scanning the run diff, and apply every such note — finalize is where those
+   deferred notes are finally applied (the heading string must match harden's canonical
+   `## slop (deferred to finalize)` EXACTLY). A
    de-slop edit that would drop coverage of any acceptance criterion (ANY phase's) is
    **VETOED** → `$RUN_DIR/followups.md`, never made (convergence is not blocked by a vetoed
    item — it is logged, not a P1).
@@ -146,8 +149,11 @@ Audit `git diff <baseRef>..<featureBranch>` (the whole run's added logic) agains
 THREE finalize lenses, reading the whole driven codebase for aggregate context but
 flagging EDITS only within the edit scope (run diff + test-support + a flagged-P1 root
 cause just outside it):
-1. AI slop (LED) — speculative fallbacks, needless try/catch, defensive "just in case"
-   code, dead code, over-abstraction, redundant comments, copy-paste (now visible across
+1. AI slop (LED) — SEED the candidate list from `$RUN_DIR/followups.md`'s
+   `## slop (deferred to finalize)` section (the per-phase harden passes' deferred-slop
+   notes, one line per item as `file:line — description`) IN ADDITION to scanning the run
+   diff for: speculative fallbacks, needless try/catch, defensive "just in case" code,
+   dead code, over-abstraction, redundant comments, copy-paste (now visible across
    phases), inconsistent naming. For each, note whether removing it would drop an
    acceptance criterion's coverage (if so, mark VETOED — do not propose it).
 2. Aggregate missing tests — cross-phase integration paths / end-to-end criteria no
@@ -155,7 +161,9 @@ cause just outside it):
 3. Aggregate logic bugs — cross-phase contract violations, integration bugs, off-by-one /
    null-empty / race issues visible only in the assembled whole.
 Spec + prior decisions: each phase's `$RUN_DIR/design-phase<P>.md` (acceptance criteria),
-`$RUN_DIR/design.md` (high-level context), `$RUN_DIR/decisions.md`.
+`$RUN_DIR/design.md` (high-level context), `$RUN_DIR/decisions.md`. Deferred-slop input:
+`$RUN_DIR/followups.md` — read its `## slop (deferred to finalize)` section (the
+per-phase harden handoff) and seed lens 1's candidates from it (see lens 1 above).
 
 Severity — pick one, don't ask:
 - P1 (actionable this stage): a real aggregate bug (lens 3), or a missing test on an
@@ -234,6 +242,9 @@ Code paths are relative to this worktree; artifact paths are the absolute `$RUN_
 (never edit code via absolute paths to the main repo). Read:
 - $RUN_DIR/design-phase<P>.md for each phase (acceptance criteria)
 - $RUN_DIR/design.md (high-level context), $RUN_DIR/decisions.md (stay consistent)
+- $RUN_DIR/followups.md — its `## slop (deferred to finalize)` section: the per-phase
+  harden deferred-slop notes (`file:line — description`). Apply these items (lens 1) as
+  part of this round's fix set, behavior-preserving and within the scope-creep gate.
 - $RUN_DIR/review-finalize-N.md + codex-review-finalize.md (the fix set; codex-only items
   live only in the codex file, so read it)
 
@@ -242,9 +253,10 @@ files; new test files + existing test-support for them; and a file just outside 
 ONLY as the root cause of a flagged P1 (then append a scope-widening note to
 `$RUN_DIR/decisions.md`). No refactor / taste edit without a flagged P1 — a non-P1
 improvement outside the diff → `$RUN_DIR/followups.md`, skip it.
-- Lens 1 de-slop: remove the slop AND apply every folded-in `slop (deferred to finalize)`
-  followups note — but **behavior-preserving only**, and ONLY if it does not drop any
-  acceptance criterion's coverage (if it would, append to followups and skip — VETOED).
+- Lens 1 de-slop: remove the slop AND apply every item from `$RUN_DIR/followups.md`'s
+  `## slop (deferred to finalize)` section — but **behavior-preserving only**, and ONLY if
+  it does not drop any acceptance criterion's coverage (if it would, append to followups
+  and skip — VETOED).
 - Lens 3 bugs: fix them; add a test that FAILS against the pre-fix code, then passes.
 - Lens 2 gaps: add the named tests, driving real production wiring (not stubbed state).
 Do NOT create any `TODO.md` — architectural findings go to the durable
