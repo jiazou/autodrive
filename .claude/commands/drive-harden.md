@@ -49,15 +49,18 @@ pass by construction; they exist for a bare/manual invocation.
   try/catch, defensive "just in case" code, dead code, over-abstraction, redundant
   comments, copy-paste, inconsistent naming), it is RECORDED — never fixed. The handoff
   is concrete and single-labeled: the audit (Step 1 reviewer) LISTS each slop instance
-  under a `## slop (deferred to finalize)` section in `$RUN_DIR/harden-<P>-N.md`, and the
-  FIX step (Step 3) transcribes each one into `$RUN_DIR/followups.md` under the SAME
+  under a `## slop (deferred to finalize)` section in `$RUN_DIR/harden-<P>-N.md`, and
+  **Step 2 (Triage) — which runs EVERY round regardless of whether a fix round
+  happens** — transcribes each one into `$RUN_DIR/followups.md` under the SAME
   canonical heading `## slop (deferred to finalize)`, one line per item as
-  `file:line — one-line description`. `/drive-finalize` later reads exactly that
-  followups section and applies de-slop ONCE, at end-of-run, over the whole-run diff
-  (doing it per-phase would do it twice and the final pass would re-touch the same
+  `file:line — one-line description` (deduped). `/drive-finalize` later reads exactly
+  that followups section and applies de-slop ONCE, at end-of-run, over the whole-run
+  diff (doing it per-phase would do it twice and the final pass would re-touch the same
   lines). Use the heading `## slop (deferred to finalize)` EVERYWHERE — the audit
   listing and the followups record — so every spotted item reliably lands in
-  `$RUN_DIR/followups.md` for finalize to pick up, with no orphaning.
+  `$RUN_DIR/followups.md` for finalize to pick up, with no orphaning even on a
+  slop-only or final clean round (Step 3, the fix step, is skipped on those rounds —
+  which is why the authoritative persist lives in the always-runs Step 2).
 1. **Add missing tests**: acceptance criteria, branches, edge cases, and error paths
    with no test → add them. A test that guards a bug MUST **fail against the pre-fix
    code** (per OPERATING.md "a green test can pass for the wrong reason" — drive the
@@ -123,7 +126,7 @@ TWO hardening lenses (NOT just acceptance-criterion conformance) + a slop NOTE:
 - AI slop (NOTE, not a lens) — RECORD each instance (file:line + one-liner) but propose
    NO edit; these are DEFERRED to `/drive-finalize`. List them under a
    `## slop (deferred to finalize)` section (file:line — one-line description), not as
-   fixable findings — Step 3 transcribes this section verbatim into
+   fixable findings — Step 2 (Triage) transcribes this section into
    `$RUN_DIR/followups.md`. (Slop kinds: speculative fallbacks, needless try/catch,
    defensive "just in case" code, dead code, over-abstraction, redundant comments,
    copy-paste, inconsistent naming.)
@@ -174,7 +177,19 @@ by an explanatory note; continue.
 
 ## Step 2 — Triage
 
-Combine voices: both-flagged = high confidence; **codex-only = scrutinize hardest**
+**Persist deferred slop FIRST (always-runs — this is the authoritative write).** Before
+deciding HARDENED-vs-fix, transcribe EVERY slop item this round's audit listed under the
+`## slop (deferred to finalize)` section of `$RUN_DIR/harden-<P>-N.md` (and the codex
+slop list) into `$RUN_DIR/followups.md` under the same canonical heading
+`## slop (deferred to finalize)`, one line per item as `file:line — one-line
+description` (create the heading once if absent; never duplicate it; dedup — skip any
+item whose `file:line — description` line is already present). This runs on EVERY round
+regardless of the fix set — **even when the fix set is empty / the round returns
+HARDENED** (Step 3, the fix step, is skipped on a slop-only or final clean round) — so
+every slop item found by any harden round reliably lands in `$RUN_DIR/followups.md` for
+`/drive-finalize`, with no orphaning.
+
+Then combine voices: both-flagged = high confidence; **codex-only = scrutinize hardest**
 (bugs Claude missed); reviewer-only = claude-only. Build the fix set from:
 - All open **P1** from this round's audit (lens 2 bugs + lens 1 criterion/bug tests).
 - **Any P1 conformance regression** the prior round's Step-4 re-review left open
@@ -182,8 +197,8 @@ Combine voices: both-flagged = high confidence; **codex-only = scrutinize hardes
   that dropped a criterion gets repaired, not lost.
 - **P2** non-criterion tests — only if cheap AND in the phase blast radius
   (6 principles); else → `$RUN_DIR/followups.md`.
-- **P3** → `$RUN_DIR/followups.md`; recorded slop notes are ALREADY in followups
-  (deferred to finalize) — never applied here.
+- **P3** → `$RUN_DIR/followups.md`; recorded slop notes were ALREADY persisted to
+  followups by the always-runs step above (deferred to finalize) — never applied here.
 
 If the fix set is empty (no open P1 from the audit, no outstanding regression, nothing
 cheap-P2 left) → **HARDENED** (this is the free confirming round — return per Step 4,
@@ -212,13 +227,13 @@ scope-widening note to `$RUN_DIR/decisions.md`). No refactor / taste edit withou
 flagged P1 — a non-P1 improvement outside the diff → `$RUN_DIR/followups.md`, skip it.
 - Lens 2 bugs: fix them; add a test that FAILS against the pre-fix code, then passes.
 - Lens 1 tests: add the named tests, driving real production wiring (not stubbed state).
-- Slop: do NOT remove any slop in this pass — it is DEFERRED to `/drive-finalize`. For
-  EACH slop item the audit listed under `## slop (deferred to finalize)` in
-  `harden-<P>-N.md`, append a line to `$RUN_DIR/followups.md` under the same canonical
-  `## slop (deferred to finalize)` heading, as `file:line — one-line description`
-  (create the heading once if absent; never duplicate it). `/drive-finalize` reads
-  exactly that followups section, so every spotted item MUST land there — no orphaning.
-  If you notice NEW slop while fixing, append it the same way; do not edit it.
+- Slop: do NOT remove any slop in this pass — it is DEFERRED to `/drive-finalize`. The
+  audit's slop items were ALREADY persisted to `$RUN_DIR/followups.md` (under
+  `## slop (deferred to finalize)`) by the always-runs Step-2 persist rule — do not
+  re-write them here. If you notice NEW slop while fixing, record it via that same
+  Step-2 persist rule: append `file:line — one-line description` to
+  `$RUN_DIR/followups.md` under the canonical `## slop (deferred to finalize)` heading
+  (create once if absent; never duplicate); do not edit the slop itself.
 Run the FULL build + integration tests until green. Commit to `phaseInt/<runId>/<P>`
 (`git add -A && git commit`) before returning.
 
