@@ -486,8 +486,8 @@ EOF
     # seen_phase — seen_phase is set BEFORE those checks, so it proves only a review-phase*
     # PATHNAME exists, which a stale/FINDINGS/missing-codex artifact would forge. A run that
     # never produced a counting phase review never legitimately reached finalize.
-    phase_candidate_R="$candidate_R"        # the COUNTING phase Rs (snapshot before finalize overwrites)
-    if [ -z "$phase_candidate_R" ]; then
+    # candidate_R still holds the COUNTING phase Rs here — b-ii overwrites it below.
+    if [ -z "$candidate_R" ]; then
       emit false "ship" "$tip" "[$(violation "ship" "no-phase-review" "$tip" "")]"
     fi
 
