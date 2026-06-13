@@ -402,27 +402,11 @@ mk_ship_multiphase() {
   echo "$repo $rd"
 }
 
-# ship where the only phase review whose R would satisfy (a)(b)(c) is FINDINGS (skipped as a
-# candidate): phase1 is CONVERGED at R1 but R1..tip carries phase-2 CODE (not ledger-only), and
-# phase2 is FINDINGS (not a candidate). So no counting review covers the tip -> ship exit 1.
-mk_ship_findings_only() {
-  local name="${1:-ship-findings-only}"
-  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
-  _init_repo "$repo"
-  _commit "$repo" "README" "base" "base" >/dev/null
-  _gitc "$repo" checkout -q -b "drive/$name"
-  local R1; R1="$(_commit "$repo" "p1.sh" "echo p1" "phase 1 code")"
-  local R2; R2="$(_commit "$repo" "p2.sh" "echo p2" "phase 2 code")"
-  _write_review "$rd" phase1 1 "$R1"            # CONVERGED, but R1..tip has phase-2 code
-  _write_codex "$rd" phase1
-  _write_review_findings "$rd" phase2 1 "$R2"   # FINDINGS -> skipped, never a candidate
-  _write_codex "$rd" phase2
-  mkdir -p "$repo/.harness"
-  printf 'd\n' > "$repo/.harness/decisions.md"
-  printf 'f\n' > "$repo/.harness/followups.md"
-  _gitc "$repo" add -A; _gitc "$repo" commit -q -m "ledger"
-  echo "$repo $rd"
-}
+# mk_ship_findings_only REMOVED (Phase-3 harden): it backed the deleted AC-ship-skip case, which
+# tested "ship skips a FINDINGS phase review as a candidate R". After the finalize wiring (D17)
+# phase reviews are no longer candidate Rs (the finalize artifact is the (a)(b)(c) candidate; a
+# phase review only feeds the b-i precondition). The live "FINDINGS phase review doesn't count
+# toward b-i -> no-phase-review" behavior is covered non-vacuously by AC34 in the test runner.
 
 # HARDEN->advance (AC4c). phaseInt/<runId>/<P> advanced by a harden commit AFTER the
 # integration review. The post-harden review-phase<P> (higher N) is bound to the

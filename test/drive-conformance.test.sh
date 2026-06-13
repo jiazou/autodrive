@@ -213,12 +213,44 @@ echo "=== AC4: ship ledger-tolerance + tight allowlist + ≤1-commit ==="
 read -r repo rd < <(mk_ship clean)
 seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
 run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.i ship ledger-only clean" 0 "$RC"
+# AC4.ii/iii/iv must EXERCISE the (a)(b)(c) allowlist-tightness logic, not stop at the b-ii
+# finalize-absent short-circuit. Each seeds a counting phase1 review (b-i precondition, via
+# mk_ship) PLUS a CONVERGED finalize bound to R = the phase1 code commit, chosen so b-i + b-ii
+# both PASS and the candidate enters the (a)(b)(c) loop, where the offending content blocks it.
+# The gate emits a single `no-review` token for ANY (a)(b)(c) failure (it does not differentiate
+# the three checks), so we assert `"reason":"no-review"` AND that it is NOT `no-phase-review`
+# (which would mean the b-i precondition fired and the (a)(b)(c) logic never ran — the very
+# wrong-reason green these cases used to be). Each case is non-vacuous against its specific check
+# (per-case mutation note).
+
+# AC4.ii — (b) allowlist: R = phase1 code (HEAD^); R..tip = the single `extra.sh` commit. (a)
+# ancestor ✓, (c) ≤1 commit ✓ (1 commit), (b) FAILS (extra.sh ∉ allowlist). MUTATION: drop the
+# (b) subset check and R..tip = {extra.sh} passes subset -> ship CLEAN -> rc 0 (reds this).
 read -r repo rd < <(mk_ship code_past_r)
-run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.ii ship code past R blocked" 1 "$RC"
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC4.ii ship code past R blocked at (b) allowlist" 1 "$RC"
+                                                    assert_out "AC4.ii reason is no-review (reached (a)(b)(c), not the b-i precondition)" '"reason":"no-review"'
+                                                    case "$OUT" in *'no-phase-review'*) echo "FAIL: AC4.ii must NOT be no-phase-review ((a)(b)(c) skipped) :: $OUT"; FAIL=$((FAIL+1));; *) echo "PASS: AC4.ii reached (a)(b)(c) (not no-phase-review)"; PASS=$((PASS+1));; esac
+
+# AC4.iii — (b) allowlist tightness: R = phase1 code (HEAD^); R..tip = the single `.harness/foo.md`
+# commit. (a) ✓, (c) ✓ (1 commit), (b) FAILS (.harness/foo.md ∉ the 3-file allowlist — the WHOLE
+# .harness/ dir is NOT blanket-allowed). MUTATION: widen the allowlist to a `.harness/` prefix and
+# foo.md passes subset -> ship CLEAN -> rc 0 (reds this — guards the per-file tightness).
 read -r repo rd < <(mk_ship other_harness_past_r)
-run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.iii(tight) ship other .harness file blocked" 1 "$RC"
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC4.iii(tight) ship other .harness file blocked at (b) allowlist" 1 "$RC"
+                                                    assert_out "AC4.iii reason is no-review (reached (a)(b)(c) allowlist)" '"reason":"no-review"'
+                                                    case "$OUT" in *'no-phase-review'*) echo "FAIL: AC4.iii must NOT be no-phase-review :: $OUT"; FAIL=$((FAIL+1));; *) echo "PASS: AC4.iii reached (a)(b)(c) (not no-phase-review)"; PASS=$((PASS+1));; esac
+
+# AC4.iv — (c) ≤1-commit: R = phase1 code (HEAD~2); R..tip = TWO ledger commits, BOTH allowlisted
+# files. (a) ✓, (c) FAILS (2 > 1) — and (c) is checked BEFORE (b), so it fires first; (b) would
+# pass since both files are allowlisted. MUTATION: drop the `ncommits -le 1` check and the two
+# all-allowlisted commits pass (a)+(b) -> ship CLEAN -> rc 0 (reds this — guards the ≤1-commit rule).
 read -r repo rd < <(mk_ship two_ledger_commits)
-run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4.iv(≤1) ship two ledger commits blocked" 1 "$RC"
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD~2')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC4.iv(≤1) ship two ledger commits blocked at (c) commit-count" 1 "$RC"
+                                                    assert_out "AC4.iv reason is no-review (reached (a)(b)(c) commit-count)" '"reason":"no-review"'
+                                                    case "$OUT" in *'no-phase-review'*) echo "FAIL: AC4.iv must NOT be no-phase-review :: $OUT"; FAIL=$((FAIL+1));; *) echo "PASS: AC4.iv reached (a)(b)(c) (not no-phase-review)"; PASS=$((PASS+1));; esac
 
 echo "=== AC4b: multi-phase existential R (no highest-N false-block) ==="
 # The terminal tip-binding R is now the finalize artifact (not a phase R); the multi-phase
@@ -261,9 +293,15 @@ run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC33 ship FINDIN
 # AC33b (b-ii — malformed CONVERGED finalize, missing reviewed-sha): a counting phase1 review
 # present + a CONVERGED review-finalize-1.md that OMITS its `reviewed-sha:` line (codex sibling
 # present). b-ii's reviewed_sha_of fails -> the AND-chain short-circuits -> candidate_R="" ->
-# no-review. NON-VACUOUS: the only thing the fixture withholds is the sha line; if the gate
-# stopped requiring `&& fin_rsha=$(reviewed_sha_of ...)`, candidate_R would hold the finalize R
-# (whose value would be empty) and the assert would no longer see no-review.
+# no-review.
+# WHAT IT GUARDS (precise): the REALISTIC regression — a no-sha finalize falling back to a USABLE
+# candidate R (e.g. `candidate_R="$tip "`, or R->tip when the sha is absent). Under such a fallback
+# R=tip gives R..tip = 0 commits (≤1 ✓) and an empty diff (subset ✓) -> ship CLEAN, flipping this
+# assert. It does NOT independently guard a bare drop of the `&& fin_rsha=$(reviewed_sha_of ...)`
+# conjunct: with the conjunct gone, fin_rsha stays empty, so candidate_R=" " yields NO loop token
+# and the gate still blocks no-review (the property is coupled — a no-sha finalize cannot legitimately
+# bind a candidate). Per the harden assessment that coupled residual is intrinsic, not over-engineered
+# around; this case asserts the valid, load-bearing property: a no-sha CONVERGED finalize must NOT ship.
 read -r repo rd < <(mk_ship clean ac33b-ship)
 seed_finalize_no_sha "$rd" 1
 run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC33b ship CONVERGED finalize missing reviewed-sha blocked" 1 "$RC"
@@ -329,11 +367,14 @@ echo "=== AC-audit-skip: an unreviewed slice NOT merged into the live phase is N
 read -r repo rd < <(mk_audit not_merged)
 run_conf "$repo" "$rd" --mode audit;                assert_rc "AC-audit-skip unmerged unreviewed slice not flagged (clean)" 0 "$RC"
 
-echo "=== AC-ship-skip: ship skips a FINDINGS phase review as a candidate R ==="
-# The only phase whose R would cover the tip with ledger-only past it is FINDINGS (skipped); the
-# CONVERGED phase's R has real code past it -> no counting review -> ship blocks.
-read -r repo rd < <(mk_ship_findings_only)
-run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC-ship-skip ship blocks when only candidate is FINDINGS" 1 "$RC"
+# AC-ship-skip REMOVED (Phase-3 harden): it tested "ship skips a FINDINGS phase review as a
+# candidate R" — but after the finalize wiring (D17) phase reviews are NO LONGER candidate Rs;
+# the (a)(b)(c) candidate is the finalize artifact, and a phase review only feeds the b-i
+# precondition. The live equivalent — a FINDINGS phase review must not count toward b-i, so a run
+# whose only phase review is FINDINGS blocks with `no-phase-review` — is covered NON-VACUOUSLY by
+# AC34 (which asserts the specific `no-phase-review` token). The old fixture mk_ship_findings_only
+# only exercised the b-ii finalize-absent path (redundant with AC32), so this case tested nothing
+# meaningful; removed along with the now-orphaned fixture.
 
 echo "=== AC5: exit-2 behavior (absent ref => git error) ==="
 read -r repo rd < <(mk_slice_clean ac5)
