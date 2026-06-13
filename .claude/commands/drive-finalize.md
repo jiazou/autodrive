@@ -170,17 +170,21 @@ Write `$RUN_DIR/review-finalize-N.md`:
   # Finalize N
   ## Verdict: CONVERGED | FINDINGS
   ## AppliedEdits: pending          (Step 4 finalizes this to yes|no — the resume marker)
-  reviewed-sha: <40-hex>
+  reviewed-sha: <40-hex>            (EXACTLY ONE such line; Step 4 REPLACES it in place)
   ## Findings → ### [SEVERITY][LENS] title / **Where** file:line / Issue / Fix / Veto?
   ## Architectural (→ TODO) → ### file:area / problem / why deferred
 CONVERGED = no open P1 AND no cheap in-scope P2 slop left to apply. Return: path,
 verdict, one-line count.
 ----- END SUBAGENT SCOPE -----
 
-**`reviewed-sha:` binding (LOAD-BEARING — the ship gate reads this).** Emit
-`reviewed-sha: <40-hex>` = `git rev-parse <featureBranch>` **AS OF THE END OF THIS AUDIT
-ROUND** — i.e. AFTER Step-3's fix commit for THIS round (the post-edit tip); for the free
-confirming clean audit it is the unchanged tip. The terminal CONVERGED `review-finalize-N.md`
+**`reviewed-sha:` binding (LOAD-BEARING — the ship gate reads this).** Each
+`review-finalize-N.md` carries **EXACTLY ONE** `^reviewed-sha:` line = `git rev-parse
+<featureBranch>` **AS OF THE END OF THIS AUDIT ROUND** — i.e. AFTER Step-3's fix commit for
+THIS round (the post-edit tip); for the free confirming clean audit it is the unchanged
+tip. When Step 4 updates it, it **REPLACES that single line IN PLACE — it MUST NOT append a
+second `reviewed-sha:` line** (the conformance helper `reviewed_sha_of()` reads the FIRST
+matching line, so an appended post-fix sha would be shadowed by a stale Step-1 first line
+and the ship gate would bind the wrong tip). The terminal CONVERGED `review-finalize-N.md`
 therefore binds the FINAL post-de-slop `featureBranch` tip — exactly what the ship gate
 needs (R == tip, so `R..tip` is empty ⊆ the ledger allowlist). This is the SAME mechanism
 as harden-regress's "re-emit reviewed-sha at the post-fix tip" rule (drive-review.md
@@ -262,14 +266,15 @@ Return STATUS as the FIRST line, then the changed-file list:
 ## Step 4 — Regression guard & converge
 
 One round per invocation; `/drive` owns the loop. Decide the return per the cap rules in
-**Loop counter & cap**, then finalize the round's `AppliedEdits` marker and re-emit
-`reviewed-sha:`:
+**Loop counter & cap**, then finalize the round's `AppliedEdits` marker and update the
+single `reviewed-sha:` line **IN PLACE** (REPLACE it — never append a second one; see the
+`reviewed-sha:` binding note for why a second line would shadow the post-fix tip):
 
 - **No fix applied this invocation** (Step-2 fix set was empty — the free confirming
-  audit) → set `review-finalize-N.md` `AppliedEdits: no`, re-emit `reviewed-sha:` at the
-  unchanged `git rev-parse <featureBranch>` tip → return `CONVERGED`.
-- **A fix was applied** → `finalizeRound += 1`; set `AppliedEdits: yes`; the round's
-  `reviewed-sha:` is the POST-fix tip (Step-1 binding). Run the **driven project's FULL
+  audit) → set `review-finalize-N.md` `AppliedEdits: no`, leave the single `reviewed-sha:`
+  line at the unchanged `git rev-parse <featureBranch>` tip → return `CONVERGED`.
+- **A fix was applied** → `finalizeRound += 1`; set `AppliedEdits: yes`; REPLACE the single
+  `reviewed-sha:` line with the POST-fix tip (Step-1 binding). Run the **driven project's FULL
   suite** as the regression guard: **a reddened test from a de-slop edit is a REAL
   REGRESSION → REVERT the offending edit (do NOT reconcile by editing the test)**, re-run,
   and fold any still-open P1 into the next round's fix set. Return `FINDINGS` (the next
