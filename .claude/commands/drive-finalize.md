@@ -221,12 +221,24 @@ satisfies it.
 Combine voices: both-flagged = high confidence; **codex-only = scrutinize hardest** (bugs
 Claude missed); reviewer-only = claude-only. Build the fix set from:
 - All open **P1** from this round's audit (lens 2 criterion/bug tests + lens 3 bugs).
-- **Cheap in-scope P2 slop** (lens 1, the LED lens — applied HERE, NOT deferred).
+- **The deferred-slop items** read from `$RUN_DIR/followups.md`'s
+  `## slop (deferred to finalize)` section (the per-phase harden handoff,
+  `file:line — description`) — finalize is the de-slop APPLIER (the dual of harden, which
+  only DEFERS), so these are finalize's responsibility to APPLY and are lens-1 fix-set
+  items (behavior-preserving, scope-gated, VETO if applying would drop any acceptance
+  criterion's coverage).
+- **Cheap in-scope P2 slop** from this round's run-diff audit (lens 1, the LED lens —
+  applied HERE, NOT deferred; same lens-1 rules: behavior-preserving, scope-gated, VETO if
+  it would drop a criterion).
 - **Any P1 regression** the prior round's Step-4 guard left open.
 P3 / VETOED / ARCH / out-of-scope → `$RUN_DIR/followups.md` (or `finalize-todo.md` for
 ARCH), never the code fix set.
 
-If the fix set is empty (no open P1, nothing cheap-P2 slop left) → **CONVERGED** (the free
+The fix set Step 2 builds here is EXACTLY what Step 3 applies: the open P1s, the deferred-slop
+items, and the run-diff cheap-P2 slop.
+
+If the fix set is empty (no open P1, no deferred-slop items, nothing cheap-P2 slop left) →
+**CONVERGED** (the free
 confirming round — return per Step 4, do not increment `finalizeRound`). Otherwise classify
 each kept item Mechanical / Taste / User-Challenge (6 principles); Taste → log to
 `$RUN_DIR/decisions.md`, surface at Gate B; User-Challenge → STOP and surface.
