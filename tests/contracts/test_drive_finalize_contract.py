@@ -274,6 +274,32 @@ def test_harden_narrowed_to_two_lenses():
         "`3-lens` audit that applied de-slop in-stage"
     )
 
+    # ---- the COORDINATOR copy in drive.md — the third harden-narrowing surface. -------- #
+    # drive.md's HARDEN step-6 (the per-phase harden-pass description) is a separate copy of
+    # the same contract; it drifted (still said harden "reduce AI slop") while drive-harden.md
+    # and CLAUDE.md were narrowed. AC41 was blind to it. Slice the harden step-6 block (from
+    # the `6. **Harden ...**` step header to the `Act on its return:` boundary that ends the
+    # harden-pass description) and pin the narrowed contract THERE: harden does NOT reduce/
+    # remove AI slop, and de-slop is DEFERRED to /drive-finalize. The bare tokens recur in the
+    # Stage-4c Finalize section below, so this is section-bounded to be load-bearing —
+    # reverting the drive.md fix (re-adding `reduce AI slop` to the harden pass) reds here.
+    harden_step = _norm(
+        _slice_between(_drive_md_text(), r"^6\.\s+\*\*Harden\b", r"^\s*Act on its return:")
+    )
+    assert "/drive-finalize" in harden_step, (
+        "drive.md's harden step-6 must DEFER de-slop to /drive-finalize (the narrowed "
+        "contract), matching drive-harden.md and CLAUDE.md"
+    )
+    assert re.search(r"de-slop is deferred to\b.*/drive-finalize", harden_step, re.IGNORECASE), (
+        "drive.md's harden step-6 must state de-slop is DEFERRED to the aggregate "
+        "/drive-finalize stage"
+    )
+    assert not re.search(r"\breduce AI slop\b", harden_step, re.IGNORECASE), (
+        "drive.md's harden step-6 must NOT describe harden as reducing AI slop "
+        "(de-slop was moved to /drive-finalize); a re-added `reduce AI slop` clause is the "
+        "harden-narrowing drift this pins"
+    )
+
 
 # =========================================================================== #
 # AC42 — drive-finalize artifact + scope-gate + cap + regression-guard contract
@@ -469,11 +495,19 @@ def test_finalize_scope_creep_gate_and_arch_todo():
         "the section must state finalize APPENDS the finding to $RUN_DIR/finalize-todo.md"
     )
     # NOT a finalize working-tree TODO.md (the broken design D10 ruled out) — the load-bearing
-    # negative clause, pinned WITHIN this section so deleting it reds.
-    assert re.search(r"NEVER writes or commits any project `?TODO\.md`?", arch), (
-        "the Architectural-findings section must state finalize NEVER writes or commits any "
-        "project TODO.md (architectural findings go to $RUN_DIR/finalize-todo.md, not a "
-        "wt/finalize/TODO.md)"
+    # negative clause, pinned WITHIN this section so deleting it reds. Semantic-tolerant (not
+    # the exact "writes or commits" phrasing): match a NEVER + a write/create/stage/commit verb
+    # + a project `TODO.md`, so a benign reword ("never creates/stages a project TODO.md")
+    # stays green while dropping the negative clause (or letting finalize write a project
+    # TODO.md) reds.
+    assert re.search(
+        r"NEVER\b[^.]*\b(write|creat|stage|commit)\w*\b[^.]*project `?TODO\.md`?",
+        arch,
+        re.IGNORECASE,
+    ), (
+        "the Architectural-findings section must state finalize NEVER writes/creates/stages/"
+        "commits any project TODO.md (architectural findings go to $RUN_DIR/finalize-todo.md, "
+        "not a wt/finalize/TODO.md)"
     )
 
 
@@ -662,7 +696,12 @@ def test_claudemd_pipeline_and_invariant():
     # ---- (iii) harden 2-lens CONSISTENCY — the 3-lens drift cannot recur. ------------ #
     # The harden artifact ledger entry must describe a 2-lens audit (the narrowed model),
     # and the OLD 3-lens / three-lenses / active de-slop-lens constructs must be ABSENT.
-    assert re.search(r"harden-<P>-N\.md\b[^\n]*\b2-lens\b", text), (
+    # Whitespace-tolerant (`_norm`, so a wrapped artifact entry doesn't false-red) and reword-
+    # tolerant on the lens-count phrasing (`2-lens` OR `two ... lenses`), but still pinned to
+    # the harden artifact token's vicinity so a real drop of the 2-lens semantics reds.
+    assert re.search(
+        r"harden-<P>-N\.md\b.{0,80}?\b(2-lens|two\b[^.]*\blenses)\b", norm, re.IGNORECASE
+    ), (
         "the harden artifact entry must describe a 2-lens audit (the narrowed model), "
         "not the OLD 3-lens audit"
     )
