@@ -621,7 +621,7 @@ def test_leg_condition_selector_is_total_over_stage_enum():
 #   - EXECUTE   leg (execute, finalize, verify, ship): autonomous implement/review/harden/verify/ship.
 _PLANNING_COND = "NOT met while autonomous planning"
 _PLANNING_COND_TAIL = "design, autoplan, dual-voice review) work remains."
-_EXECUTE_COND = "NOT met while autonomous implement / review / harden / verify / ship work remains."
+_EXECUTE_COND = "NOT met while autonomous implement / review / harden / finalize / verify / ship work remains."
 
 # The stage-set that keys each leg, as the frozensets the selector partition must produce.
 _PLANNING_STAGES = frozenset({"premises", "plan"})
