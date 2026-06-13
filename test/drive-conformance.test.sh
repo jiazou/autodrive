@@ -42,6 +42,24 @@ seed_finalize() {
   { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
 }
 
+# Seed a FINDINGS finalize artifact (NOT converged) — same shape as seed_finalize but the
+# Verdict is FINDINGS, so the ship gate's b-ii finalize candidate-R scan rejects it (no
+# converged finalize -> candidate_R="" -> no-review). Mirrors mkfixture.sh's
+# _write_review_findings shape for the `finalize` scope. $1=run_dir $2=N $3=reviewed-sha.
+seed_finalize_findings() {
+  local rd="$1" n="$2" sha="$3"
+  mkdir -p "$rd"
+  {
+    echo "# Review finalize round $n"
+    echo
+    echo "## Verdict: FINDINGS"
+    echo "## AppliedEdits: no"
+    echo
+    echo "reviewed-sha: $sha"
+  } > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
+}
+
 # Assert exit code. $1=desc $2=expected-rc $3=actual-rc
 assert_rc() {
   if [ "$2" = "$3" ]; then
@@ -199,6 +217,53 @@ run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC4b multi-phase 
 echo "=== W1(audit): ship must NOT count a phasedesign DESIGN review as the integration review ==="
 read -r repo rd < <(mk_ship_phasedesign_only)
 run_conf "$repo" "$rd" --mode ship;                 assert_rc "W1 ship blocks when only a review-phasedesign<P> (with sha) exists, no integration review" 1 "$RC"
+
+echo "=== Finalize (Phase 3): ship-gate finalize/phase-review preconditions (AC32-AC35) ==="
+# The D27-deferred decisive cases NOT covered by any Phase-2 fixture (every Phase-2 ship
+# fixture seeds BOTH a counting phase review AND a CONVERGED finalize, so the b-i
+# no-phase-review / absent-or-FINDINGS-finalize no-review / unparseable-finalize branches
+# were untaken). Each asserts the SPECIFIC reason token (the load-bearing distinction:
+# WHICH guard fired) — an rc-only assert would pass green-for-the-wrong-reason (D-P3-3).
+# Regression validity: the no-phase-review precondition (keyed on the COUNTING candidate_R)
+# and the finalize terminal candidate-R did not exist pre-Phase-2; these cases fail against
+# the pre-Phase-2 ship gate.
+
+# AC32 (AC23 negative — absent): a counting phase1 review present but NO review-finalize-*.md.
+# b-i passes (candidate_R holds phase1's R), then b-ii finds no converged finalize ->
+# candidate_R="" -> ship blocks no-review (b-ii emptied it AFTER b-i passed).
+read -r repo rd < <(mk_ship clean ac32-ship)   # seeds a counting phase1 review; NO finalize artifact
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC32 ship absent finalize (phase review present) blocked" 1 "$RC"
+                                                    assert_out "AC32 reason is no-review (b-ii, finalize absent)" '"reason":"no-review"'
+
+# AC33 (AC23 negative — FINDINGS): a counting phase1 review present + a FINDINGS
+# review-finalize-1.md (+ codex). b-ii rejects the non-converged finalize -> candidate_R="" ->
+# no-review. (Distinct from AC32 only in that the finalize artifact EXISTS but is FINDINGS.)
+read -r repo rd < <(mk_ship clean ac33-ship)
+seed_finalize_findings "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC33 ship FINDINGS finalize (phase review present) blocked" 1 "$RC"
+                                                    assert_out "AC33 reason is no-review (b-ii, finalize FINDINGS)" '"reason":"no-review"'
+
+# AC34 (AC24 — non-counting phase review, FINDINGS): a CONVERGED tip-binding finalize exists,
+# but the ONLY review-phase1 is FINDINGS (so candidate_R empties at b-i) -> ship blocks
+# no-phase-review. Built INLINE from mk_ship clean (D-P3-4): overwrite review-phase1-1.md to
+# FINDINGS (candidate_R empties), then seed_finalize at HEAD^ (the phase code commit, parent of
+# the ledger tip — a VALID finalize R, so the ONLY blocking cause is the non-counting phase
+# review). Reason MUST be no-phase-review (b-i fires FIRST and exits before b-ii), NOT no-review.
+read -r repo rd < <(mk_ship clean ac34-ship)
+_write_review_findings "$rd" phase1 1 "$(git -C "$repo" rev-parse 'HEAD^')"   # flip phase1 to FINDINGS
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')" yes              # valid CONVERGED finalize
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC34 ship CONVERGED finalize + only FINDINGS phase review blocked" 1 "$RC"
+                                                    assert_out "AC34 reason is no-phase-review (b-i keys off COUNTING set)" '"reason":"no-phase-review"'
+
+# AC35 (AC24 — non-counting phase review, missing codex): same as AC34 but the phase1 review
+# stays CONVERGED while its codex sibling is DELETED -> codex_present fails -> candidate_R
+# empties at b-i -> no-phase-review. Proves b-i keys off the FULL counting check (verdict + sha
+# + codex), not bare review-phase1 pathname presence.
+read -r repo rd < <(mk_ship clean ac35-ship)
+rm -f "$rd/codex-review-phase1.md"                                            # drop the phase codex sibling
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')" yes              # valid CONVERGED finalize
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC35 ship CONVERGED finalize + phase review missing codex blocked" 1 "$RC"
+                                                    assert_out "AC35 reason is no-phase-review (missing phase codex)" '"reason":"no-phase-review"'
 
 echo "=== AC4c: HARDEN->advance consumes post-harden review ==="
 read -r repo rd < <(mk_phase_harden post_harden_ok 1)
@@ -455,6 +520,27 @@ run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 -r-phase-id c
 assert_out_contains "CK2 phaseDesignRound counts the FULL -r phase id 4-r1 (not mis-keyed to 4)" \
   '"phaseDesignRound":{"4-r1":2}'
 
+echo "=== Finalize (Phase 3): checkpoint (finalize) arm (AC36/AC37) ==="
+# AC36 (AC25 positive): a CONVERGED review-finalize-1.md with `## AppliedEdits: yes` + codex,
+# NO slice/<name>/finalize branch. Assert the POSITIVE observables (D-P3-3/P1#3): checkpoint
+# does NOT validate review scopes against slice branches (a misclassified finalize would
+# silently land in reviewCount, raising no violation), so the vacuous "no slice violation"
+# pin is meaningless. Assert (i) counters.finalizeRound==1 AND (ii) reviewCount has NO
+# `finalize` key (the minimal fixture's reviewCount is {} -> assert the exact "reviewCount":{}).
+# If the (finalize) arm were deleted, reviewCount would gain "finalize":1 and finalizeRound
+# would be 0 -> both assertions flip. Regression validity: pre-Phase-2 there was no (finalize)
+# arm (finalize counted as a slice).
+read -r repo rd < <(mk_checkpoint finalize_round)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "AC36 checkpoint finalize_round clean" 0 "$RC"
+assert_out_contains "AC36 finalizeRound counts the AppliedEdits:yes finalize round" '"finalizeRound":1'
+assert_out_contains "AC36 reviewCount has NO finalize key (diverted by the (finalize) arm, not slice-classified)" '"reviewCount":{}'
+# AC37 (AC25 negative): review-finalize-1.md keeps `## Verdict:` (passes the unparseable-review
+# Verdict grep) but OMITS the `AppliedEdits:` line -> the (finalize) arm fails closed
+# -> unparseable-finalize, exit 1. Assert the SPECIFIC reason (mirrors unparseable-harden).
+read -r repo rd < <(mk_checkpoint finalize_unparseable)
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "AC37 checkpoint finalize missing AppliedEdits -> exit 1" 1 "$RC"
+assert_out_contains "AC37 unparseable-finalize violation" '"reason":"unparseable-finalize"'
+
 echo "=== CK3/CK4: epoch-gap + dropped-increment recovery; state.json never read ==="
 # Markers r1+r3 with state.json claiming redesigns:2 — the dropped 3rd increment is
 # recovered from the artifact (highest-R wins), the gap is flagged for a human.
@@ -586,6 +672,12 @@ assert_out_contains "SL out-of-enum stage -> stage-malformed" '{"scope":"stage",
 read -r repo rd < <(mk_state_lint stage_done_clean)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "SL stage:\"done\" (real stage) clean" 0 "$RC"
 assert_out_contains "SL real stage clean envelope" '"clean":true,"mode":"state-lint"'
+# AC38 (AC26): stage=="finalize" (Stage 4c) is in the real enum -> clean (no stage-malformed).
+# Regression validity: pre-Phase-2 the enum lacked `finalize`, so this would have hit
+# stage-malformed (exit 1); the clean assertion flips with the enum add.
+read -r repo rd < <(mk_state_lint stage_finalize_clean)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "AC38 stage:\"finalize\" (Stage 4c) clean" 0 "$RC"
+assert_out_contains "AC38 finalize-stage clean envelope" '"clean":true,"mode":"state-lint"'
 # P1-C: phaseList element must be a REF-SAFE phase id — a value with spaces forms an
 # invalid phaseInt/<runId>/<P> ref.
 read -r repo rd < <(mk_state_lint phaselist_badref)
