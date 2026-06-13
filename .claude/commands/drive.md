@@ -1040,7 +1040,10 @@ rebirth signalled before ship is consumed and handed off (Gate B precedence stil
 
 Run the SHIP stage (`/drive-ship` — `~/.claude/commands/drive-ship.md`) on `featureBranch`
 (marker `inflight-ship.marker`): promote
-`$RUN_DIR/decisions.md`+`followups.md` into the repo ledgers, run the full suite
+`$RUN_DIR/decisions.md`+`followups.md` into the repo ledgers (and
+`$RUN_DIR/finalize-todo.md` → repo-root `TODO.md` when present) — the 3-file
+`SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`},
+run the full suite
 (red → retry once → STOP), build the **single** commit + PR, **Gate B** (approve
 diff), then push/open PR. → `lastGate = "B"`, `stage = done`
 
