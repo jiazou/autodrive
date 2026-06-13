@@ -79,6 +79,22 @@ _write_codex() {
   { echo "codex review for $scope"; echo ok; } > "$rd/codex-review-$scope.md"
 }
 
+# Seed a CONVERGED finalize artifact (the ship gate's terminal tip-binding candidate-R).
+# Ship-mode now derives its tip-binding R from review-finalize-N.md (the phase review is
+# demoted to a no-phase-review precondition). $1=rd $2=N $3=reviewed-sha. Writes a CONVERGED
+# verdict + AppliedEdits + reviewed-sha and a non-empty codex sibling.
+seed_finalize() {
+  local rd="$1" n="$2" sha="$3"
+  mkdir -p "$rd"
+  {
+    echo "# Review finalize round $n"; echo
+    echo "## Verdict: CONVERGED"
+    echo "## AppliedEdits: no"; echo
+    echo "reviewed-sha: $sha"
+  } > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo ok; } > "$rd/codex-review-finalize.md"
+}
+
 # Create a run dir under $HARNESS_RUNS (cleaned by the PID-prefix glob on EXIT). $1=runId
 mk_rundir() {
   local runid="$1" rd="$HARNESS_RUNS/$1"
@@ -330,8 +346,11 @@ mk_ship_repo_reviewed() {
   _commit "$repo" README base base >/dev/null
   _gitc "$repo" checkout -q -b "drive/$runid"
   tip="$(_commit "$repo" feature.sh "echo hi" "phase 1 code")"
-  _write_review "$rd" phase1 1 "$tip"   # reviewed-sha == drive tip → ship clean
+  _write_review "$rd" phase1 1 "$tip"   # counting phase review → no-phase-review precondition
   _write_codex "$rd" phase1
+  # Ship's terminal tip-binding candidate-R is now the CONVERGED finalize artifact. No ledger
+  # commit here, so the drive tip IS the finalize R (reviewed-sha == tip; R..tip empty ⊆ allowlist).
+  seed_finalize "$rd" 1 "$tip"
   printf '%s %s\n' "$repo" "$rd"
 }
 
