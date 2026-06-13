@@ -175,7 +175,7 @@ state.json                   -- run model: runId, baseRef, featureBranch, stage,
 event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
 review-<scope>-N.md          -- per-scope (design/phasedesign<P>[-r<R>]/slice/phase/finalize) review outputs
 codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw
-harden-<P>-N.md              -- per-phase harden audit (3-lens) outputs
+harden-<P>-N.md              -- per-phase harden audit (2-lens) outputs
 codex-harden-<P>.md          -- codex harden findings; codex-harden-<P>.log raw
 finalize-todo.md             -- finalize architectural follow-ups (durable; promoted to
                                 repo-root TODO.md at ship)

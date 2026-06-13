@@ -948,10 +948,11 @@ it consumes any `rebirth_pending` the soft-check just set), before proceeding:
    (`/drive-harden phase <P>` — `~/.claude/commands/drive-harden.md`) IN the
    `phaseInt/<runId>/<P>` worktree (`phaseReview[<P>].status = hardening`; each
    `/drive-harden` invocation gets `inflight-harden-<P>.marker`). It is a mutating
-   find→fix→verify pass over the assembled phase to **reduce AI slop, add missing
-   tests, and fix logic bugs** — beyond acceptance criteria — committing to
+   find→fix→verify pass over the assembled phase to **add missing tests, fix logic
+   bugs** — beyond acceptance criteria (de-slop is DEFERRED to the aggregate
+   `/drive-finalize` stage) — committing to
    `phaseInt/<runId>/<P>`. Its own 3-fix-round cap (independent of the conformance cap-8);
-   de-slop edits that would drop a criterion's coverage are vetoed; after any code
+   a fix that would drop a criterion's coverage is vetoed; after any code
    change it re-runs `/drive-review phase <P> harden-regress` as the regression guard.
    Act on its return:
    - `FINDINGS` → a fix round ran but the phase isn't clean yet. Keep
