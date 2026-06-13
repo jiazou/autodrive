@@ -76,6 +76,22 @@ def _section(text, header_re, *, stop_re=r"^#{1,4}\s"):
     return "\n".join(lines[start:end])
 
 
+def _slice_between(text, start_re, stop_re, *, inclusive_stop=False):
+    """Slice from the FIRST line matching `start_re` up to the line matching `stop_re`
+    (excluded by default; included when `inclusive_stop`). Asserts BOTH markers exist so
+    deleting the start marker (e.g. the `Write ...:` schema header) OR the stop boundary
+    reds. Used to pin a sub-block WITHIN an already-sliced section."""
+    lines = text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if re.search(start_re, ln)), None)
+    assert start is not None, f"sub-block start /{start_re}/ not found"
+    end = next(
+        (j for j in range(start + 1, len(lines)) if re.search(stop_re, lines[j])),
+        None,
+    )
+    assert end is not None, f"sub-block stop /{stop_re}/ not found after /{start_re}/"
+    return "\n".join(lines[start : (end + 1 if inclusive_stop else end)])
+
+
 # =========================================================================== #
 # AC39 — finalize command exists with frontmatter; dispatched IN Stage 4c
 # =========================================================================== #
@@ -281,13 +297,35 @@ def test_finalize_emits_shipgate_artifact_contract():
     step1 = _section(text, r"^##\s+Step 1\b.*Audit")
     step1_norm = _norm(step1)
 
-    assert "review-finalize-N.md" in step1_norm, (
-        "Step 1 must name the review-finalize-N.md artifact it WRITES"
+    # The schema-block tokens (`review-finalize-N.md`, the `## AppliedEdits:` marker, the
+    # `reviewed-sha: <40-hex>` line, the codex sibling/raw-log/CODEX_UNAVAILABLE) recur ELSE-
+    # WHERE within Step 1 itself — the binding paragraph (:208-219), the degradation paragraph
+    # (:232-237), and the post-process prose — so a Step-1-wide check stays GREEN even if the
+    # real artifact-SCHEMA listing / exec command block is deleted. Slice the two distinctive
+    # sub-blocks WITHIN Step 1 and pin each token THERE:
+    #   (a) the `Write $RUN_DIR/review-finalize-N.md:` schema enumeration (:197-203), and
+    #   (b) the codex `codex exec ... > $RUN_DIR/codex-raw-finalize.log` command + its post-
+    #       process target `codex-review-finalize.md` (:224-230).
+    schema = _norm(_slice_between(step1, r"Write\s+`?\$RUN_DIR/review-finalize-N\.md", r"^CONVERGED\b"))
+    codex_block = _norm(
+        _slice_between(step1, r"^```\s*$", r"codex-review-finalize\.md", inclusive_stop=True)
     )
-    assert "## AppliedEdits:" in step1, (
-        "Step 1's artifact schema must carry the `## AppliedEdits:` marker line"
+
+    assert "review-finalize-N.md" in schema, (
+        "Step 1's artifact-SCHEMA block (`Write $RUN_DIR/review-finalize-N.md:`) must name "
+        "the review-finalize-N.md artifact it WRITES; the binding/degradation prose elsewhere "
+        "in Step 1 does NOT satisfy this"
     )
-    assert "reviewed-sha" in step1_norm, "Step 1's schema must carry the reviewed-sha line"
+    assert "## AppliedEdits:" in schema, (
+        "Step 1's artifact SCHEMA block must carry the `## AppliedEdits:` marker line"
+    )
+    # The schema's literal `reviewed-sha: <40-hex>` line (NOT the binding-paragraph prose,
+    # which the section-wide check accepted vacuously). Pin the schema-line form.
+    assert re.search(r"reviewed-sha:\s*<40-hex>", schema), (
+        "Step 1's artifact SCHEMA block must carry the `reviewed-sha: <40-hex>` line "
+        "(the per-round binding line the ship gate reads); the binding-paragraph prose "
+        "elsewhere in Step 1 does NOT satisfy this"
+    )
     # reviewed-sha bound to the featureBranch tip — the LOAD-BEARING binding clause in Step 1
     # is the `git rev-parse <featureBranch>` COMMAND that produces the sha. The prose phrase
     # "featureBranch tip" recurs incidentally in Step 1 (a benign-prose match would make this
@@ -297,8 +335,18 @@ def test_finalize_emits_shipgate_artifact_contract():
         "Step 1's reviewed-sha must bind to `git rev-parse <featureBranch>` (the binding "
         "command that yields the post-fix tip the ship gate reads)"
     )
-    assert "codex-review-finalize.md" in step1_norm, "Step 1 must name the codex sibling"
-    assert "codex-raw-finalize.log" in step1_norm, "Step 1 must name the per-scope raw codex log"
+    # The codex command block (the `codex exec ... > $RUN_DIR/codex-raw-finalize.log` exec
+    # redirection) + its post-process target `codex-review-finalize.md`, pinned to the fenced
+    # command block + its immediate post-process sentence, so deleting the exec redirection
+    # path or the post-process target reds (the degradation paragraph's mentions do NOT).
+    assert "codex-raw-finalize.log" in codex_block, (
+        "Step 1's codex exec command must redirect to `$RUN_DIR/codex-raw-finalize.log` "
+        "(the per-scope raw codex log); the degradation prose mention does NOT satisfy this"
+    )
+    assert "codex-review-finalize.md" in codex_block, (
+        "Step 1's codex post-process must write `$RUN_DIR/codex-review-finalize.md` (the "
+        "codex sibling); the degradation prose mention does NOT satisfy this"
+    )
     assert "CODEX_UNAVAILABLE" in step1_norm, (
         "Step 1's codex degradation must emit the CODEX_UNAVAILABLE token"
     )
@@ -407,12 +455,26 @@ def test_finalize_scope_creep_gate_and_arch_todo():
         "lens 3 must be the aggregate logic-bugs lens"
     )
     # Architectural findings route: durable finalize-todo.md, promoted to repo-root TODO.md.
-    assert "finalize-todo.md" in norm, "the durable $RUN_DIR/finalize-todo.md"
-    assert "TODO.md" in norm, "the repo-root TODO.md promotion target"
-    # NOT a finalize working-tree TODO.md (the broken design D10 ruled out).
-    assert re.search(r"NEVER writes or commits any project `TODO.md`", text) or re.search(
-        r"do not create any `?TODO\.md`?", norm, re.IGNORECASE
-    ), "finalize must NOT write a wt/finalize/TODO.md (architectural findings go to $RUN_DIR)"
+    # SECTION-BOUNDED to `## Architectural findings → durable $RUN_DIR/finalize-todo.md`
+    # (drive-finalize.md:107). The bare tokens `finalize-todo.md` / `TODO.md` recur in Step 3,
+    # the Loop-counter §, and the Phase-2 obligations note, so a file-wide check stays GREEN
+    # even if the real routing section is deleted. Slice it and pin its load-bearing clauses
+    # THERE: finalize APPENDS findings to $RUN_DIR/finalize-todo.md, and NEVER writes/commits
+    # any project TODO.md.
+    arch = _norm(_section(text, r"^##\s+Architectural findings\b"))
+    assert "finalize-todo.md" in arch, (
+        "the Architectural-findings section must route findings to $RUN_DIR/finalize-todo.md"
+    )
+    assert re.search(r"\bAPPENDS?\b.*finalize-todo\.md", arch, re.IGNORECASE), (
+        "the section must state finalize APPENDS the finding to $RUN_DIR/finalize-todo.md"
+    )
+    # NOT a finalize working-tree TODO.md (the broken design D10 ruled out) — the load-bearing
+    # negative clause, pinned WITHIN this section so deleting it reds.
+    assert re.search(r"NEVER writes or commits any project `?TODO\.md`?", arch), (
+        "the Architectural-findings section must state finalize NEVER writes or commits any "
+        "project TODO.md (architectural findings go to $RUN_DIR/finalize-todo.md, not a "
+        "wt/finalize/TODO.md)"
+    )
 
 
 # =========================================================================== #
@@ -459,15 +521,33 @@ def test_ship_spec_finalize_precondition_and_promotion():
         "tip would FALSE-STOP a resumed ship); weakening it to strict == tip must red"
     )
 
-    # ---- ledger promotion + 3-entry allowlist (unchanged load-bearing pins). ---------- #
-    assert "finalize-todo.md" in norm and "TODO.md" in norm, (
-        "ship must promote $RUN_DIR/finalize-todo.md -> repo-root TODO.md"
+    # ---- ledger promotion + 3-entry allowlist. ---------------------------------------- #
+    # SECTION-BOUNDED to `## Ship worktree + ledger promotion` (drive-ship.md:41). The bare
+    # tokens (`finalize-todo.md`, `TODO.md`, `SHIP_LEDGER_ALLOWLIST`, `.harness/...`) recur in
+    # `## Build the PR` + `## Ship conformance`, so a file-wide check stays GREEN even if the
+    # real promotion paragraph (drive-ship.md:44-62) is deleted. Slice the promotion section
+    # and pin the promotion clause THERE.
+    promo = _norm(_section(text, r"^##\s+Ship worktree \+ ledger promotion\b"))
+    assert re.search(
+        r"finalize-todo\.md\b.*(promote|into).*\brepo-root `?TODO\.md", promo, re.IGNORECASE
+    ) or re.search(
+        r"promote\b.*finalize-todo\.md\b.*\bTODO\.md", promo, re.IGNORECASE
+    ), (
+        "the ledger-promotion section must promote $RUN_DIR/finalize-todo.md -> the repo-root "
+        "TODO.md; the Build-the-PR / conformance mentions of these tokens do NOT satisfy this"
     )
-    assert "SHIP_LEDGER_ALLOWLIST" in norm, "the SHIP_LEDGER_ALLOWLIST constant"
-    # The 3-entry allowlist contents.
-    assert "TODO.md" in norm and ".harness/decisions.md" in norm and (
-        ".harness/followups.md" in norm
-    ), "the 3-entry ledger allowlist {decisions.md, followups.md, TODO.md}"
+    assert "SHIP_LEDGER_ALLOWLIST" in promo, (
+        "the ledger-promotion section must name the SHIP_LEDGER_ALLOWLIST constant it keeps "
+        "in sync (the single ledger commit's allowlist)"
+    )
+    # The 3-entry allowlist contents, pinned WITHIN the promotion section.
+    assert (
+        "TODO.md" in promo and ".harness/decisions.md" in promo and ".harness/followups.md" in promo
+    ), "the 3-entry ledger allowlist {.harness/decisions.md, .harness/followups.md, TODO.md}"
+    # And the SINGLE-commit discipline (the promotion lands in the one ledger commit).
+    assert re.search(r"SINGLE commit\b|single commit\b", promo), (
+        "the promotion must land in the SINGLE ledger commit (R..tip ≤1 commit ⊆ allowlist)"
+    )
 
     # ---- (b) the finalize-todo Gate-B SURFACING bullet, SECTION-BOUNDED. -------------- #
     # `"Gate B" in text` is vacuous — `## Gate B` is its own section + the constant appears
@@ -537,10 +617,19 @@ def test_claudemd_pipeline_and_invariant():
     )
     assert re.search(r"Stage 4c", norm), "CLAUDE.md must place finalize as Stage 4c"
 
-    # Harden's stage line defers de-slop to finalize (not applied in harden).
-    assert re.search(r"de-slop is [Dd]eferred to `?/drive-finalize`?", norm) or re.search(
-        r"defer.*de-slop.*finalize", norm, re.IGNORECASE
-    ), "CLAUDE.md harden description must defer de-slop to /drive-finalize"
+    # Harden's stage description defers de-slop to finalize (not applied in harden).
+    # SECTION-BOUNDED to the `Each phase ends with a HARDEN pass` invariant bullet (up to the
+    # next top-level `- **` bullet). A file-wide `defer.*de-slop.*finalize` is VACUOUS: `norm`
+    # is the whole file collapsed to one line, so the alternation spans CLAUDE.md:38's
+    # unrelated "DEFERRED ... /drive-finalize" across to a distant "de-slop"/"finalize" and
+    # stays GREEN even if the harden bullet's own deferral clause is deleted. Slice the HARDEN
+    # bullet and pin the deferral THERE.
+    harden_bullet = _norm(_slice_between(text, r"Each phase ends with a HARDEN pass", r"^- \*\*"))
+    assert re.search(r"de-slop is [Dd]eferred to `?/drive-finalize`?", harden_bullet), (
+        "CLAUDE.md's HARDEN-pass invariant bullet must state de-slop is deferred to "
+        "/drive-finalize (a file-wide defer/finalize co-occurrence elsewhere does NOT "
+        "satisfy this)"
+    )
 
     # ---- (ii) FINALIZE invariant is OMISSION-PROOF (the load-bearing property). ------- #
     # Not just the token `omission-`: the invariant must state that ship's terminal/
@@ -554,8 +643,21 @@ def test_claudemd_pipeline_and_invariant():
         norm,
         re.IGNORECASE,
     ), "ship's terminal SHA-bound review must BE the finalize artifact (tip-binding)"
-    assert re.search(r"FINALIZE_CAP\s*=\s*3", norm), "the FINALIZE_CAP=3 cap"
-    assert "finalizeRound" in norm, "the finalizeRound counter in the invariant"
+    # The cap + counter must be pinned to the FINALIZE invariant BULLET, not file-wide:
+    # `finalizeRound` recurs in the `## Run state` inventory (CLAUDE.md:171) and `FINALIZE_CAP`
+    # could be defined elsewhere, so a norm-wide check stays GREEN even if the invariant's own
+    # `Own cap FINALIZE_CAP=3 ... counter state.finalizeRound` line is deleted. Slice the
+    # FINALIZE bullet (`- **The run ends with a single FINALIZE pass**` up to the next
+    # top-level `- **` bullet) and assert the cap/counter THERE.
+    finalize_inv = _norm(_slice_between(text, r"single FINALIZE pass", r"^- \*\*"))
+    assert re.search(r"FINALIZE_CAP\s*=\s*3", finalize_inv), (
+        "the FINALIZE invariant bullet must state its own cap FINALIZE_CAP = 3 (a file-wide "
+        "occurrence elsewhere does NOT satisfy this)"
+    )
+    assert "finalizeRound" in finalize_inv, (
+        "the FINALIZE invariant bullet must name the state.finalizeRound counter (the "
+        "run-state inventory mention does NOT satisfy this)"
+    )
 
     # ---- (iii) harden 2-lens CONSISTENCY — the 3-lens drift cannot recur. ------------ #
     # The harden artifact ledger entry must describe a 2-lens audit (the narrowed model),
