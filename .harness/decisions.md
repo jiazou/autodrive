@@ -2159,3 +2159,340 @@ Three integration findings on the assembled phase-4 branch (codex-review-phase4.
 **Kept (per harden instruction):** the uncommitted docstring edit in test_rebirth_handshake.py (`test_resume_rebirth_continue_is_fail_closed_re_proven`: "via BOTH `--mode checkpoint` AND `--mode state-lint`") — included in this commit.
 
 **Verify:** `python3 -m pytest` = 451 passed (was 450; +1 e2e); drive-conformance 181/0; rebirth-install-layout 20/0; drive-soft-check-doc 21/0; statusline-window ALL PASS.
+
+## Run harden-20260612-210528 (2026-06-13) — end-of-flow aggregate FINALIZE stage (Stage 4c) + narrowed per-phase harden
+
+# Decisions — add an end-of-flow aggregate hardening stage to /drive
+
+## D1 — Premise (corrected; User-Challenge, clarified twice by user)
+The feature is a CHANGE TO THE /drive SKILL: every drive run, on whatever PROJECT it drives,
+ends with a final aggregate hardening pass over that driven project. NOT hardening the
+autodrive repo's own scripts (that was a misread, twice). Implementation lands in this repo's
+drive specs + tests; the capability runs on the driven project.
+
+## D2 — End-stage role: de-slop moves to the END (user choice at the design fork)
+Per-phase HARDEN (drive-harden.md) narrows to CORRECTNESS ONLY (lens 2 add-tests + lens 3
+fix-bugs). Lens 1 (de-slop) is REMOVED from per-phase harden and done ONCE at the end, in a
+new final aggregate stage that ALSO does a whole-run bug/test/TODO sweep over the full run
+diff. Matches the canonical "dedicated de-slop pass when correctness dominated" rule + the
+user's "de-slop at the end."
+
+## D3 — Edit scope of the final stage (Taste; coordinator call): run-diff-focused, aggregate-aware
+The final stage READS the whole driven codebase for aggregate context but EDITS only the run's
+diff (baseRef..featureBranch) + a flagged-P1's true root cause just outside it (same scope-creep
+HARD GATE as drive-harden). /drive builds a feature; it must not rewrite untouched user code.
+"Look at the entire codebase in aggregate" = read-context, not edit-everything.
+
+## D4 — Architectural findings → TODO in the DRIVEN project (Mechanical)
+Major architectural problems the final stage finds are appended to a TODO in the driven
+project's tree (not fixed in-run), surfaced at Gate B.
+
+## D7 — Final-stage command name = `drive-finalize` (`/drive-finalize`) (Taste; Phase 1 design)
+Resolves design.md Open Question 1 (separate command, name fixed). The stage LEADS with de-slop
+but also runs the aggregate logic-bug + missing-test sweep and routes architectural findings to a
+TODO — `drive-deslop` undersells that; `drive-finalize` names it by its pipeline ROLE (the final
+aggregate quality pass before Verify/Ship). The shared dual-voice 3-lens body is re-stated inline
+(not factored to a common include — no such mechanism exists; factoring would be a Phase-1 refactor
+beyond the narrow), mirroring how drive-harden.md already restates drive-review.md's mechanics.
+
+## D8 — Ship-gate scope token = `finalize`; artifacts review-finalize-N.md + codex-review-finalize.md (Mechanical)
+`finalize` is disjoint from `phase<P>`/`phasedesign<P>`, so the existing `--mode ship`
+`review-phase*` glob never matches it — Phase 2 adds it as a SEPARATE explicit candidate-R source.
+Reuses drive-review.md's `review-<scope>-N.md` / `codex-review-<scope>.md` / `codex-raw-<scope>.log`
+naming verbatim so the conformance helpers (highest_review_file/verdict_converged/reviewed_sha_of/
+codex_present) work on it UNMODIFIED.
+
+## D9 — Finalize fix-round cap = FINALIZE_CAP = 3; counter `state.finalizeRound` (Mechanical)
+Mirrors HARDEN_CAP=3 (fix rounds only; the confirming clean audit is free). Run-singleton stage →
+a single top-level state field (no per-phase map). Each `review-finalize-N.md` carries an
+`## AppliedEdits: yes|no` marker so the counter is artifact-derivable like harden's. Phase 2 wires
+the state field + run-graph node.
+
+## D10 — architectural findings: durable $RUN_DIR/finalize-todo.md, promoted at ship (REVISED, phasedesign1 r1)
+finalize APPENDS architectural findings to $RUN_DIR/finalize-todo.md (durable, worktree-reachable);
+the SHIP stage promotes it into the driven project's repo-root TODO.md within the single ledger
+commit (SHIP_LEDGER_ALLOWLIST extended to include TODO.md) and surfaces it at Gate B from the
+$RUN_DIR copy. finalize NEVER writes/commits a worktree TODO.md (the old "working-tree note" design
+was broken: ship runs in a separate wt/ship worktree and can't see an uncommitted wt/finalize note).
+
+
+## D11 — Placement (Stage 4c, after all phases hardened, before Verify) is fixed by D6 (Taste)
+Phase 1 encodes only the stage's self-contained contract (scope, artifact, cap, returns) in the
+same shape drive-harden.md uses, so Phase 2 can drop it into the loop. The actual wiring (new Stage
+4c, the "all phases hardened" precondition, Verify-reads-final-tree) is Phase 2.
+
+## D12 — Fix slice-1.2 codex P2 (reviewed-sha replace-in-place) before converging (Taste)
+codex flagged a load-bearing ambiguity: drive-finalize.md's "re-emit reviewed-sha" could be read as
+APPEND, but reviewed_sha_of() reads the FIRST match → ship would bind the stale pre-fix sha,
+defeating the omission-proofing. Chose to fix (not log-and-defer) since it's the feature's spine.
+
+## D13 — per-slice re-review subsumed by phase re-review for the phase-scoped handoff fix (Taste)
+The deferred-slop handoff is a CROSS-SLICE property only verifiable where both files coexist (the
+phase integration). A per-slice dual-voice review can't see it (and codex re-raises a slice-isolation
+false positive). So for these phase-finding reroutes (phase1 r1 P1 wiring, r2 P1 orphan-path), the
+authoritative dual-voice gate is the phase re-review; per-slice fixes are mechanically verified
+(only-its-file + waiver). Slice reviewCount unchanged for these fix rounds.
+
+## D14 — finalize de-slop is AUDIT-DRIVEN; deferred-slop notes are a SEED, not a fix queue (phase1 r3, codex)
+followups.md is append-only; treating its "## slop (deferred to finalize)" section as a standing
+fix set never converges (applied items persist). Refinement: finalize convergence is keyed on the
+round's re-audit of the run-diff CODE (an already-applied slop edit won't reappear); the deferred-slop
+notes SEED the first audit (best-effort recall of harden's spots) but are not the convergence signal
+and need no drain. General lesson: an append-only ledger used as a work queue needs a drain/done-marker
+or an idempotent audit-driven convergence; otherwise it loops.
+
+## D13-REVERTED — per-slice review IS required each fix round (git-truth gate)
+D13 (subsume per-slice review into phase review) is WRONG: bin/drive-conformance.sh --mode audit
++ the merge gate require EVERY merged slice to have a counting dual-voice review whose reviewed-sha
+== the slice's CURRENT tip. Skipping it flags sha-mismatch and blocks assembly. So each fix round
+gets its own per-slice dual-voice review (reviewed-sha bound to the new tip), THEN the phase review
+verifies the cross-slice handoff. The per-slice review is scoped to the slice's OWN change soundness
+(codex prompted to not re-raise the cross-file slice-isolation false positive).
+
+## D15 — `(finalize)` classifier case is CHECKPOINT-ONLY, not state-lint (Mechanical; Phase 2 design)
+The real `case "$scope"` over `review-*.md` lives ONLY in bin/drive-conformance.sh `--mode checkpoint`
+(~L610). `--mode state-lint` reads state.json and has NO review-scope classifier (it validates routing
+fields). Phase-1 §Interfaces 3 / the prompt said "checkpoint/state-lint classifier" — imprecise; real
+code wins. The phantom-slice `(finalize)` arm goes in checkpoint mode; state-lint's only finalize edit
+is adding `finalize` to the stage enum.
+
+## D16 — `finalizeRound` is a BARE INTEGER counter, not a per-phase map (Mechanical; Phase 2 design)
+finalize is run-singleton, so `counters.finalizeRound` is `$frj` (an int), unlike the per-phase
+`redesigns`/`hardenRound`/`phaseReviewRound` maps. Matches `state.finalizeRound`'s shape (D9) and the
+resume `max(state, int)` repair.
+
+## D17 — ship's finalize R REPLACES the phase Rs as tip-binding; phase reviews become a precondition (Taste; Phase 2 design)
+Two roles split: the finalize R is the ONLY review whose reviewed-sha == post-finalize tip (the
+tip-binding (a)(b)(c) test runs on it). The phase reviews can no longer tip-bind (finalize commits
+moved the tip past them) but their EXISTENCE is still required (`no-phase-review` precondition),
+preserving "every shipped phase had a counting integration review." Keep both — dropping the
+precondition would let a finalize-only artifact ship a phase that never reviewed.
+
+## D18 — `stage = finalize` is a new pipeline stage value (Mechanical; Phase 2 design)
+Added to drive.md's flow AND state-lint's stage enum (the cross-slice contract: Slice 2.1 uses it,
+Slice 2.2 validates it). Resume routes finalize-vs-verify by the finalize ARTIFACT (CONVERGED +
+reviewed-sha == tip), not by `state.stage` (artifact-derived, per the run's git-truth discipline).
+
+## D19 — OPERATING.md is NOT edited by Phase 2 (Taste; Phase 2 design)
+The de-slop-at-end principle is already canonical in OPERATING.md. The finalize MECHANISM belongs in
+the project CLAUDE.md invariant (Phase 2 D2/AC30), not a duplicate global rule (Principle 2/4).
+
+## D20 — Phase-2 design fixes from phasedesign2 r1 (2 P1 + 2 P2)
+(Claude P1) A1 now changes BOTH drive.md:920 (operative HARDENED-handler transition) AND :925
+(restatement) to stage=finalize — else finalize never dispatches in the single-session happy path.
+(Codex P1) the ship phase-review precondition keys off the COUNTING candidate_R (post
+verdict/sha/codex checks), NOT seen_phase presence — a stale/FINDINGS phase artifact can't forge it.
+(Codex P2) finalize ship candidate-R uses the existing (a)(b)(c) ancestor+≤1-commit+allowlist rule,
+NOT strict reviewed-sha==tip (tolerates ship's later ledger commit); the strict == is only the
+resume-time routing check (pre-ledger-commit). (Codex P2) finalizeRound reconstruction fails closed
+(unparseable-finalize) on a review-finalize-N.md missing AppliedEdits, mirroring unparseable-harden.
+
+## D21 — add slice 2.5 to update the 4 reddened existing conformance tests (Mechanical; discovered at implement)
+Phase 2's conformance.sh change (slice 2.2) reds 4 existing test/drive-conformance.test.sh cases that
+pin the OLD ship/counters behavior (AC4.i, AC4b, AC5b, CK1) — the expected "gate-tightening reds the
+allow-tests" signal. test/drive-conformance.test.sh wasn't owned by a Phase-2 slice (test-ownership put
+it in Phase 1), but Phase-2 integration requires a green suite, so the behavior change must carry its
+test update. NEW slice 2.5 owns test/drive-conformance.test.sh and updates those 4 cases to the new
+contract (finalize terminal R; no-phase-review keyed on counting; 6-key counters incl finalizeRound).
+NEW finalize-specific coverage (checkpoint finalize fixture, unparseable-finalize, full pipeline
+contract) stays in Phase 3. 2.5 is file-disjoint from 2.1-2.4 (deps:none), works against the design
+contract.
+
+## D22 — add slice 2.6 to update test_rebirth_handshake.py for the new finalize stage (Mechanical; discovered at phase-2 integration)
+Phase 2's new `finalize` stage (slice 2.1 added it to drive.md's leg-condition selector) reds 2 existing
+tests in tests/contracts/test_rebirth_handshake.py that hardcode the 5-stage enum (_STAGE_ENUM,
+_EXECUTE_STAGES). finalize is a real execute-leg stage, so the selector add is correct and the test
+constants are stale → add `finalize` (execute-leg) to both. NEW slice 2.6 owns test_rebirth_handshake.py
+(file-disjoint, deps:none). Same "gate-add reds the contract test, update it" pattern as 2.5.
+
+## D23 — add slice 2.7: the ship-contract change reds ship-fixtures in 2 more test files (discovered at phase-2 integration)
+Phase 2's new ship contract (finalize artifact = terminal candidate-R) reds 5 ship-fixture cases across
+test/drive-merge-gate.test.sh (3: ship-silent-when-reviewed, --git-dir ship, push --mirror) and
+test/drive-enforcement-e2e.test.sh (2: ship silent allow after ledger-only commit; fail-mode expected
+ship exit 2 — now short-circuits to no-review like AC5b). These are EXPECTED behavior-change reds (the
+omission-proofing now requires a finalize artifact; the fixtures seed only phase reviews). The
+enforcement behavior is CORRECT. Slice 2.5 only covered drive-conformance.test.sh; slice 2.7 owns the
+2 remaining bash test files and updates their ship fixtures to seed a CONVERGED finalize artifact
+(reviewed-sha bound so R..tip = the single ledger commit), matching the new contract. File-disjoint, deps:none.
+
+## D24 — phase-2 integration P1: merge-gate ship-deny remediation must point at /drive-finalize (design gap)
+codex phase-2 review: bin/drive-merge-gate.sh:1090's ship-deny message names `/drive-review phase <P>`,
+but the new ship contract requires the finalize artifact — following it leaves ship blocked. bin/drive-merge-gate.sh
+was never in Phase 2's file set (design gap). Fix: NEW slice 2.8 updates the merge-gate ship-deny remediation to
+`/drive-finalize` (matching conformance/drive-ship); reopen 2.7 to update the ship-deny message assertions in
+drive-merge-gate.test.sh + drive-enforcement-e2e.test.sh; reopen 2.1 for the P2 (drive.md Stage-5 summary 3-file
+allowlist incl TODO.md). New canonical ship-deny remediation message defined in the slice prompts.
+
+## D25 — phase-2 P1: finalize-CONVERGED check must be TOLERANT in resume + ship precondition (codex r2)
+/drive-ship commits the ledger BEFORE suite-red STOP and Gate B, so a resume after those points has
+tip = ledger commit (one past the finalize reviewed-sha). drive.md A2 resume routing + drive-ship.md C1
+precondition used strict reviewed-sha==tip ("resume is pre-ledger") — false for a post-ledger resume →
+false-stop/misroute back to finalize. Fix (reopen 2.1 drive.md + 2.3 drive-ship.md): the finalize-CONVERGED
+determination uses the TOLERANT test (==tip OR ancestor with R..tip ⊆ 3-file allowlist ≤1 commit), the same
+criterion the --mode ship gate uses. This is the root reviewed-sha-tolerance lesson applied to ALL finalize-
+CONVERGED surfaces, not just the ship conformance gate.
+
+## D26 — phase-2 P1: drive.md resume finalize-CONVERGED must also require the codex sibling (codex r3)
+The 3 finalize-CONVERGED surfaces must be IDENTICAL. drive.md resume routing had the tolerant sha test but
+omitted the non-empty codex-review-finalize.md requirement that conformance.sh ship gate + drive-ship.md
+precondition both have → a finalize missing its codex sibling could resume to verify while ship rejects it.
+Fix (reopen 2.1): add "AND a non-empty codex-review-finalize.md exists" to drive.md's resume finalize-CONVERGED check.
+
+## D27 — phase-2 harden: codex/Claude flagged 3 finalize test gaps; CONFIRMED Phase-3 scope (harden triage)
+Phase-2 harden audit (Claude 0 P1 / codex 3 P1) surfaced the SAME 3 finalize-specific test gaps,
+all D21-deferred to Phase 3 ("Tests"): (AC24) the b-i `no-phase-review` precondition with a valid
+finalize artifact but only a non-counting phase review → assert no-phase-review rc1; (AC25) checkpoint
+`(finalize)` arm — positive `AppliedEdits: yes` → finalizeRound==1 + no phantom-slice, AND a missing
+`AppliedEdits:` line → unparseable-finalize rc1; (AC23 negative) ship BLOCKS no-review when the finalize
+artifact is absent/FINDINGS with phase reviews present. Per the harden HARD GATE these are NOT written
+in Phase-2 harden (forbidden to reach into the unbuilt Phase 3). The Phase-3 detailed design MUST cover
+these exact decisive cases — every updated Phase-2 fixture seeds BOTH a phase review AND a finalize
+artifact, so the b-i / unparseable / no-review branches are currently untaken by any test.
+
+## D28 — phase-2 harden-regress: reconcile design-phase2.md to D25/D26 (tolerant finalize-tip); codex BLOCKING was doc-staleness
+The harden-regress codex pass raised BLOCKING: drive.md:113 + drive-ship.md:17 use the TOLERANT
+finalize-CONVERGED test (R ancestor of tip, R..tip ⊆ 3-file allowlist ≤1 commit) while design-phase2.md
+AC21/C1/D18/L135 still asserted strict `reviewed-sha == tip` at resume + ship-start (tolerant reserved
+for --mode ship). Investigated against git truth: the CODE is correct per D25/D26 (decided at phase-2
+implement, codex r2/r3) AND the CONVERGED round-4 conformance review (review-phase2-4.md: "THREE
+finalize-CONVERGED surfaces now IDENTICAL ... tolerant"); drive-ship.md commits the ledger BEFORE its
+suite-red STOP and Gate B, so a post-ledger resume has tip = R+1 and strict `==` would false-stop —
+the tolerant test is provably correct. The acceptance-criteria DOC (AC21/C1/D18/L135) was stale: it
+predates D25/D26 and was never reconciled. Per OPERATING ("update the doc when in-session decisions
+diverge"), reconciled all four spec regions to the tolerant test this harden round. NO code change (the
+code already implements the converged contract). The codex BLOCKING was a true divergence detection
+that trusted the stale spec over the later-authoritative decisions + converged code. Doc-only edit —
+no behavior change, no regression guard needed, hardenRound unchanged.
+
+## D-P3-1 — EXTEND test/drive-conformance.test.sh + mkfixture.sh for the bash finalize cases (Mechanical; Phase 3 design)
+The file IS the conformance behavioral suite (runner harness, seed_finalize, all mk_* fixtures,
+section structure); a new bash test file would duplicate the harness (anti-DRY). Its Phase-2
+owner (slice 2.5) is already converged, so a single Phase-3 slice may own it without a Phase-3
+write-race. New finalize cases (AC32-AC38) extend it; two new mk_checkpoint variants + one
+mk_state_lint variant extend mkfixture.sh.
+
+## D-P3-2 — finalize spec-contract pins go in a NEW tests/contracts/test_drive_finalize_contract.py (Taste; Phase 3 design)
+Pin `/drive-finalize` referenced in drive.md + the harden lens-narrowing + the finalize pipeline
+contract (Stage 4c placement, artifact contract, ship precondition, CLAUDE.md invariant, cross-file
+token consistency) in a dedicated new file — NOT by editing the generic test_drive_command_refs.py
+(its `expected` set is a sanity floor; overloading it muddies a generic test) and NOT in the
+checkpoint-scoped test_checkpoint_contract.py. Mirrors the existing one-contract-per-feature pattern.
+Keeps Phase-3 ownership clean (test_drive_command_refs.py is owned by an earlier phase).
+
+## D-P3-3 — assert the SPECIFIC violation reason, not just rc 1 (Mechanical; Phase 3 design)
+The D27 mandate is about WHICH guard fires: AC23neg → `no-review` (b-ii empties candidate_R after
+b-i passed), AC24 → `no-phase-review` (b-i fires first), AC25b → `unparseable-finalize`. An rc-only
+assertion passes green-for-the-wrong-reason. Each negative case asserts its reason token.
+
+## D-P3-4 — AC34/AC35 (AC24) build the fixture INLINE from mk_ship clean (Mechanical; Phase 3 design)
+Flip review-phase1 to FINDINGS / delete its codex; seed_finalize at HEAD^. mk_ship clean already
+builds the repo + ledger commit + tip-binding R; two inline edits suffice — no new mk_* builder for
+two call sites.
+
+## D-P3-5 — Slice 3.1 owns BOTH test/drive-conformance.test.sh and test/fixtures/mkfixture.sh (Mechanical; Phase 3 design)
+The new cases call the new fixture builders — one write-unit. Splitting across two parallel slices
+would race on the fixture call-site contract. Within Phase 3 these files are owned by exactly one
+slice (3.2 owns only the new Python file) → disjoint.
+
+## D-P3-6 — assert "finalizeRound":1 as a SUBSTRING, not full-JSON-equality, for AC36 (Mechanical; Phase 3 design)
+The other counters are {}/0 by the minimal finalize_round fixture; pinning the whole counters object
+would be brittle to base shape. Pin the one value under test (right-size at design).
+
+## D-P3-7 — Phase 3 P1 design-review fixes (Mechanical; grounded in the real worktree)
+Resolved the three dual-voice P1s by grounding each test re-spec on a worktree grep/read:
+- **P1#1 (AC44 token consistency unrealizable).** Greps showed the tokens are NOT uniform across
+  files: `inflight-finalize.marker` lives ONLY in drive.md+CLAUDE.md (not drive-finalize.md/
+  conformance.sh); `## AppliedEdits: yes` is NOT in CLAUDE.md. Re-specified AC44 / test 9 to
+  PER-FILE expectation sets (matched-file set EQUALS required set per token) so the test passes
+  on correct code and reds only on a real drop/spelling-drift. Grounded on
+  `grep -rln '<token>' .claude/commands/ bin/ CLAUDE.md`.
+- **P1#2 (Stage-4c pins vacuous).** `/drive-finalize` and `stage = finalize` also appear in
+  resume/recovery prose (drive.md:128/133/399-402), so a loose "appears somewhere" pin passed
+  vacuously. Re-specified tests 2/3 + AC39/AC40 to SECTION-BOUND on real anchors: the
+  `### Stage 4c — Finalize` header (drive.md:981), the dispatch `then invoke /drive-finalize`
+  (drive.md:1011), and the Execute→Finalize transition `all phases … hardened → stage = finalize`
+  (drive.md:979) — deleting the real wiring now reds despite the token surviving elsewhere.
+- **P1#3 (AC25a "no slice violation" vacuous).** Confirmed checkpoint mode does NOT validate
+  scopes against slice branches (conformance.sh:656 default arm); a misclassified `finalize`
+  would silently land in `reviewCount`, raising no violation. Re-specified AC25a/AC36 + the
+  helper + edge-notes to assert the POSITIVE: `counters.reviewCount` has NO `finalize` key AND
+  `counters.finalizeRound == 1`. Grounded on the real `counters` JSON shape
+  (conformance.sh:787) and the `(finalize)` case arm (conformance.sh:644).
+Slice ownership UNCHANGED and disjoint (3.1 owns test/drive-conformance.test.sh +
+test/fixtures/mkfixture.sh; 3.2 owns tests/contracts/test_drive_finalize_contract.py).
+
+## AC44 P1 (both voices) — finalize-token consistency re-specced from exact-set-equality to per-token required-presence (required carriers MUST contain the token, extras tolerated); fixed `## AppliedEdits: yes` set to {drive.md, drive-finalize.md, bin/drive-conformance.sh} (drive-harden.md has `## AppliedEdits: pending` only) and made `review-finalize` require all six carriers incl. bin/drive-merge-gate.sh; grounded by grep, both AC44 locations (interfaces ~224 + AC list ~392) agree.
+
+- [slice 3.2 / phase-3 integration] Flagged scope-widening to CLAUDE.md:178 — changed `harden-<P>-N.md -- per-phase harden audit (3-lens) outputs` to `(2-lens)` to match the narrowed harden model (drive-harden.md "The two hardening lenses"; de-slop deferred to /drive-finalize). True root cause of the AC43 P1 (vacuous test masked a real production-doc drift introduced in phase 1/2). Classification: Mechanical — phase-1/2 consistency drift exposed at phase-3 integration. (Authorized 1-line out-of-ownership edit per the slice prompt.)
+
+## Slice 3.2 round 2 — tightened vacuous token-presence pins (Mechanical, P-completeness/P-explicit)
+Phase-integration review found 2 P1 vacuous pins in test_drive_finalize_contract.py; fixed both + swept for the same defect class.
+- AC42 `test_finalize_emits_shipgate_artifact_contract`: section-bound the full-suite-revert-on-red guard to `## Step 4 — Regression guard & converge` (was file-wide `full...suite`+`REVERT`, satisfied by Step-3/lens-1 prose at L77/316/353). Now reds if the Step-4 guard (FULL suite as regression guard + reddened→REVERT + "do not reconcile by editing the test") is deleted/weakened.
+- AC43 `test_ship_spec_finalize_precondition_and_promotion`: section-bound (a) the tolerant finalize precondition #3 to `## Preconditions` (review-finalize-N.md + ANCESTOR-of-tip + R..tip ≤1 commit + explicit tolerate; reds if weakened to strict ==tip) and (b) the Gate-B finalize-todo surfacing bullet to `## Build the PR` (finalize-todo.md architectural follow-ups from durable $RUN_DIR copy before Gate B; reds if bullet deleted). Was `ancestor` anywhere + bare `"Gate B" in text`.
+- SWEEP: found 1 additional weak pin — `test_finalize_scope_creep_gate_and_arch_todo` three-lenses check used norm-wide `de-slop`/`missing test`/`logic bug` (de-slop appears x14 file-wide); section-bound to `## The three lenses` with the 3 numbered lens definitions (reds if section deleted/lens dropped). Other norm-wide checks left as-is: they pin distinctive literal/multi-word tokens (review-finalize-N.md, baseRef..featureBranch, FINALIZE_CAP=3, SHIP_LEDGER_ALLOWLIST), not generic words — not the loose-token defect.
+Each tightened assertion verified by mutation: deleting/weakening the real clause reds; correct code passes. Full tests/contracts/ green.
+
+## slice 3.2 (loose-pin convergent fix)
+- Section-bounded every clause-pinning assertion in test_drive_finalize_contract.py to its
+  owning `##`/`###` header so a token recurring in OTHER sections cannot satisfy it. Fixed
+  the 4 codex-flagged loose pins (harden lens-defs, finalize Step-1 artifact schema,
+  finalize Scope diff-clause, CLAUDE.md run-state inventory) PLUS tightened the reviewed-sha
+  binding (dropped the loose `featureBranch tip` prose OR-branch; pin only `rev-parse
+  featureBranch`) and moved FINALIZE_CAP/finalizeRound presence into the `Loop counter`
+  section slice. (P1: completeness.)
+- CLAUDE.md run-state asserts the COLLAPSED `review-<scope>-N.md ... finalize` family form
+  (run-state never carries a literal `review-finalize-N.md`; that literal lives only in the
+  FINALIZE invariant, pinned separately by part (ii)).
+- Self-mutation-tested EVERY assertion (in-memory section/line deletion + monkeypatched
+  Path.read_text): every targeted clause-deletion reds its owning test; all 9 tests pass on
+  the real files. No over-tightening — pins bind a header + distinctive clause, not line
+  numbers or incidental wording.
+
+## slice 3.2 (test-pin tightening) — 2026-06-13
+- Fixed the 8 still-green clause-deletion mutations + 2 pre-existing loose pins (Scope
+  diff-clause harness false-flag was harness-only; CLAUDE harden de-slop deferral was a
+  real file-wide-norm vacuity, tightened to the HARDEN bullet). Principle 1 (completeness):
+  achieved full mutation parity (63 mutations, 0 still-green) rather than fixing only the
+  named 8, per the methodology brief.
+- Added a `_slice_between(start_re, stop_re, inclusive_stop)` helper to pin sub-blocks WITHIN
+  an already-sliced section (Step-1 schema block + codex command block); it asserts BOTH
+  markers exist so deleting either reds. Principle 5 (explicit-over-clever).
+- D-3.2-harden-drift: Fixed harden-narrowing consistency drift in `.claude/commands/drive.md` step-6 (~951): removed "reduce AI slop" from the harden-pass description and reconciled the immediately-following veto clause; harden now reads "add missing tests, fix logic bugs (de-slop is DEFERRED to the aggregate /drive-finalize stage)", matching drive-harden.md:45 and CLAUDE.md. AC41 (`test_harden_narrowed_to_two_lenses`) extended to pin this third surface. Classification: Mechanical — phase-1 harden-narrowing consistency drift in drive.md exposed at phase-3, sibling to the CLAUDE.md:178 fix.
+
+## D31 — phase-3 integration: reconcile README.md + docs/flow.md to the new pipeline (Taste, completeness)
+codex phase-3 review found the repo's entrypoint user docs (README.md, docs/flow.md) still describe the
+PRE-finalize/pre-narrowing pipeline (omit /drive-finalize; harden "reduce AI slop"). Task scope named
+.claude/commands+bin+tests, NOT README/docs — but per Completeness + boil-lakes (in blast radius, <1 day)
+a pipeline feature must not ship with entrypoint docs describing the old pipeline. DECISION: reconcile both
+docs now as a flagged completeness edit committed on phaseInt/3 (coordinator-level, like the CLAUDE.md/
+drive.md harden reconciliations). NO new contract-test pins for them (user prose, not a load-bearing contract
+surface; pinning would re-trigger the prose-pin churn seen in slice 3.2). Surfaced at Gate B.
+
+## D32 — phase-3 doc sweep: fix drive-enforcement.md; REJECT summary-abstraction + history-rewrite findings (right-size)
+codex round-4 repo-wide drift sweep found 3 doc surfaces. DECISIONS: (1) FIX docs/drive-enforcement.md —
+its ship-contract section still describes the pre-finalize gate (2-file allowlist, /drive-review remediation);
+reconcile to finalize-keyed + 3-file allowlist + /drive-finalize remediation (active reference doc, completeness).
+(2) REJECT the "routes findings to project TODO.md" summary finding — one-line summaries are accurate at their
+abstraction (findings DO reach TODO via finalize-todo.md→ship promotion); precise mechanism is in the stage body;
+spelling it everywhere violates explicit≠verbose. (3) REJECT the .harness/decisions.md D15 finding — it is a
+dated append-only HISTORICAL entry; rewriting it falsifies the audit trail (supersession = later entries).
+DECLARED: after drive-enforcement.md, the doc-completeness sweep is DONE — any further ancillary-doc nitpick
+routes to followups.md (behavioral feature + normative specs + entrypoint docs are all consistent; diminishing
+returns beyond task scope, which was .claude/commands + bin + tests).
+
+## D33 — phase-3 converged; stale gate-code comment routed to FINALIZE de-slop (not phase-3 harden)
+Phase-3 integration CONVERGED at 5b23141 (Claude 0 P1; codex 0 P1, 1 MINOR). The MINOR — bin/drive-conformance.sh:448
+ship-case banner comment still states the pre-fix "EXISTS a counting phase/integration review" model (logic at
+:484 is correct: finalize candidate-R + no-phase-review precondition) — is in PHASE-2's file, NOT phase-3's diff,
+so phase-3 harden (scoped to the phase-3 diff) won't touch it. It IS in the whole-run diff, so it's a FINALIZE
+de-slop target (the aggregate stage over baseRef..featureBranch). Will be fixed in finalize.
+
+## D34 — reconcile onto main (#42 preserved); 2 codex resume findings dispositioned pre-existing-out-of-scope
+Per user choice (rebase+reconcile+re-review now): merged featureBranch onto main (post-#42), rewired the
+finalize stage's I1 boundaries to #42's hook-only model (dropped the re-introduced Coordinator soft-check
+refs), re-reviewed. #42's soft-check removal fully preserved (only the historical note remains). Round-2 fix
+made ship-resume idempotent (force-clean wt/ship; skip already-promoted ledger) + added the wt/finalize
+resume-classifier rule. codex then surfaced 2 deeper resume findings (router has no ship/done route;
+classifier can't distinguish wt/ship by branch) — VERIFIED both are PRE-EXISTING in main's pre-finalize
+drive.md (not introduced here) and the feature's paths are SAFE (verify-passthrough + ship force-clean).
+Routed to followups as a focused /drive-resume-router hardening task. Surfaced at Gate B.
