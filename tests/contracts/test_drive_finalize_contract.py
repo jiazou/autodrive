@@ -99,16 +99,39 @@ def test_drive_finalize_command_exists_with_frontmatter():
 
 def test_drive_md_dispatches_drive_finalize_in_stage_4c():
     """`/drive-finalize` is wired as the actual Stage-4c DISPATCH, not merely mentioned
-    in resume/recovery prose. SECTION-BOUNDED: slice the `### Stage 4c — Finalize`
-    section and assert a real `/drive-finalize` slash-command token appears INSIDE it
-    (the dispatch is the `then invoke /drive-finalize` line). Deleting the Stage-4c
-    dispatch reds this even though `/drive-finalize` survives in the resume prose
-    (drive.md:399-402). Pins AC39."""
+    in resume/recovery prose OR in the three OTHER in-section `/drive-finalize` mentions
+    (the LEADS-with-de-slop wiring prose drive.md:985, the inflight-marker prose :994,
+    and the FINDINGS re-invoke :1020). SECTION-BOUNDED to `### Stage 4c — Finalize`, then
+    pin the DISTINCTIVE imperative dispatch construct: the initial `invoke /drive-finalize`
+    that hands the stage its `cwd = $RUN_DIR/wt/finalize` AND `passing` the run args
+    (drive.md:1011). The other three in-section mentions lack this `invoke ... cwd ...
+    passing` shape — the re-invoke at :1020 is `re-invoke ... on the SAME ... worktree`
+    with no `passing` clause — so deleting/rewording ONLY the real dispatch at :1011 reds
+    this, while the prose mentions alone do NOT satisfy it. Pins AC39."""
     section = _section(_drive_md_text(), r"^###\s+Stage 4c\b")
+    # Sanity: the section must NOT be satisfiable by the bare token alone — there are
+    # multiple in-section `/drive-finalize` mentions, so a loose token check is vacuous.
     refs = _DRIVE_REF.findall(section)
     assert "/drive-finalize" in refs, (
-        "the Stage 4c section must DISPATCH /drive-finalize (as a slash-command token), "
-        f"not just reference it elsewhere; found refs in section: {sorted(set(refs))}"
+        "the Stage 4c section must reference /drive-finalize; found refs in section: "
+        f"{sorted(set(refs))}"
+    )
+    # The load-bearing pin: the initial dispatch construct. `invoke /drive-finalize`
+    # (NOT `re-invoke`) ... `cwd = $RUN_DIR/wt/finalize` ... `passing` the run args, all
+    # on one normalized stretch. Negative-lookbehind `(?<!re-)` excludes the :1020
+    # re-invoke; the `passing` clause excludes the prose mentions at :985/:994.
+    norm = _norm(section)
+    dispatch = re.compile(
+        r"(?<!re-)invoke\s+`?/drive-finalize`?\b.*?cwd\s*=\s*`?\$RUN_DIR/wt/finalize"
+        r".*?\bpassing\b",
+        re.IGNORECASE,
+    )
+    assert dispatch.search(norm), (
+        "the Stage 4c section must carry the real DISPATCH of /drive-finalize "
+        "(`invoke /drive-finalize ... with cwd = $RUN_DIR/wt/finalize ... passing "
+        "<runId>, $RUN_DIR, baseRef, featureBranch`); the LEADS/inflight prose mentions "
+        "and the FINDINGS `re-invoke` do NOT satisfy this — the initial dispatch was "
+        "deleted or reworded"
     )
 
 
@@ -196,6 +219,30 @@ def test_harden_narrowed_to_two_lenses():
     ), (
         "drive-harden.md must state it does NOT remove/apply slop in-stage "
         "(de-slop is deferred to finalize); a re-applied de-slop lens would drop this"
+    )
+
+    # ABSENCE check — the OLD active de-slop FIX-lens must be GONE (not merely deferred).
+    # The pre-narrowing version carried slop as an active numbered apply-lens
+    # (`## The three hardening lenses` / `1. **Reduce AI slop**` / a `3-lens` audit), all
+    # of which the narrowing replaced with `## The two hardening lenses (+ a deferred slop
+    # NOTE)` / a `2-lens` audit / a slop NOTE. Reintroducing the slop-as-a-fix lens while
+    # KEEPING the `do NOT remove any slop` deferral sentence (which the presence checks
+    # above accept) must RED here. These phrases were ACTIVE-APPLY constructs, NOT the
+    # deferral mentions (`do NOT remove any slop`, `DEFER to /drive-finalize`, `## slop
+    # (deferred to finalize)`), so this targets only the regressed active lens.
+    assert not re.search(r"\bReduce AI slop\b", norm, re.IGNORECASE), (
+        "drive-harden.md must NOT carry the OLD active de-slop fix-lens "
+        "(`**Reduce AI slop**`); de-slop is DEFERRED to /drive-finalize, not applied "
+        "in-stage — this is a re-introduced slop-as-a-fix lens"
+    )
+    assert not re.search(r"\bthree hardening lenses\b", norm, re.IGNORECASE), (
+        "drive-harden.md must NOT advertise THREE hardening lenses (the narrowed stage "
+        "has TWO correctness lenses + a deferred slop NOTE); a third active lens is the "
+        "regressed de-slop lens"
+    )
+    assert not re.search(r"\b3-lens\b", norm, re.IGNORECASE), (
+        "drive-harden.md's audit must be a 2-lens (+ slop-note) audit, not the OLD "
+        "`3-lens` audit that applied de-slop in-stage"
     )
 
 
