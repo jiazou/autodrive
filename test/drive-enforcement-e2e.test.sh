@@ -82,6 +82,14 @@ _write_codex() {
   local rd="$1" scope="$2"; mkdir -p "$rd"
   { echo "codex review for $scope"; echo ok; } > "$rd/codex-review-$scope.md"
 }
+# Seed a CONVERGED finalize artifact — ship-mode's terminal tip-binding candidate-R (the
+# phase review is demoted to a no-phase-review precondition). $1=rd $2=N $3=reviewed-sha.
+_write_finalize() {
+  local rd="$1" n="$2" sha="$3"; mkdir -p "$rd"
+  { echo "# review finalize $n"; echo; echo "## Verdict: CONVERGED"; echo "## AppliedEdits: no"; echo; echo "reviewed-sha: $sha"; } \
+    > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo ok; } > "$rd/codex-review-finalize.md"
+}
 mk_rundir() { local rd="$HARNESS_RUNS/$1"; mkdir -p "$rd"; printf '%s\n' "$rd"; }
 
 # --- Drive the REAL installed gate. $1=hook-command-path $2=command $3=cwd.
@@ -345,6 +353,12 @@ stage_ship() {
   #   rsha..tip = 1 commit but extra.sh is NOT in the .harness allowlist → diff ⊄ allowlist.
   _write_review "$rd" phase1 1 "$rsha"
   _write_codex "$rd" phase1
+  # Ship's terminal tip-binding candidate-R is now the CONVERGED finalize artifact (the phase
+  # review above is demoted to the no-phase-review precondition). Bind it to rsha = the phase
+  # code commit (the tip-binding R, parent of the eventual ledger tip). The uncovered/>1-commit
+  # DENY cases below still deny on rules (b)/(c) — rsha..tip ⊄ allowlist / >1 commit; the
+  # ledger-only case goes silent because rsha..tip is then the single allowlisted commit.
+  _write_finalize "$rd" 1 "$rsha"
 
   # Prove the deny below is the INTENDED-VIOLATION deny (exit 1: tip uncovered), not a
   # fail-closed error deny (exit 2). Ship resolves runId from HEAD, so run the checker
@@ -357,10 +371,10 @@ stage_ship() {
   fi
 
   run_installed_gate "$INSTALLED_GATE" "gh pr create --title x --body y" "$repo"
-  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-review phase'; then
+  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-finalize'; then
     pass "ship: DENY gh pr create when tip is NOT covered by a converged review"
   else
-    fail "ship: expected DENY naming /drive-review phase; got rc=$GATE_RC out='$GATE_OUT'"
+    fail "ship: expected DENY naming /drive-finalize; got rc=$GATE_RC out='$GATE_OUT'"
   fi
 
   # Make the tip COVERED via the SHIP path: reset the unreviewed extra commit, then add a
@@ -394,7 +408,7 @@ stage_ship() {
   fi
 
   run_installed_gate "$INSTALLED_GATE" "gh pr create --title x --body y" "$repo"
-  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-review phase'; then
+  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-finalize'; then
     pass "ship: DENY when 2 ledger-only commits sit past R (R..tip >1 commit, even all allowlisted)"
   else
     fail "ship: expected DENY for >1-commit ledger window; got rc=$GATE_RC out='$GATE_OUT'"
@@ -433,6 +447,11 @@ stage_fail_modes() {
   tip="$(_commit "$repo" .harness/decisions.md "ledger" "ship: promote run ledger")"
   _write_review "$rd" phase1 1 "$rsha"
   _write_codex "$rd" phase1
+  # Ship now short-circuits to no-review (empty candidate_R) BEFORE the git diff when there is
+  # no CONVERGED finalize artifact. Seed a finalize R = rsha (the phase code commit, parent of
+  # the corrupt tip; its tree is intact) so candidate_R is non-empty and the (a)(b)(c) loop
+  # reaches `git diff R..tip` against the corrupt tip → git_or_die → exit 2 (fail-closed).
+  _write_finalize "$rd" 1 "$rsha"
 
   # Corrupt tip's TREE object: `git diff R..tip` cannot read it → git_or_die → exit 2.
   # Commit objects (HEAD, R) are untouched, so runId-from-HEAD + R resolution still work.
