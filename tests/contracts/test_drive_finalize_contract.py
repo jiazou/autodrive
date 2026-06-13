@@ -270,11 +270,31 @@ def test_finalize_emits_shipgate_artifact_contract():
     assert "CODEX_UNAVAILABLE" in norm, "the codex-unavailable degradation token"
     assert re.search(r"FINALIZE_CAP\s*=\s*3", norm), "FINALIZE_CAP = 3"
     assert "finalizeRound" in norm, "the finalizeRound counter"
-    # Full-suite regression guard with revert-on-red.
-    assert re.search(r"full\b.*\bsuite", norm, re.IGNORECASE), (
-        "the full-suite regression guard"
+
+    # Full-suite regression guard with revert-on-red — SECTION-BOUNDED to `## Step 4 —
+    # Regression guard & converge`. A loose file-wide `full...suite` + `REVERT` is vacuous:
+    # `full suite` appears in Step-3's prose and `REVERT` in the lens-1 de-slop prose, so
+    # deleting the REAL Step-4 guard clause (the post-fix full-suite re-run that REVERTs a
+    # de-slop edit which reds a test) would stay green. Slice Step 4 and assert the guard's
+    # load-bearing co-occurrence THERE: the FULL suite re-run AS the regression guard, and
+    # the revert-on-red rule (a reddened test → REVERT the edit, do NOT edit the test).
+    step4 = _norm(_section(text, r"^##\s+Step 4\b.*Regression guard"))
+    # The full-suite re-run that IS the regression guard (not Step-3's plain "run the suite").
+    assert re.search(r"FULL\s+suite\b.*\bregression guard", step4, re.IGNORECASE), (
+        "Step 4 must run the driven project's FULL suite AS the regression guard after a "
+        "fix round; deleting/weakening this Step-4 clause must red (a file-wide `full "
+        "suite` mention elsewhere does NOT satisfy it)"
     )
-    assert re.search(r"\bREVERT\b", text), "the revert-on-red rule"
+    # The revert-on-red rule, co-located in Step 4: a de-slop edit that reds a test is a
+    # REAL REGRESSION → REVERT it, and explicitly NOT reconcile by editing the test.
+    assert re.search(r"reddened\b.*\bREVERT\b", step4), (
+        "Step 4's regression guard must REVERT the offending edit when a test reds "
+        "(a real regression), not reconcile by editing the test"
+    )
+    assert re.search(r"do not reconcile by editing the test", step4, re.IGNORECASE), (
+        "Step 4 must forbid reconciling a reddened test by editing the test "
+        "(the load-bearing revert-on-red discipline)"
+    )
 
 
 def test_finalize_scope_creep_gate_and_arch_todo():
@@ -318,10 +338,22 @@ def test_finalize_scope_creep_gate_and_arch_todo():
         "forbidden: a refactor/taste edit WITHOUT a flagged P1"
     )
 
-    # Three lenses, de-slop LED.
-    assert re.search(r"de-slop", norm, re.IGNORECASE), "the de-slop lens"
-    assert re.search(r"missing test", norm, re.IGNORECASE), "the aggregate missing-test lens"
-    assert re.search(r"logic bug", norm, re.IGNORECASE), "the aggregate logic-bug lens"
+    # Three lenses, de-slop LED — SECTION-BOUNDED to `## The three lenses`. The bare
+    # tokens `de-slop` (x14), `missing test`, `logic bug` are spread file-wide (Step-1/
+    # Step-2 prose), so a norm-wide check stays green even if the real `## The three lenses`
+    # section is deleted. Slice the section and pin the three NUMBERED lens definitions THERE
+    # (de-slop LED as lens 1; aggregate missing tests as lens 2; aggregate logic bugs as
+    # lens 3), so dropping/renumbering a lens reds.
+    lenses = _norm(_section(text, r"^##\s+The three lenses\b"))
+    assert re.search(r"1\.\s*\*?\*?de-slop\b.*\bLED\b", lenses, re.IGNORECASE), (
+        "lens 1 must be de-slop, LED (the lens harden defers here)"
+    )
+    assert re.search(r"2\.\s*\*?\*?aggregate missing tests", lenses, re.IGNORECASE), (
+        "lens 2 must be the aggregate missing-tests lens"
+    )
+    assert re.search(r"3\.\s*\*?\*?aggregate logic bugs", lenses, re.IGNORECASE), (
+        "lens 3 must be the aggregate logic-bugs lens"
+    )
     # Architectural findings route: durable finalize-todo.md, promoted to repo-root TODO.md.
     assert "finalize-todo.md" in norm, "the durable $RUN_DIR/finalize-todo.md"
     assert "TODO.md" in norm, "the repo-root TODO.md promotion target"
@@ -346,11 +378,36 @@ def test_ship_spec_finalize_precondition_and_promotion():
         "ship must gate a Finalize-CONVERGED precondition"
     )
     assert "/drive-finalize" in norm, "ship remediation must name /drive-finalize"
-    # Tolerant test (ancestor / ≤1 commit), NOT strict == tip — the precondition must
-    # explicitly TOLERATE a post-ledger resume tip.
-    assert re.search(r"TOLERATE", text) or re.search(
-        r"ancestor", norm, re.IGNORECASE
-    ), "the finalize precondition must be TOLERANT (ancestor/≤1-commit), not strict == tip"
+
+    # ---- (a) the TOLERANT finalize-CONVERGED precondition #3, SECTION-BOUNDED. -------- #
+    # Bound to `## Preconditions` and pin the SPECIFIC tolerant test: the finalize
+    # artifact's `reviewed-sha R` is an ANCESTOR of the featureBranch tip with `R..tip` ≤1
+    # commit ⊆ the ledger allowlist — NOT strict `== tip`. A bare `ancestor` mention is
+    # vacuous (it also appears in the `## Ship conformance` prose); pin the precondition's
+    # load-bearing co-occurrence: the finalize artifact + ancestor-of-tip + the ≤1-commit
+    # allowlist tolerance, so weakening precondition #3 to strict `== tip` (or dropping the
+    # ancestor/≤1-commit tolerance) reds.
+    pre = _norm(_section(text, r"^##\s+Preconditions\b"))
+    assert "review-finalize-N.md" in pre, (
+        "precondition #3 must name the run's terminal review-finalize-N.md artifact"
+    )
+    assert re.search(
+        r"reviewed-sha\s+R\b.*\bANCESTOR\b.*featureBranch.*tip", pre, re.IGNORECASE
+    ), (
+        "precondition #3 must require finalize's `reviewed-sha R` be an ANCESTOR of the "
+        "featureBranch tip (the tolerant test, not strict == tip)"
+    )
+    assert re.search(r"R\.\.tip\b.*≤1\s*commit|R\.\.tip\b.*<=?\s*1\s*commit", pre), (
+        "precondition #3's tolerance must bound `R..tip` to ≤1 commit ⊆ the ledger allowlist"
+    )
+    assert re.search(r"strict\b.*==\s*tip\b.*FALSE-STOP", pre, re.IGNORECASE) or re.search(
+        r"TOLERATE\b.*ledger commit", pre, re.IGNORECASE
+    ), (
+        "precondition #3 must EXPLICITLY tolerate the one post-ledger commit (strict == "
+        "tip would FALSE-STOP a resumed ship); weakening it to strict == tip must red"
+    )
+
+    # ---- ledger promotion + 3-entry allowlist (unchanged load-bearing pins). ---------- #
     assert "finalize-todo.md" in norm and "TODO.md" in norm, (
         "ship must promote $RUN_DIR/finalize-todo.md -> repo-root TODO.md"
     )
@@ -359,7 +416,30 @@ def test_ship_spec_finalize_precondition_and_promotion():
     assert "TODO.md" in norm and ".harness/decisions.md" in norm and (
         ".harness/followups.md" in norm
     ), "the 3-entry ledger allowlist {decisions.md, followups.md, TODO.md}"
-    assert "Gate B" in text, "the finalize follow-ups are surfaced at Gate B"
+
+    # ---- (b) the finalize-todo Gate-B SURFACING bullet, SECTION-BOUNDED. -------------- #
+    # `"Gate B" in text` is vacuous — `## Gate B` is its own section + the constant appears
+    # in conformance prose. Pin the SPECIFIC bullet (in `## Build the PR`) that surfaces
+    # $RUN_DIR/finalize-todo.md's architectural follow-ups from the DURABLE $RUN_DIR copy
+    # before approving the push at Gate B, so deleting that bullet reds.
+    build = _norm(_section(text, r"^##\s+Build the PR\b"))
+    assert re.search(
+        r"finalize-todo\.md\b.*surface.*architectural follow-ups", build, re.IGNORECASE
+    ) or re.search(
+        r"surface.*finalize-todo\.md.*architectural follow-ups", build, re.IGNORECASE
+    ), (
+        "Build-the-PR must surface $RUN_DIR/finalize-todo.md's architectural follow-ups "
+        "before Gate B (the specific finalize-todo surfacing bullet)"
+    )
+    assert re.search(r"Gate B", build), (
+        "the finalize-todo surfacing must be tied to Gate B (before approving the push)"
+    )
+    # And the durable-$RUN_DIR-copy source (NOT the worktree) is load-bearing: the ship
+    # worktree is rebuilt from the tip and never carries finalize-todo.md.
+    assert re.search(r"\$RUN_DIR\b.*copy|durable\b.*\$RUN_DIR", build, re.IGNORECASE), (
+        "the surfacing must read finalize-todo.md from the durable $RUN_DIR copy "
+        "(not the ship worktree, which does not carry it)"
+    )
 
 
 def test_claudemd_pipeline_and_invariant():
