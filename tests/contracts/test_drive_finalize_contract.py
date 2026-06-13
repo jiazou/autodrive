@@ -288,6 +288,36 @@ def test_finalize_scope_creep_gate_and_arch_todo():
 
     assert "baseRef..featureBranch" in norm, "the whole-run diff scope baseRef..featureBranch"
     assert "HARD GATE" in text, "the edit-scope HARD GATE"
+
+    # ---- LOAD-BEARING scope-creep clauses (section-bounded to the HARD GATE). --------- #
+    # Not the bare `HARD GATE` heading: pin the actual edit-scope allowances/exceptions
+    # that make the gate load-bearing, so dropping them reds. Slice the gate section so a
+    # match elsewhere can't false-pass.
+    gate = _norm(_section(text, r"^##\s+Scope-creep HARD GATE\b"))
+    # Allowed: the run's own diff surface.
+    assert re.search(r"files in `?git diff", gate), (
+        "the gate must allow editing the run's own diff surface (git diff baseRef..featureBranch)"
+    )
+    # Allowed: existing test-support (fixtures/harnesses) — a load-bearing allowance.
+    assert re.search(r"test-support\b.*\(.*fixtures", gate, re.IGNORECASE) or re.search(
+        r"existing\b.*\btest-support", gate, re.IGNORECASE
+    ), "the gate must allow EXISTING test-support (fixtures/harnesses) for coverage"
+    # Exception: a file JUST OUTSIDE the diff iff it is the true root cause of a flagged P1.
+    assert re.search(r"just outside\b.*diff", gate, re.IGNORECASE), (
+        "the gate must carry the `just outside the diff` exception"
+    )
+    assert re.search(r"flagged\b[^.]*\bP1\b", gate, re.IGNORECASE), (
+        "the out-of-diff exception must be gated on a FLAGGED P1 root cause"
+    )
+    assert re.search(r"log it to\b.*decisions\.md", gate, re.IGNORECASE) or re.search(
+        r"\$RUN_DIR/decisions\.md", gate
+    ), "widening scope for the flagged-P1 exception must be LOGGED to $RUN_DIR/decisions.md"
+    # Forbidden: a refactor/taste edit without a flagged P1, and editing untouched user code.
+    assert re.search(r"[Ff]orbidden", gate), "the gate must state what is FORBIDDEN"
+    assert re.search(r"refactor\b.*without a flagged\b[^.]*\bP1", gate, re.IGNORECASE), (
+        "forbidden: a refactor/taste edit WITHOUT a flagged P1"
+    )
+
     # Three lenses, de-slop LED.
     assert re.search(r"de-slop", norm, re.IGNORECASE), "the de-slop lens"
     assert re.search(r"missing test", norm, re.IGNORECASE), "the aggregate missing-test lens"
@@ -333,27 +363,83 @@ def test_ship_spec_finalize_precondition_and_promotion():
 
 
 def test_claudemd_pipeline_and_invariant():
-    """CLAUDE.md lists `/drive-finalize` as Stage 4c between harden and verify in the
-    Pipeline + runner list; the harden lens list defers de-slop to finalize; a FINALIZE
-    invariant is present (ship tip-binding = finalize artifact, omission-proof, cap 3,
-    finalizeRound); Run-state lists the finalize artifacts. Pins AC43 (CLAUDE.md half)."""
+    """LOAD-BEARING pin of the real CLAUDE.md finalize contract — not bare token presence.
+    Three regression-tight assertions, each grounded against the live CLAUDE.md and each
+    RED on a real drift:
+
+    (i)  the numbered Pipeline lists `/drive-finalize` ORDERED between harden and verify
+         (a step number > harden's and < verify's — order-bounded, so reordering or
+         dropping the finalize step reds, where a bare token would not);
+    (ii) the FINALIZE invariant is omission-proof (ship's terminal SHA-bound artifact IS
+         the finalize review; a run that omits finalize CANNOT ship) WITH cap 3 + counter;
+    (iii)the harden artifact/lens descriptions are CONSISTENT with the 2-lens model — the
+         old `3-lens`/`three hardening lenses`/active `Reduce AI slop` constructs are
+         ABSENT (so the 3-lens drift this test was blind to can never recur).
+
+    Pins AC43 (CLAUDE.md half)."""
     text = _text(CLAUDE_MD)
     norm = _norm(text)
+    lines = text.splitlines()
 
-    assert "/drive-finalize" in norm, "CLAUDE.md must reference /drive-finalize"
+    # ---- (i) ORDERED pipeline: harden < finalize < verify by NUMBERED step. ---------- #
+    # The Pipeline block is a numbered list (`5. /drive-harden`, `6. /drive-finalize`,
+    # `7. verify`). Parse the step NUMBER that introduces each stage and assert the order,
+    # so a finalize step that is dropped or moved out from between harden and verify reds —
+    # a bare `Stage 4c` / `/drive-finalize` token cannot satisfy this.
+    def _step_no(stage_re):
+        for ln in lines:
+            m = re.match(r"\s*(\d+)\.\s", ln)
+            if m and re.search(stage_re, ln):
+                return int(m.group(1))
+        return None
+
+    n_harden = _step_no(r"/drive-harden\b")
+    n_finalize = _step_no(r"/drive-finalize\b")
+    n_verify = _step_no(r"^\s*\d+\.\s*verify\b")
+    assert n_harden is not None, "Pipeline must have a numbered /drive-harden step"
+    assert n_finalize is not None, "Pipeline must have a numbered /drive-finalize step"
+    assert n_verify is not None, "Pipeline must have a numbered verify step"
+    assert n_harden < n_finalize < n_verify, (
+        f"Pipeline order must be harden({n_harden}) < finalize({n_finalize}) < "
+        f"verify({n_verify}); /drive-finalize must sit BETWEEN harden and verify"
+    )
     assert re.search(r"Stage 4c", norm), "CLAUDE.md must place finalize as Stage 4c"
-    # Harden's lens list defers de-slop to finalize (not applied in harden).
-    assert re.search(r"de-slop is deferred to `?/drive-finalize`?", norm) or re.search(
+
+    # Harden's stage line defers de-slop to finalize (not applied in harden).
+    assert re.search(r"de-slop is [Dd]eferred to `?/drive-finalize`?", norm) or re.search(
         r"defer.*de-slop.*finalize", norm, re.IGNORECASE
     ), "CLAUDE.md harden description must defer de-slop to /drive-finalize"
-    # FINALIZE invariant: ship tip-binding on the finalize artifact + cap + counter.
-    assert "FINALIZE_CAP=3" in norm or re.search(r"FINALIZE_CAP\s*=\s*3", norm), (
-        "the FINALIZE_CAP=3 invariant"
-    )
+
+    # ---- (ii) FINALIZE invariant is OMISSION-PROOF (the load-bearing property). ------- #
+    # Not just the token `omission-`: the invariant must state that ship's terminal/
+    # tip-binding artifact IS the finalize review, so a run that omits finalize CANNOT
+    # ship. Pin the causal clause, not a loose word.
+    assert re.search(
+        r"omits .*finalize\b.*\bCANNOT ship", norm, re.IGNORECASE
+    ), "the omission-proof property (a run that omits/fails finalize CANNOT ship)"
+    assert re.search(
+        r"\bTERMINAL\b.*review-finalize-N\.md|review-finalize-N\.md.*tip-binding",
+        norm,
+        re.IGNORECASE,
+    ), "ship's terminal SHA-bound review must BE the finalize artifact (tip-binding)"
+    assert re.search(r"FINALIZE_CAP\s*=\s*3", norm), "the FINALIZE_CAP=3 cap"
     assert "finalizeRound" in norm, "the finalizeRound counter in the invariant"
-    assert re.search(r"omission-", norm, re.IGNORECASE), (
-        "the omission-proof property (a run that omits finalize cannot ship)"
+
+    # ---- (iii) harden 2-lens CONSISTENCY — the 3-lens drift cannot recur. ------------ #
+    # The harden artifact ledger entry must describe a 2-lens audit (the narrowed model),
+    # and the OLD 3-lens / three-lenses / active de-slop-lens constructs must be ABSENT.
+    assert re.search(r"harden-<P>-N\.md\b[^\n]*\b2-lens\b", text), (
+        "the harden artifact entry must describe a 2-lens audit (the narrowed model), "
+        "not the OLD 3-lens audit"
     )
+    assert not re.search(r"\b3-lens\b", norm), (
+        "CLAUDE.md must NOT describe a 3-lens harden audit (harden was narrowed to two "
+        "correctness lenses; de-slop deferred to /drive-finalize)"
+    )
+    assert not re.search(r"\bthree hardening lenses\b", norm, re.IGNORECASE), (
+        "CLAUDE.md must NOT advertise THREE hardening lenses"
+    )
+
     # Run-state lists the finalize artifacts.
     assert "review-finalize-N.md" in norm, "Run-state lists review-finalize-N.md"
     assert "finalize-todo.md" in norm, "Run-state lists finalize-todo.md"
