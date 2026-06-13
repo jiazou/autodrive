@@ -298,7 +298,7 @@ test_ship_gh_pr_create() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   run_gate "gh pr create --title x --body y" "$repo"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "ship denies unreviewed gh pr create"
   else
     fail "ship should deny gh pr create; got: $out"
@@ -387,7 +387,7 @@ test_ship_gh_repo_flag() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   run_gate "gh --repo o/r pr create --title x" "$repo"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "ship denies gh --repo o/r pr create (global flag before subcommand)"
   else
     fail "ship should deny gh --repo … pr create; got: $out"
@@ -466,7 +466,7 @@ test_ship_git_C_outside_cwd_deny() {
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   outside="$TMPROOT/outside-$runid"; mkdir -p "$outside"   # NOT a git repo
   run_gate "git -C $repo push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "ship denies git -C <drive_repo> push when cwd is OUTSIDE the repo (finding 1)"
   else
     fail "ship should deny git -C <drive_repo> push from outside cwd; got: $out"
@@ -503,7 +503,7 @@ test_ship_git_dir_eq_outside_cwd_deny() {
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   outside="$TMPROOT/outside-gd-$runid"; mkdir -p "$outside"   # NOT a git repo
   run_gate "git --git-dir=$repo/.git push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "ship denies git --git-dir=<repo>/.git push from outside cwd (=form)"
   else
     fail "ship should deny git --git-dir=… push from outside cwd; got: $out"
@@ -541,7 +541,7 @@ test_ship_work_tree_eq_bypass_deny() {
   ra="$(new_runid)"; rinfo="$(mk_ship_repo_reviewed "$ra")"; repo="${rinfo%% *}"
   rb="$(new_runid)"; cwdrepo="$(mk_ship_repo "$rb")"; cwdrepo="${cwdrepo%% *}"
   run_gate "git --work-tree=$repo push" "$cwdrepo"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase' \
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize' \
      && printf '%s' "$out" | grep -q "run $rb "; then
     pass "AC-A8: git --work-tree=<reviewed> push from unreviewed drive cwd DENIES (bypass closed, =form)"
   else
@@ -556,7 +556,7 @@ test_ship_work_tree_space_bypass_deny() {
   ra="$(new_runid)"; rinfo="$(mk_ship_repo_reviewed "$ra")"; repo="${rinfo%% *}"
   rb="$(new_runid)"; cwdrepo="$(mk_ship_repo "$rb")"; cwdrepo="${cwdrepo%% *}"
   run_gate "git --work-tree $repo push" "$cwdrepo"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase' \
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize' \
      && printf '%s' "$out" | grep -q "run $rb "; then
     pass "AC-A8: git --work-tree <reviewed> push from unreviewed drive cwd DENIES (bypass closed, space form)"
   else
@@ -593,7 +593,7 @@ test_tok_git_C_empty_push_deny() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   run_gate 'git -C "" push' "$repo"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "tok: git -C \"\" push from unreviewed drive cwd DENIES (empty -C is a no-op → identity = cwd)"
   else
     fail "tok: git -C \"\" push should DENY (empty -C no-op); got rc=$GATE_RC out='$out'"
@@ -612,7 +612,7 @@ test_tok_git_C_spaced_path_deny() {
   mkdir -p "$(dirname "$spaced")"; mv "$origrepo" "$spaced"
   outside="$TMPROOT/tok-spaced-out-$runid"; mkdir -p "$outside"   # NOT a git repo
   run_gate "git -C \"$spaced\" push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "tok: git -C \"/path with spaces\" push targeting an unreviewed drive repo DENIES (quoted-span path)"
   else
     fail "tok: git -C \"/path with spaces\" push should DENY (path with space); got rc=$GATE_RC out='$out'"
@@ -630,10 +630,10 @@ test_tok_quoted_gitdir_spaced_deny() {
   outside="$TMPROOT/tok-gd-out-$runid"; mkdir -p "$outside"
   # =form: --git-dir="<spaced>/.git"
   run_gate "git --git-dir=\"$spaced/.git\" push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     # space form: --git-dir "<spaced>/.git"
     run_gate "git --git-dir \"$spaced/.git\" push" "$outside"; out="$GATE_OUT"
-    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
       pass "tok: quoted --git-dir (= and space forms) with a spaced gitdir path resolve + DENY"
     else
       fail "tok: --git-dir \"<spaced>/.git\" (space form) should DENY; got: $out"
@@ -722,7 +722,7 @@ test_acA1_C_compose_relative() {
   parent="$TMPROOT/acA1-$runid"; mkdir -p "$parent/a"
   ln -s "$repo" "$parent/a/b"
   run_gate "git -C a -C b push" "$parent"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "AC-A1: git -C a -C b composes to a/b (denies unreviewed drive repo at \$CWD/a/b)"
   else
     fail "AC-A1: git -C a -C b should compose to a/b and DENY; got: $out"
@@ -737,7 +737,7 @@ test_acA3_C_absolute_resets() {
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   parent="$TMPROOT/acA3-$runid"; mkdir -p "$parent/rel"   # rel exists, rel/abs does not
   run_gate "git -C rel -C $repo push" "$parent"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "AC-A3: git -C rel -C /abs resets to /abs (denies the absolute drive repo, not \$CWD/rel/abs)"
   else
     fail "AC-A3: absolute -C must reset the accumulator and DENY /abs; got: $out"
@@ -754,7 +754,7 @@ test_acA11_C_abs_then_rel_compose() {
   base="$TMPROOT/acA11-$runid"; mkdir -p "$base"
   ln -s "$repo" "$base/rel"
   run_gate "git -C $base -C rel push" "$TMPROOT"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "AC-A11: git -C /abs -C rel composes to /abs/rel (denies the unreviewed drive repo there)"
   else
     fail "AC-A11: relative -C must compose onto the absolute base and DENY /abs/rel; got: $out"
@@ -770,7 +770,7 @@ test_acA2_C_abs_plus_relative_gitdir() {
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   outside="$TMPROOT/acA2-out-$runid"; mkdir -p "$outside"   # NOT a git repo; no .git here
   run_gate "git -C $repo --git-dir=.git push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "AC-A2: git -C /repo --git-dir=.git resolves to /repo/.git (DENY; different axes, not last-wins .git)"
   else
     fail "AC-A2: -C /repo + --git-dir=.git should target /repo and DENY; got: $out"
@@ -785,9 +785,9 @@ test_acA4_gitdir_both_forms_with_C() {
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   outside="$TMPROOT/acA4-out-$runid"; mkdir -p "$outside"
   run_gate "git -C $repo --git-dir .git push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     run_gate "git -C $repo --git-dir=.git push" "$outside"; out="$GATE_OUT"
-    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
       pass "AC-A4: --git-dir <p> (space) and --git-dir=<p> (=), both with -C, resolve identically (DENY)"
     else
       fail "AC-A4: --git-dir= form (with -C) should DENY; got: $out"
@@ -807,7 +807,7 @@ test_acA5_two_gitdir_last_wins() {
   _commit "$other" README base base >/dev/null   # non-drive (main)
   outside="$TMPROOT/acA5-out-$runid"; mkdir -p "$outside"
   run_gate "git --git-dir=$other/.git --git-dir=$repo/.git push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "AC-A5: two --git-dir flags → last wins (DENY the second, unreviewed drive repo)"
   else
     fail "AC-A5: last --git-dir should win and DENY; got: $out"
@@ -841,10 +841,10 @@ test_acA9b_work_tree_value_consumed() {
   wt="$TMPROOT/acA9b-wt-$runid"; mkdir -p "$wt"
   # space form: value consumed, push still recognized, identity = cwd (drive) → DENY.
   run_gate "git --work-tree $wt push" "$repo"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     # =form: same.
     run_gate "git --work-tree=$wt push" "$repo"; out="$GATE_OUT"
-    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
       pass "AC-A9b: --work-tree <p>/=<p> value consumed (push still detected; identity = cwd → DENY)"
     else
       fail "AC-A9b: --work-tree= value-consume should keep push detection + DENY cwd; got: $out"
@@ -897,7 +897,7 @@ test_acA10_gitfile_push_gitdir() {
   [ -f "$wt/.git" ] || { fail "AC-A10(b): fixture .git is not a gitfile"; return; }
   outside="$TMPROOT/acA10bout-$runid"; mkdir -p "$outside"
   run_gate "git --git-dir=$wt/.git push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "AC-A10(b): git --git-dir=<linked-wt>/.git push reduces gitfile→wt root (DENY unreviewed drive HEAD)"
   else
     fail "AC-A10(b): gitfile --git-dir push should reduce + DENY; got: $out"
@@ -914,7 +914,7 @@ test_acA10_real_gitdir_directory_unaffected() {
   [ -d "$repo/.git" ] || { fail "AC-A10(dir): fixture .git is not a directory"; return; }
   outside="$TMPROOT/acA10dir-$runid"; mkdir -p "$outside"
   run_gate "git --git-dir=$repo/.git push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "AC-A10: real .git DIRECTORY is unaffected by gitfile reduction (still DENY unreviewed)"
   else
     fail "AC-A10: real .git directory --git-dir should DENY (no spurious reduction); got: $out"
@@ -1184,12 +1184,12 @@ test_ship_body_token_keys_head_not_body() {
   # The drive cwd's OWN run: UNREVIEWED ship.
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   # Body references the OTHER (clean) run's slice token. Post-fix the gate keys runId
-  # from HEAD → names the OWN unreviewed run ($runid) and the /drive-review phase
+  # from HEAD → names the OWN unreviewed run ($runid) and the /drive-finalize
   # remediation. Pre-fix it re-keyed to the OTHER run ($otherrun) from the body token
   # (and emitted the /drive-review ship text), so both checks below fail pre-fix.
   run_gate "gh pr create --title x --body 'see slice/$otherrun/4a'" "$repo"; out="$GATE_OUT"
   if is_deny "$out" \
-     && printf '%s' "$out" | grep -q '/drive-review phase' \
+     && printf '%s' "$out" | grep -q '/drive-finalize' \
      && printf '%s' "$out" | grep -q "run $runid " \
      && ! printf '%s' "$out" | grep -q "run $otherrun "; then
     pass "ship keys runId from HEAD not body token (names OWN run $runid, never OTHER run from body)"
@@ -1199,18 +1199,18 @@ test_ship_body_token_keys_head_not_body() {
 }
 
 # ---------------------------------------------------------------------------------
-# Finding #2: ship deny remediation names `/drive-review phase`, not `/drive-review ship`.
+# Finding #2: ship deny remediation names `/drive-finalize`, not `/drive-review ship`.
 # ---------------------------------------------------------------------------------
 test_ship_deny_names_phase_not_ship() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   run_gate "gh pr create --title x --body y" "$repo"; out="$GATE_OUT"
   if is_deny "$out" \
-     && printf '%s' "$out" | grep -q '/drive-review phase' \
+     && printf '%s' "$out" | grep -q '/drive-finalize' \
      && ! printf '%s' "$out" | grep -q '/drive-review ship'; then
-    pass "ship deny remediation names /drive-review phase (NOT the nonexistent /drive-review ship)"
+    pass "ship deny remediation names /drive-finalize (NOT the nonexistent /drive-review ship)"
   else
-    fail "ship deny should name /drive-review phase and not /drive-review ship; got: $out"
+    fail "ship deny should name /drive-finalize and not /drive-review ship; got: $out"
   fi
 }
 
@@ -1340,7 +1340,7 @@ test_tilde_C_targets_home_drive_deny() {
   repo="$(printf '%s' "$info" | cut -d' ' -f1)"; rel="$(printf '%s' "$info" | cut -d' ' -f3)"
   outside="$TMPROOT/tilde-out-$runid"; mkdir -p "$outside"   # NOT a git repo
   run_gate "git -C ~/$rel push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "tilde: git -C ~/<reldrive> push expands ~ to \$HOME → targets the drive repo → DENY"
   else
     fail "tilde: git -C ~/<reldrive> push should expand ~ and DENY; got: $out"
@@ -1355,7 +1355,7 @@ test_tilde_bare_C_compose_deny() {
   repo="$(printf '%s' "$info" | cut -d' ' -f1)"; rel="$(printf '%s' "$info" | cut -d' ' -f3)"
   outside="$TMPROOT/tilde-bare-out-$runid"; mkdir -p "$outside"
   run_gate "git -C ~ -C $rel push" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "tilde: bare ~ -C composes to \$HOME/<rel> → DENY (bare ~ → \$HOME)"
   else
     fail "tilde: bare ~ -C should resolve \$HOME and DENY; got: $out"
@@ -1398,7 +1398,7 @@ test_linecont_splits_C_value_deny() {
   outside="$TMPROOT/lc-C-out-$runid"; mkdir -p "$outside"
   cmd="$(printf 'git -C \\\n%s push' "$repo")"   # -C, line-cont, then the value
   run_gate "$cmd" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "line-cont: git -C \\<newline><repo> push rejoins -C+value → DENY"
   else
     fail "line-cont: -C \\<newline><repo> should rejoin and DENY; got: $out"
@@ -1416,7 +1416,7 @@ test_linecont_inside_dquote_deny() {
   half1="${repo%??}"; half2="${repo#$half1}"   # split into two non-empty halves
   cmd="$(printf 'git -C "%s\\\n%s" push' "$half1" "$half2")"
   run_gate "$cmd" "$outside"; out="$GATE_OUT"
-  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-review phase'; then
+  if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
     pass "line-cont (in \"…\"): backslash-newline inside double quotes is elided → path rejoins → DENY"
   else
     fail "line-cont (in \"…\"): in-dquote continuation should rejoin + DENY; got: $out"
@@ -2196,7 +2196,7 @@ main() {
   test_never_allow
   # finding #1: ship runId from HEAD, not body token
   test_ship_body_token_keys_head_not_body
-  # finding #2: ship deny remediation names /drive-review phase
+  # finding #2: ship deny remediation names /drive-finalize
   test_ship_deny_names_phase_not_ship
   # finding #3: explicit non-drive push target not gated; bare drive push gated
   test_push_origin_main_not_ship

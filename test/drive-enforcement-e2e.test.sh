@@ -371,10 +371,10 @@ stage_ship() {
   fi
 
   run_installed_gate "$INSTALLED_GATE" "gh pr create --title x --body y" "$repo"
-  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-review phase'; then
+  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-finalize'; then
     pass "ship: DENY gh pr create when tip is NOT covered by a converged review"
   else
-    fail "ship: expected DENY naming /drive-review phase; got rc=$GATE_RC out='$GATE_OUT'"
+    fail "ship: expected DENY naming /drive-finalize; got rc=$GATE_RC out='$GATE_OUT'"
   fi
 
   # Make the tip COVERED via the SHIP path: reset the unreviewed extra commit, then add a
@@ -408,7 +408,7 @@ stage_ship() {
   fi
 
   run_installed_gate "$INSTALLED_GATE" "gh pr create --title x --body y" "$repo"
-  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-review phase'; then
+  if is_deny "$GATE_OUT" && printf '%s' "$GATE_OUT" | grep -q '/drive-finalize'; then
     pass "ship: DENY when 2 ledger-only commits sit past R (R..tip >1 commit, even all allowlisted)"
   else
     fail "ship: expected DENY for >1-commit ledger window; got rc=$GATE_RC out='$GATE_OUT'"
