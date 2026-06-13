@@ -47,20 +47,12 @@ pass by construction; they exist for a bare/manual invocation.
 - **NOTE AI slop → DEFER to `/drive-finalize`** (not a fix lens here): Per-phase harden
   no longer REMOVES slop. When the audit spots slop (speculative fallbacks, needless
   try/catch, defensive "just in case" code, dead code, over-abstraction, redundant
-  comments, copy-paste, inconsistent naming), it is RECORDED — never fixed. The handoff
-  is concrete and single-labeled: the audit (Step 1 reviewer) LISTS each slop instance
-  under a `## slop (deferred to finalize)` section in `$RUN_DIR/harden-<P>-N.md`, and
-  **Step 2 (Triage) — which runs EVERY round regardless of whether a fix round
-  happens** — transcribes each one into `$RUN_DIR/followups.md` under the SAME
-  canonical heading `## slop (deferred to finalize)`, one line per item as
-  `file:line — one-line description` (deduped). `/drive-finalize` later reads exactly
-  that followups section and applies de-slop ONCE, at end-of-run, over the whole-run
-  diff (doing it per-phase would do it twice and the final pass would re-touch the same
-  lines). Use the heading `## slop (deferred to finalize)` EVERYWHERE — the audit
-  listing and the followups record — so every spotted item reliably lands in
-  `$RUN_DIR/followups.md` for finalize to pick up, with no orphaning even on a
-  slop-only or final clean round (Step 3, the fix step, is skipped on those rounds —
-  which is why the authoritative persist lives in the always-runs Step 2).
+  comments, copy-paste, inconsistent naming), it is RECORDED under the canonical heading
+  `## slop (deferred to finalize)` — never fixed — and Step 2's always-runs persist
+  transcribes it to `$RUN_DIR/followups.md`, from which `/drive-finalize` applies de-slop
+  ONCE at end-of-run over the whole-run diff (doing it per-phase would do it twice). See
+  Step 2 for the authoritative persist rule (the guaranteed transcribe source + the
+  always-runs guarantee).
 1. **Add missing tests**: acceptance criteria, branches, edge cases, and error paths
    with no test → add them. A test that guards a bug MUST **fail against the pre-fix
    code** (per OPERATING.md "a green test can pass for the wrong reason" — drive the
@@ -150,7 +142,11 @@ Write `$RUN_DIR/harden-<P>-N.md`:
   # Harden phase <P> N
   ## Verdict: HARDENED | FINDINGS
   ## AppliedEdits: pending          (Step 4 finalizes this to yes|no — the resume marker)
-  ## Findings → ### [SEVERITY][LENS] Short title / **Where** file:line / Issue / Fix / Veto? 
+  ## Findings → ### [SEVERITY][LENS] Short title / **Where** file:line / Issue / Fix
+  ## slop (deferred to finalize)    (REQUIRED — one line per slop item as `file:line — one-line description`; empty section if none)
+You MUST write the `## slop (deferred to finalize)` section listing EVERY slop instance you
+spotted (one line each, `file:line — one-line description`); this section is the GUARANTEED
+transcribe source Step 2 reads — anything not listed here is not reliably carried to finalize.
 HARDENED = no open P1 AND nothing cheap-P2 left to apply. Return: path, verdict, one-line count.
 ----- END SUBAGENT SCOPE -----
 
@@ -178,16 +174,18 @@ by an explanatory note; continue.
 ## Step 2 — Triage
 
 **Persist deferred slop FIRST (always-runs — this is the authoritative write).** Before
-deciding HARDENED-vs-fix, transcribe EVERY slop item this round's audit listed under the
-`## slop (deferred to finalize)` section of `$RUN_DIR/harden-<P>-N.md` (and the codex
-slop list) into `$RUN_DIR/followups.md` under the same canonical heading
-`## slop (deferred to finalize)`, one line per item as `file:line — one-line
-description` (create the heading once if absent; never duplicate it; dedup — skip any
-item whose `file:line — description` line is already present). This runs on EVERY round
-regardless of the fix set — **even when the fix set is empty / the round returns
-HARDENED** (Step 3, the fix step, is skipped on a slop-only or final clean round) — so
-every slop item found by any harden round reliably lands in `$RUN_DIR/followups.md` for
-`/drive-finalize`, with no orphaning.
+deciding HARDENED-vs-fix, transcribe slop into `$RUN_DIR/followups.md` under the canonical
+heading `## slop (deferred to finalize)`, one line per item as `file:line — one-line
+description` (create the heading once if absent; never duplicate it; dedup — skip any item
+whose `file:line — description` line is already present). The GUARANTEED transcribe source
+is the Claude audit's `## slop (deferred to finalize)` section in
+`$RUN_DIR/harden-<P>-N.md` (Step-1 schema requires it) — EVERY item it lists MUST be
+written. Then fold in any codex slop from `$RUN_DIR/codex-harden-<P>.md` BEST-EFFORT (the
+codex summary is capped/best-effort and may not carry a structured slop list, so it is an
+opportunistic add, not the guaranteed source). This runs on EVERY round regardless of the
+fix set — **even when the fix set is empty / the round returns HARDENED** (Step 3, the fix
+step, is skipped on a slop-only or final clean round) — so every slop item the Claude audit
+lists reliably lands in `$RUN_DIR/followups.md` for `/drive-finalize`, with no orphaning.
 
 Then combine voices: both-flagged = high confidence; **codex-only = scrutinize hardest**
 (bugs Claude missed); reviewer-only = claude-only. Build the fix set from:
@@ -239,7 +237,7 @@ Run the FULL build + integration tests until green. Commit to `phaseInt/<runId>/
 
 Return STATUS as the FIRST line, then the changed-file list:
 - `STATUS: DONE` — fix set applied, tests green, committed. List changed files (within
-  the allowed scope above). "Flagged:" line for deviations / Taste / vetoed items / any
+  the allowed scope above). "Flagged:" line for deviations / Taste / any
   scope-widening root-cause edit (also logged to `$RUN_DIR/decisions.md`).
 - `STATUS: BLOCKED — <reason>` — non-decision blocker (env/tool/test failure you
   can't resolve). State it + what would unblock.
@@ -256,7 +254,8 @@ in **Loop counter & cap**, then finalize the round's `AppliedEdits` marker:
   audit) → set `harden-<P>-N.md` `AppliedEdits: no` → return `HARDENED`.
 - **A fix was applied** → `hardenRound += 1`; set `AppliedEdits: yes`. Re-run
   `/drive-review phase <P> harden-regress` as the regression guard (catches a
-  conformance break the tests can't — e.g. a de-slop edit that dropped a criterion).
+  conformance break the tests can't — e.g. a bug-fix that silently changed an
+  asserted-elsewhere behavior).
   Any P1 it finds is folded into the next round's fix set. Return `FINDINGS` (the next
   invocation re-audits; a subsequent clean audit returns HARDENED).
 - **`hardenRound >= HARDEN_CAP` and this audit still has open P1** → return `STOP`.

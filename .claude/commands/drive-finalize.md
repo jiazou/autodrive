@@ -182,7 +182,8 @@ Severity — pick one, don't ask:
 - P1 (actionable this stage): a real aggregate bug (lens 3), or a missing test on an
   acceptance criterion / on a bug being fixed (lens 2).
 - P2: slop worth removing (lens 1, the LED lens — so finalize DOES apply cheap in-scope
-  P2 slop, unlike narrowed harden) or a non-criterion test gap.
+  P2 slop, unlike narrowed harden) or a non-criterion test gap (the test gap is logged to
+  `$RUN_DIR/followups.md`, not fixed in-run).
 - P3: cosmetic; → followups, never fix.
 Architectural findings → flag as `ARCH` (routed to TODO, not a code fix). Out-of-scope
 real bugs → `$RUN_DIR/followups.md`.
@@ -240,9 +241,17 @@ the current code, NOT on the followups ledger. Build the fix set from:
   `## slop (deferred to finalize)` notes, but an item enters the fix set only when the
   audit confirms the slop is still in the code). Same lens-1 rules: behavior-preserving,
   scope-gated, VETO if it would drop any acceptance criterion's coverage.
+- **Cheap in-scope P2 slop** — lens-1 slop that is cheap AND within the run's blast radius
+  (6 principles): into the fix set (finalize APPLIES cheap in-scope slop, unlike harden).
 - **Any P1 regression** the prior round's Step-4 guard left open.
-P3 / VETOED / ARCH / out-of-scope → `$RUN_DIR/followups.md` (or `finalize-todo.md` for
-ARCH), never the code fix set.
+**No finding class is silently dropped.** Every finding has a destination:
+- **P1** (lens 2 criterion/bug tests + lens 3 bugs) → fix set.
+- **Cheap in-scope P2 slop** → fix set (above).
+- **Non-criterion test gaps (P2) + non-cheap / out-of-scope P2 / P3** → `$RUN_DIR/followups.md`
+  (exactly as drive-harden.md routes non-criterion / non-cheap findings) — logged, never
+  silently dropped; convergence is not blocked by them.
+- **VETOED** (a de-slop edit that would drop a criterion) → `$RUN_DIR/followups.md`.
+- **ARCH** (MAJOR architectural problems) → `$RUN_DIR/finalize-todo.md`.
 
 The fix set Step 2 builds here is EXACTLY what Step 3 applies: the open P1s and the
 audit-confirmed run-diff slop. Finalize does NOT drain or mutate `followups.md` (it is an
