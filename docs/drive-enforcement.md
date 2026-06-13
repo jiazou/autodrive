@@ -2,7 +2,8 @@
 
 Make it **impossible to skip plan/design review OR code review by omission** in a
 `/drive` run, with automatic remediation (a blocked action feeds Claude the exact
-`/drive-review` command to run, then it retries and proceeds).
+command to run, then it retries and proceeds — `/drive-review` for the plan/design/
+slice/phase gates, `/drive-finalize` for the ship gate).
 
 ## The problem
 
@@ -57,14 +58,18 @@ missing file or an empty one (a bare `touch`) fails. Output is JSON on stdout
 `1` violations, `2` usage/IO/git error. The fail-open vs fail-closed policy for exit 2
 lives in the **hooks**, not the checker.
 
-The `ship` mode tolerates exactly the one bookkeeping commit SHIP makes after the last
-review: it requires **∃** a counting phase/integration review with `reviewed-sha = R`
-such that `R` is an ancestor of the tip, `R..tip` touches only the **ship-ledger
-allowlist** — the exact two files `.harness/decisions.md` and `.harness/followups.md`
-(NOT the whole `.harness/` dir) — and `R..tip` is at most one commit. Selection is
-existential, not "highest-N" (N is a per-scope counter, so max-N can mis-select an
-early phase across phases). I.e. *all shipped code was reviewed; only the single
-ledger commit moved the tip.*
+The `ship` mode is keyed off the run's terminal **finalize** review and tolerates exactly
+the one bookkeeping commit SHIP makes after it. The tip-binding candidate-`R` is the
+CONVERGED finalize artifact — the highest-N `review-finalize-N.md` with `## Verdict:
+CONVERGED` and a non-empty `codex-review-finalize.md` sibling — whose `reviewed-sha = R`
+must be an ancestor of the tip, with `R..tip` touching only the **ship-ledger allowlist**
+— the exact three files `.harness/decisions.md`, `.harness/followups.md`, and repo-root
+`TODO.md` (NOT the whole `.harness/` dir) — and `R..tip` at most one commit. **PLUS** a
+precondition: ≥1 COUNTING phase-integration review must exist (a converged, SHA-bound,
+codex-backed `review-phase*` — else `no-phase-review`), since a run that never produced
+one never legitimately reached finalize. No converged finalize artifact → no candidate-`R`
+→ ship blocks `no-review`. I.e. *the finalize review covers the shipped tip; only the
+single ledger commit moved it after.*
 
 The `impl-presence:<id>` mode enforces an **IMPLEMENT-stage invariant** that is independent
 of the review modes: before a slice `slice/<runId>/<id>` merges, its diff against its
@@ -95,7 +100,7 @@ and the gate's `deny` must still win).
 | **slice-merge** | `git merge … slice/<runId>/<id>` (each slice token in the command) | `slice-merge:<id>` | SHA-bound CONVERGED review for the slice tip | fail-OPEN (silent) |
 | **impl-presence** | same `git merge … slice/<runId>/<id>` boundary — runs *alongside* the review check, per slice token | `impl-presence:<id>` | the slice diff makes **any non-deletion change** (add, modify, rename-into, copy-into, type-change — `--diff-filter=d`, i.e. exclude deletions only) to a runnable test path **OR** a commit carries a real `Drive-Test-Waiver:` trailer (a DELETED test path does **not** count — and since `--name-only` prints only a rename's destination, a rename *away from* a test path also does not count while a rename *into* one does; a dotfile basename like `test/.x.test.sh` never counts — the real runners skip dotfiles) | **fail-CLOSED** (deny) |
 | **phase-merge** | `git branch -f drive/<runId> phaseInt/<runId>/<P>` or `git merge … phaseInt/<runId>/<P>` | `phase-merge:<P>` | SHA-bound CONVERGED review for the phase-integration tip (naturally requires the post-harden review, since HARDEN re-emits `reviewed-sha`) | fail-OPEN (silent) |
-| **ship** | `gh pr create`, `glab mr create`, or any `git push` whose head is the drive branch (incl. bare `git push`, `git push -u origin HEAD`) | `ship` | all shipped code covered by a counting review (ledger-only `R..tip` tolerated) | **fail-CLOSED** (deny) |
+| **ship** | `gh pr create`, `glab mr create`, or any `git push` whose head is the drive branch (incl. bare `git push`, `git push -u origin HEAD`) | `ship` | a CONVERGED finalize review (`review-finalize-N.md` + codex sibling) covers the shipped tip — `R..tip` tolerated only for the single 3-file ledger commit ({`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`}); ≥1 counting phase-integration review is a precondition | **fail-CLOSED** (deny) |
 
 **Epoch-aware phasedesign gate.** A phase can be **redesigned** (a slice's assumption check
 finds the Tier-2 design stale → REDESIGN). Each redesign opens a durable **epoch** marker
