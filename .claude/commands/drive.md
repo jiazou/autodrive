@@ -154,7 +154,11 @@ verdict / merge / gate.
     remove stale ones with `git worktree remove` only — never `branch -D` (branch cleanup is
     the guarded assemble/advance steps' job). A `slice/<runId>/<id>` worktree is live until
     its slice is `converged`; a `phaseInt/<runId>/<P>` worktree is live only for the current
-    phase with `phaseReview[<P>].status` not yet `hardened`. A detached `wt/design<P>`
+    phase with `phaseReview[<P>].status` not yet `hardened`. A `wt/finalize` worktree
+    (checked out at `featureBranch`) is live while `stage == finalize` AND finalize has
+    not CONVERGED (the run is still in/at the finalize stage — finalize-CONVERGED uses the
+    § Current phase artifact criterion); otherwise it is stale →
+    `git worktree remove --force`. A detached `wt/design<P>`
     worktree (the per-phase design read worktree) is never live across a pause → always
     `git worktree remove --force` it.
   - **Each slice, by `step`:** `queued` → leave it for the phase-loop to dispatch.
@@ -167,6 +171,11 @@ verdict / merge / gate.
   - **Phase `hardening`:** resume HARDEN on `phaseInt/<runId>/<P>` (don't rebuild). If
     `status == hardened` but `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch`,
     complete its `git branch -f` advance (Execute step 6) instead.
+  - **Finalize (`stage == finalize`, not CONVERGED):** resume finalize on the preserved
+    `$RUN_DIR/wt/finalize` worktree (don't rebuild); re-dispatch `/drive-finalize` per
+    Stage 4c (its `FINALIZE_CAP = 3` reconstructed from `finalizeRound`, counter rule 6).
+    If `wt/finalize` is absent (removed mid-pause), re-create it per Stage 4c step 1
+    (`git worktree add $RUN_DIR/wt/finalize <featureBranch>`) before re-dispatching.
   - **Counter reconstruction (all six counters):** state.json is a resume-repair HINT,
     never a proof input. Repair each counter one-directionally —
     `counter = max(state hint, artifact-derived value)`: the hint may RAISE a counter

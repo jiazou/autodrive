@@ -40,7 +40,20 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
 
 ## Ship worktree + ledger promotion
 
-- `git worktree add $RUN_DIR/wt/ship <featureBranch>` and work there (cwd).
+- **Create `wt/ship` idempotently** (a resumed ship may have a stale one from a prior
+  partial attempt): `git worktree remove --force $RUN_DIR/wt/ship 2>/dev/null; git
+  worktree prune`, then `git worktree add $RUN_DIR/wt/ship <featureBranch>` and work
+  there (cwd).
+- **Resume-idempotency rule (do NOT double-promote / double-commit).** The ledger commit
+  is created BEFORE the suite-red STOP and BEFORE Gate B, so a resumed ship re-enters
+  here AFTER it already landed. Determine state from git BEFORE appending: let `R` =
+  finalize's `reviewed-sha` (precondition #3). If `R..featureBranch` tip is already
+  exactly the single ledger commit (`R` is the tip's parent AND the tip touches only the
+  3-file `SHIP_LEDGER_ALLOWLIST`), the ledger was already promoted on a prior crashed
+  attempt → **SKIP** the append+commit below (re-appending would DUPLICATE entries and a
+  second commit would break the `R..tip ≤1 commit` ship-gate invariant). Append+commit
+  ONLY when the tip is still AT `R` (`R == tip`, pre-ledger). The forward path (first
+  ship entry, `R == tip`) is unchanged.
 - **Promote the run ledgers into the repo's committed ones:** append this run's
   `$RUN_DIR/decisions.md` + `$RUN_DIR/followups.md` entries to the repo's
   `.harness/decisions.md` + `.harness/followups.md` (the cross-task ledgers). Then,
