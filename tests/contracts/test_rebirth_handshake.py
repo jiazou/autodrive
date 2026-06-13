@@ -558,7 +558,7 @@ def test_hook_docstring_enumerates_rebirth_dual():
 
 # =========================================================================== #
 # AC12 — the rebirth-handoff `/goal <leg-condition>` selector is TOTAL over the stage enum
-# (premises, plan, execute, verify, ship) → exactly one leg-condition each.
+# (premises, plan, execute, finalize, verify, ship) → exactly one leg-condition each.
 # =========================================================================== #
 # A leg-condition selector bullet: a list item (`- `) keyed on `stage` that lists the stages
 # it covers in a `{…}` brace group and maps them to a leg-CONDITION body. Loosened from the
@@ -571,7 +571,7 @@ def test_hook_docstring_enumerates_rebirth_dual():
 #   - `cond`  : the bullet's remaining text after the brace group up to the next sibling
 #               `- ` bullet (or block end) — wrap-tolerant, so a reflowed multi-line
 #               condition still reads as one non-empty body.
-_STAGE_ENUM = ("premises", "plan", "execute", "verify", "ship")
+_STAGE_ENUM = ("premises", "plan", "execute", "finalize", "verify", "ship")
 _LEG_BULLET_RE = re.compile(
     r"^\s*- .*?`stage`.*?\{(?P<stages>[^}]*)\}(?P<cond>.*?)(?=^\s*- |\Z)",
     re.MULTILINE | re.DOTALL,
@@ -590,7 +590,7 @@ def _leg_selector_section():
 
 def test_leg_condition_selector_is_total_over_stage_enum():
     """AC12: the rebirth-handoff `/goal <leg-condition>` selector covers the FULL stage enum
-    (premises, plan, execute, verify, ship) with each stage mapped to exactly ONE
+    (premises, plan, execute, finalize, verify, ship) with each stage mapped to exactly ONE
     leg-condition. A stage dropped (a successor resumes with no goal) or double-mapped (an
     ambiguous selection) flips the test."""
     section = _leg_selector_section()
@@ -618,14 +618,14 @@ def test_leg_condition_selector_is_total_over_stage_enum():
 # is the distinctive "NOT met while autonomous <leg-work> remains" clause that the resume
 # `/goal` must carry for its leg; they mirror the Stage-0/Gate-A leg-goal definitions.
 #   - PLANNING leg (premises, plan): autonomous planning/design/autoplan/review work remains.
-#   - EXECUTE   leg (execute, verify, ship): autonomous implement/review/harden/verify/ship.
+#   - EXECUTE   leg (execute, finalize, verify, ship): autonomous implement/review/harden/verify/ship.
 _PLANNING_COND = "NOT met while autonomous planning"
 _PLANNING_COND_TAIL = "design, autoplan, dual-voice review) work remains."
 _EXECUTE_COND = "NOT met while autonomous implement / review / harden / verify / ship work remains."
 
 # The stage-set that keys each leg, as the frozensets the selector partition must produce.
 _PLANNING_STAGES = frozenset({"premises", "plan"})
-_EXECUTE_STAGES = frozenset({"execute", "verify", "ship"})
+_EXECUTE_STAGES = frozenset({"execute", "finalize", "verify", "ship"})
 
 
 def _leg_bullet_map(section):
@@ -665,7 +665,7 @@ def _assert_leg_condition_mapping(section):
     )
     # … the execute-leg row binds the EXECUTE condition semantics …
     assert _EXECUTE_COND in execute_cond, (
-        "the execute-leg row (execute, verify, ship) must bind the EXECUTE-leg condition "
+        "the execute-leg row (execute, finalize, verify, ship) must bind the EXECUTE-leg condition "
         f"('NOT met while autonomous implement / review / harden / verify / ship …'); got {execute_cond!r}"
     )
     # … and NOT the planning condition (so a swap reds).
@@ -677,7 +677,7 @@ def _assert_leg_condition_mapping(section):
 def test_leg_condition_selector_maps_each_leg_to_its_own_condition():
     """AC12: beyond totality, the selector binds the CORRECT condition per leg — the planning
     stage-set (premises, plan) → the planning-leg condition, the execute stage-set (execute,
-    verify, ship) → the execute-leg condition — over the REAL merged drive.md. A swapped or
+    finalize, verify, ship) → the execute-leg condition — over the REAL merged drive.md. A swapped or
     mis-mapped condition (a handoff that re-arms the WRONG leg's goal) reds this pin."""
     _assert_leg_condition_mapping(_leg_selector_section())
 
