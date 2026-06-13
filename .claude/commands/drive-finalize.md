@@ -75,12 +75,20 @@ followups/TODO, not edited.
    over-abstraction, redundant narration comments, copy-paste duplication (now visible
    across phases), inconsistent naming. **De-slop MUST be behavior-preserving:** a de-slop
    edit that reds a test is a REAL REGRESSION → **REVERT** that edit; do NOT reconcile it
-   by changing the test (the Step-4 regression-guard rule). **Seed lens 1 from
-   `$RUN_DIR/followups.md`'s `## slop (deferred to finalize)` section** (the per-phase
-   harden deferred-slop handoff, one line per item as `file:line — description`) IN
-   ADDITION to scanning the run diff, and apply every such note — finalize is where those
-   deferred notes are finally applied (the heading string must match harden's canonical
-   `## slop (deferred to finalize)` EXACTLY). A
+   by changing the test (the Step-4 regression-guard rule). **The source of truth for
+   "is there slop left" is THIS round's own AUDIT of the run-diff CODE**
+   (`git diff <baseRef>..<featureBranch>`): each round re-scans the actual code for
+   remaining slop, and the fix set is the slop the audit finds STILL PRESENT in the current
+   code. **Seed the audit's lens-1 candidate scan from `$RUN_DIR/followups.md`'s
+   `## slop (deferred to finalize)` section** (the per-phase harden deferred-slop handoff,
+   one line per item as `file:line — description`) so harden's pre-identified spots aren't
+   missed — but these notes are a best-effort SEED, NOT a standing fix set: an item is
+   fixed only if the audit confirms the slop is still in the code. Because followups.md is
+   APPEND-ONLY, finalize does NOT drain or mutate it; convergence does NOT depend on that
+   section being empty. An already-applied deferred-slop edit will not reappear (the code no
+   longer has that slop), so a stale line there is harmless — it is not the convergence
+   signal; the code re-audit is. (The seed heading string must match harden's canonical
+   `## slop (deferred to finalize)` EXACTLY.) A
    de-slop edit that would drop coverage of any acceptance criterion (ANY phase's) is
    **VETOED** → `$RUN_DIR/followups.md`, never made (convergence is not blocked by a vetoed
    item — it is logged, not a P1).
@@ -149,21 +157,26 @@ Audit `git diff <baseRef>..<featureBranch>` (the whole run's added logic) agains
 THREE finalize lenses, reading the whole driven codebase for aggregate context but
 flagging EDITS only within the edit scope (run diff + test-support + a flagged-P1 root
 cause just outside it):
-1. AI slop (LED) — SEED the candidate list from `$RUN_DIR/followups.md`'s
+1. AI slop (LED) — the source of truth is YOUR AUDIT of the run-diff CODE: SCAN the run
+   diff (`git diff <baseRef>..<featureBranch>`) for slop STILL PRESENT in the current code:
+   speculative fallbacks, needless try/catch, defensive "just in case" code, dead code,
+   over-abstraction, redundant comments, copy-paste (now visible across phases),
+   inconsistent naming. SEED the candidate scan from `$RUN_DIR/followups.md`'s
    `## slop (deferred to finalize)` section (the per-phase harden passes' deferred-slop
-   notes, one line per item as `file:line — description`) IN ADDITION to scanning the run
-   diff for: speculative fallbacks, needless try/catch, defensive "just in case" code,
-   dead code, over-abstraction, redundant comments, copy-paste (now visible across
-   phases), inconsistent naming. For each, note whether removing it would drop an
-   acceptance criterion's coverage (if so, mark VETOED — do not propose it).
+   notes, one line per item as `file:line — description`) so harden's pre-identified spots
+   aren't missed — but only flag a seeded item if the audit confirms the slop is still in
+   the code (an already-applied note whose slop is gone is NOT a finding). For each, note
+   whether removing it would drop an acceptance criterion's coverage (if so, mark VETOED —
+   do not propose it).
 2. Aggregate missing tests — cross-phase integration paths / end-to-end criteria no
    single phase's tests covered. Name the exact case to cover.
 3. Aggregate logic bugs — cross-phase contract violations, integration bugs, off-by-one /
    null-empty / race issues visible only in the assembled whole.
 Spec + prior decisions: each phase's `$RUN_DIR/design-phase<P>.md` (acceptance criteria),
-`$RUN_DIR/design.md` (high-level context), `$RUN_DIR/decisions.md`. Deferred-slop input:
+`$RUN_DIR/design.md` (high-level context), `$RUN_DIR/decisions.md`. Deferred-slop SEED:
 `$RUN_DIR/followups.md` — read its `## slop (deferred to finalize)` section (the
-per-phase harden handoff) and seed lens 1's candidates from it (see lens 1 above).
+per-phase harden handoff) to seed lens 1's candidate scan (see lens 1 above); it is a
+best-effort seed, not a fix set — the run-diff code audit decides what is still slop.
 
 Severity — pick one, don't ask:
 - P1 (actionable this stage): a real aggregate bug (lens 3), or a missing test on an
@@ -219,27 +232,28 @@ satisfies it.
 ## Step 2 — Triage
 
 Combine voices: both-flagged = high confidence; **codex-only = scrutinize hardest** (bugs
-Claude missed); reviewer-only = claude-only. Build the fix set from:
+Claude missed); reviewer-only = claude-only. The fix set is keyed on THIS round's AUDIT of
+the current code, NOT on the followups ledger. Build the fix set from:
 - All open **P1** from this round's audit (lens 2 criterion/bug tests + lens 3 bugs).
-- **The deferred-slop items** read from `$RUN_DIR/followups.md`'s
-  `## slop (deferred to finalize)` section (the per-phase harden handoff,
-  `file:line — description`) — finalize is the de-slop APPLIER (the dual of harden, which
-  only DEFERS), so these are finalize's responsibility to APPLY and are lens-1 fix-set
-  items (behavior-preserving, scope-gated, VETO if applying would drop any acceptance
-  criterion's coverage).
-- **Cheap in-scope P2 slop** from this round's run-diff audit (lens 1, the LED lens —
-  applied HERE, NOT deferred; same lens-1 rules: behavior-preserving, scope-gated, VETO if
-  it would drop a criterion).
+- **Lens-1 slop the audit finds STILL PRESENT in the current code** (lens 1, the LED lens
+  — applied HERE, NOT deferred; the audit's candidate scan was seeded by the followups
+  `## slop (deferred to finalize)` notes, but an item enters the fix set only when the
+  audit confirms the slop is still in the code). Same lens-1 rules: behavior-preserving,
+  scope-gated, VETO if it would drop any acceptance criterion's coverage.
 - **Any P1 regression** the prior round's Step-4 guard left open.
 P3 / VETOED / ARCH / out-of-scope → `$RUN_DIR/followups.md` (or `finalize-todo.md` for
 ARCH), never the code fix set.
 
-The fix set Step 2 builds here is EXACTLY what Step 3 applies: the open P1s, the deferred-slop
-items, and the run-diff cheap-P2 slop.
+The fix set Step 2 builds here is EXACTLY what Step 3 applies: the open P1s and the
+audit-confirmed run-diff slop. Finalize does NOT drain or mutate `followups.md` (it is an
+APPEND-ONLY ledger); a stale already-applied deferred-slop line there is harmless because
+it is NOT the convergence signal — the code re-audit is. An already-applied edit will not
+reappear (the code no longer has that slop), so the audit fix set naturally empties.
 
-If the fix set is empty (no open P1, no deferred-slop items, nothing cheap-P2 slop left) →
-**CONVERGED** (the free
-confirming round — return per Step 4, do not increment `finalizeRound`). Otherwise classify
+If the audit fix set is empty (no open P1, and no slop the audit finds still present in the
+code) → **CONVERGED** (the free
+confirming round — return per Step 4, do not increment `finalizeRound`). Convergence does
+NOT depend on the followups section being empty. Otherwise classify
 each kept item Mechanical / Taste / User-Challenge (6 principles); Taste → log to
 `$RUN_DIR/decisions.md`, surface at Gate B; User-Challenge → STOP and surface.
 
@@ -255,8 +269,11 @@ Code paths are relative to this worktree; artifact paths are the absolute `$RUN_
 - $RUN_DIR/design-phase<P>.md for each phase (acceptance criteria)
 - $RUN_DIR/design.md (high-level context), $RUN_DIR/decisions.md (stay consistent)
 - $RUN_DIR/followups.md — its `## slop (deferred to finalize)` section: the per-phase
-  harden deferred-slop notes (`file:line — description`). Apply these items (lens 1) as
-  part of this round's fix set, behavior-preserving and within the scope-creep gate.
+  harden deferred-slop notes (`file:line — description`). These SEED the audit; they are
+  NOT a standing fix set. Apply a lens-1 item only when this round's audit
+  (`review-finalize-N.md`) confirms the slop is still in the code — behavior-preserving and
+  within the scope-creep gate. Do NOT re-apply notes whose slop is already gone, and do NOT
+  drain or edit followups.md (it is append-only).
 - $RUN_DIR/review-finalize-N.md + codex-review-finalize.md (the fix set; codex-only items
   live only in the codex file, so read it)
 
@@ -265,8 +282,9 @@ files; new test files + existing test-support for them; and a file just outside 
 ONLY as the root cause of a flagged P1 (then append a scope-widening note to
 `$RUN_DIR/decisions.md`). No refactor / taste edit without a flagged P1 — a non-P1
 improvement outside the diff → `$RUN_DIR/followups.md`, skip it.
-- Lens 1 de-slop: remove the slop AND apply every item from `$RUN_DIR/followups.md`'s
-  `## slop (deferred to finalize)` section — but **behavior-preserving only**, and ONLY if
+- Lens 1 de-slop: remove the slop the audit found STILL PRESENT in the code (its candidate
+  scan was seeded by the `## slop (deferred to finalize)` notes, but apply an item only
+  when the slop is actually still in the code) — **behavior-preserving only**, and ONLY if
   it does not drop any acceptance criterion's coverage (if it would, append to followups
   and skip — VETOED).
 - Lens 3 bugs: fix them; add a test that FAILS against the pre-fix code, then passes.
