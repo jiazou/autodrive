@@ -76,10 +76,16 @@ followups/TODO, not edited.
    across phases), inconsistent naming. **De-slop MUST be behavior-preserving:** a de-slop
    edit that reds a test is a REAL REGRESSION → **REVERT** that edit; do NOT reconcile it
    by changing the test (the Step-4 regression-guard rule). **The source of truth for
-   "is there slop left" is THIS round's own AUDIT of the run-diff CODE**
+   "what slop is APPLICABLE this round" is THIS round's own AUDIT of the run-diff CODE**
    (`git diff <baseRef>..<featureBranch>`): each round re-scans the actual code for
-   remaining slop, and the fix set is the slop the audit finds STILL PRESENT in the current
-   code. **Seed the audit's lens-1 candidate scan from `$RUN_DIR/followups.md`'s
+   remaining slop, and the round's de-slop fix set is the CHEAP IN-SCOPE slop the audit
+   finds STILL PRESENT in the current code (6-principles blast-radius + boil-lakes gate).
+   Slop the audit confirms is present but is NON-cheap or OUT-of-scope is **deferred to
+   `$RUN_DIR/followups.md`** (Step 2's routing) and is **EXPLICITLY NON-BLOCKING** — it
+   stays in the code and does NOT keep the round from converging (mirrors how harden's
+   non-cheap P2 → followups doesn't block HARDENED). So convergence keys on the APPLICABLE
+   set being empty, NOT on "no slop anywhere in the code." **Seed the audit's lens-1
+   candidate scan from `$RUN_DIR/followups.md`'s
    `## slop (deferred to finalize)` section** (the per-phase harden deferred-slop handoff,
    one line per item as `file:line — description`) so harden's pre-identified spots aren't
    missed — but these notes are a best-effort SEED, NOT a standing fix set: an item is
@@ -233,16 +239,18 @@ satisfies it.
 ## Step 2 — Triage
 
 Combine voices: both-flagged = high confidence; **codex-only = scrutinize hardest** (bugs
-Claude missed); reviewer-only = claude-only. The fix set is keyed on THIS round's AUDIT of
-the current code, NOT on the followups ledger. Build the fix set from:
+Claude missed); reviewer-only = claude-only. The round's de-slop fix set (the APPLICABLE
+set) is keyed on THIS round's AUDIT of the current code, NOT on the followups ledger. Build
+the fix set from:
 - All open **P1** from this round's audit (lens 2 criterion/bug tests + lens 3 bugs).
-- **Lens-1 slop the audit finds STILL PRESENT in the current code** (lens 1, the LED lens
-  — applied HERE, NOT deferred; the audit's candidate scan was seeded by the followups
-  `## slop (deferred to finalize)` notes, but an item enters the fix set only when the
-  audit confirms the slop is still in the code). Same lens-1 rules: behavior-preserving,
-  scope-gated, VETO if it would drop any acceptance criterion's coverage.
-- **Cheap in-scope P2 slop** — lens-1 slop that is cheap AND within the run's blast radius
-  (6 principles): into the fix set (finalize APPLIES cheap in-scope slop, unlike harden).
+- **Cheap in-scope P2 slop the audit finds STILL PRESENT in the current code** — lens-1
+  slop (the LED lens) that is cheap AND within the run's blast radius (6 principles):
+  applied HERE, not deferred (finalize APPLIES cheap in-scope slop, unlike harden). The
+  audit's candidate scan was seeded by the followups `## slop (deferred to finalize)`
+  notes, but an item enters the fix set only when the audit confirms the slop is still in
+  the code. Same lens-1 rules: behavior-preserving, scope-gated, VETO if it would drop any
+  acceptance criterion's coverage. NON-cheap or out-of-scope slop the audit confirms is
+  present is NOT in the fix set — it is routed to followups (below) and is non-blocking.
 - **Any P1 regression** the prior round's Step-4 guard left open.
 **No finding class is silently dropped.** Every finding has a destination:
 - **P1** (lens 2 criterion/bug tests + lens 3 bugs) → fix set.
@@ -254,15 +262,19 @@ the current code, NOT on the followups ledger. Build the fix set from:
 - **ARCH** (MAJOR architectural problems) → `$RUN_DIR/finalize-todo.md`.
 
 The fix set Step 2 builds here is EXACTLY what Step 3 applies: the open P1s and the
-audit-confirmed run-diff slop. Finalize does NOT drain or mutate `followups.md` (it is an
-APPEND-ONLY ledger); a stale already-applied deferred-slop line there is harmless because
-it is NOT the convergence signal — the code re-audit is. An already-applied edit will not
-reappear (the code no longer has that slop), so the audit fix set naturally empties.
+audit-confirmed CHEAP IN-SCOPE run-diff slop (the APPLICABLE set). Finalize does NOT drain
+or mutate `followups.md` (it is an APPEND-ONLY ledger); a stale already-applied
+deferred-slop line there is harmless because it is NOT the convergence signal — the code
+re-audit is. An already-applied edit will not reappear (the code no longer has that slop),
+so the applicable fix set naturally empties.
 
-If the audit fix set is empty (no open P1, and no slop the audit finds still present in the
-code) → **CONVERGED** (the free
-confirming round — return per Step 4, do not increment `finalizeRound`). Convergence does
-NOT depend on the followups section being empty. Otherwise classify
+If the APPLICABLE fix set is empty — no open P1, and no cheap in-scope slop the audit finds
+still present in the code (any remaining slop the audit sees is non-cheap/out-of-scope and
+was routed to followups) → **CONVERGED** (the free confirming round — return per Step 4, do
+not increment `finalizeRound`). CONVERGED is the applicable set being empty, NOT "no slop
+anywhere in the code": slop deferred to followups does NOT block convergence (mirrors how
+harden's non-cheap P2 → followups doesn't block HARDENED). Convergence does NOT depend on
+the followups section being empty. Otherwise classify
 each kept item Mechanical / Taste / User-Challenge (6 principles); Taste → log to
 `$RUN_DIR/decisions.md`, surface at Gate B; User-Challenge → STOP and surface.
 

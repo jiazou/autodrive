@@ -226,12 +226,13 @@ flagged P1 — a non-P1 improvement outside the diff → `$RUN_DIR/followups.md`
 - Lens 2 bugs: fix them; add a test that FAILS against the pre-fix code, then passes.
 - Lens 1 tests: add the named tests, driving real production wiring (not stubbed state).
 - Slop: do NOT remove any slop in this pass — it is DEFERRED to `/drive-finalize`. The
-  audit's slop items were ALREADY persisted to `$RUN_DIR/followups.md` (under
-  `## slop (deferred to finalize)`) by the always-runs Step-2 persist rule — do not
-  re-write them here. If you notice NEW slop while fixing, record it via that same
-  Step-2 persist rule: append `file:line — one-line description` to
-  `$RUN_DIR/followups.md` under the canonical `## slop (deferred to finalize)` heading
-  (create once if absent; never duplicate); do not edit the slop itself.
+  audit's slop items are persisted to `$RUN_DIR/followups.md` (under
+  `## slop (deferred to finalize)`) by the always-runs Step-2 persist rule — that is the
+  SINGLE authoritative slop-persist path; do NOT write followups here. If you notice NEW
+  slop while fixing, do not edit the slop and do not append it yourself — list it in your
+  "Flagged:" return line so the next round's audit surfaces it and Step-2's always-runs
+  persist (with its dedup rule) records it. Never write a second slop-persist path from
+  this step.
 Run the FULL build + integration tests until green. Commit to `phaseInt/<runId>/<P>`
 (`git add -A && git commit`) before returning.
 
