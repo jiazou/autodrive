@@ -746,14 +746,14 @@ mk_checkpoint() {
       # (finalize) arm runs. Regression validity: pre-Phase-2 there was no (finalize) arm, so the
       # finalize review would land in slice_keys -> reviewCount {"finalize":1} + finalizeRound 0.
       _gitc "$repo" checkout -q -b "phaseInt/$name/1"
-      _commit "$repo" "phase.sh" "echo p1" "phase 1 integration" >/dev/null
+      local fr_tip; fr_tip="$(_commit "$repo" "phase.sh" "echo p1" "phase 1 integration")"
       {
         echo "# Review finalize round 1"
         echo
         echo "## Verdict: CONVERGED"
         echo "## AppliedEdits: yes"
         echo
-        echo "reviewed-sha: $zeros"
+        echo "reviewed-sha: $fr_tip"
       } > "$rd/review-finalize-1.md"
       { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
       ;;
@@ -765,13 +765,13 @@ mk_checkpoint() {
       # AppliedEdits line is irrelevant (the finalize review counts as a slice) -> no
       # unparseable-finalize; the assertion below flips with the Phase-2 fix.
       _gitc "$repo" checkout -q -b "phaseInt/$name/1"
-      _commit "$repo" "phase.sh" "echo p1" "phase 1 integration" >/dev/null
+      local fu_tip; fu_tip="$(_commit "$repo" "phase.sh" "echo p1" "phase 1 integration")"
       {
         echo "# Review finalize round 1"
         echo
         echo "## Verdict: CONVERGED"
         echo
-        echo "reviewed-sha: $zeros"
+        echo "reviewed-sha: $fu_tip"
       } > "$rd/review-finalize-1.md"
       { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
       ;;
