@@ -11,6 +11,13 @@
 # fields resume keys on (D40). All other modes derive the verdict from git refs +
 # review artifacts and NEVER read state.json (D1/D8).
 #
+# Stage 4c FINALIZE wiring (scope token `finalize`): `--mode ship`'s tip-binding
+# candidate-R is the `review-finalize-N.md` artifact (the phase-integration review is
+# demoted to a `no-phase-review` precondition — D17); `--mode checkpoint`'s `counters`
+# carries a 6th key `finalizeRound` (bare int = `## AppliedEdits: yes` count over the
+# review-finalize-*.md family; finalize is run-singleton, so not a per-phase map — D16);
+# `--mode state-lint`'s stage enum includes `finalize` (D18).
+#
 # Truth model:
 #   runId        = basename(RUN_DIR)
 #   featureBranch = drive/<runId>
@@ -25,9 +32,10 @@
 # Fail-closed/open semantics for exit 2 live in the HOOKS, not here.
 set -euo pipefail
 
-# --- Ship-ledger allowlist: the EXACT two files SHIP commits AFTER the last review.
-#     Kept in sync with drive-ship.md (NOT the whole .harness/ dir — D12). ---
-SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md")
+# --- Ship-ledger allowlist: the EXACT files SHIP commits AFTER the last review.
+#     Kept in sync with drive-ship.md (NOT the whole .harness/ dir — D12). Repo-root
+#     TODO.md is promoted from finalize-todo.md in the same single ledger commit (D10). ---
+SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md" "TODO.md")
 
 usage() {
   echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|phasedesign-gate:<P>|slice-merge:<id>|phase-merge:<P>|impl-presence:<id>|ship|audit|checkpoint|state-lint" >&2
@@ -473,6 +481,28 @@ EOF
       candidate_R="$candidate_R$rsha "
     done
 
+    # (b-i) Precondition: ≥1 COUNTING phase-integration review must exist (D17). Key off the
+    # COUNTING set (candidate_R: post verdict_converged/reviewed_sha_of/codex_present), NOT
+    # seen_phase — seen_phase is set BEFORE those checks, so it proves only a review-phase*
+    # PATHNAME exists, which a stale/FINDINGS/missing-codex artifact would forge. A run that
+    # never produced a counting phase review never legitimately reached finalize.
+    phase_candidate_R="$candidate_R"        # the COUNTING phase Rs (snapshot before finalize overwrites)
+    if [ -z "$phase_candidate_R" ]; then
+      emit false "ship" "$tip" "[$(violation "ship" "no-phase-review" "$tip" "")]"
+    fi
+
+    # (b-ii) The TERMINAL tip-binding candidate-R is the finalize artifact (D17): finalize's
+    # reviewed-sha == post-finalize tip, so it REPLACES the phase Rs as the candidate set the
+    # (a)(b)(c) test runs on. The phase Rs are consumed only by the b-i precondition above.
+    # No converged finalize artifact → candidate_R="" → ship blocks below (no-review).
+    fin_rf="$(highest_review_file finalize)" || true
+    if [ -n "$fin_rf" ] && verdict_converged "$fin_rf" \
+         && fin_rsha="$(reviewed_sha_of "$fin_rf")" && codex_present finalize; then
+      candidate_R="$fin_rsha "
+    else
+      candidate_R=""
+    fi
+
     # Test each candidate R against (a)(b)(c). Succeed on first that satisfies all.
     # git-error-vs-verdict: a candidate R is a sha read from a review ARTIFACT (not a
     # ref the tool constructed). A non-resolving R = a stale/typoed artifact that binds
@@ -592,7 +622,7 @@ EOF
     # epoch-suffixed phasedesign artifact with no redesign-<P>-r<R>.marker — fail closed).
     # Round files are review-<scope>-N.md with pure-integer N; classify the scope:
     # design (not a counter) | phasedesign<P>[-r<R>] | phase<P> | else a slice id.
-    slice_keys=""; phase_keys=""; pd_keys=""
+    slice_keys=""; phase_keys=""; pd_keys=""; finalize_yes_count=0
     for f in "$RUN_DIR"/review-*.md; do
       # -e || -L: a DANGLING review dirent is corruption, not absence — skipping it would
       # UNDERCOUNT reviewCount/phaseReviewRound (the counters the resume path consumes) and
@@ -611,6 +641,18 @@ EOF
         (design) ;;
         (phasedesign?*) pd_keys="$pd_keys${scope#phasedesign}"$'\n' ;;
         (phase?*)       phase_keys="$phase_keys${scope#phase}"$'\n' ;;
+        (finalize)
+          # finalize is run-singleton — NOT a slice (no phantom slice/<runId>/finalize branch).
+          # Count its `AppliedEdits: yes` fix rounds for finalizeRound (B5); FAIL CLOSED on a
+          # missing AppliedEdits: line, mirroring the harden unparseable-harden path exactly
+          # (a finalize fix-round artifact MUST carry the marker; a missing one would silently
+          # undercount the cap/re-dispatch guard). A `pending`/`no` line is present-but-not-yes
+          # → not a violation, just not counted.
+          if ! grep -qE '^(##[[:space:]]*)?AppliedEdits:' "$f"; then
+            viol_arr+=("$(violation "$base" "unparseable-finalize")")
+          elif grep -qE '^(##[[:space:]]*)?AppliedEdits:[[:space:]]*yes[[:space:]]*$' "$f"; then
+            finalize_yes_count=$((finalize_yes_count + 1))
+          fi ;;
         (*)             slice_keys="$slice_keys$scope"$'\n' ;;
       esac
     done
@@ -739,7 +781,10 @@ EOF
     # reviewCount[<id>] = count of review-<id>-N.md, pure-integer N (I3 rule 1).
     rcj="$(printf '%s' "$slice_keys" | sort | uniq -c | awk '{print $2, $1}' | json_from_pairs)"
 
-    counters="{\"redesigns\":$rdj,\"phaseDesignRound\":$pdrj,\"phaseReviewRound\":$prrj,\"hardenRound\":$hrj,\"reviewCount\":$rcj}"
+    # finalizeRound = count of review-finalize-*.md with `AppliedEdits: yes` (B5). A bare
+    # integer (finalize is run-singleton), not a per-phase map — matches state.finalizeRound.
+    frj="$finalize_yes_count"
+    counters="{\"redesigns\":$rdj,\"phaseDesignRound\":$pdrj,\"phaseReviewRound\":$prrj,\"hardenRound\":$hrj,\"reviewCount\":$rcj,\"finalizeRound\":$frj}"
     if [ "${#viol_arr[@]:-0}" -eq 0 ]; then
       printf '{"clean":true,"mode":"checkpoint","tip":"%s","violations":[],"counters":%s}\n' "$tip" "$counters"
       exit 0
@@ -868,9 +913,10 @@ EOF_PHASES
 
     # stage must be one of the real pipeline stages — an out-of-enum stage is an
     # unroutable hint (a resume can't place the run). The enum is the state.json
-    # template's stage values: premises, plan, execute, verify, ship, done.
+    # template's stage values: premises, plan, execute, finalize, verify, ship, done
+    # (finalize = Stage 4c, the cross-slice contract with drive.md — B4/D18).
     case "$stage" in
-      premises|plan|execute|verify|ship|done) ;;
+      premises|plan|execute|finalize|verify|ship|done) ;;
       *) viol_arr+=("$(violation "stage" "stage-malformed")") ;;
     esac
 
