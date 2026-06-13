@@ -1,11 +1,13 @@
 ---
-description: HARDEN stage (Stage 4.5) of /drive — per-phase quality-hardening pass that runs AFTER the phase-integration review converges. Find→fix→verify over the assembled phase to (1) reduce AI slop, (2) add missing tests, (3) fix logic bugs. Mutating, beyond acceptance criteria. Usually invoked by /drive.
+description: HARDEN stage (Stage 4.5) of /drive — per-phase quality-hardening pass that runs AFTER the phase-integration review converges. Find→fix→verify over the assembled phase to (1) add missing tests, (2) fix logic bugs; notes AI slop and DEFERS it to the final aggregate stage (`/drive-finalize`). Mutating, beyond acceptance criteria. Usually invoked by /drive.
 argument-hint: phase <P> (within an existing run)
 ---
 You are running the HARDEN stage (Stage 4.5) for **one phase**. Harness-owned — no
 gstack skill. Unlike `/drive-review` (a PASSIVE conformance audit scoped to
 acceptance criteria), HARDEN is a **mutating find→fix→verify loop** that hunts
-quality defects **beyond** the spec. `/drive` invokes it once per phase, AFTER the
+quality defects **beyond** the spec — (1) add missing tests, (2) fix logic bugs;
+it **notes (does not fix) AI slop, deferring it to the end-of-run `/drive-finalize`
+aggregate pass**. `/drive` invokes it once per phase, AFTER the
 phase-integration review CONVERGED and BEFORE `featureBranch` advances, operating on
 the assembled `phaseInt/<runId>/<P>` worktree (so its commits land on that branch — the same
 branch `featureBranch` will fast-forward to).
@@ -40,20 +42,22 @@ tree) if any fails:
 When `/drive` invokes this stage it passes all of the above directly, so these checks
 pass by construction; they exist for a bare/manual invocation.
 
-## The three hardening lenses
+## The two hardening lenses (+ a deferred slop NOTE)
 
-1. **Reduce AI slop** (per OPERATING.md "No AI Slop"): speculative fallbacks,
-   unnecessary `try/catch`, "just in case" defensive code, dead/unreachable code,
-   over-abstraction, redundant narration comments, copy-paste duplication,
-   inconsistent naming. **De-slop edits YIELD to conformance:** an edit that would
-   drop coverage of any acceptance criterion is VETOED — log it to
-   `$RUN_DIR/followups.md`, never make it (this is what stops de-slop ↔ conformance
-   oscillation).
-2. **Add missing tests**: acceptance criteria, branches, edge cases, and error paths
+- **NOTE AI slop → DEFER to `/drive-finalize`** (not a fix lens here): Per-phase harden
+  no longer REMOVES slop. When the audit spots slop (speculative fallbacks, needless
+  try/catch, defensive "just in case" code, dead code, over-abstraction, redundant
+  comments, copy-paste, inconsistent naming), it RECORDS the finding (file:line +
+  one-line description) to `$RUN_DIR/followups.md` under a `slop (deferred to finalize)`
+  heading and applies NO edit. De-slop happens ONCE, at end-of-run, in `/drive-finalize`,
+  over the whole-run diff — doing it per-phase would do it twice and the final pass would
+  re-touch the same lines. The awareness is kept (the note), only the per-phase EDIT is
+  removed.
+1. **Add missing tests**: acceptance criteria, branches, edge cases, and error paths
    with no test → add them. A test that guards a bug MUST **fail against the pre-fix
    code** (per OPERATING.md "a green test can pass for the wrong reason" — drive the
    real production wiring, not seeded/stubbed state).
-3. **Fix logic issues & bugs**: off-by-one, wrong conditionals, unhandled
+2. **Fix logic issues & bugs**: off-by-one, wrong conditionals, unhandled
    null/empty, races, incorrect error handling, contract violations the conformance
    review missed.
 
@@ -98,10 +102,10 @@ Allowed to edit:
 Forbidden: any **refactor / taste edit without a flagged P1**, and editing unrelated
 working code. A non-P1 improvement outside the diff → `$RUN_DIR/followups.md`, skip it.
 
-## Step 1 — Audit (dual-voice, 3-lens)
+## Step 1 — Audit (dual-voice, 2-lens + slop-note)
 
 Run the **same dual-voice mechanics as `/drive-review`** (a passive Claude reviewer
-subagent + a direct codex pass over the same scope), but with the **harden 3-lens
+subagent + a direct codex pass over the same scope), but with the **harden 2-lens
 prompt** below instead of the conformance prompt. CRITICAL BOUNDARY: pass PATHS +
 git refs only — never any implementer's or harden-fixer's notes/rationale (preserves
 the reviewer's independent judgment, exactly as conformance review does).
@@ -110,11 +114,12 @@ Spawn a generic reviewer subagent:
 
 ----- BEGIN SUBAGENT SCOPE -----
 Audit `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` and the files it touches, against the
-THREE hardening lenses (NOT just acceptance-criterion conformance):
-1. AI slop — speculative fallbacks, needless try/catch, defensive "just in case"
-   code, dead code, over-abstraction, redundant comments, copy-paste, inconsistent
-   naming. For each, note whether removing it would drop an acceptance criterion's
-   coverage (if so, mark VETOED — do not propose it).
+TWO hardening lenses (NOT just acceptance-criterion conformance) + a slop NOTE:
+1. AI slop — RECORD each instance (file:line + one-liner) but propose NO edit; these
+   are DEFERRED to `/drive-finalize`. List them under a `slop (deferred)` section, not
+   as fixable findings. (Slop kinds: speculative fallbacks, needless try/catch,
+   defensive "just in case" code, dead code, over-abstraction, redundant comments,
+   copy-paste, inconsistent naming.)
 2. Missing tests — acceptance criteria / branches / edge cases / error paths with no
    test. Name the exact case to cover.
 3. Logic & bugs — off-by-one, wrong conditionals, unhandled null/empty, races, bad
@@ -125,8 +130,9 @@ slices; `$RUN_DIR/design.md` is high-level context), `$RUN_DIR/decisions.md`.
 Severity — pick one, don't ask:
 - P1 (actionable this stage): a real bug (lens 3), or a missing test on an acceptance
   criterion / on a bug being fixed (lens 2).
-- P2: slop worth removing (lens 1) or a missing test on a non-criterion path — fix
-  only if cheap AND in the phase's blast radius; otherwise → followups.
+- P2: a missing test on a non-criterion path — fix only if cheap AND in the phase's
+  blast radius; otherwise → followups. (Slop is NOT a P-finding here — it is recorded
+  to followups as a finalize-deferred note, never fixed.)
 - P3: cosmetic; → followups, never fix.
 Out-of-phase / out-of-diff real bugs → `$RUN_DIR/followups.md`.
 
@@ -142,11 +148,11 @@ Codex pass (run DIRECTLY from main, background, per-scope log — NEVER inside a
 subagent that waits on it):
 
 ```
-codex exec "Harden phase <P>: review git diff <phaseBaseSha>..phaseInt/<runId>/<P> for (1) AI
-slop to remove, (2) missing tests to add (acceptance criteria, branches, edge/error
-paths), (3) logic bugs. Flag P1 (real bug / missing test on a criterion) vs P2 (slop
-/ non-criterion test gap) with file:line. Note any de-slop edit that would drop an
-acceptance criterion (do not propose it). Prioritized." > $RUN_DIR/codex-harden-<P>.log 2>&1
+codex exec "Harden phase <P>: review git diff <phaseBaseSha>..phaseInt/<runId>/<P> for (1)
+missing tests to add (acceptance criteria, branches, edge/error paths), (2) logic
+bugs. Flag P1 (real bug / missing test on a criterion) vs P2 (non-criterion test gap)
+with file:line. Also LIST (do not propose removing) any AI slop you see (file:line) —
+it is deferred to a later aggregate pass. Prioritized." > $RUN_DIR/codex-harden-<P>.log 2>&1
 ```
 
 run_in_background; wait for completion; then a bounded post-process subagent: "Read
@@ -167,9 +173,10 @@ Combine voices: both-flagged = high confidence; **codex-only = scrutinize hardes
 - **Any P1 conformance regression** the prior round's Step-4 re-review left open
   (recorded in `$RUN_DIR/review-phase<P>-*.md` / state) — fold it in so a harden edit
   that dropped a criterion gets repaired, not lost.
-- **P2** slop / non-criterion tests — only if cheap AND in the phase blast radius
+- **P2** non-criterion tests — only if cheap AND in the phase blast radius
   (6 principles); else → `$RUN_DIR/followups.md`.
-- **P3** and **VETOED** de-slop → `$RUN_DIR/followups.md`, never apply.
+- **P3** → `$RUN_DIR/followups.md`; recorded slop notes are ALREADY in followups
+  (deferred to finalize) — never applied here.
 
 If the fix set is empty (no open P1 from the audit, no outstanding regression, nothing
 cheap-P2 left) → **HARDENED** (this is the free confirming round — return per Step 4,
@@ -196,10 +203,11 @@ files; new test files + existing test-support (fixtures/harnesses/snapshots) for
 and a file just outside the diff ONLY as the root cause of a flagged P1 (then append a
 scope-widening note to `$RUN_DIR/decisions.md`). No refactor / taste edit without a
 flagged P1 — a non-P1 improvement outside the diff → `$RUN_DIR/followups.md`, skip it.
-- Lens 3 bugs: fix them; add a test that FAILS against the pre-fix code, then passes.
-- Lens 2 gaps: add the named tests, driving real production wiring (not stubbed state).
-- Lens 1 slop: remove it ONLY if it does not drop any acceptance criterion's coverage
-  (if it would, append to followups and skip — VETOED).
+- Lens 2 bugs: fix them; add a test that FAILS against the pre-fix code, then passes.
+- Lens 1 gaps: add the named tests, driving real production wiring (not stubbed state).
+- Slop: do NOT remove any slop in this pass — it is recorded to followups and deferred
+  to `/drive-finalize`. If you notice new slop while fixing, append it to followups; do
+  not edit it.
 Run the FULL build + integration tests until green. Commit to `phaseInt/<runId>/<P>`
 (`git add -A && git commit`) before returning.
 
