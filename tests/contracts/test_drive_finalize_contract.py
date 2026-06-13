@@ -195,29 +195,42 @@ def test_harden_narrowed_to_two_lenses():
     two correctness lenses (add missing tests / fix logic bugs), and no longer instructs
     APPLYING a de-slop edit within harden. Anchors on stable directive tokens, not exact
     prose (OPERATING: structural over brittle-regex). Pins AC41."""
-    norm = _norm(_text(DRIVE_HARDEN))
+    text = _text(DRIVE_HARDEN)
+    norm = _norm(text)
 
-    # Deferral target named.
-    assert "/drive-finalize" in norm, "drive-harden.md must name /drive-finalize"
-    assert "defer" in norm.lower(), (
-        "drive-harden.md must DEFER slop (a `defer`/`deferred` directive) to finalize"
+    # The lens DEFINITIONS are SECTION-BOUNDED to `## The two hardening lenses (+ a
+    # deferred slop NOTE)` (drive-harden.md:45-62). The bare tokens (`/drive-finalize`,
+    # `defer`, `add missing tests`, `fix logic`, `do NOT remove any slop`) all recur
+    # elsewhere in the file (frontmatter/intro/Step-1 prompt/triage prose), so a
+    # file-wide check stays GREEN even if the real lens defs are deleted. Slice the
+    # section and pin the deferral NOTE + the two numbered correctness lenses THERE.
+    lenses = _norm(_section(text, r"^##\s+The two hardening lenses\b"))
+
+    # Deferral NOTE (lens-0): harden DEFERS slop to /drive-finalize, not a fix lens here.
+    assert "/drive-finalize" in lenses, (
+        "the two-lenses section must DEFER slop to /drive-finalize (the deferral NOTE)"
+    )
+    assert re.search(r"\bDEFER\b", lenses, re.IGNORECASE), (
+        "the two-lenses section's slop NOTE must carry a `DEFER` directive to finalize"
     )
 
-    # The two correctness lenses are present (stable directive tokens).
-    assert re.search(r"add missing tests", norm, re.IGNORECASE), (
-        "harden lens 1 (add missing tests) missing"
+    # The two NUMBERED correctness lenses are defined THERE (stable directive tokens).
+    assert re.search(r"1\.\s*\*?\*?[Aa]dd missing tests", lenses), (
+        "harden lens 1 (`1. Add missing tests`) must be defined in the two-lenses section"
     )
-    assert re.search(r"fix logic", norm, re.IGNORECASE), (
-        "harden lens 2 (fix logic issues/bugs) missing"
+    assert re.search(r"2\.\s*\*?\*?[Ff]ix logic", lenses), (
+        "harden lens 2 (`2. Fix logic issues & bugs`) must be defined in the section"
     )
 
-    # The narrowing directive: harden no longer REMOVES slop in-stage. This is the
-    # robust negative — assert the explicit "do NOT remove slop here" directive is
-    # present (a re-introduced de-slop lens would have to delete this directive).
-    assert re.search(r"do not remove any slop", norm, re.IGNORECASE) or re.search(
-        r"no longer removes slop", norm, re.IGNORECASE
+    # The narrowing directive: harden no longer REMOVES slop in-stage. The pre-narrowing
+    # version applied slop as an active numbered lens; the narrowing replaced it with the
+    # `no longer REMOVES slop` deferral. Pinned WITHIN the section so a re-introduced
+    # active de-slop lens (which would rewrite this section) reds. The note literally
+    # reads "no longer REMOVES slop".
+    assert re.search(r"no longer\b.*\bREMOVES?\b.*slop", lenses, re.IGNORECASE) or re.search(
+        r"do not remove any slop", lenses, re.IGNORECASE
     ), (
-        "drive-harden.md must state it does NOT remove/apply slop in-stage "
+        "the two-lenses section must state harden no longer REMOVES slop in-stage "
         "(de-slop is deferred to finalize); a re-applied de-slop lens would drop this"
     )
 
@@ -258,18 +271,43 @@ def test_finalize_emits_shipgate_artifact_contract():
     text = _text(DRIVE_FINALIZE)
     norm = _norm(text)
 
-    assert "review-finalize-N.md" in norm, "names the review-finalize-N.md artifact"
-    assert "## AppliedEdits:" in text, "the `## AppliedEdits:` marker line"
-    assert "reviewed-sha" in norm, "the reviewed-sha binding line"
-    # reviewed-sha bound to the featureBranch tip.
-    assert re.search(r"rev-parse\s+<?\s*`?featureBranch", norm) or re.search(
-        r"featureBranch\s*`?\s*tip", norm, re.IGNORECASE
-    ), "reviewed-sha must bind to the featureBranch tip"
-    assert "codex-review-finalize.md" in norm, "the codex sibling"
-    assert "codex-raw-finalize.log" in norm, "the per-scope raw codex log"
-    assert "CODEX_UNAVAILABLE" in norm, "the codex-unavailable degradation token"
-    assert re.search(r"FINALIZE_CAP\s*=\s*3", norm), "FINALIZE_CAP = 3"
-    assert "finalizeRound" in norm, "the finalizeRound counter"
+    # ---- artifact SCHEMA, SECTION-BOUNDED to `## Step 1 — Audit`. -------------------- #
+    # The real artifact-schema block (the `Write $RUN_DIR/review-finalize-N.md:` listing,
+    # the `## AppliedEdits:` marker, the reviewed-sha binding paragraph, the codex sibling
+    # + raw log + CODEX_UNAVAILABLE degradation) all live in Step 1 (drive-finalize.md:
+    # 152-238). The same tokens recur file-wide (the Loop-counter §128-149, the three-lenses
+    # §, Step-4 §339-347), so a file-wide check stays GREEN if the real Step-1 schema is
+    # deleted. Slice Step 1 and assert the schema THERE.
+    step1 = _section(text, r"^##\s+Step 1\b.*Audit")
+    step1_norm = _norm(step1)
+
+    assert "review-finalize-N.md" in step1_norm, (
+        "Step 1 must name the review-finalize-N.md artifact it WRITES"
+    )
+    assert "## AppliedEdits:" in step1, (
+        "Step 1's artifact schema must carry the `## AppliedEdits:` marker line"
+    )
+    assert "reviewed-sha" in step1_norm, "Step 1's schema must carry the reviewed-sha line"
+    # reviewed-sha bound to the featureBranch tip — the LOAD-BEARING binding clause in Step 1
+    # is the `git rev-parse <featureBranch>` COMMAND that produces the sha. The prose phrase
+    # "featureBranch tip" recurs incidentally in Step 1 (a benign-prose match would make this
+    # vacuous), so pin ONLY the rev-parse-featureBranch construct — deleting the binding
+    # paragraph's `git rev-parse <featureBranch>` then reds.
+    assert re.search(r"rev-parse\s+<?\s*`?featureBranch", step1_norm), (
+        "Step 1's reviewed-sha must bind to `git rev-parse <featureBranch>` (the binding "
+        "command that yields the post-fix tip the ship gate reads)"
+    )
+    assert "codex-review-finalize.md" in step1_norm, "Step 1 must name the codex sibling"
+    assert "codex-raw-finalize.log" in step1_norm, "Step 1 must name the per-scope raw codex log"
+    assert "CODEX_UNAVAILABLE" in step1_norm, (
+        "Step 1's codex degradation must emit the CODEX_UNAVAILABLE token"
+    )
+
+    # FINALIZE_CAP / finalizeRound are defined in `## Loop counter & cap`, not Step 1 — pin
+    # them there (section-bounded), so deleting the cap section reds.
+    cap = _norm(_section(text, r"^##\s+Loop counter\b"))
+    assert re.search(r"FINALIZE_CAP\s*=\s*3", cap), "the cap section must define FINALIZE_CAP = 3"
+    assert "finalizeRound" in cap, "the cap section must define the finalizeRound counter"
 
     # Full-suite regression guard with revert-on-red — SECTION-BOUNDED to `## Step 4 —
     # Regression guard & converge`. A loose file-wide `full...suite` + `REVERT` is vacuous:
@@ -306,7 +344,21 @@ def test_finalize_scope_creep_gate_and_arch_todo():
     text = _text(DRIVE_FINALIZE)
     norm = _norm(text)
 
-    assert "baseRef..featureBranch" in norm, "the whole-run diff scope baseRef..featureBranch"
+    # The diff-scope clause, SECTION-BOUNDED to `## Scope (READ vs EDIT)` (drive-finalize.md:
+    # 47-52). `baseRef..featureBranch` recurs later (the HARD GATE §, Step 1's audit prompt),
+    # so a file-wide check stays GREEN even if the real `## Scope` section is deleted. Slice
+    # it and pin the diff-scope definition + its "derive from git, never an implementer list"
+    # discipline THERE.
+    scope = _norm(_section(text, r"^##\s+Scope\b.*READ vs EDIT"))
+    assert "baseRef..featureBranch" in scope or re.search(
+        r"git diff\s+<?baseRef>?\.\.<?featureBranch", scope
+    ), "the Scope section must define the diff scope as `git diff baseRef..featureBranch`"
+    assert re.search(r"never an implementer list", scope, re.IGNORECASE) or re.search(
+        r"authoritatively from git", scope, re.IGNORECASE
+    ), (
+        "the Scope section must derive the diff authoritatively from git "
+        "(never an implementer list) — the load-bearing diff-scope discipline"
+    )
     assert "HARD GATE" in text, "the edit-scope HARD GATE"
 
     # ---- LOAD-BEARING scope-creep clauses (section-bounded to the HARD GATE). --------- #
@@ -520,10 +572,26 @@ def test_claudemd_pipeline_and_invariant():
         "CLAUDE.md must NOT advertise THREE hardening lenses"
     )
 
-    # Run-state lists the finalize artifacts.
-    assert "review-finalize-N.md" in norm, "Run-state lists review-finalize-N.md"
-    assert "finalize-todo.md" in norm, "Run-state lists finalize-todo.md"
-    assert "inflight-finalize" in norm, "Run-state mentions the inflight-finalize marker"
+    # Run-state lists the finalize artifacts — SECTION-BOUNDED to `## Run state & shared
+    # memory`. The bare tokens recur in the FINALIZE invariant above (`review-finalize-N.md`
+    # at CLAUDE.md:135, `finalize-todo` / `finalizeRound` in the same invariant), so a
+    # file-wide check stays GREEN even if the real run-state inventory drops the finalize
+    # entries. Slice the run-state section and pin the inventory THERE. NOTE: run-state
+    # represents the finalize REVIEW via the collapsed `review-<scope>-N.md` family whose
+    # scope list includes `finalize` (NOT a literal `review-finalize-N.md`), so assert that
+    # collapsed-family form, not the invariant's literal.
+    runstate = _norm(_section(text, r"^##\s+Run state\b"))
+    assert re.search(
+        r"review-<scope>-N\.md\b[^\n]*\bfinalize\b", _section(text, r"^##\s+Run state\b")
+    ), (
+        "the Run-state section must list the finalize review via the `review-<scope>-N.md` "
+        "family whose scope list includes `finalize` (the run-state inventory entry, NOT "
+        "the invariant's literal review-finalize-N.md)"
+    )
+    assert "finalize-todo.md" in runstate, "Run-state must list finalize-todo.md"
+    assert "inflight-finalize" in runstate, (
+        "Run-state must mention the inflight-finalize marker"
+    )
 
 
 # =========================================================================== #
