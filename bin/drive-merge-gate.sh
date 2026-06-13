@@ -1087,7 +1087,7 @@ if [ "$is_ship" = true ]; then
   run_conformance "ship"; rc=$?
   # Run-boundary gate, fail-CLOSED: rc 1 OR 9 → DENY; only rc 0 allows (silent).
   if [ "$rc" -ne 0 ]; then
-    emit_deny "The code being shipped for run $runId is not fully covered by a converged review. Run \`/drive-review phase <P>\` for the final phase so its reviewed-sha covers the shipped tip (ship-mode passes when a converged phase review's reviewed-sha is an ancestor of the tip and only the ledger commit sits past it), then retry the push/PR."
+    emit_deny "The code being shipped for run $runId is not fully covered by a converged finalize review. Run \`/drive-finalize\` so its \`review-finalize-N.md\` reviewed-sha covers the shipped tip (ship-mode's terminal candidate-R is the finalize review; a counting phase-integration review remains a precondition), then retry the push/PR."
   fi
   exit 0
 fi
