@@ -60,6 +60,21 @@ seed_finalize_findings() {
   { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
 }
 
+# Seed a CONVERGED finalize artifact that OMITS its `reviewed-sha:` line -> reviewed_sha_of
+# fails in the ship gate's b-ii scan -> candidate_R="" -> no-review. Same shape as
+# seed_finalize but the sha line is absent (codex sibling still present). $1=run_dir $2=N.
+seed_finalize_no_sha() {
+  local rd="$1" n="$2"
+  mkdir -p "$rd"
+  {
+    echo "# Review finalize round $n"
+    echo
+    echo "## Verdict: CONVERGED"
+    echo "## AppliedEdits: no"
+  } > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
+}
+
 # Assert exit code. $1=desc $2=expected-rc $3=actual-rc
 assert_rc() {
   if [ "$2" = "$3" ]; then
@@ -242,6 +257,30 @@ read -r repo rd < <(mk_ship clean ac33-ship)
 seed_finalize_findings "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
 run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC33 ship FINDINGS finalize (phase review present) blocked" 1 "$RC"
                                                     assert_out "AC33 reason is no-review (b-ii, finalize FINDINGS)" '"reason":"no-review"'
+
+# AC33b (b-ii — malformed CONVERGED finalize, missing reviewed-sha): a counting phase1 review
+# present + a CONVERGED review-finalize-1.md that OMITS its `reviewed-sha:` line (codex sibling
+# present). b-ii's reviewed_sha_of fails -> the AND-chain short-circuits -> candidate_R="" ->
+# no-review. NON-VACUOUS: the only thing the fixture withholds is the sha line; if the gate
+# stopped requiring `&& fin_rsha=$(reviewed_sha_of ...)`, candidate_R would hold the finalize R
+# (whose value would be empty) and the assert would no longer see no-review.
+read -r repo rd < <(mk_ship clean ac33b-ship)
+seed_finalize_no_sha "$rd" 1
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC33b ship CONVERGED finalize missing reviewed-sha blocked" 1 "$RC"
+                                                    assert_out "AC33b reason is no-review (b-ii, finalize sha unreadable)" '"reason":"no-review"'
+
+# AC33c (b-ii — malformed CONVERGED finalize, missing codex sibling): a counting phase1 review
+# present + a VALID CONVERGED review-finalize-1.md (valid reviewed-sha) but its
+# codex-review-finalize.md DELETED. b-ii's codex_present finalize fails -> candidate_R="" ->
+# no-review. NON-VACUOUS: the only thing the fixture withholds is the finalize codex sibling; if
+# the gate stopped requiring `&& codex_present finalize`, candidate_R would hold the valid
+# finalize R (an ancestor of the tip with only the ledger commit past it) -> ship CLEAN, flipping
+# both asserts.
+read -r repo rd < <(mk_ship clean ac33c-ship)
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"   # valid CONVERGED finalize (writes codex sibling)
+rm -f "$rd/codex-review-finalize.md"                          # drop the finalize codex sibling
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC33c ship CONVERGED finalize missing codex sibling blocked" 1 "$RC"
+                                                    assert_out "AC33c reason is no-review (b-ii, finalize codex missing)" '"reason":"no-review"'
 
 # AC34 (AC24 — non-counting phase review, FINDINGS): a CONVERGED tip-binding finalize exists,
 # but the ONLY review-phase1 is FINDINGS (so candidate_R empties at b-i) -> ship blocks

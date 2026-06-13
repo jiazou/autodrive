@@ -42,8 +42,9 @@ See `mission-control/README.md`.
     (after ALL phases hardened, before verify)
     6. /drive-finalize ONCE         (aggregate whole-run pass over baseRef..featureBranch:
                                      LEADS with de-slop + logic-bug/missing-test sweep;
-                                     routes architectural findings to the driven project's
-                                     TODO.md; emits the ship gate's terminal SHA-bound
+                                     appends architectural findings to
+                                     $RUN_DIR/finalize-todo.md (ship promotes it to the
+                                     project's TODO.md); emits the ship gate's terminal SHA-bound
                                      review artifact; own cap 3)
     7. verify (optional)      (qa-only / browse)
     8. /drive-ship ONCE             -> [Gate B] -> push

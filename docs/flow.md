@@ -76,7 +76,7 @@ real information exists:
 │  │       aggregate pass over  git diff baseRef..featureBranch  (the WHOLE-RUN diff)       │
 │  │       find→fix→verify ↺(cap FINALIZE_CAP=3): ① de-slop (LED — moved out of harden)     │
 │  │                                              ② aggregate missing tests ③ aggregate bugs│
-│  │       MAJOR architectural findings → driven project's TODO.md (not fixed in-run)       │
+│  │       MAJOR architectural findings → $RUN_DIR/finalize-todo.md (ship promotes → TODO.md)│
 │  │       dual-voice audit[C+X] → ✓CONV; emits review-finalize-N.md = the ship gate's      │
 │  │       TERMINAL SHA-bound review (reviewed-sha == featureBranch tip)                     │
 │  └──────────────────────────────────────────────────────────────────────────────────────┘
@@ -115,8 +115,9 @@ real information exists:
 - **FINALIZE** runs once for the whole run after ALL phases harden and before Verify — an
   aggregate find→fix→verify over `baseRef..featureBranch` that LEADS with de-slop (moved out
   of per-phase harden) plus an aggregate missing-test / logic-bug sweep, own **cap
-  FINALIZE_CAP=3**; routes MAJOR architectural findings to the driven project's `TODO.md` and
-  emits the ship gate's terminal SHA-bound review (`review-finalize-N.md`)
+  FINALIZE_CAP=3**; appends MAJOR architectural findings to `$RUN_DIR/finalize-todo.md` (ship
+  promotes it to the project's `TODO.md`) and emits the ship gate's terminal SHA-bound review
+  (`review-finalize-N.md`)
 
 ## Slash-command invocations for this run (2 phases × 2 slices × 3 rounds)
 
