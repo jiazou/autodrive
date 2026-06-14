@@ -86,8 +86,9 @@ LIMIT_SEG=""
 [ -n "$BLOCK" ] && LIMIT_SEG="block $(printf "$(pct_color "$BLOCK")%s%%${RESET}" "$BLOCK")"
 [ -n "$WEEK" ]  && LIMIT_SEG="${LIMIT_SEG:+$LIMIT_SEG · }week $(printf "$(pct_color "$WEEK")%s%%${RESET}" "$WEEK")"
 
-[ -n "$COST_SEG" ]  && USAGE_STATUS=" │ 💰 $COST_SEG"
-[ -n "$LIMIT_SEG" ] && USAGE_STATUS="$USAGE_STATUS │ ⏳ $LIMIT_SEG"
+# ⏳ block/week first so it survives terminal-width truncation; 💰 cost (longer) trails.
+[ -n "$LIMIT_SEG" ] && USAGE_STATUS=" │ ⏳ $LIMIT_SEG"
+[ -n "$COST_SEG" ]  && USAGE_STATUS="$USAGE_STATUS │ 💰 $COST_SEG"
 
 # Truncate directory to last 3 segments (mirrors starship truncation_length = 3)
 TRUNCATED=$(echo "$DIR" | awk -F'/' '{
