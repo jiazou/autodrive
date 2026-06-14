@@ -74,6 +74,17 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
   (incl. other `.harness/*`), or splitting into >1 commit, makes the ship conformance
   check fail. Keep this in sync with the `SHIP_LEDGER_ALLOWLIST` constant.
 
+## Design-doc handoff audit
+
+After the ledger commit, audit `$RUN_DIR/decisions.md` for **cross-run decisions** — decisions that introduce or change contracts, surface API methods, naming conventions, or cross-slice ownership rules that future runs will need to build on. A decision is cross-run if its subject (a method name, a carrier field, a paradigm label, a directive contract) does not appear in the driven project's shared design doc.
+
+For each cross-run decision not yet reflected in the design doc, append a `HANDOFF:` entry to `$RUN_DIR/followups.md` in the form:
+```
+HANDOFF: [D-N] <subject> — land in <design-doc path> before next run starts
+```
+
+These entries are promoted into `.harness/followups.md` by the ledger commit already made above. Surface them at Gate B alongside the PR summary so the user sees what the next run must pick up. Do NOT block Gate B on unresolved handoffs — they are advisory, not a hard gate.
+
 ## Run the full suite (flaky-retry)
 
 Run the FULL test suite in the ship worktree. **Red → retry once**; green →
