@@ -22,7 +22,8 @@ Three shifts make the check independent of coordinator-writable state:
 
 1. **SHA-bound proof.** `/drive-review` records `reviewed-sha: <40-hex>` (the tip it
    actually diffed) in `review-<scope>-N.md`. A review only *counts* for code whose
-   git tip **equals** its `reviewed-sha`. A stale CONVERGED file cannot cover commits
+   git tip **equals** its `reviewed-sha` (the `ship` gate is the one exception — see the
+   ship-mode paragraph below). A stale CONVERGED file cannot cover commits
    added after it — "reviewed an old tip, then added unreviewed commits" is caught as
    a `sha-mismatch`.
 2. **Truth from git refs, not state.** Conformance never reads `step`/`phaseReview`
@@ -49,7 +50,8 @@ The `checkpoint` and `state-lint` modes back the **context-pressure rebirth** ha
 
 A review artifact **counts** iff: the highest-N `review-<scope>-N.md` has
 `## Verdict: CONVERGED` **and** a `reviewed-sha:` line equal to the git tip the mode
-checks, **and** `codex-review-<scope>.md` exists and is **non-empty**. The codex file's
+checks (the `ship` gate is the one exception — see the ship-mode paragraph below),
+**and** `codex-review-<scope>.md` exists and is **non-empty**. The codex file's
 content is **not** inspected — *any* non-empty `codex-review-<scope>.md` satisfies the
 codex requirement, whether it is a real codex review OR a `CODEX_UNAVAILABLE`
 degradation note (the explicit token written when the codex CLI is absent). Only a
@@ -191,8 +193,8 @@ are deliberately separate:
   auditor to the same answer. It is clean iff: no open `inflight-*.marker`; every
   `phaseInt/<runId>/<P>` ref resolves and relates to `drive/<runId>` by ancestry (else
   `phaseInt-divergent`); every `slice/<runId>/<id>` ref resolves; and every counter artifact
-  is well-formed (`unparseable-review` / `unparseable-harden` / `epoch-gap` /
-  `regress-mismatch` / `epoch-unmarked` otherwise). An open in-flight marker → `inflight-open`.
+  is well-formed (`unparseable-review` / `unparseable-harden` / `unparseable-finalize` /
+  `epoch-gap` / `regress-mismatch` / `epoch-unmarked` otherwise). An open in-flight marker → `inflight-open`.
   Its envelope carries a `counters` key — the single artifact-derived computation point the
   resume-repair path consumes. Markers:
   - **In-flight dispatch markers** (`inflight-<kind>-<scope>.marker`) — one per coordinator

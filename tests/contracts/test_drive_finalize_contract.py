@@ -311,7 +311,6 @@ def test_finalize_emits_shipgate_artifact_contract():
     `CODEX_UNAVAILABLE` degradation + `FINALIZE_CAP = 3` / `finalizeRound` + the full-suite
     regression guard with REVERT-on-red. Pins AC42 (artifact half)."""
     text = _text(DRIVE_FINALIZE)
-    norm = _norm(text)
 
     # ---- artifact SCHEMA, SECTION-BOUNDED to `## Step 1 — Audit`. -------------------- #
     # The real artifact-schema block (the `Write $RUN_DIR/review-finalize-N.md:` listing,
@@ -416,7 +415,6 @@ def test_finalize_scope_creep_gate_and_arch_todo():
     repo-root `TODO.md` architectural route (NOT a `wt/finalize/TODO.md`). Pins AC42
     (scope/gate/arch half)."""
     text = _text(DRIVE_FINALIZE)
-    norm = _norm(text)
 
     # The diff-scope clause, SECTION-BOUNDED to `## Scope (READ vs EDIT)` (drive-finalize.md:
     # 47-52). `baseRef..featureBranch` recurs later (the HARD GATE §, Step 1's audit prompt),

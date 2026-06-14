@@ -367,15 +367,6 @@ echo "=== AC-audit-skip: an unreviewed slice NOT merged into the live phase is N
 read -r repo rd < <(mk_audit not_merged)
 run_conf "$repo" "$rd" --mode audit;                assert_rc "AC-audit-skip unmerged unreviewed slice not flagged (clean)" 0 "$RC"
 
-# AC-ship-skip REMOVED (Phase-3 harden): it tested "ship skips a FINDINGS phase review as a
-# candidate R" — but after the finalize wiring (D17) phase reviews are NO LONGER candidate Rs;
-# the (a)(b)(c) candidate is the finalize artifact, and a phase review only feeds the b-i
-# precondition. The live equivalent — a FINDINGS phase review must not count toward b-i, so a run
-# whose only phase review is FINDINGS blocks with `no-phase-review` — is covered NON-VACUOUSLY by
-# AC34 (which asserts the specific `no-phase-review` token). The old fixture mk_ship_findings_only
-# only exercised the b-ii finalize-absent path (redundant with AC32), so this case tested nothing
-# meaningful; removed along with the now-orphaned fixture.
-
 echo "=== AC5: exit-2 behavior (absent ref => git error) ==="
 read -r repo rd < <(mk_slice_clean ac5)
 # slice-merge for a nonexistent slice id -> ref unresolvable -> exit 2 (gate fails open)

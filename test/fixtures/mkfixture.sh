@@ -402,12 +402,6 @@ mk_ship_multiphase() {
   echo "$repo $rd"
 }
 
-# mk_ship_findings_only REMOVED (Phase-3 harden): it backed the deleted AC-ship-skip case, which
-# tested "ship skips a FINDINGS phase review as a candidate R". After the finalize wiring (D17)
-# phase reviews are no longer candidate Rs (the finalize artifact is the (a)(b)(c) candidate; a
-# phase review only feeds the b-i precondition). The live "FINDINGS phase review doesn't count
-# toward b-i -> no-phase-review" behavior is covered non-vacuously by AC34 in the test runner.
-
 # HARDEN->advance (AC4c). phaseInt/<runId>/<P> advanced by a harden commit AFTER the
 # integration review. The post-harden review-phase<P> (higher N) is bound to the
 # post-harden tip; the pre-harden one is stale.
@@ -543,7 +537,7 @@ mk_audit_multi_live() {
 #
 # variant:
 #   clean             -- quiescent well-formed run: live phaseInt, no inflight markers,
-#                        counter artifacts covering all five I3 rules; state.json is
+#                        counter artifacts covering the I3 rules; state.json is
 #                        CORRUPT garbage (proves the mode never reads it).
 #                        Expected counters: reviewCount {"1.1":2} (review-1.1-final.md
 #                        is not a round file), phaseReviewRound {"1":2} (3 review-phase1
