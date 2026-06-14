@@ -303,3 +303,47 @@ executable proof — do them as one coherent pass that cuts logic AND its tests 
 - [P3] Cross-file rebirth prose duplication across drive.md/drive-plan.md/drive-review.md (~150-250):
   collapse into one authoritative section. Coupled to the prose-pin tests.
 Audit artifacts: $RUN_DIR/codex-overdesign-audit.log + the Claude audit in the session transcript.
+
+## Run harden-20260612-210528 (2026-06-13) — finalize stage
+
+# Follow-ups (promoted to .harness/followups.md at ship)
+## slop-label-drift (P2, non-blocking) — drive-harden.md reviewer-prompt ~L119 says 'slop (deferred)'; canonical followups heading is 'slop (deferred to finalize)'. Align for tidiness; finalize consumes the correct heading so behavior is unaffected.
+## main-tree leak (process) — a slice implementer edited main's .claude/commands/drive-harden.md (absolute-path hazard) despite cwd=worktree; coordinator restored main to clean. Slice branch content was intact. LESSON: verify main tree clean after parallel slice dispatches.
+## drive-harden.md vestigial Veto wording (P2) — '## Findings ... / Veto?' schema field + 'vetoed items' in Step-3 STATUS line are leftovers from when de-slop could be VETOED; no actionable veto remains in the 2-lens model. Cosmetic.
+## drive-finalize.md FINALIZE_CAP soft for P2 (P2) — the cap-3 STOP fires only on cap+open-P1; a lens-1 P2-slop-only round can exceed 3 fix rounds. Mirrors harden's HARDEN_CAP convention; consider tightening both consistently if it ever loops.
+## Phase 3: pin finalizeRound in tests/contracts/test_state_json_shape.py CORE_KEYS (codex 2.4 P2) — the new top-level run-state field is currently unguarded; add it so drift (drive.md example or CLAUDE.md enumeration dropping finalizeRound) reds the contract test.
+## Phase 3: re-pin ship negative branches AC4.ii/iii/iv (codex 2.5 P2) — they now short-circuit at no-review (no finalize artifact) and assert only a generic exit 1; seed a CONVERGED finalize R that violates each (a)(b)(c) condition (code-past-R / non-allowlisted file / >1 commit) so the finalize-R ship logic is pinned.
+## Phase-3/cosmetic: 2 stale comments in test_rebirth_handshake.py (~L616, L675) still say (execute,verify,ship) without finalize — non-load-bearing comment text.
+## Phase 3: update 'five I3 rules' → six (mkfixture.sh:562, test_checkpoint_contract.py:499/514) and add a python pin for the finalizeRound (6th counter) reconstruction rule — currently documented in drive.md/drive-finalize.md but not asserted by a test (codex/Claude phase-2 P2).
+
+## harden phase 2 — deferred (not applied this stage)
+- [P2 slop, VETOED] finalize-CONVERGED rule appears in 3 surfaces (drive.md ~L113,
+  drive-ship.md ~L17, CLAUDE.md ~L131). Codex proposed collapsing to one canonical
+  rule + cross-ref. NOT applied: D26 mandates the 3 surfaces be IDENTICAL and each is
+  an independently load-bearing gate surface; a cross-ref refactor risks dropping a
+  load-bearing clause (ancestor-of-tip / allowlist subset / ≤1 commit / phase-review
+  precondition) from one surface — the exact drift D26 closed. Revisit only as a
+  whole-doc DRY pass with a test pinning the three surfaces equal.
+- [P3 cosmetic] test/drive-merge-gate.test.sh fn `test_ship_deny_names_phase_not_ship`
+  (+ its main() registration comment) still says "phase" but now asserts /drive-finalize.
+  Rename to `test_ship_deny_names_finalize_not_ship`. Cosmetic; defer (harden never fixes P3).
+
+## de-slop-before-ship (pre-finalize run — residuals deferred, cannot land post-harden commits)
+This run implements the finalize stage but EXECUTES the pre-finalize pipeline, so featureBranch tip == the
+phase-3 review's reviewed-sha (R==tip). A de-slop commit would make R..tip a non-ledger code change →
+breaks the ship gate's `R..tip ⊆ ledger-allowlist` invariant (no finalize artifact exists to re-cover the
+tip in a pre-finalize run). So end-of-run de-slop has nowhere to land — exactly the gap /drive-finalize
+closes for FUTURE runs. Residuals deferred:
+- [P3 slop] bin/drive-conformance.sh:448 — ship-case banner comment still states the pre-fix "EXISTS a
+  counting phase/integration review" model; the logic at :484 correctly uses the finalize candidate-R +
+  no-phase-review precondition. Stale comment, no behavior impact. (codex phase3-r5 MINOR; D33.)
+
+## /drive resume-router hardening (PRE-EXISTING; surfaced by codex during the finalize-feature reconcile)
+Not introduced by this feature (verified against main's pre-finalize drive.md); the feature's own paths are
+made SAFE by the round-2 idempotency fixes. A focused follow-up should tighten the EXISTING resume design:
+- [P2] drive.md resume router (§ Current phase) has no explicit `stage = ship`/`stage = done` route — a
+  gateB/suite-red resume re-enters via verify (harmless passthrough; ship is now idempotent). Add explicit
+  ship/done routes so the 4 resume surfaces agree end-to-end.
+- [P2] drive.md worktree classifier classifies wt/* by checked-out branch, but wt/finalize AND wt/ship are
+  both on featureBranch — add an explicit `wt/ship` case (path-aware), mirroring the new wt/finalize rule.
+  (Ship already force-cleans wt/ship on entry, so this is a clarity/robustness cleanup, not a live bug.)

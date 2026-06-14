@@ -110,7 +110,29 @@ verdict / merge / gate.
   - **Current phase:** `state.phase` = the lowest phase in `state.phaseList` whose
     `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch` (branch absent, or
     `git merge-base --is-ancestor phaseInt/<runId>/<P> <featureBranch>` fails). All are
-    ancestors → `stage = verify`.
+    ancestors → the run is PAST Execute; distinguish **finalize** (Stage 4c) from
+    **verify** (Stage 4b) by the finalize ARTIFACT, NOT `state.stage` alone (the run's
+    git-truth discipline): finalize has CONVERGED iff the highest-N `review-finalize-*.md`
+    exists, its first `## Verdict:` line is `CONVERGED`, AND a NON-EMPTY
+    `$RUN_DIR/codex-review-finalize.md` exists (the codex sibling — matching
+    `bin/drive-conformance.sh`'s `--mode ship` `codex_present` check and `drive-ship.md`
+    precondition #3, so all three finalize-CONVERGED surfaces use the IDENTICAL criterion),
+    AND its `reviewed-sha` (call it
+    `R`) is an ANCESTOR of the current `featureBranch` tip with `R..tip` ⊆ the 3-file
+    `SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`}
+    and ≤ 1 commit — the SAME tolerant (a)(b)(c) ancestor + allowlist + `≤ 1 commit`
+    criterion the `--mode ship` gate uses, NOT strict `reviewed-sha == tip`. Finalize
+    CONVERGED → `stage = verify`; otherwise (no finalize artifact, a FINDINGS terminal
+    artifact, a missing/empty `codex-review-finalize.md` sibling, or a `reviewed-sha` that
+    is not such a tolerant ancestor of the tip) →
+    `stage = finalize`. **The tolerant test (not strict `==`) is load-bearing at resume**
+    because ship commits the ledger BEFORE its suite-red STOP and BEFORE Gate B — so a
+    resume CAN land post-ledger-commit. It covers BOTH cases: the just-converged
+    pre-ledger case (`R == tip`, `R..tip` empty) AND a resume after ship's single ledger
+    commit (suite-red STOP or Gate-B pause, where `R..tip` is the lone allowlisted ledger
+    commit). Strict `==` would misroute that post-ledger resume back to `stage = finalize`
+    and re-run finalize on an already-ledger-committed tree. This determination stays
+    derived from artifacts, not `state.stage`.
   - **Derived phase-design status:** the current phase's design counts as converged ONLY if
     the epoch-aware `bin/drive-conformance.sh $RUN_DIR --mode phasedesign-gate:<P>` passes
     for the CURRENT epoch — `phaseDesign[<P>].status` is a hint, never the trigger. Gate
@@ -123,12 +145,20 @@ verdict / merge / gate.
     stranded by definition (the dispatching session is gone). Apply the recovery rule in
     § Durable checkpoint contract — **adopt / re-dispatch / STOP, never wait** for a
     worker; adopt of a review unit requires BOTH the round's `review-<scope>-N.md` AND a
-    non-empty `codex-review-<scope>.md` sibling.
+    non-empty `codex-review-<scope>.md` sibling. A stranded `inflight-finalize.marker` is
+    a review unit (scope `finalize`): adopt only if BOTH `review-finalize-N.md` (verdict
+    line) AND a non-empty `codex-review-finalize.md` exist; else re-dispatch (first `mv`
+    the `codex-raw-finalize.log` aside, as for any review unit); STOP if re-dispatch would
+    breach `FINALIZE_CAP` per the reconstructed `finalizeRound`.
   - **Worktrees:** classify each `$RUN_DIR/wt/` worktree by its checked-out branch and
     remove stale ones with `git worktree remove` only — never `branch -D` (branch cleanup is
     the guarded assemble/advance steps' job). A `slice/<runId>/<id>` worktree is live until
     its slice is `converged`; a `phaseInt/<runId>/<P>` worktree is live only for the current
-    phase with `phaseReview[<P>].status` not yet `hardened`. A detached `wt/design<P>`
+    phase with `phaseReview[<P>].status` not yet `hardened`. A `wt/finalize` worktree
+    (checked out at `featureBranch`) is live while `stage == finalize` AND finalize has
+    not CONVERGED (the run is still in/at the finalize stage — finalize-CONVERGED uses the
+    § Current phase artifact criterion); otherwise it is stale →
+    `git worktree remove --force`. A detached `wt/design<P>`
     worktree (the per-phase design read worktree) is never live across a pause → always
     `git worktree remove --force` it.
   - **Each slice, by `step`:** `queued` → leave it for the phase-loop to dispatch.
@@ -141,7 +171,12 @@ verdict / merge / gate.
   - **Phase `hardening`:** resume HARDEN on `phaseInt/<runId>/<P>` (don't rebuild). If
     `status == hardened` but `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch`,
     complete its `git branch -f` advance (Execute step 6) instead.
-  - **Counter reconstruction (all five counters):** state.json is a resume-repair HINT,
+  - **Finalize (`stage == finalize`, not CONVERGED):** resume finalize on the preserved
+    `$RUN_DIR/wt/finalize` worktree (don't rebuild); re-dispatch `/drive-finalize` per
+    Stage 4c (its `FINALIZE_CAP = 3` reconstructed from `finalizeRound`, counter rule 6).
+    If `wt/finalize` is absent (removed mid-pause), re-create it per Stage 4c step 1
+    (`git worktree add $RUN_DIR/wt/finalize <featureBranch>`) before re-dispatching.
+  - **Counter reconstruction (all six counters):** state.json is a resume-repair HINT,
     never a proof input. Repair each counter one-directionally —
     `counter = max(state hint, artifact-derived value)`: the hint may RAISE a counter
     (tightening a cap risks at worst a premature STOP — safe), never lower it (loosening
@@ -168,6 +203,12 @@ verdict / merge / gate.
        `T = phasedesign<P>` if artifact-derived redesigns == 0, else
        `phasedesign<P>-r<R>` for the current (highest) epoch R — count ONLY the current
        epoch's round files (a redesign resets the round with a fresh cap-8).
+    6. `finalizeRound` = max(state, count of `review-finalize-*.md` (pure-integer N) with
+       `## AppliedEdits: yes`) — a confirming clean audit writes `AppliedEdits: no` and
+       does NOT count (cap-3 is on fix rounds); never count all `review-finalize` files.
+       (Mirrors rule 3's harden rule, but over the `review-finalize-*.md` family — NOT the
+       harden loop. The checkpoint proof asserts ONLY the artifact-derived value;
+       `state.finalizeRound` is a one-directional resume hint.)
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
   initialize and write `$RUN_DIR/state.json` in this shape (set `sessionId` from the
@@ -179,7 +220,7 @@ verdict / merge / gate.
   "baseRef": "main", "featureBranch": "drive/<id>",
   "phase": 1, "phaseList": [], "phaseBaseSha": null, "concurrencyCap": 4, "designReview": 0,
   "budget": { "ceilingCalls": null, "ceilingMin": null, "calls": 0, "startedAt": "<iso>" },
-  "slices": {}, "phaseDesign": {}, "phaseReview": {}, "lastGate": null,
+  "slices": {}, "phaseDesign": {}, "phaseReview": {}, "finalizeRound": 0, "lastGate": null,
   "verify": { "attempts": [] }, "ship": { "suite": null, "conformance": null, "prUrl": null },
   "sessionId": null, "autoContinue": true, "waiting": null, "rebirth_pending": false,
   "designPath": "$RUN_DIR/design.md" }
@@ -241,7 +282,8 @@ the coordinator's self-report. Two marker families carry the contract:
   `inflight-review-<scope>.marker` (scope = the review scope token — `design`, `<id>`,
   `phase<P>`, `phasedesign<P>[-r<R>]`; this ONE marker brackets the whole dual-voice
   chain: reviewer subagent → background codex → post-process → counter/state record),
-  `inflight-harden-<P>.marker`, `inflight-verify.marker`, `inflight-ship.marker`.
+  `inflight-harden-<P>.marker`, `inflight-finalize.marker`, `inflight-verify.marker`,
+  `inflight-ship.marker`.
   **Epoch resolution (single owner — the marker WRITER).** Whoever writes a
   `phasedesign<P>[-r<R>]` scope token resolves `<R>` at write time by the ONE rule: `R`
   = highest epoch among `$RUN_DIR/redesign-<P>-r*.marker` (0 → the bare `phasedesign<P>`;
@@ -352,6 +394,11 @@ such boundary, consuming any `rebirth_pending` the hook's steer has set:
   phase-integration review verdict, each HARDEN round verdict, and the phase advance
   (§ Stage 2–4.5). The phase-design sub-stage runs MULTIPLE dual-voice review rounds, so a rebirth
   signalled there is consumed at this boundary rather than running on into slice dispatch.
+- **Finalize** — at the finalize dispatch boundary, BEFORE `/drive-finalize` is dispatched
+  (before `inflight-finalize.marker` is written), and after each finalize round verdict
+  (CONVERGED / FINDINGS / STOP) once its marker is cleared (§ Stage 4c). Once
+  `/drive-finalize` is dispatched its `inflight-finalize.marker` is open, so there is no
+  safe boundary INSIDE a finalize round until it returns.
 - **Plan** — between plan-stage steps, after each design-review round (§ Stage 1).
 - **Verify** — after each QA/e2e attempt (§ Stage 4b).
 - **Ship** — at the ship dispatch boundary, BEFORE `/drive-ship` is dispatched (before the
@@ -492,8 +539,8 @@ forgotten:
    current leg, so the goal's "NOT met while …" clause must match that leg:
    - `stage` ∈ {`"premises"`, `"plan"`} (planning leg → Gate A; premises is pre-Gate-A):
      `NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.`
-   - `stage` ∈ {`"execute"`, `"verify"`, `"ship"`} (execute leg → Gate B):
-     `NOT met while autonomous implement / review / harden / verify / ship work remains.`
+   - `stage` ∈ {`"execute"`, `"finalize"`, `"verify"`, `"ship"`} (execute leg → Gate B):
+     `NOT met while autonomous implement / review / harden / finalize / verify / ship work remains.`
 
 **Pre-run exception:** the **preconditions** STOPs (gstack missing, dirty tree) fire *before*
 a run exists — there is no `$RUN_DIR`/`state.json` to render, so they STOP plainly (no graph).
@@ -513,10 +560,10 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
 1. **`state.json`** — the durable structured run-model. Fields the graph reads:
    `task` (→ Premises line — always written at run-setup), `stage`, `lastGate`, `waiting`,
    `phase`, `phaseList`, `designReview`, `phaseDesign[<P>].status`,
-   `slices[<id>].{step,owns,deps}`, `phaseReview[<P>].status`, `verify`, `ship`.
-   **The status fields pick glyphs only.** Every round COUNT
+   `slices[<id>].{step,owns,deps}`, `phaseReview[<P>].status`, `finalizeRound`, `verify`,
+   `ship`. **The status fields pick glyphs only.** Every round COUNT
    (`designReview`, `slices[<id>].reviewCount`, `phaseDesign[<P>].round`,
-   `phaseReview[<P>].{round, hardenRound}`) is artifact-derived (rule below); the matching
+   `phaseReview[<P>].{round, hardenRound}`, `finalizeRound`) is artifact-derived (rule below); the matching
    state counter is read ONLY as the labeled DISPLAY fallback in the missing-artifact rule
    — never as a proof of a count.
 2. **Fixed-format markdown files** (scope-token naming):
@@ -531,6 +578,10 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
      `codex-review-phasedesign<P>[-r<R>].md`, `R` = highest `redesign-<P>-r*.marker` in
      `$RUN_DIR` (no marker → the bare `phasedesign<P>` token).
    - `harden-<P>-N.md` (`## Verdict: HARDENED|FINDINGS`) and `codex-harden-<P>.md`.
+   - `review-finalize-<N>.md` (`## Verdict: CONVERGED|FINDINGS`; `## AppliedEdits:
+     yes|no`) and its codex sibling `codex-review-finalize.md` — the run-singleton
+     Finalize node's source, same dual-voice rule as any review scope (CONVERGED only when
+     BOTH voices have zero P1; a bare first-line `CODEX_UNAVAILABLE` ⇒ `Codex n/a`).
    - **The slice scope token is the BARE id** — `review-<id>-*.md` /
      `codex-review-<id>*.md` (e.g. `review-1.2-3.md`, `codex-review-1.2.md`), per
      drive-review.md. Glob by prefix to tolerate round suffixes (`-r2`). (Design scope =
@@ -552,7 +603,7 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
 - Print the glyph legend once at the top of the block:
   `[✓ done · ◐ current · ✗ stop · ↻ rebirth · ? unknown]`, plus the `‖` note (below).
 - **One branch per stage that has STARTED**, in order
-  `Premises · Plan · Execute · Verify · Ship` (a not-yet-started stage is omitted).
+  `Premises · Plan · Execute · Finalize · Verify · Ship` (a not-yet-started stage is omitted).
   "Started" = `state.stage` has reached/passed it OR its artifacts exist.
 - **Premises:** one line — the resolved problem (first non-empty line of `state.task`,
   truncated).
@@ -580,6 +631,17 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
   `hardenRound` is the missing-artifact display fallback only.
   A `stop:<r>` while in Execute anchors `← YOU ARE HERE` to a `✗ STOP: <r>` leaf under
   the responsible slice/phase node.
+- **Finalize:** the run-singleton aggregate-harden node, rendered between Execute and
+  Verify (a not-yet-started Finalize stage is omitted, same "started" rule). Derive it
+  from the `review-finalize-*.md` family + `codex-review-finalize.md` (same per-round
+  dual-voice verdict derivation as any review scope — non-terminal rounds are FINDINGS by
+  construction → Claude count + `Codex —`; the terminal round renders both voices):
+  `✓ Finalize: CONVERGED (k fix rounds)` when its terminal `review-finalize-N.md` is
+  CONVERGED (k = `finalizeRound` = the `## AppliedEdits: yes` count); `◐ Finalize: round
+  N` while in progress; `✗ Finalize: STOP (cap)` on a finalize STOP. `state.finalizeRound`
+  is the missing-artifact DISPLAY fallback only (the general missing-artifact rule below).
+  A `stop:finalize-*` while `stage==finalize` anchors `← YOU ARE HERE` to a `✗ STOP: <r>`
+  leaf under the Finalize node.
 - **Verify:** from `state.verify.attempts[]` (ordered ⇒ saga); multiple attempts render
   the false-negative → re-verify saga, e.g. `e2e: FAIL → re-verify → PASS`.
 - **Ship:** child lines `conformance: <state.ship.conformance or pending>` ·
@@ -592,8 +654,8 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
   active node; `ask:<header>` → a `? <header>` leaf under the current stage (Premises if
   Stage 0); `rebirth` → a `↻ REBIRTH` CONTINUATION node (NOT a `✗ STOP` leaf) under the
   current stage's active node — the active Execute node (the current phase, or the current
-  slice if the boundary was a per-slice review verdict) when `stage==execute`, else the
-  active Plan/Verify/Ship node. Its node text is
+  slice if the boundary was a per-slice review verdict) when `stage==execute`, the Finalize
+  node when `stage==finalize`, else the active Plan/Verify/Ship node. Its node text is
   `↻ REBIRTH: context-pressure handoff (resume: /drive <runId>) ← YOU ARE HERE`, with
   `<runId>` = `state.runId`. It derives purely from `state.waiting=="rebirth"` +
   `state.runId` + `state.stage`/`phase` — no new artifact, no event-log parse. An
@@ -642,8 +704,9 @@ so it never drifts and never fabricates:
 For ANY counted round whose artifact is absent — for ANY family: `review-design-*.md`,
 `review-<id>-*.md`, `review-phase<P>-*.md`, the current-epoch
 `review-phasedesign<P>[-r<R>]-*.md` (`R` = highest `redesign-<P>-r*.marker`),
-`harden-<P>-*.md`, and their codex siblings (`codex-review-<scope>*.md`,
-`codex-harden-<P>*.md`) — show the matching state counter as a DISPLAY HINT (its sole
+`harden-<P>-*.md`, `review-finalize-*.md`, and their codex siblings
+(`codex-review-<scope>*.md`, `codex-harden-<P>*.md`, `codex-review-finalize.md`) — show
+the matching state counter (`finalizeRound` for the finalize family) as a DISPLAY HINT (its sole
 graph use) with verdict `?`; never fabricate a verdict, never treat this fallback count
 as proof.
 
@@ -888,10 +951,11 @@ it consumes any `rebirth_pending` the hook's steer set), before proceeding:
    (`/drive-harden phase <P>` — `~/.claude/commands/drive-harden.md`) IN the
    `phaseInt/<runId>/<P>` worktree (`phaseReview[<P>].status = hardening`; each
    `/drive-harden` invocation gets `inflight-harden-<P>.marker`). It is a mutating
-   find→fix→verify pass over the assembled phase to **reduce AI slop, add missing
-   tests, and fix logic bugs** — beyond acceptance criteria — committing to
+   find→fix→verify pass over the assembled phase to **add missing tests, fix logic
+   bugs** — beyond acceptance criteria (de-slop is DEFERRED to the aggregate
+   `/drive-finalize` stage) — committing to
    `phaseInt/<runId>/<P>`. Its own 3-fix-round cap (independent of the conformance cap-8);
-   de-slop edits that would drop a criterion's coverage are vetoed; after any code
+   a fix that would drop a criterion's coverage is vetoed; after any code
    change it re-runs `/drive-review phase <P> harden-regress` as the regression guard.
    Act on its return:
    - `FINDINGS` → a fix round ran but the phase isn't clean yet. Keep
@@ -911,12 +975,62 @@ it consumes any `rebirth_pending` the hook's steer set), before proceeding:
      move broke the invariant). Then `git worktree remove` the integration worktree
      (slice worktrees were already removed on convergence), delete slice branches, and
      advance `state.phase` to the next id in `state.phaseList` (if this was the last phase,
-     `stage = verify`). Proceed to the next phase.
+     `stage = finalize`). Proceed to the next phase.
    - `STOP` (3 fix rounds exceeded / BLOCKED / NEEDS_CONTEXT) → STOP; the phase stays
      `hardening` and does **not** advance — its half-hardened state is preserved on
      `phaseInt/<runId>/<P>` for resume.
 
-When all phases reach `status = hardened` → `stage = verify`.
+When all phases reach `status = hardened` → `stage = finalize`.
+
+### Stage 4c — Finalize (aggregate harden; once, before Verify)
+
+Runs ONCE per run, AFTER every phase reached `status = hardened` (Stage 2–4.5 step 6),
+and BEFORE Verify (Stage 4b). It is the end-of-run aggregate quality pass over the
+WHOLE-RUN diff (`baseRef..featureBranch`) — `/drive-finalize`
+(`~/.claude/commands/drive-finalize.md`) LEADS with de-slop (the lens per-phase harden
+defers here) plus an aggregate logic-bug + missing-test sweep, and emits the **terminal
+SHA-bound review artifact the ship gate consumes** (`review-finalize-N.md` with
+`reviewed-sha == featureBranch tip`).
+
+At the finalize dispatch boundary — BEFORE `inflight-finalize.marker` is written, so the
+coordinator is between dispatch units with no open `inflight-*.marker` — run the
+**Safe-boundary rebirth handler** (§ I1) so
+a rebirth signalled before finalize is consumed and handed off. Once `/drive-finalize` is
+dispatched its `inflight-finalize.marker` is open → there is no safe boundary INSIDE a
+finalize round until it returns; after each finalize round verdict (CONVERGED / FINDINGS /
+STOP) is recorded the marker is cleared, which is again a safe boundary → run the
+**Safe-boundary rebirth handler** (§ I1) there too.
+
+1. **Worktree precondition.** Finalize runs in `$RUN_DIR/wt/finalize` checked out at
+   `featureBranch`. The last phase already advanced (step 6), so `featureBranch` is
+   checked out in NO worktree and is free; create it:
+   `git worktree add $RUN_DIR/wt/finalize <featureBranch>` (literal `featureBranch` =
+   `drive/<runId>` with `<runId>` substituted). This is the ONLY worktree where
+   `featureBranch` is live during finalize — correct, because finalize is terminal (no
+   further `branch -f` advance needs `featureBranch` free).
+2. **Init the state field:** `state.finalizeRound = 0` if absent (JSON-safe write).
+3. **Dispatch:** write `inflight-finalize.marker` (write-before-dispatch, tmp + `mv`;
+   content
+   `{"kind":"finalize","scope":"finalize","runId":"<runId>","sessionId":"<this session or null>","startedAt":"<iso>"}`),
+   then invoke `/drive-finalize` (`~/.claude/commands/drive-finalize.md`) with cwd =
+   `$RUN_DIR/wt/finalize`, passing `<runId>`, `$RUN_DIR`, `baseRef`, `featureBranch`.
+   Increment `budget.calls`. Append a dispatch line to `$RUN_DIR/event-log.jsonl`.
+4. **Return handling (the loop /drive owns):**
+   - `CONVERGED` → record `state.finalizeRound`, append a verdict line to
+     `event-log.jsonl`, clear `inflight-finalize.marker` (clear-after-record: artifact
+     written + state updated + event-log line), `git worktree remove
+     $RUN_DIR/wt/finalize` → `stage = verify`.
+   - `FINDINGS` → record `state.finalizeRound`, append a verdict line, clear
+     `inflight-finalize.marker`, then **re-invoke `/drive-finalize`** on the SAME
+     `$RUN_DIR/wt/finalize` worktree (the stage owns its own `FINALIZE_CAP = 3`
+     fix-round cap; /drive just re-dispatches until CONVERGED or STOP). Re-write
+     `inflight-finalize.marker` around each re-dispatch.
+   - `STOP — <reason>` → STOP via **Present human pause** (`waiting =
+     "stop:finalize-<short>"`); the run stays in `stage = finalize`,
+     `$RUN_DIR/wt/finalize` is preserved for resume, and the run does NOT advance to
+     Verify/Ship. (Omission-/non-convergence-proof at ship: with no CONVERGED finalize
+     artifact binding the tip, the `--mode ship` gate's finalize candidate-R is absent →
+     ship blocks.)
 
 ### Stage 4b — Verify (optional)
 If the change touches a UI/URL (auto-detect), run gstack `qa-only` / `browse` on the
@@ -939,7 +1053,10 @@ rebirth signalled before ship is consumed and handed off (Gate B precedence stil
 
 Run the SHIP stage (`/drive-ship` — `~/.claude/commands/drive-ship.md`) on `featureBranch`
 (marker `inflight-ship.marker`): promote
-`$RUN_DIR/decisions.md`+`followups.md` into the repo ledgers, run the full suite
+`$RUN_DIR/decisions.md`+`followups.md` into the repo ledgers (and
+`$RUN_DIR/finalize-todo.md` → repo-root `TODO.md` when present) — the 3-file
+`SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`},
+run the full suite
 (red → retry once → STOP), build the **single** commit + PR, **Gate B** (approve
 diff), then push/open PR. → `lastGate = "B"`, `stage = done`
 

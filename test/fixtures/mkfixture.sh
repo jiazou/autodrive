@@ -402,28 +402,6 @@ mk_ship_multiphase() {
   echo "$repo $rd"
 }
 
-# ship where the only phase review whose R would satisfy (a)(b)(c) is FINDINGS (skipped as a
-# candidate): phase1 is CONVERGED at R1 but R1..tip carries phase-2 CODE (not ledger-only), and
-# phase2 is FINDINGS (not a candidate). So no counting review covers the tip -> ship exit 1.
-mk_ship_findings_only() {
-  local name="${1:-ship-findings-only}"
-  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
-  _init_repo "$repo"
-  _commit "$repo" "README" "base" "base" >/dev/null
-  _gitc "$repo" checkout -q -b "drive/$name"
-  local R1; R1="$(_commit "$repo" "p1.sh" "echo p1" "phase 1 code")"
-  local R2; R2="$(_commit "$repo" "p2.sh" "echo p2" "phase 2 code")"
-  _write_review "$rd" phase1 1 "$R1"            # CONVERGED, but R1..tip has phase-2 code
-  _write_codex "$rd" phase1
-  _write_review_findings "$rd" phase2 1 "$R2"   # FINDINGS -> skipped, never a candidate
-  _write_codex "$rd" phase2
-  mkdir -p "$repo/.harness"
-  printf 'd\n' > "$repo/.harness/decisions.md"
-  printf 'f\n' > "$repo/.harness/followups.md"
-  _gitc "$repo" add -A; _gitc "$repo" commit -q -m "ledger"
-  echo "$repo $rd"
-}
-
 # HARDEN->advance (AC4c). phaseInt/<runId>/<P> advanced by a harden commit AFTER the
 # integration review. The post-harden review-phase<P> (higher N) is bound to the
 # post-harden tip; the pre-harden one is stale.
@@ -559,7 +537,7 @@ mk_audit_multi_live() {
 #
 # variant:
 #   clean             -- quiescent well-formed run: live phaseInt, no inflight markers,
-#                        counter artifacts covering all five I3 rules; state.json is
+#                        counter artifacts covering the I3 rules; state.json is
 #                        CORRUPT garbage (proves the mode never reads it).
 #                        Expected counters: reviewCount {"1.1":2} (review-1.1-final.md
 #                        is not a round file), phaseReviewRound {"1":2} (3 review-phase1
@@ -604,6 +582,16 @@ mk_audit_multi_live() {
 #                        files -> phaseDesignRound {"4-r1":2} (marker-anchored counter). exit 1
 #                        from the epoch-unmarked detector's by-design residual on a terminal-`-r`
 #                        id; the assertion is on the counter VALUE, not cleanliness.
+#   finalize_round    -- quiescent clean-shaped base (live phaseInt/<name>/1) + a CONVERGED
+#                        review-finalize-1.md carrying `## Verdict:` + `## AppliedEdits: yes`
+#                        + a codex-review-finalize.md sibling, and NO slice/<name>/finalize
+#                        branch. Asserts the POSITIVE: counters.finalizeRound==1 AND
+#                        counters.reviewCount has NO `finalize` key (the `(finalize)` arm
+#                        diverted it to finalize_yes_count, not the slice default) -> clean.
+#   finalize_unparseable -- same base, but review-finalize-1.md keeps `## Verdict: CONVERGED`
+#                        (so it passes the unparseable-review Verdict grep) and OMITS the
+#                        `AppliedEdits:` line entirely -> the (finalize) arm fails its
+#                        AppliedEdits grep -> unparseable-finalize, exit 1. Codex sibling present.
 mk_checkpoint() {
   local variant="$1" name="${2:-ckpt-$1}"
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -725,6 +713,45 @@ mk_checkpoint() {
       # unmarked_epochs()/the phase-derivation loop would otherwise stay green (every other
       # epoch-unmarked fixture also seeds a review file). Must fail closed: epoch-unmarked.
       _write_codex "$rd" "phasedesign1-r1"
+      ;;
+    finalize_round)
+      # Quiescent clean-shaped base (a live phaseInt so the run is well-formed), then a single
+      # CONVERGED review-finalize-1.md with `## AppliedEdits: yes` + a codex sibling. NO
+      # slice/<name>/finalize branch is ever created (proves finalize is NOT a slice). Keep
+      # the run otherwise-CLEAN: no other review-*/harden-* files that would add counter noise,
+      # so the ONLY observables are finalizeRound==1 and an EMPTY reviewCount (no `finalize` key).
+      # The `## Verdict:` line is required — else the unparseable-review grep trips BEFORE the
+      # (finalize) arm runs. Regression validity: pre-Phase-2 there was no (finalize) arm, so the
+      # finalize review would land in slice_keys -> reviewCount {"finalize":1} + finalizeRound 0.
+      _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+      local fr_tip; fr_tip="$(_commit "$repo" "phase.sh" "echo p1" "phase 1 integration")"
+      {
+        echo "# Review finalize round 1"
+        echo
+        echo "## Verdict: CONVERGED"
+        echo "## AppliedEdits: yes"
+        echo
+        echo "reviewed-sha: $fr_tip"
+      } > "$rd/review-finalize-1.md"
+      { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
+      ;;
+    finalize_unparseable)
+      # Same quiescent base, but review-finalize-1.md keeps `## Verdict: CONVERGED` (so the
+      # unparseable-review Verdict grep passes) and OMITS the `AppliedEdits:` line entirely.
+      # The (finalize) arm's AppliedEdits grep then fails -> unparseable-finalize, exit 1.
+      # Regression validity: pre-Phase-2 there was no (finalize) arm, so the missing
+      # AppliedEdits line is irrelevant (the finalize review counts as a slice) -> no
+      # unparseable-finalize; the assertion below flips with the Phase-2 fix.
+      _gitc "$repo" checkout -q -b "phaseInt/$name/1"
+      local fu_tip; fu_tip="$(_commit "$repo" "phase.sh" "echo p1" "phase 1 integration")"
+      {
+        echo "# Review finalize round 1"
+        echo
+        echo "## Verdict: CONVERGED"
+        echo
+        echo "reviewed-sha: $fu_tip"
+      } > "$rd/review-finalize-1.md"
+      { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
       ;;
   esac
   echo "$repo $rd"
@@ -968,6 +995,9 @@ mk_impl_presence() {
 #                        NOT be skipped (false-clean) by the key loop                   -> exit 1
 #   slice_key_newline -- a slice-id KEY containing a newline ("1\n2") -> one
 #                        slice-routing-malformed, consumed losslessly (no shredding)    -> exit 1
+#   stage_finalize_clean -- a clone of `clean` with "stage":"finalize" (Stage 4c). The
+#                        state-lint stage enum accepts `finalize`, so all other routing
+#                        fields being well-formed -> clean (no stage-malformed)        -> exit 0
 #   no_state          -- a real drive/<runId> branch but NO state.json file -> exit 2 (IO)
 mk_state_lint() {
   local variant="$1" name="${2:-statelint-$1}"
@@ -1369,6 +1399,24 @@ JSON
   "verify": {"attempts": []},
   "ship": {"suite": null, "conformance": null, "prUrl": null},
   "waiting": null
+}
+JSON
+      ;;
+    stage_finalize_clean)
+      # A clone of `clean` with stage=finalize (Stage 4c). The stage enum accepts `finalize`,
+      # so with all other routing fields well-formed the run is clean (no stage-malformed).
+      # Regression validity: pre-Phase-2 the enum lacked `finalize`, so this would have hit
+      # stage-malformed (exit 1); the clean assertion flips with the enum add.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "finalize",
+  "phaseList": ["1", "2"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []},
+    "1.2": {"step": "converged", "owns": ["bin/y.sh", "test/y.test.sh"], "deps": ["1.1"]}
+  },
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
 }
 JSON
       ;;

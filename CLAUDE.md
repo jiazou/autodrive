@@ -34,13 +34,19 @@ high-level plan → a detailed per-phase design → a per-slice assumption check
 4. /drive-review per slice — Claude subagent + codex; converged = no P1; cap 8
    then a phase-integration /drive-review over the assembled phase
 5. /drive-harden phase — after the phase review converges: a mutating find→fix→verify
-   pass over the assembled phase to reduce AI slop, add missing tests, fix logic bugs
+   pass over the assembled phase to add missing tests, fix logic bugs (de-slop is
+   DEFERRED to the final aggregate /drive-finalize stage)
    (own cap 3; re-runs the conformance review as a regression guard); then advance
-6. verify — qa-only / browse (optional), after all phases harden
-7. /drive-ship ONCE → Gate B → push
+6. /drive-finalize — ONCE after all phases hardened, BEFORE verify: an aggregate quality
+   pass over the whole-run diff (baseRef..featureBranch) that LEADS with de-slop (moved out
+   of per-phase harden) + a whole-run logic-bug/missing-test sweep; routes architectural
+   findings to the driven project's TODO.md; emits the ship gate's terminal SHA-bound review
+   artifact (own cap 3)
+7. verify — qa-only / browse (optional), after finalize
+8. /drive-ship ONCE → Gate B → push
 ```
 
-The stage commands (`/drive-plan`, `/drive-design`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-ship`) are single-sourced
+The stage commands (`/drive-plan`, `/drive-design`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-finalize`, `/drive-ship`) are single-sourced
 runners that `/drive` invokes in order; you can also step them manually within an
 existing run (a new task is a new run-id).
 
@@ -113,15 +119,24 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
   disagreement with what each side asserts.
 - **Each phase ends with a HARDEN pass** (after its review converges, before
   `featureBranch` advances): a mutating find→fix→verify over the assembled phase for
-  AI-slop removal, missing tests, and logic bugs — *beyond* acceptance criteria. It
-  bounds edits to the phase's own surface + test-support (scope-creep gate, with
-  flagged root-cause exceptions) and vetoes de-slop edits that would drop a criterion's
-  coverage. The phase reaches the terminal `hardened` status — and `featureBranch`
-  advances by a pure ref move — only when harden returns HARDENED.
+  missing tests and logic bugs (de-slop is deferred to `/drive-finalize`) — *beyond*
+  acceptance criteria. It bounds edits to the phase's own surface + test-support
+  (scope-creep gate, with flagged root-cause exceptions) and vetoes edits that would
+  drop a criterion's coverage. The phase reaches the terminal `hardened` status — and
+  `featureBranch` advances by a pure ref move — only when harden returns HARDENED.
 - **Harden has its own cap of 3 fix rounds**, independent of the conformance cap-8: the
   confirming clean audit is free, and its regression guard runs `/drive-review phase
   <P> harden-regress` (which does NOT touch the phase `round`), so a phase whose
   integration already used 6–8 rounds is never false-STOPped during hardening.
+- **The run ends with a single FINALIZE pass** (`/drive-finalize`, Stage 4c) AFTER all
+  phases hardened and BEFORE Verify — an aggregate de-slop + whole-run
+  logic-bug/missing-test sweep over `baseRef..featureBranch`, run in
+  `$RUN_DIR/wt/finalize`. It emits the ship gate's TERMINAL SHA-bound review
+  (`review-finalize-N.md` with `reviewed-sha == featureBranch tip`); ship's tip-binding
+  candidate-R is THIS artifact (the phase-integration review is demoted to a
+  precondition), so a run that omits or fails finalize CANNOT ship (omission- and
+  non-convergence-proof). Own cap FINALIZE_CAP=3 fix rounds; counter
+  `state.finalizeRound`.
 - **File ownership is the parallelism contract:** independent slices own disjoint
   files and run in parallel; a slice never writes outside its owned files.
 - Run codex from the **main** context (background + per-scope log), never inside a
@@ -152,19 +167,23 @@ state.json                   -- run model: runId, baseRef, featureBranch, stage,
                                 designing→converged; round = design-review cap-8 counter;
                                 redesigns = REDESIGN re-run count, cap 3),
                                 phaseReview{status,round,hardenRound} where status
-                                = converged→hardening→hardened (terminal);
+                                = converged→hardening→hardened (terminal); plus the
+                                top-level run-singleton counter finalizeRound;
                                 plus lastGate, designPath, rebirth_pending (signal/hint —
                                 never a proof input), and the Stop-hook keys the hooks
                                 read: sessionId, autoContinue, waiting
 event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
-review-<scope>-N.md          -- per-scope (design/phasedesign<P>[-r<R>]/slice/phase) review outputs
+review-<scope>-N.md          -- per-scope (design/phasedesign<P>[-r<R>]/slice/phase/finalize) review outputs
 codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw
-harden-<P>-N.md              -- per-phase harden audit (3-lens) outputs
+harden-<P>-N.md              -- per-phase harden audit (2-lens) outputs
 codex-harden-<P>.md          -- codex harden findings; codex-harden-<P>.log raw
+finalize-todo.md             -- finalize architectural follow-ups (durable; promoted to
+                                repo-root TODO.md at ship)
 redesign-<P>-r<R>.marker     -- append-only redesign epoch markers (highest R = the
                                 artifact-derived redesign count; current review epoch)
 inflight-<kind>-<scope>.marker -- open = a dispatch unit in flight (write-before-dispatch,
                                 clear-after-record); none open = half of "safe boundary"
+                                (e.g. inflight-finalize.marker brackets the finalize dispatch)
 checkpoint-complete.marker   -- single-use checkpoint proof record (tip-bound; consumed
                                 at resume; never an authorization)
 decisions.md / followups.md  -- run-local ledgers (promoted to the repo at ship)
