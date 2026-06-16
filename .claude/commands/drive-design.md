@@ -31,11 +31,22 @@ Write `$RUN_DIR/design-phase<P>.md` covering, for phase `<P>` ONLY:
 - Interfaces (exact signatures, types, endpoints this phase adds or changes)
 - Edge cases and failure modes (at least 5, with intended behavior)
 - Acceptance criteria (numbered, testable)
-- **Slices** — the independent units within this phase. For each slice give `acceptance:`
-  (which criteria it satisfies), `owns:` (the files/dirs it will write — slices intended to
-  run in parallel MUST own DISJOINT files), and `deps:` (other slice ids it needs first):
+- **Slices** — **default to ONE slice for the phase.** A second slice is justified ONLY by
+  (a) **fan-out** (built independently/in parallel, disjoint files) or (b) **staged risk** (a
+  foundation whose correctness must verify before the next is safe to build on it). A linear
+  chain is one slice unless it contains such a foundation. **Shared-contract rule:** if two
+  candidate slices share a contract that is **new in this phase and co-authored by both** — a
+  helper emitted/mirrored in both, a writer/reader pair, a value produced by one and consumed
+  by another — they MUST be the **same slice**, so the contract is authored and reviewed in
+  one head (splitting them across slices is what lets the contract fail to transfer). This
+  does NOT apply to consuming an already-fixed interface from a prior slice/phase — that is a
+  normal `deps:` edge and fan-out-eligible. Tests ride with the code they cover — never a
+  slice of their own. For each slice give `acceptance:`
+  (which criteria it satisfies), `owns:` (the files/dirs it will write — parallel slices MUST
+  own DISJOINT files), and `deps:` (slice ids it needs first); for each slice beyond the first,
+  `why:` names its justification (`fan-out` | `staged-risk: <what verifies first>`):
       - Slice <P>.1 <name> — acceptance: <criteria>; owns: <files>; deps: none
-      - Slice <P>.2 <name> — acceptance: ...; owns: <disjoint files>; deps: <P>.1
+      - Slice <P>.2 <name> — acceptance: ...; owns: <disjoint files>; deps: <P>.1; why: fan-out
 
 Decision protocol (overrides any "ask the human" reflex) — apply the 6 Decision Principles
 (see the harness `CLAUDE.md`). Record choices under a "Decisions" section + append to
