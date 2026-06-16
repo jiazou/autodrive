@@ -30,15 +30,46 @@ Steps:
 1. Read $RUN_DIR/task.md if it exists; otherwise use the task at the end of
    this prompt.
 2. Read $RUN_DIR/decisions.md to stay consistent with prior choices.
-3. Read enough of the codebase to fix the shape and the phase boundaries.
+3. Read enough of the codebase to fix the shape and the phase boundaries, and to
+   sketch the **dependency graph** of the work — the units of change and which depend
+   on which. The phase breakdown is DERIVED from this graph, not from a template.
+   While reading, also **count the change surface** (touch-points) — new modules,
+   modified functions, call-sites touched, new interfaces, modified contracts — and
+   from it estimate the production-code size (next bullet).
 4. Write $RUN_DIR/design.md covering:
    - Goal (one paragraph)
    - Approach (the high-level strategy / architecture — the shape, not the signatures)
-   - **Phases** — break the work into ordered phases (each builds on the last). For
-     each phase give a one-to-three-line scope: what it delivers, its rough boundary,
-     and what it relies on from earlier phases. Format:
+   - **Size estimate** — the touch-point count from step 3 and an estimated **production
+     SLOC** band. Production SLOC = source lines of the shipping code, **EXCLUDING tests,
+     comments, docstrings, and blank lines** (logic, not prose). Prefer the touch-point count
+     over a raw line guess; calibrate against similar past changes in this repo where you can.
+     State the band and what it triggers:
+       - **≲150 SLOC** — single unit; no seam-hunt required.
+       - **~150–500 SLOC** (or > ~8 touch-points) — **mandatory seam-hunt:** re-examine the
+         dependency graph for a fan-out or staged-risk seam you may have lumped. Split ONLY on
+         a natural seam found this way; if none exists, keep it one phase and add a
+         `heightened-review:` note (an extra adversarial pass at integration review).
+       - **≳500 SLOC** (or > ~20 touch-points, or > 3 new interfaces) — **must split on
+         natural seams OR justify atomicity explicitly** + carry `heightened-review:`.
+     Size is a tripwire for attention and review depth, NOT a license to cut a cohesive change
+     at an arbitrary line count; the cut itself is governed by fan-out / staged-risk below.
+   - **Phases** — **default to ONE phase.** A phase boundary is justified ONLY by one of:
+     (a) **fan-out** — units that can be built independently/in parallel (distinct
+     subsystems, disjoint files), or (b) **staged risk** — an intermediate unit is a
+     *foundation* whose correctness must be verified (built + tested / behaviorally gated)
+     before later units are safe to build on it. A linear dependency chain collapses to ONE
+     phase, however many files it touches — UNLESS it contains such a foundation. The test is
+     NOT "does later code depend on this" (everything does) but "would building dependents on a
+     subtly-wrong foundation hide or scatter the failure absent an intermediate verify?" If its
+     correctness is proven by the SAME tests/gate as its dependents, it is one phase; if it
+     needs its own verify first, split. Tests and process artifacts (ledgers, docs)
+     NEVER form their own phase — they ride with the code they cover. For each phase beyond
+     the first, the `relies on:` field MUST name its justification (`fan-out` or
+     `staged-risk: <foundation that must verify first>`); a phase that can cite neither is
+     collapsed into its predecessor. Give each phase a one-to-three-line scope: what it
+     delivers, its rough boundary, what it relies on. Format:
          ### Phase 1: <name> — delivers <what>; boundary <rough scope>; relies on: none
-         ### Phase 2: <name> — delivers <what>; boundary <rough scope>; relies on: Phase 1
+         ### Phase 2: <name> — delivers <what>; boundary <rough scope>; relies on: Phase 1 (fan-out | staged-risk: <reason>)
      Do NOT enumerate slices, interfaces, or edge cases — that is each phase's own
      detailed-design job.
    - Decisions (high-level choices made autonomously)

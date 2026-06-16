@@ -10,18 +10,36 @@ refs:
 
 - `design` — review the **high-level** `$RUN_DIR/design.md` itself, before Gate A: a
   sound goal/approach and a sound ordered `## Phases` breakdown (no phase dependency
-  cycle; phase boundaries that can deliver the goal). High-level altitude — it does NOT
-  demand slice/interface detail (that is each phase's own design). No code diff.
+  cycle; phase boundaries that can deliver the goal). **Right-sized decomposition (both
+  directions):** over-split is a P1 — a phase beyond the first whose `relies on:` cites no
+  `fan-out`/`staged-risk` justification, a tests/docs-only phase, or a phase that is mere
+  sequential dependency in one subsystem with no foundation needing its own verify. Under-split
+  is a P2 — a single phase that bundles a foundation (a unit whose correctness must verify
+  before dependents are safe) with its dependents. **Size band:** a design whose `Size estimate`
+  is over-band (~150–500 / ≳500 production SLOC — comments + tests excluded) must either split
+  on a real fan-out/staged-risk seam OR carry an explicit atomicity justification plus a
+  `heightened-review:` note; an over-band design that did neither is a P1. A missing `Size
+  estimate` section is itself a P1. High-level altitude — it does NOT demand slice/interface
+  detail (that is each phase's own design). No code diff.
 - `phase <P> design` — review the per-phase detailed design `$RUN_DIR/design-phase<P>.md`
   itself (invoked by `/drive-design`, before that phase implements): buildable interfaces,
   testable acceptance criteria, a sound slice breakdown (no slice dependency cycle; parallel
   slices own disjoint files; no slice contract that contradicts the real prior-phase code).
+  **Right-sized + shared-contract:** flag any slice beyond the first lacking a `why:`
+  (`fan-out`/`staged-risk`), any test-only slice, and — P1 — any two slices that share a
+  contract new-in-this-phase and co-authored by both (a helper emitted/mirrored in both, a
+  writer/reader pair, a value produced by one and consumed by another) instead of being one
+  slice. P2: a single slice that bundles a must-verify-first foundation with its dependents.
   No code diff.
 - `slice <id>` — review the slice's diff `git diff <phaseBaseSha>..slice/<runId>/<id>`
   against that slice's acceptance criteria (owned files only).
 - `phase <P>` — review the assembled integration diff
   `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration issues (interfaces,
-  cross-slice contracts).
+  cross-slice contracts). **Size reconciliation** (the estimate is self-reported — verify it
+  against the real diff): measure the assembled phase's actual production SLOC (exclude tests,
+  comments, blanks); if it crosses into a HIGHER band than the plan's `Size estimate` claimed
+  (claimed ≲150 but actual > 150, or claimed ~150–500 but actual > 500) with no
+  `heightened-review:` note, flag P2 — re-examine the decomposition on the true size.
 - `phase <P> harden-regress` — same review as `phase <P>`, but invoked by
   `/drive-harden` as its regression guard. Identical scope/diff/mechanics; the ONLY
   difference is the counter (below) — its bounding is owned by the harden loop, not the
@@ -59,15 +77,28 @@ prompt. Pass PATHS + git refs only. Spawn a generic reviewer subagent:
 Audit the <scope>:
 - `design`: audit the HIGH-LEVEL `$RUN_DIR/design.md` ITSELF — a sound goal/approach and
   a sound ordered `## Phases` breakdown (no phase dependency cycle; phase boundaries that
-  can deliver the goal). High-level altitude — do NOT demand slice/interface detail. No
-  code diff.
+  can deliver the goal). Right-sized decomposition (both directions): P1 over-split = a phase
+  beyond the first with no `fan-out`/`staged-risk` justification, a test/docs-only phase, or
+  mere sequential dependency in one subsystem with no foundation needing its own verify; P2
+  under-split = one phase bundling a must-verify-first foundation with its dependents. Size band:
+  an over-band `Size estimate` (~150–500 / ≳500 production SLOC, comments+tests excluded) that
+  neither split on a real seam nor carries an atomicity justification + `heightened-review:` note
+  is P1; an absent `Size estimate` section is P1. High-level altitude — do NOT demand
+  slice/interface detail. No code diff.
 - `phasedesign<P>`: audit the per-phase detailed design `$RUN_DIR/design-phase<P>.md` ITSELF
   — interfaces buildable, acceptance criteria testable, the `Slices` breakdown sound (no
   slice dependency cycle; parallel slices own disjoint files; no slice contract that
-  contradicts the real prior-phase code). No code diff.
+  contradicts the real prior-phase code). Right-sized + shared-contract: a slice beyond the
+  first with no `why:`, a test-only slice, or — P1 — two slices sharing a contract
+  new-in-this-phase + co-authored (helper mirrored in both, writer/reader pair,
+  produced-then-consumed value) rather than being one slice; P2 = one slice bundling a
+  must-verify-first foundation with its dependents. No code diff.
 - a slice: audit `git diff <phaseBaseSha>..slice/<runId>/<id>` against THAT slice's
   acceptance criteria, restricted to its owned files.
 - a phase: audit `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration correctness.
+  Size reconciliation: measure actual production SLOC (exclude tests/comments/blanks); if it
+  crosses into a higher band than the plan's `Size estimate` claimed with no `heightened-review:`
+  note, flag P2.
 Spec + prior decisions: the phase's detailed design `$RUN_DIR/design-phase<P>.md` (for a
 slice/phase scope — the slice acceptance criteria live there; `$RUN_DIR/design.md` is the
 high-level context), and `$RUN_DIR/decisions.md`. Derive the diff authoritatively from git
@@ -114,11 +145,20 @@ Use a **per-scope** log so parallel slice reviews don't collide:
 
 ```
 codex exec "Review <scope>. For 'design': audit $RUN_DIR/design.md — high-level only
-(sound goal/approach + ordered ## Phases, no phase cycle). For 'phasedesign<P>': audit
-$RUN_DIR/design-phase<P>.md (buildable interfaces, testable criteria, sound Slices — no
-slice cycle, disjoint owns, no contract contradicting real prior-phase code). For a slice:
+(sound goal/approach + ordered ## Phases, no phase cycle; FLAG over-split P1 — a phase beyond
+the first with no fan-out/staged-risk justification, a test/docs-only phase, or mere sequential
+dependency with no foundation needing its own verify; and under-split P2 — one phase bundling a
+must-verify-first foundation with its dependents; and FLAG P1 an over-band Size estimate
+(~150-500/>=500 production SLOC, comments+tests excluded) that neither split on a real seam nor
+carries an atomicity justification + heightened-review note, or an absent Size estimate). For 'phasedesign<P>': audit
+$RUN_DIR/design-phase<P>.md (buildable interfaces, testable criteria, sound Slices — no slice
+cycle, disjoint owns, no contract contradicting real prior-phase code; FLAG a slice beyond the
+first with no why:, a test-only slice, two slices sharing a new co-authored contract instead of
+being one, or a slice bundling a must-verify-first foundation with its dependents). For a slice:
 git diff <phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owned files. For
-a phase: git diff <phaseBaseSha>..phaseInt/<runId>/<P>, integration. Flag BLOCKING/MAJOR/
+a phase: git diff <phaseBaseSha>..phaseInt/<runId>/<P>, integration; AND reconcile size — actual
+production SLOC (excl tests/comments/blanks) crossing into a higher band than the plan's Size
+estimate claimed with no heightened-review note is P2. Flag BLOCKING/MAJOR/
 MINOR with file:line. Prioritized." > $RUN_DIR/codex-raw-<scope>.log 2>&1
 ```
 
