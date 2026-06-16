@@ -15,13 +15,12 @@ refs:
   `fan-out`/`staged-risk` justification, a tests/docs-only phase, or a phase that is mere
   sequential dependency in one subsystem with no foundation needing its own verify. Under-split
   is a P2 — a single phase that bundles a foundation (a unit whose correctness must verify
-  before dependents are safe) with its dependents, where the old staged boundary would have
-  caught an integration bug at an intermediate verify. **Size band:** a design whose `Size
-  estimate` is over-band (~150–500 / ≳500 production SLOC — comments + tests excluded) must
-  either split on a real fan-out/staged-risk seam OR carry an explicit atomicity justification
-  plus a `heightened-review:` note; an over-band design that did neither is a P1 (it skipped the
-  seam-hunt). A missing/absent `Size estimate` section is itself a P1. High-level altitude — it
-  does NOT demand slice/interface detail (that is each phase's own design). No code diff.
+  before dependents are safe) with its dependents. **Size band:** a design whose `Size estimate`
+  is over-band (~150–500 / ≳500 production SLOC — comments + tests excluded) must either split
+  on a real fan-out/staged-risk seam OR carry an explicit atomicity justification plus a
+  `heightened-review:` note; an over-band design that did neither is a P1. A missing `Size
+  estimate` section is itself a P1. High-level altitude — it does NOT demand slice/interface
+  detail (that is each phase's own design). No code diff.
 - `phase <P> design` — review the per-phase detailed design `$RUN_DIR/design-phase<P>.md`
   itself (invoked by `/drive-design`, before that phase implements): buildable interfaces,
   testable acceptance criteria, a sound slice breakdown (no slice dependency cycle; parallel
@@ -36,12 +35,11 @@ refs:
   against that slice's acceptance criteria (owned files only).
 - `phase <P>` — review the assembled integration diff
   `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration issues (interfaces,
-  cross-slice contracts). **Size reconciliation (estimate is self-reported — verify it):**
-  measure the assembled phase's actual production SLOC from this diff (exclude tests, comments,
-  blanks); if it crosses into a HIGHER band than the plan's `Size estimate` claimed (claimed
-  ≲150 but actual > 150, or claimed ~150–500 but actual > 500) and no `heightened-review:` note
-  was carried, flag P2 — the estimate under-counted, so the seam-hunt / review-depth decision
-  was made on a wrong size and the decomposition should be re-examined.
+  cross-slice contracts). **Size reconciliation** (the estimate is self-reported — verify it
+  against the real diff): measure the assembled phase's actual production SLOC (exclude tests,
+  comments, blanks); if it crosses into a HIGHER band than the plan's `Size estimate` claimed
+  (claimed ≲150 but actual > 150, or claimed ~150–500 but actual > 500) with no
+  `heightened-review:` note, flag P2 — re-examine the decomposition on the true size.
 - `phase <P> harden-regress` — same review as `phase <P>`, but invoked by
   `/drive-harden` as its regression guard. Identical scope/diff/mechanics; the ONLY
   difference is the counter (below) — its bounding is owned by the harden loop, not the

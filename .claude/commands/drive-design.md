@@ -37,11 +37,10 @@ Write `$RUN_DIR/design-phase<P>.md` covering, for phase `<P>` ONLY:
   chain is one slice unless it contains such a foundation. **Shared-contract rule:** if two
   candidate slices share a contract that is **new in this phase and co-authored by both** — a
   helper emitted/mirrored in both, a writer/reader pair, a value produced by one and consumed
-  by another — they MUST be the **same slice**, so the contract is authored and reviewed in
-  one head (splitting them across slices is what lets the contract fail to transfer). This
-  does NOT apply to consuming an already-fixed interface from a prior slice/phase — that is a
-  normal `deps:` edge and fan-out-eligible. Tests ride with the code they cover — never a
-  slice of their own. For each slice give `acceptance:`
+  by another — they MUST be the **same slice** (a split here is where the contract fails to
+  transfer). This does NOT apply to consuming an already-fixed interface from a prior
+  slice/phase — that is a normal `deps:` edge and fan-out-eligible. Tests ride with the code
+  they cover — never a slice of their own. For each slice give `acceptance:`
   (which criteria it satisfies), `owns:` (the files/dirs it will write — parallel slices MUST
   own DISJOINT files), and `deps:` (slice ids it needs first); for each slice beyond the first,
   `why:` names its justification (`fan-out` | `staged-risk: <what verifies first>`):
