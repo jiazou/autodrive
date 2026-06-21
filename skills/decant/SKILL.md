@@ -5,6 +5,7 @@ description: |
   session, classifies each as universal (global candidate) vs workflow-specific,
   checks for duplicates, identifies missing lessons, and recommends promotions
   to the canonical OPERATING.md. Surfaces the meta-pattern under the session's corrections.
+  Also prunes used-up git worktrees and merged/closed branches (confirm-gated).
   Use at the end of any non-trivial session — especially before clearing
   context, switching to a different effort, or after the user gives
   methodological feedback that should outlive this conversation.
@@ -126,7 +127,49 @@ appropriate section of `autodrive/OPERATING.md`, and update MEMORY.md to
 mark the entry with the `**promoted to canonical autodrive/OPERATING.md**`
 marker.
 
-## Step 7 — Final output
+## Step 7 — Repo hygiene: prune used-up worktrees & branches
+
+End-of-session is also when stale worktrees and merged branches pile up. Prune
+them, but treat every delete as consequential/outward — **enumerate candidates,
+confirm once via AskUserQuestion, then delete.** Never act without the confirm.
+
+Bind these first:
+- `PRIMARY` = the default branch name (`git remote show origin | sed -n 's/.*HEAD branch: //p'`, usually `main`).
+- `CUR_WT` = the current worktree root (`git rev-parse --show-toplevel`).
+- `CUR_BR` = the branch this session is on (`git branch --show-current`).
+- `FORK` = the push remote for personal branches (often `origin`); `UPSTREAM` = the PR base remote if different (this project: `upstream`). If there's only one remote, `FORK` = `UPSTREAM` = it.
+
+**7a — Worktrees.** Run `git worktree list --porcelain`. For each worktree that
+is NOT `CUR_WT` and NOT the primary checkout, it is a **removal candidate** only
+when ALL hold:
+- clean — `git -C <path> status --porcelain` is empty (no uncommitted changes); AND
+- no unpushed commits — `git -C <path> log --branches --not --remotes` is empty; AND
+- its branch's PR is MERGED or CLOSED (see 7b), or the branch is fully contained in `PRIMARY`.
+If a worktree is dirty or has unpushed commits, KEEP it and list it as "skipped (has unsaved work)" — it may belong to a concurrent session. Never `--force`.
+
+**7b — Branches (local + fork remote).** For each local branch (except `PRIMARY`
+and `CUR_BR`) and each `FORK` branch (except `PRIMARY`), resolve its PR:
+`gh pr list --repo <UPSTREAM owner/repo> --state all --head <branch> --json number,state`.
+Classify:
+- PR state MERGED or CLOSED → **delete candidate** (squash-merge means commits won't show in `PRIMARY` by hash — the PR state is authoritative, not `git branch --merged`).
+- No PR, but commits already present/superseded in `PRIMARY` — verify with BOTH `git rev-list --count <UPSTREAM>/PRIMARY..<branch>` (0 ahead = contained) OR a content check that the unique commits landed via a sibling squash-merge (`git cherry`, then confirm the diff is in `PRIMARY`). If you cannot confirm it landed, **abstain — keep the branch.**
+- PR still OPEN, or unmerged unique commits not in `PRIMARY` → **KEEP.**
+
+**7c — Confirm + execute.** Present the candidate set (worktrees, local branches,
+remote branches, each with its reason — PR # + state) and the keep/skip list.
+Confirm with a single AskUserQuestion. On approval:
+- `git worktree remove <path>` for each worktree candidate (no `--force`; if it refuses, report and keep).
+- `git branch -d <branch>` for local candidates; if it refuses because squash-merged, `git branch -D` ONLY for branches whose PR is confirmed MERGED/CLOSED.
+- `git push <FORK> --delete <branch...>` for remote candidates (batch them).
+- `git fetch <FORK> --prune` and re-list to confirm.
+
+NEVER delete: `PRIMARY`, `CUR_BR`/`CUR_WT`, any dirty worktree, any branch with
+unpushed commits or an OPEN PR, or any branch/worktree you cannot confirm is
+used-up. When unsure, keep it and say why.
+
+If there are no stale worktrees or branches, say so in one line and move on.
+
+## Step 8 — Final output
 
 Produce a tight summary (~150 words) for the user:
 
@@ -135,6 +178,7 @@ Produce a tight summary (~150 words) for the user:
 - Missing lessons added (if any).
 - Meta-pattern (one sentence, if applicable).
 - Promotion recommendation status.
+- Repo hygiene: worktrees removed, branches deleted (local/remote), and anything skipped with unsaved work.
 
 Don't restate full rule text — point at memory files by name. The user can
 read the source of truth themselves.
@@ -149,4 +193,8 @@ read the source of truth themselves.
 - **Don't ramble through the session narrative.** The user already lived
   through it. Focus on what to do with the lessons, not what we learned.
 - **Don't run this skill if 0 new entries were saved AND the user explicitly
-  hasn't given methodological feedback.** Nothing to distill.
+  hasn't given methodological feedback.** Nothing to distill. (Step 7 repo
+  hygiene can still run on request even when there's nothing to distill.)
+- **Don't delete a worktree or branch without the Step 7c confirmation**, and
+  never touch the current session's worktree/branch, a dirty tree, unpushed
+  commits, or an open-PR branch. When you can't confirm a branch landed, keep it.
