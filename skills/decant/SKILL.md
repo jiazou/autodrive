@@ -129,9 +129,9 @@ marker.
 
 ## Step 7 — Repo hygiene: prune used-up worktrees & branches
 
-End-of-session is also when stale worktrees and merged branches pile up. Prune
-them, but treat every delete as consequential/outward — **enumerate candidates,
-confirm once via AskUserQuestion, then delete.** Never act without the confirm.
+Stale worktrees and merged branches pile up across runs. Prune them — but each
+delete is consequential/outward, so **enumerate candidates, confirm once via
+AskUserQuestion, then delete.**
 
 Bind these first:
 - `PRIMARY` = the default branch name (`git remote show origin | sed -n 's/.*HEAD branch: //p'`, usually `main`).
@@ -152,7 +152,7 @@ and `CUR_BR`) and each `FORK` branch (except `PRIMARY`), resolve its PR:
 `gh pr list --repo <UPSTREAM owner/repo> --state all --head <branch> --json number,state`.
 Classify:
 - PR state MERGED or CLOSED → **delete candidate** (squash-merge means commits won't show in `PRIMARY` by hash — the PR state is authoritative, not `git branch --merged`).
-- No PR, but commits already present/superseded in `PRIMARY` — verify with BOTH `git rev-list --count <UPSTREAM>/PRIMARY..<branch>` (0 ahead = contained) OR a content check that the unique commits landed via a sibling squash-merge (`git cherry`, then confirm the diff is in `PRIMARY`). If you cannot confirm it landed, **abstain — keep the branch.**
+- No PR → delete only if its commits already landed in `PRIMARY`, confirmed by EITHER `git rev-list --count <UPSTREAM>/PRIMARY..<branch>` = 0 (fully contained) OR `git cherry` plus checking each unique commit's diff is in `PRIMARY` (sibling squash-merge). Cannot confirm → **abstain, keep the branch.**
 - PR still OPEN, or unmerged unique commits not in `PRIMARY` → **KEEP.**
 
 **7c — Confirm + execute.** Present the candidate set (worktrees, local branches,
