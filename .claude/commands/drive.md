@@ -69,7 +69,9 @@ verdict / merge / gate.
     REQUIRES the marker for a non-`rebirth` resume: missing/invalid means reconcile from
     scratch. (Format + validity rules: § Durable checkpoint contract.)
   - **`waiting == "rebirth"` → re-proven CONTINUE (fail closed), NOT a STOP.** A
-    `rebirth`-waiting run found on resume is the outgoing session's context-pressure handoff.
+    `rebirth`-waiting run found on resume is the outgoing session's context-clear handoff —
+    either a context-pressure rebirth (class A) or a deterministic seam (class B: Gate A
+    approval, phase advance); the resume is identical for both.
     `waiting = "rebirth"` is set ONLY by the I1 handler AFTER a passing proof + a durable
     `checkpoint-complete.marker` (§ I1), so the resume consumer RE-PROVES resumability before
     continuing — it does NOT trust the marker's tip alone (per § Durable checkpoint contract,
@@ -257,8 +259,9 @@ is independent of `/goal` — use either or both. Set `autoContinue:false` to di
 the hook for this run.
 
 `waiting = "rebirth"` is the lone CONTINUE exception: it is set-to-pause in the
-OUTGOING session (so its turn can end at a safe boundary after a context-pressure
-checkpoint) and auto-cleared-as-continue by the resume path in the INCOMING session —
+OUTGOING session (so its turn can end at a safe boundary after a context-clear checkpoint —
+context-pressure OR a deterministic seam) and auto-cleared-as-continue by the resume path in
+the INCOMING session —
 it is NOT a STOP awaiting a human answer. The hook reads only `waiting`'s truthiness, so
 it lets the turn end on `rebirth` exactly as on any pause; the resume path (§ Run setup &
 resume) clears it and drives forward.
@@ -382,24 +385,42 @@ Honest-coverage residual: the Stop hook is the SOLE detector — if it is not in
 (`bin/install-operating-rules.sh`), context-pressure rebirth does not trigger; and a single
 catastrophic turn can overshoot the window before the hook fires at turn end.
 
-## I1 — Safe-boundary rebirth handler (consume `rebirth_pending`)
+## I1 — Safe-boundary rebirth handler (the checkpoint-and-handoff routine)
 
-The single shared **rebirth-checkpoint routine** that CONSUMES `rebirth_pending` and ACTS —
-ONE routine every safe-boundary site calls (stated here once, referenced from each stage).
-The detection (Stop hook) is stage-agnostic and can set `rebirth_pending` in ANY stage, so
-EVERY autonomous safe boundary must invoke this handler, not just Execute. It runs at each
-such boundary, consuming any `rebirth_pending` the hook's steer has set:
+The single shared **checkpoint-and-handoff routine** — ONE routine every safe-boundary site
+calls (stated here once, referenced from each stage) to checkpoint, distill the outgoing
+leg's learnings (`/decant`), and hand off to a fresh session. It has **two trigger classes**,
+both routing through the SAME steps 2–6 below — so both set `waiting="rebirth"` only after a
+passing proof + a durable marker, and the resume path is identical and never depends on WHICH
+trigger fired:
+
+- **(A) Context-pressure** — the Stop hook sets `rebirth_pending` when the transcript crosses
+  its token threshold (§ Context-pressure detection). Stage-agnostic: it can arm in ANY stage,
+  so EVERY autonomous safe boundary must invoke this handler to consume it.
+- **(B) Deterministic seam** — a PLANNED context-clear at a fixed pipeline boundary,
+  independent of token pressure: **after Gate A approval** (plan→execute) and **after each
+  phase advance** (§ Stage 1; § Stage 2–4.5 step 6). The seam itself is the trigger — no
+  `rebirth_pending` flag is involved; it fires every time the boundary is reached.
+
+It runs at each safe boundary below, consuming any `rebirth_pending` the hook's steer has set
+AND firing unconditionally at the two deterministic seams:
 - **Execute** — after the per-phase detailed design converges (its `inflight-design-<P>.marker`
   cleared, BEFORE freezing base + dispatching slices), after each per-slice review verdict, the
   phase-integration review verdict, each HARDEN round verdict, and the phase advance
   (§ Stage 2–4.5). The phase-design sub-stage runs MULTIPLE dual-voice review rounds, so a rebirth
   signalled there is consumed at this boundary rather than running on into slice dispatch.
+  **The phase advance is also a deterministic seam — Seam B (a trigger-class-B handoff) — it
+  fires UNCONDITIONALLY (not gated on `rebirth_pending`) so each phase's successor — the next
+  phase's design, or Finalize after the last phase — starts in a fresh session.**
 - **Finalize** — at the finalize dispatch boundary, BEFORE `/drive-finalize` is dispatched
   (before `inflight-finalize.marker` is written), and after each finalize round verdict
   (CONVERGED / FINDINGS / STOP) once its marker is cleared (§ Stage 4c). Once
   `/drive-finalize` is dispatched its `inflight-finalize.marker` is open, so there is no
   safe boundary INSIDE a finalize round until it returns.
-- **Plan** — between plan-stage steps, after each design-review round (§ Stage 1).
+- **Plan** — between plan-stage steps, after each design-review round, and at the **Gate A
+  approval transition** (plan→execute), which is the deterministic Seam A (a trigger-class-B
+  handoff): the handoff fires UNCONDITIONALLY on approval (not gated on `rebirth_pending`) so
+  Execute starts in a fresh session (§ Stage 1).
 - **Verify** — after each QA/e2e attempt (§ Stage 4b).
 - **Ship** — at the ship dispatch boundary, BEFORE `/drive-ship` is dispatched (before the
   `inflight-ship.marker` is written) (§ Stage 5). Once `/drive-ship` is dispatched its
@@ -411,9 +432,12 @@ Each of those sites is a genuine safe boundary (the coordinator is between dispa
 with no open `inflight-*.marker`). Steps, in this exact order (this handler NEVER sets
 `rebirth_pending` — phase-2 detection does):
 
-1. **Gate on the signal + the boundary.** Proceed ONLY if `state.rebirth_pending == true`
-   AND this is a genuine safe boundary (no open `inflight-*.marker`). Falsy → do nothing,
-   continue the pipeline.
+1. **Gate on the trigger + the boundary.** Proceed ONLY if this is a genuine safe boundary
+   (no open `inflight-*.marker`) AND a trigger fired — EITHER `state.rebirth_pending == true`
+   (class A) OR this invocation is one of the two deterministic seams (class B: Gate A
+   approval, phase advance). Neither trigger at a safe boundary → do nothing, continue the
+   pipeline. (A class-B seam fires every time it is reached, independent of `rebirth_pending`;
+   if pressure ALSO armed the flag at a seam, this one handoff covers both.)
 2. **Finish the current atomic step** (§ Durable checkpoint contract). Let any in-flight
    unit return + record + clear its marker; finish a REDESIGN marker-write → state-write
    span. Do NOT enter the sequence mid-dispatch.
@@ -441,6 +465,20 @@ with no open `inflight-*.marker`). Steps, in this exact order (this handler NEVE
    fail-closed: the marker write is step 4 and the `waiting` set is step 5 — marker BEFORE
    `waiting`, adjacent. (Setting `waiting` first would let the turn end before resumability
    is durable.)
+5.5. **Run `/decant`** (EVERY trigger — pressure or deterministic seam). Now that
+   resumability is durable (marker written, `waiting="rebirth"` set), distill the OUTGOING
+   leg's learnings before the context clears: invoke the `decant` skill in its default
+   autonomous mode (survey this session's memory entries, dedupe, write any genuine new
+   memory, surface promotion recommendations in the handoff output). It writes ONLY to memory
+   / `OPERATING.md` — outside `$RUN_DIR` and the run's feature branch — so it cannot affect
+   the just-proven resumability and cannot bloat the minimal handoff prompt, and it self-skips
+   when nothing meaningful was learned. Do NOT let a decant recommendation pause or block the
+   handoff (it is advisory; the user acts on it later). A decant failure is non-fatal — note
+   it and proceed to step 6 (resumability is already proven; learnings-distillation is
+   best-effort). **This step-5.5 decant IS the context-clear decant for this boundary** — it
+   satisfies the standing "run `/decant` on context-clear" rule for this handoff, so do NOT
+   additionally run a wrap-decant at the same clear. (The standing run-wrap decant fires only
+   at the TRUE run-wrap — after Gate B / `stage=done` — which is not a handoff seam.)
 6. **Present the handoff via Present human pause.** `waiting` is already set (step 5), so
    the routine emits the run graph (rendering the `↻ REBIRTH` node from
    `waiting=="rebirth"`) and presents the **rebirth handoff block** (the literal `/drive
@@ -456,7 +494,9 @@ resume, or the `rebirth`-continue path on a same-session re-paste (§ Run setup 
 the handoff and the outgoing session keeps going, `waiting="rebirth"` +
 `checkpoint-complete.marker` persist; the next safe boundary re-observes `rebirth_pending`
 still true and re-presents (re-proving — the marker is record-not-authorization). No
-double-handoff: the marker is single-use, consumed only by a `/drive <runId>` resume.
+double-handoff: the marker is single-use, consumed only by a `/drive <runId>` resume. (A
+class-B deterministic seam sets no `rebirth_pending` flag, so it has no leave-pending state —
+it fires once on reaching the boundary, and the resume clears `waiting` as for any handoff.)
 
 **Gate/STOP precedence over rebirth.** At a boundary where BOTH `rebirth_pending == true`
 AND the next pipeline action is a Gate A / Gate B / a non-decision STOP: the **gate/STOP
@@ -466,12 +506,13 @@ wins** — present the gate/STOP (its own `waiting` value), NOT `waiting="rebirt
 boundary only when a PRIOR turn's Stop already armed it. A rebirth that would FIRST arise on
 the very turn that ends in the gate/STOP is therefore armed at the next autonomous, non-pause
 Stop instead — deferred by at most one turn, never lost.) The
-human is present at that pause and can resume in a fresh session if they wish: **Gate A**
-hands the next leg's `/goal` line on approval; **Gate B** hands NO goal (after Gate-B
-approval the push is immediate — there is no next leg). The user, knowing the runId,
-pastes `/drive <runId>` into a fresh session themselves — NEITHER gate emits a `/drive
-<runId>` resume token (that runId resume line is the rebirth handshake's distinct
-contribution). `rebirth_pending` does NOT carry forward ACROSS the fresh-session resume:
+human is present at that pause and can resume in a fresh session: **Gate A** — on approval
+the deterministic Seam A fires (§ Stage 1), so Gate A DOES emit the `/drive <runId>` resume
+line + the execute-leg `/goal` and hands off (Execute starts fresh) regardless of whether
+pressure was also pending; **Gate B** hands NO goal and NO resume token (after Gate-B approval
+the push is immediate — there is no next leg). A STOP is not a deterministic-clear seam: after
+the human resolves it the run continues, and any pending pressure-rebirth (class A) is
+consumed at the next safe boundary. `rebirth_pending` does NOT carry forward ACROSS the fresh-session resume:
 it is reset to `false` exactly once at the sessionId-rebind step (the successor re-derives
 pressure from its own transcript growth and hands off at the next safe boundary there — no
 handoff is lost). WITHIN the same outgoing session it does PERSIST (per Leave-pending
@@ -515,22 +556,21 @@ forgotten:
    literally (the same value the run graph's `↻ REBIRTH` node shows):
 
    ```
-   ↻ REBIRTH — this /drive run is approaching its context budget and has checkpointed
-   to hand off to a fresh session. Your run is proven resumable — both proof modes
-   clean (checkpoint AND state-lint passed).
+   ↻ REBIRTH — this /drive run has checkpointed and is clearing context to continue in a
+   fresh session (planned boundary, or context pressure). Proven resumable — both proof
+   modes clean (checkpoint AND state-lint).
 
    To continue, paste this into a FRESH Claude Code session:
 
      /drive <runId>
 
-   Then re-arm the goal for the next autonomous leg (LEG-AWARE — emit the
-   `<leg-condition>` line that matches the SUCCESSOR's resume leg, selected by
-   `state.stage` per the table below):
+   Then re-arm the goal for the next autonomous leg (LEG-AWARE — emit the `<leg-condition>`
+   line that matches the SUCCESSOR's resume leg, selected by `state.stage` per the table
+   below):
 
-     /goal The /drive run <runId> is resuming after a context-pressure rebirth and is
-     driving the pipeline autonomously toward its next human gate (Gate A/B) or a
-     non-decision STOP, OR is paused at a rebirth handoff (waiting="rebirth") awaiting my
-     paste of the resume line. <leg-condition>
+     /goal The /drive run <runId> is driving autonomously toward its next human gate
+     (Gate A/B) or a non-decision STOP, OR is paused at a rebirth handoff (waiting="rebirth")
+     awaiting my paste of the resume line. <leg-condition>
 
    (This session can stop now; the fresh session owns the run once it resumes.)
    ```
@@ -656,7 +696,7 @@ timestamp; if a value isn't in `state.json` or a fixed-format file, render it as
   current stage's active node — the active Execute node (the current phase, or the current
   slice if the boundary was a per-slice review verdict) when `stage==execute`, the Finalize
   node when `stage==finalize`, else the active Plan/Verify/Ship node. Its node text is
-  `↻ REBIRTH: context-pressure handoff (resume: /drive <runId>) ← YOU ARE HERE`, with
+  `↻ REBIRTH: context-clear handoff — planned boundary or pressure (resume: /drive <runId>) ← YOU ARE HERE`, with
   `<runId>` = `state.runId`. It derives purely from `state.waiting=="rebirth"` +
   `state.runId` + `state.stage`/`phase` — no new artifact, no event-log parse. An
   unrecognized `waiting` still renders, with `← YOU ARE HERE` on a generic `✗ STOP:
@@ -789,9 +829,10 @@ key throughlines:
    condition is met**. A single whole-run goal therefore can't span a human gate — to
    let the run *pause* at Gate A the gate has to count as a satisfying state, but that
    same satisfaction auto-clears the goal, leaving the execute half with none. So we
-   scope **one goal per autonomous leg**, re-armed at Gate A (which hands the user the
-   next/execute-leg line to paste on approval); Gate B hands no further line — after Gate-B
-   approval the push is immediate.
+   scope **one goal per autonomous leg**, re-armed at each leg boundary: Gate A's approval
+   triggers the Seam A handoff, which hands the user the execute-leg line (the handoff block
+   is the single source — § Stage 1); Gate B hands no further line — after Gate-B approval the
+   push is immediate.
 
    Present the **leg-1** goal (drives planning → Gate A). Bind `<task>` = the resolved
    premise (`$ARGUMENTS`), then **continue regardless** (never block waiting for them):
@@ -820,6 +861,18 @@ the one human gate here. If no approved/converged design → STOP. → `lastGate
 Parse the `## Phases` breakdown into the ordered phase ids in `state.phaseList`. **Slices
 are NOT defined here** — `state.slices` stays empty; each phase's `/drive-design` (Execute
 step 1) produces and records its own slices, in detail, against the real prior-phase code.
+
+**Seam A — deterministic handoff after Gate A approval.** Once approved (`lastGate="A"`,
+`stage="execute"`, `phaseList` parsed) the plan is fully recorded and no `inflight-*.marker`
+is open — a genuine safe boundary. Invoke the **checkpoint-and-handoff routine** (§ I1 steps
+2–6) UNCONDITIONALLY (class-B deterministic seam, NOT gated on `rebirth_pending`): it proves
+resumability, runs `/decant`, sets `waiting="rebirth"`, presents the handoff (`/drive
+<runId>` + the execute-leg `/goal`), and ends the turn — so **Execute begins in the fresh
+session** the user resumes into. (A failing proof fails closed → STOP per § I1 step 3, do NOT
+hand off.) `/drive-plan` presents Gate A — direction + any Taste/Challenge items — and does
+NOT hand the goal; **this Seam A handoff is the single source of BOTH the `/drive <runId>`
+resume line AND the execute-leg `/goal`** (delivered together in the handoff block, § Present
+human pause), so the goal is delivered exactly once.
 
 At each Plan safe boundary — between plan-stage steps and after each design-review round
 (the coordinator is between dispatch units with no open `inflight-*.marker`) — run the
@@ -975,7 +1028,16 @@ it consumes any `rebirth_pending` the hook's steer set), before proceeding:
      move broke the invariant). Then `git worktree remove` the integration worktree
      (slice worktrees were already removed on convergence), delete slice branches, and
      advance `state.phase` to the next id in `state.phaseList` (if this was the last phase,
-     `stage = finalize`). Proceed to the next phase.
+     `stage = finalize`). **Seam B — deterministic handoff after the phase advance.** With
+     the advance complete (its atomic ref move recorded) and no `inflight-*.marker` open —
+     a genuine safe boundary — invoke the **checkpoint-and-handoff routine** (§ I1 steps 2–6)
+     UNCONDITIONALLY (class-B deterministic seam, NOT gated on `rebirth_pending`): it proves
+     resumability, runs `/decant`, sets `waiting="rebirth"`, presents the handoff (`/drive
+     <runId>` + the execute-leg `/goal`), and ends the turn — so the successor (the next
+     phase's `/drive-design` step 1, or Finalize / Stage 4c after the last phase) **begins in
+     the fresh session** the user resumes into. (A failing proof fails closed → STOP per § I1
+     step 3, do NOT hand off; the advance is already durable, so resume picks up at the next
+     phase / finalize.)
    - `STOP` (3 fix rounds exceeded / BLOCKED / NEEDS_CONTEXT) → STOP; the phase stays
      `hardening` and does **not** advance — its half-hardened state is preserved on
      `phaseInt/<runId>/<P>` for resume.
@@ -1040,8 +1102,8 @@ Append each e2e/QA attempt's outcome to `state.verify.attempts`
 (`{result:"PASS"|"FAIL"}`) — the ordered array is the run graph's Verify source and its
 false-negative → re-verify saga.
 After each QA/e2e attempt — a Verify safe boundary (between dispatch units, no open
-`inflight-*.marker`) — run the **Safe-boundary
-rebirth handler** (§ I1) so a rebirth signalled during Verify is consumed and handed off.
+`inflight-*.marker`) — run the **Safe-boundary rebirth handler** (§ I1) so a rebirth
+signalled during Verify is consumed and handed off.
 → `stage = ship`
 
 ### Stage 5 — Ship (once)

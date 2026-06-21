@@ -270,7 +270,7 @@ def _handoff_block():
     """The fenced handoff block presented when `waiting=="rebirth"` (Present human pause
     step 3): the ```-fenced block whose first line starts the `↻ REBIRTH —` orientation."""
     md = _drive_md()
-    start = md.index("↻ REBIRTH — this /drive run is approaching its context budget")
+    start = md.index("↻ REBIRTH — this /drive run has checkpointed and is clearing context")
     fence_open = md.rindex("```", 0, start)
     fence_close = md.index("```", start)
     return md[fence_open: fence_close]
@@ -281,7 +281,7 @@ def _handoff_goal_line():
     leg-aware re-arm line whose trailing `<leg-condition>` placeholder the selector binds.
     Bounded to the handoff block so an unrelated `/goal` line elsewhere can't satisfy it."""
     block = _norm(_handoff_block())
-    start = block.index("/goal The /drive run <runId> is resuming after a context-pressure")
+    start = block.index("/goal The /drive run <runId> is driving autonomously toward")
     # the line is the goal sentence through its trailing `<leg-condition>` placeholder token
     return block[start:]
 
@@ -452,33 +452,35 @@ def test_reset_on_resume_is_structural_not_prose_only():
 
 
 # =========================================================================== #
-# AC8 — gate precedence (D45): Gate A hands the next leg's /goal line; Gate B hands NONE
-# (push is immediate); NEITHER gate emits /drive <runId>; rebirth uniquely contributes the
-# runId resume line. (Ground truth: drive-ship.md Gate B pushes after approval, no goal.)
+# AC8 — gate precedence (updated for deterministic Seam A): on approval Gate A fires the
+# Seam A handoff, so Gate A DOES emit the `/drive <runId>` resume line + the execute-leg
+# `/goal` (Execute starts fresh); Gate B hands NO goal and NO resume token (push is
+# immediate). The OLD "NEITHER gate emits a resume token" invariant is intentionally
+# superseded by the deterministic context-clear after Gate A. (Ground truth: drive-ship.md
+# Gate B pushes after approval, no goal.)
 # =========================================================================== #
-def test_gate_precedence_neither_gate_emits_runid_resume():
-    """AC8/D45: drive.md's gate-precedence prose states Gate A hands the next leg's `/goal`
-    line on approval and Gate B hands NONE (immediate push, no next leg), NEITHER emits a
-    `/drive <runId>` resume token, and the runId resume line is the rebirth handshake's
-    DISTINCT contribution. (Corrected from the false 'BOTH gates hand a goal' claim.)"""
+def test_gate_precedence_gateA_emits_resume_via_seam_a():
+    """AC8 (deterministic Seam A): drive.md's gate-precedence prose states that on approval
+    Gate A fires the Seam A handoff and so DOES emit the `/drive <runId>` resume line + the
+    execute-leg `/goal` (Execute begins in a fresh session), while Gate B hands NO goal and
+    NO resume token (immediate push, no next leg). The OLD 'NEITHER gate emits a resume
+    token' invariant is intentionally superseded — Gate A now clears context after approval."""
     blob = _norm(_drive_md())
+    # Gate A now emits the resume line + the execute-leg goal (via the deterministic Seam A handoff)
     assert (
-        "**Gate A** hands the next leg's `/goal` line on approval; **Gate B** hands NO goal "
-        "(after Gate-B approval the push is immediate — there is no next leg)"
+        "Gate A DOES emit the `/drive <runId>` resume line + the execute-leg `/goal`"
     ) in blob, (
-        "gate precedence must state Gate A hands the next leg's /goal line and Gate B hands "
-        "NONE (immediate push) — not the false 'BOTH gates hand a goal'"
+        "gate precedence must state Gate A DOES emit the resume line + execute-leg /goal "
+        "(the deterministic Seam A handoff fires on approval)"
     )
-    # the false claim must NOT remain anywhere
-    assert "BOTH Gate A and Gate B hand the next leg's `/goal` line" not in blob, (
-        "the false 'BOTH Gate A and Gate B hand the next leg's /goal line' claim must be gone"
+    # Gate B still hands nothing — no goal, no resume token (immediate push)
+    assert "**Gate B** hands NO goal and NO resume token" in blob, (
+        "gate precedence must state Gate B hands NO goal and NO resume token (immediate push)"
     )
-    assert (
-        "NEITHER gate emits a `/drive <runId>` resume token (that runId resume line is the "
-        "rebirth handshake's distinct contribution)"
-    ) in blob, (
-        "gate precedence must state NEITHER gate emits `/drive <runId>` and that the runId "
-        "resume line is rebirth's distinct contribution"
+    # the OLD 'neither gate emits a resume token' claim must be GONE (Gate A now emits it)
+    assert "NEITHER gate emits a `/drive <runId>` resume token" not in blob, (
+        "the old 'NEITHER gate emits a /drive <runId> resume token' invariant must be gone — "
+        "Gate A now emits it via the deterministic Seam A handoff"
     )
 
 
@@ -766,36 +768,39 @@ def test_hook_escalation_and_i1_share_the_handshake_tokens():
     assert 'set `waiting = "rebirth"`' in i1
 
 
-# --- AC7: cross-file /goal rebirth-pause clause consistency ----------------- #
-# The `/goal` rebirth-pause clause must be present + byte-identical across BOTH
-# drive.md (×2: the rebirth-handoff re-arm goal + the Stage-0 leg-1 goal) and
-# drive-plan.md (×1: the Gate-A→leg-2 goal) — AC7 / design-phase4.md edge-case 4: a
-# one-sided edit to any of those `/goal` surfaces must red this pin.
+# --- AC7: /goal rebirth-pause clause — single-source + consistency ---------- #
+# The `/goal` rebirth-pause clause appears in drive.md ×2 (the rebirth-handoff re-arm goal
+# + the Stage-0 leg-1 goal) and must be byte-identical there. It is ABSENT from drive-plan.md
+# (×0): the execute-leg goal is single-sourced in drive.md's Seam A handoff block — drive-plan
+# defers it (no dual ownership). A one-sided edit to drive.md's clause, or a goal reintroduced
+# into drive-plan.md, reds this pin.
 _GOAL_REBIRTH_PAUSE_CLAUSE = (
     'paused at a rebirth handoff (waiting="rebirth") awaiting my paste of the resume line'
 )
 
 
 def _assert_goal_rebirth_pause_consistent(drive_md, drive_plan_md):
-    """The cross-file AC7 pin, factored so the flip-proof runs the SAME assertion against a
-    mutated COPY. Both files (whitespace-normalized) must carry the SAME rebirth-pause `/goal`
-    clause, at its expected per-file count. drive.md carries it ×2 — once in the rebirth-handoff
-    successor re-arm goal (the I-section leg-aware re-arm) and once in the Stage-0 leg-1 goal;
-    drive-plan.md carries it ×1, in the Gate-A→leg-2 goal it hands the planner. A one-sided edit
-    to EITHER file's clause — including dropping just ONE of drive.md's two — reds this.
-    Raises AssertionError if the clause is missing from, altered in, or mis-counted in either."""
+    """The AC7 pin, factored so the flip-proof runs the SAME assertion against a mutated COPY.
+    drive.md (whitespace-normalized) must carry the SAME rebirth-pause `/goal` clause ×2 — once
+    in the rebirth-handoff successor re-arm goal (the I-section leg-aware re-arm) and once in
+    the Stage-0 leg-1 goal. drive-plan.md must carry it ×0: the execute-leg goal is
+    single-sourced in drive.md's Seam A handoff (drive-plan defers), so a reintroduced
+    drive-plan goal — dual ownership — reds this, as does dropping one of drive.md's two.
+    Raises AssertionError if the clause is mis-counted in either file."""
     assert _norm(drive_md).count(_GOAL_REBIRTH_PAUSE_CLAUSE) == 2, (
         "drive.md must carry the SAME /goal rebirth-pause clause in both the rebirth-handoff "
         "re-arm goal and the Stage-0 leg-1 goal (×2)"
     )
-    assert _norm(drive_plan_md).count(_GOAL_REBIRTH_PAUSE_CLAUSE) == 1, (
-        "drive-plan.md must carry the SAME /goal rebirth-pause clause in its leg-2 goal (×1)"
+    assert _norm(drive_plan_md).count(_GOAL_REBIRTH_PAUSE_CLAUSE) == 0, (
+        "drive-plan.md must NOT carry the /goal rebirth-pause clause (×0) — the execute-leg "
+        "goal is single-sourced in drive.md's Seam A handoff; a drive-plan goal is dual ownership"
     )
 
 
-def test_goal_rebirth_pause_clause_consistent_across_drive_and_plan():
-    """AC7 cross-file consistency: the leg-2 `/goal` rebirth-pause clause
-    (`waiting="rebirth"` … awaiting my paste of the resume line) is present and identical in
-    BOTH drive.md and drive-plan.md, so the two `/goal` surfaces can't drift apart."""
+def test_goal_rebirth_pause_clause_single_sourced_in_drive_md():
+    """AC7: the `/goal` rebirth-pause clause is present + identical in drive.md ×2 and ABSENT
+    from drive-plan.md (×0) — the execute-leg goal is single-sourced in drive.md's Seam A
+    handoff (drive-plan defers), so the two surfaces can't drift apart and no dual ownership
+    is reintroduced."""
     _assert_goal_rebirth_pause_consistent(_drive_md(), _drive_plan_md())
 

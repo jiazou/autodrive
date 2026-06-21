@@ -92,14 +92,29 @@ than silently auto-deciding a Taste/Challenge.
 - Plus dynamic surfacing of **Taste** (at gates) and **User-Challenge**
   (immediately).
 
+**Deterministic context-clear handoffs (fresh context per leg).** Beyond the gates, `/drive`
+checkpoints, runs `/decant`, clears context, and resumes in a FRESH session at two
+deterministic **seams**: **after Gate A approval** (→ Execute starts fresh) and **after each
+phase advance** (→ the next phase's design, or Finalize after the last phase, starts fresh).
+These reuse the existing **rebirth** checkpoint-and-handoff routine (drive.md § I1 steps 2–6,
+trigger class B) — they are NOT a new mechanism; the durable run-state lives in `$RUN_DIR`
+(paths, not context) and the handoff emits the minimal succinct prompt (`/drive <runId>` +
+the leg `/goal`). The context-pressure rebirth (class A, Stop-hook-triggered) remains as a
+safety net for any single leg that overflows its window. **Decant runs at every context-clear
+boundary** (I1 step 5.5) — distilling the outgoing leg's learnings before they are lost — plus
+once at the true run-wrap (after Gate B). Clearing context = a fresh session, which Claude
+Code cannot self-initiate: you paste `/drive <runId>` at each `═══` boundary; the `/goal`
+re-arms autonomy WITHIN each leg.
+
 **Session goal (Stage 0).** Because a run typically starts in a fresh session,
 Stage 0 presents Claude Code's native **`/goal`** for you to paste — a session-scoped
 completion condition that keeps the session driving turn-to-turn instead of stopping
 mid-pipeline. `/goal` can only be set by you (no programmatic setter) and **auto-clears
 the instant its condition is met**, so a single whole-run goal would clear itself at
 Gate A (the gate is a satisfying "awaiting your input" state). `/drive` therefore uses
-**one goal per autonomous leg**, re-armed at each gate: Stage 0 gives you the leg-1 goal
-(→ Gate A), and Gate A / Gate B hand you the next leg's line on approval. It still
+**one goal per autonomous leg**, re-armed at each leg boundary: Stage 0 gives you the leg-1
+goal (→ Gate A), Gate A's post-approval Seam A handoff hands you the execute-leg line, and
+Gate B hands none (the push is immediate). It still
 complements the gates: `/goal` continues the autonomous stages; Gate A / Gate B / STOPs
 still pause for you.
 

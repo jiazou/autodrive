@@ -128,27 +128,26 @@ unreachable, emit a one-line `(run graph unavailable: drive.md not found)` note 
 continue; do NOT paraphrase the spec); (3) present Gate A and wait for approval; clear
 `waiting = null` on approval.
 
-Reaching this gate satisfied (and so auto-cleared) the leg-1 `/goal`, so also hand
-me the **leg-2** goal to paste *alongside* my approval — it keeps the execute half
-(implement → review → harden → verify → ship) driving autonomously to Gate B. Bind
-`<task>` = the run's task:
+Reaching this gate satisfied (and so auto-cleared) the leg-1 `/goal`. Do NOT hand the
+execute-leg goal here: on approval the coordinator runs **Seam A** — a deterministic
+context-clear handoff (drive.md § Stage 1 / § I1) — which clears context so Execute begins
+in a FRESH session and presents the `/drive <runId>` resume line **plus** the execute-leg
+`/goal` together in its handoff block (single source). So at Gate A just present the
+direction + Taste/Challenge items and wait for approval; the handoff that follows delivers
+the resume line and goal.
 
-> Paste this with your approval to drive the execute half up to Gate B:
->
-> ```
-> /goal The /drive run for "<task>" has opened its PR (Gate B passed, stage=done), OR is paused awaiting my input at Gate B, a non-decision STOP, or an AskUserQuestion, OR is paused at a rebirth handoff (waiting="rebirth") awaiting my paste of the resume line. NOT met while autonomous implement / review / harden / verify / ship work remains.
-> ```
-
-(If the user skips it, the execute half still runs — it just won't auto-continue
-across turns. After Gate B the push is immediate, so no further goal is needed.)
+(Running `/drive-plan` standalone, without the coordinator: after approval re-arm the
+execute-leg goal and continue manually — the deterministic handoff is the coordinator's step.)
 
 ## After this stage
 
 - Approved → update $RUN_DIR/state.json (`stage=execute`, `lastGate="A"`,
   `waiting=null`), parse the `## Phases` breakdown into the ordered phase ids in
-  `state.phaseList`, and begin the execute half (see drive.md). **Slices are NOT defined
-  here** — `state.slices` stays empty; each phase's `/drive-design phase <P>` produces and
-  records its own slices just before that phase implements.
+  `state.phaseList`. The coordinator then runs **Seam A** — the deterministic post-Gate-A
+  context-clear handoff (drive.md § Stage 1 / § I1) — so the **execute half begins in a fresh
+  session**, not in-context here. **Slices are NOT defined here** — `state.slices` stays
+  empty; each phase's `/drive-design phase <P>` produces and records its own slices just
+  before that phase implements.
 - No approved/converged design (cancelled, or can't converge in 8 rounds) → STOP
   and report what's missing **via the Present human pause routine**: set
   `state.waiting="stop:<reason>"`, then emit the run graph — read
