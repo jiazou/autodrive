@@ -35,8 +35,17 @@ before the pause.
 ## Run setup & resume
 
 Generate `runId = <branch>-<timestamp>` and `RUN_DIR = ~/.claude/harness-runs/<runId>/`
-(`mkdir -p`). All per-run artifacts live in `$RUN_DIR` (absolute path), reachable
-from any worktree. Append a line to `$RUN_DIR/event-log.jsonl` at every dispatch /
+(fresh run only — a resume reuses an existing id). **Atomic collision claim:**
+`<timestamp>` is second-resolution, so the runId is NOT unique by construction — claim it
+atomically. `mkdir -p` the parent `~/.claude/harness-runs/`, then claim the leaf with
+**plain `mkdir "$RUN_DIR"` (NOT `mkdir -p`)** — an atomic test-and-create that fails if the
+dir already exists. This claim is the FIRST setup step — it **precedes** `featureBranch`
+creation and the first `state.json` write. On an **already-exists** failure (EEXIST — a
+prior or concurrent run owns the id) append a numeric disambiguator (`-2`, `-3`, …) to the
+runId and retry the leaf `mkdir`; that success is the claim. Any OTHER `mkdir` error
+(permissions, bad path) is a real failure → STOP, never retry. Never reuse an existing
+run's `$RUN_DIR`. All per-run artifacts live in `$RUN_DIR` (absolute path), reachable from
+any worktree. Append a line to `$RUN_DIR/event-log.jsonl` at every dispatch /
 verdict / merge / gate.
 
 - **Resume:** if invoked with an existing runId (its `$RUN_DIR/state.json` exists), load it

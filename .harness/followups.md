@@ -347,3 +347,14 @@ made SAFE by the round-2 idempotency fixes. A focused follow-up should tighten t
 - [P2] drive.md worktree classifier classifies wt/* by checked-out branch, but wt/finalize AND wt/ship are
   both on featureBranch — add an explicit `wt/ship` case (path-aware), mirroring the new wt/finalize rule.
   (Ship already force-cleans wt/ship on entry, so this is a clarity/robustness cleanup, not a live bug.)
+
+## Run drive/runid-collision-guard (2026-06-21) — runId collision hardening
+
+- **[P3, pre-existing] `<branch>` slug normalization into the runId is unpinned.** drive.md
+  generates `runId = <branch>-<timestamp>` but never specifies how `<branch>` (the
+  task-derived slug) is normalized into a single git-ref-safe / path-safe segment. The new
+  atomic `mkdir` claim makes a *colliding* id safe (disambiguate or STOP), but two
+  *different* tasks could still normalize to the same slug, and an unsanitized slug could
+  yield an illegal ref/path. Surfaced by codex during the collision-guard review.
+  **Suggested:** pin a deterministic slug rule (lowercase, `[a-z0-9-]`, collapse/truncate)
+  where runId is minted. **Severity:** low.
