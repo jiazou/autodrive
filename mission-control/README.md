@@ -13,9 +13,9 @@ losing the thread. Morning briefing skill: **`harvest`**.
 
 ## The core insight (why this exists)
 
-The task system was bootstrapped 2026-05-21 and then *never operated* — exactly one daily note
-ever, 29 seed tasks left unreviewed. A system you must remember to run decays. Mission Control is
-the harness that runs the loops and surfaces what needs you, so operation doesn't depend on memory.
+A task system you must remember to run decays — it accumulates unreviewed tasks and stale daily
+notes until it's abandoned. Mission Control is the harness that runs the recurring loops and
+surfaces what needs you, so operating the system doesn't depend on memory.
 
 ## Data model
 
