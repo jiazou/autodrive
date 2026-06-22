@@ -540,7 +540,21 @@ apply_tier_W_child() {
     git -C "$repo" worktree prune 2>/dev/null
   fi
 
-  # Step 4 — trash the dead dir (D4: trash, never rm). On success ⇒ removed; on failure ⇒
+  # Step 4 — late re-check IMMEDIATELY before the destructive trash. The Step-1 full re-verify
+  # MINIMIZES but cannot CLOSE the check-then-act window: a run that goes live AFTER its Step-1
+  # predicate is read (`.waiting` set after line 526, an inflight marker written after 527, done
+  # cleared after 528) would otherwise still flow to trash. A check-then-act window is IRREDUCIBLE
+  # in a lockless shell GC — we MINIMIZE it (not close it) by re-checking the cheapest,
+  # earliest-written liveness signals (is_waiting_quiet + has_open_inflight) right before
+  # $TRASH_CMD, shrinking the surviving window to ~one syscall. A resuming session writes its
+  # inflight marker / `.waiting` BEFORE doing real work, so this catches the realistic resume.
+  # The residual sub-syscall window between this re-check and the trash is ACCEPTED: the GC is
+  # report-only by default; `--apply` is a manual, ≥14-day-aged, done-run one-shot (followup in
+  # $RUN_DIR/followups.md). On either signal going live ⇒ skipped-changed, NO trash.
+  is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
+  has_open_inflight "$d" && { printf 'skipped-changed'; return; }
+
+  # Step 5 — trash the dead dir (D4: trash, never rm). On success ⇒ removed; on failure ⇒
   # trash-failed (fail-safe: the dir remains, the next GC re-attempts; NO rm fallback).
   if $TRASH_CMD "$dir" 2>/dev/null; then
     printf 'removed'
@@ -808,8 +822,15 @@ done
 
 if [ "$JSON" -ne 1 ]; then
   tierL_mb=$((tierL_bytes_total / 1048576))
-  printf 'summary: %s runs scanned · Tier-L would reclaim ~%s MB across %s runs · Tier-W would remove %s worktrees across %s runs · %s runs/items skipped\n' \
-    "$runs_scanned" "$tierL_mb" "$tierL_runs" "$tierW_worktrees" "$tierW_runs" "$skipped"
+  # Apply-aware summary verbs: past-tense (reclaimed/removed) under --apply for an action that
+  # actually happened; hypothetical (would-reclaim/would-remove) in report-only mode.
+  if [ "$APPLY" -eq 1 ]; then
+    l_verb="reclaimed"; w_verb="removed"
+  else
+    l_verb="would reclaim"; w_verb="would remove"
+  fi
+  printf 'summary: %s runs scanned · Tier-L %s ~%s MB across %s runs · Tier-W %s %s worktrees across %s runs · %s runs/items skipped\n' \
+    "$runs_scanned" "$l_verb" "$tierL_mb" "$tierL_runs" "$w_verb" "$tierW_worktrees" "$tierW_runs" "$skipped"
 fi
 
 exit 0

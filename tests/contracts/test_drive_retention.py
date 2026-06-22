@@ -1203,6 +1203,44 @@ def test_human_summary_bytes_summed_then_converted(tmp_path):
     assert int(m.group(1)) >= 1, f"per-run flooring lost sub-MB logs: {summary}"
 
 
+def test_human_summary_verbs_are_apply_aware(tmp_path):
+    """finding-2 (round-2, MINOR): the per-run report lines correctly switch to past tense under
+    --apply, but the top-level summary stayed hypothetical ("would reclaim"/"would remove") for
+    an action that ACTUALLY happened. Report mode keeps "would reclaim"/"would remove"; --apply
+    uses "reclaimed"/"removed". One run with an eligible heavy log + an eligible drive-owned
+    worktree exercises both Tier verbs. Mutation-verify: REDs pre-fix (apply summary said
+    "would")."""
+    repo = _make_owning_repo(tmp_path, "verbs", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "verbs")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-x.log").write_text("x" * (2 * 1024 * 1024), encoding="utf-8")  # ~2 MB heavy log
+    _clean_pushed_checkout(d / "wt" / "phase1")    # eligible drive-owned worktree
+    _backdate(d)
+    # Report mode: hypothetical verbs.
+    cp_r = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14"],
+        home=root,
+    )
+    sum_r = cp_r.stdout.strip().splitlines()[-1]
+    assert "would reclaim" in sum_r and "would remove" in sum_r, (
+        f"report mode must use hypothetical verbs: {sum_r}"
+    )
+    # Apply mode: past-tense verbs for an action that happened.
+    shim, _ = _graveyard_shim(tmp_path)
+    cp_a = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14", "--apply"],
+        home=root, env={"RETENTION_TRASH_CMD": str(shim)},
+    )
+    sum_a = cp_a.stdout.strip().splitlines()[-1]
+    assert "reclaimed" in sum_a and "removed" in sum_a, (
+        f"apply mode summary must use past-tense verbs: {sum_a}"
+    )
+    assert "would reclaim" not in sum_a and "would remove" not in sum_a, (
+        f"apply mode summary must NOT use hypothetical verbs: {sum_a}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # LENS-1 missing tests: AC1 missing-jq / missing-state.json; AC4 repoRoot beats gitdir;
 # AC7 Tier-W gate-order on the W tier; AC12 completedAt-anchor + future-clamp
@@ -1596,6 +1634,71 @@ def test_apply_reverify_declines_run_gone_live_via_waiting(tmp_path):
     assert (d / "wt" / "9.1").exists(), "no destructive verb on the now-live run's worktree"
     moved = sorted(p.name for p in graveyard.iterdir())
     assert moved == ["wt-1.1"], f"only 1.1 should be trashed, got {moved}"
+
+
+def test_apply_late_recheck_declines_run_gone_live_after_step1(tmp_path):
+    """finding-2 (round-2) guard: the IMMEDIATELY-before-trash re-check, distinct from Step-1.
+
+    The Step-1 full re-verify MINIMIZES but cannot CLOSE the check-then-act window: a run can go
+    live AFTER its Step-1 predicates are read but BEFORE its destructive verb. This drives exactly
+    that: a single eligible drive-owned child whose owning repo's `git worktree remove` (which runs
+    BETWEEN Step-1 and the trash) writes an `inflight-*.marker` — the run resumes in that sub-step
+    window. Step-1 saw a quiet, marker-free run (passes); the late re-check (is_waiting_quiet +
+    has_open_inflight, re-run right before $TRASH_CMD) sees the open marker ⇒ skipped-changed, NO
+    trash, dir intact. REDS pre-fix: with the late re-check removed the worktree is trashed even
+    though the run went live.
+
+    Injection is faithful: a `git` wrapper on PATH writes the marker on `worktree remove` then
+    delegates to the real git, so the marker genuinely appears in the Step1→trash window (not
+    pre-seeded). A single child guarantees Step-1 ran marker-free for THIS child."""
+    repo = _make_owning_repo(tmp_path, "latelive", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "latelive")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    _clean_pushed_checkout(d / "wt" / "1.1")    # the single eligible child
+    _backdate(d)
+    graveyard = tmp_path / "graveyard"
+    graveyard.mkdir(parents=True, exist_ok=True)
+    shim, _ = _graveyard_shim(tmp_path)
+    # A `git` wrapper that, on `worktree remove`, writes an inflight marker into the run dir (the
+    # run goes LIVE in the Step1→trash window) BEFORE delegating to the real git. Real git is
+    # resolved via `command -v` with the wrapper dir stripped from PATH so we don't self-recurse.
+    real_git = subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip()
+    gitwrap_dir = tmp_path / "gitwrap"
+    gitwrap_dir.mkdir(parents=True, exist_ok=True)
+    gitwrap = gitwrap_dir / "git"
+    gitwrap.write_text(
+        "#!/usr/bin/env bash\n"
+        f'rundir="{d}"\n'
+        f'realgit="{real_git}"\n'
+        # Detect a `worktree remove` invocation in the args; on it, the run resumes → write marker.
+        'for a in "$@"; do\n'
+        '  if [ "$a" = "remove" ]; then\n'
+        '    printf x > "$rundir/inflight-implement-1.1.marker" 2>/dev/null || true\n'
+        '    break\n'
+        '  fi\n'
+        'done\n'
+        'exec "$realgit" "$@"\n',
+        encoding="utf-8",
+    )
+    os.chmod(gitwrap, 0o755)
+    env = {"RETENTION_TRASH_CMD": str(shim),
+           "PATH": f"{gitwrap_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14",
+         "--json", "--apply"],
+        home=root, env=env,
+    )
+    objs = [json.loads(l) for l in cp.stdout.splitlines() if l.strip()]
+    o = _by_id(objs)["latelive"]
+    c = _child(o, "1.1")
+    assert c["eligible"] is True, "verdict must stay eligible (apply never re-classifies)"
+    assert c["action"] == "skipped-changed", (
+        "a run that went live (inflight marker) AFTER Step-1 but before trash must be "
+        "caught by the late re-check ⇒ skipped-changed"
+    )
+    assert (d / "wt" / "1.1").exists(), "no destructive verb may run once the run went live"
+    assert sorted(p.name for p in graveyard.iterdir()) == [], "nothing should be trashed"
 
 
 def test_apply_tierW_dirty_child_is_skip_none_no_trash(tmp_path):
