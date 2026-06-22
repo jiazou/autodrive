@@ -440,7 +440,7 @@ these are its known limits, stated rather than overclaimed:
   can interrupt a turn already in flight.
 - **Absent-hook degradation.** The Stop hook is the SOLE detector; with **no** Stop hook
   installed there is NO context-pressure detection at all (the prior coordinator soft-check
-  fallback was removed — eyeballed self-measurement over-triggered false handoffs). Install
+  fallback was removed — heuristic self-measurement over-triggered false handoffs). Install
   the hook via `bin/install-operating-rules.sh`.
 - **Gate/STOP-collision human-restart edge.** When a Gate (A/B) or non-decision STOP and a
   rebirth are both due, the **gate/STOP wins** and `rebirth_pending` is re-derived in the

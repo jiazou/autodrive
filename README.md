@@ -13,9 +13,9 @@ Roles are generic `Agent` subagents (no parallel-team framework — see
 `.harness/decisions.md` D1).
 
 This repo also houses a second, separate harness: **[Mission Control](mission-control/README.md)**
-— an *optional* personal operating layer that tracks Claude agent sessions as first-class
-objects bound to vault tasks, with a morning standup and a glanceable single
-surface. It is **macOS-specific** (launchd + SwiftBar) and assumes an **Obsidian PARA vault**
+— an *optional* add-on that tracks your Claude agent sessions, binds each to an Obsidian
+task, and gives you a morning standup plus a single status view. It is **macOS-specific**
+(launchd + SwiftBar) and assumes an **Obsidian PARA vault**
 (configurable via `MC_VAULT`). Fully independent of `/drive` — skip it if you don't use Obsidian.
 See `mission-control/README.md`.
 
@@ -207,9 +207,9 @@ holds only the cross-task ledgers (`decisions.md`, `followups.md`).
 
 ## Testing
 
-The repo has **two test suites**, split by language and runner. This split is
-intentional (D5) — the `/drive` coordinator is shell, Mission Control + hooks are
-Python, so each is tested by its native runner; they are **not** merged.
+The repo has **two test suites**, split by language: the `/drive` coordinator gates are
+shell, while Mission Control and the hooks are Python, so each is tested by its native
+runner.
 
 | Suite | Dir | Language / runner | Covers |
 | --- | --- | --- | --- |

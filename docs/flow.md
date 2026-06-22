@@ -133,7 +133,7 @@ real information exists:
 | `/drive-finalize` | 2 | Stage 4c, once for the whole run: 1 fix round (→ FINDINGS) + 1 free confirming audit (→ CONVERGED). De-slop-led aggregate sweep over `baseRef..featureBranch`. Up to FINALIZE_CAP=3 fix rounds |
 | `/qa-only` | 1 | verify (optional) |
 | `/drive-ship` | 1 | Stage 5 |
-| **Total** | **44** | minimum for this idealized run (1 round per phase design, 3 per slice, 1 harden fix round/phase, 1 finalize fix round). A `REDESIGN` or extra round adds more. + `codex exec` inside every `/drive-review`, every `/drive-harden` audit, AND every `/drive-finalize` audit (CLI, not a command) |
+| **Total** | **44** | exact for this idealized run, and a floor (1 round per phase design, 3 per slice, 1 harden fix round/phase, 1 finalize fix round). A `REDESIGN` or extra round only adds more. + `codex exec` inside every `/drive-review`, every `/drive-harden` audit, AND every `/drive-finalize` audit (CLI, not a command) |
 
 ## Notes
 
