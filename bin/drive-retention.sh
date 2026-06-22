@@ -37,11 +37,21 @@ JSON=0
 # Without this, `shift 2` with only one positional left does NOT shift, so $1 stays the
 # flag and the loop spins forever (a hang — neither exit 0 nor exit 2; would block
 # GC-at-setup). A missing flag value is the same class of caller error as an unknown flag.
+# A flag-shaped value (the next token starts with `-`, e.g. `--root --json`) is ALSO a
+# missing value: silently swallowing the next flag as the value would scan the wrong root.
+# `need_value <flag> <remaining-argc> <next>`: exit 2 if no next token OR it is flag-shaped.
+need_value() {
+  local flag="$1" argc="$2" next="$3"
+  [ "$argc" -ge 2 ] || { echo "drive-retention.sh: $flag needs a value" >&2; exit 2; }
+  case "$next" in
+    -*) echo "drive-retention.sh: $flag needs a value (got flag-shaped: $next)" >&2; exit 2 ;;
+  esac
+}
 while [ $# -gt 0 ]; do
   case "$1" in
-    --root)     [ $# -ge 2 ] || { echo "drive-retention.sh: --root needs a value" >&2; exit 2; }; ROOT="$2"; shift 2 ;;
-    --age-days) [ $# -ge 2 ] || { echo "drive-retention.sh: --age-days needs a value" >&2; exit 2; }; AGE_DAYS="$2"; shift 2 ;;
-    --now)      [ $# -ge 2 ] || { echo "drive-retention.sh: --now needs a value" >&2; exit 2; }; NOW="$2"; shift 2 ;;
+    --root)     need_value --root "$#" "$2"; ROOT="$2"; shift 2 ;;
+    --age-days) need_value --age-days "$#" "$2"; AGE_DAYS="$2"; shift 2 ;;
+    --now)      need_value --now "$#" "$2"; NOW="$2"; shift 2 ;;
     --json)     JSON=1; shift ;;
     *)
       echo "drive-retention.sh: unknown flag: $1" >&2
@@ -306,10 +316,14 @@ wt_cleanliness() {
   rc=$?
   [ "$rc" -eq 0 ] || { printf 'unreadable'; return; }
   [ -z "$porcelain" ] || { printf 'dirty'; return; }
-  # Unpushed: any local commit not reachable from any remote-tracking ref. If there are no
-  # remotes/upstreams the conservative answer is unpushed (cannot prove pushed) — fail-safe.
+  # Unpushed: any local commit not reachable from any remote-tracking ref. `--all` (not
+  # `--branches`) so a commit reachable ONLY from a DETACHED HEAD or refs/stash is also
+  # caught — a /drive worktree is often on a detached HEAD, and `--branches` would miss its
+  # unpushed commit (report==apply fail-open: Phase 2 --apply would lose it). `--all` covers
+  # HEAD + branches + stash; a genuinely-pushed-clean checkout still yields empty. If there
+  # are no remotes/upstreams the conservative answer is unpushed (cannot prove pushed).
   local unpushed
-  unpushed="$(git -C "$dir" log --branches --not --remotes --oneline 2>/dev/null)"
+  unpushed="$(git -C "$dir" log --all --not --remotes --oneline 2>/dev/null)"
   rc=$?
   [ "$rc" -eq 0 ] || { printf 'unreadable'; return; }
   [ -z "$unpushed" ] || { printf 'unpushed'; return; }

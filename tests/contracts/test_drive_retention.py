@@ -104,6 +104,33 @@ def _clean_pushed_checkout(child_dir):
     _git(child_dir, "update-ref", "refs/remotes/origin/main", head)
 
 
+def _detached_unpushed_checkout(child_dir):
+    """Make child_dir a CLEAN git checkout on a DETACHED HEAD whose tip commit is reachable
+    only from HEAD (no branch points at it) and is NOT on any remote-tracking ref. The
+    pushed commit is on `main` and on origin/main; HEAD is detached one commit AHEAD.
+
+    `git log --branches --not --remotes` (the buggy probe) returns EMPTY here (no BRANCH
+    holds the unpushed commit) ⇒ wrongly clean. `git log --all --not --remotes` (the fix)
+    includes HEAD ⇒ flags the detached commit ⇒ skip:unpushed. Working tree stays clean."""
+    child_dir.mkdir(parents=True, exist_ok=True)
+    _git(child_dir, "init", "-q")
+    (child_dir / "x").write_text("x\n")
+    _git(child_dir, "add", "-A")
+    _git(child_dir, "commit", "-qm", "c1-pushed")
+    pushed = subprocess.run(
+        ["git", "-C", str(child_dir), "rev-parse", "HEAD"],
+        check=True, capture_output=True, text=True,
+    ).stdout.strip()
+    _git(child_dir, "update-ref", "refs/remotes/origin/main", pushed)  # c1 IS pushed
+    (child_dir / "y").write_text("y\n")
+    _git(child_dir, "add", "-A")
+    _git(child_dir, "commit", "-qm", "c2-detached-unpushed")          # local-only commit
+    # Detach HEAD at the unpushed commit, then move the only branch BACK to the pushed
+    # commit so NO branch points at c2 — it is reachable solely from the detached HEAD.
+    _git(child_dir, "checkout", "-q", "--detach", "HEAD")
+    _git(child_dir, "branch", "-f", "main", pushed)
+
+
 def _registered_pointer(child_dir, admin_dir, *, backref="self"):
     """Make child_dir/.git a worktree gitdir POINTER FILE → admin_dir, and seed admin_dir's
     `gitdir` back-reference. backref='self' (path equality holds ⇒ registered),
@@ -171,6 +198,54 @@ def test_trailing_valued_flag_exits_two_not_hang(tmp_path, flag):
     (and would have blocked GC-at-setup)."""
     cp = run_script([str(SCRIPT), flag], home=tmp_path)
     assert cp.returncode == 2
+
+
+@pytest.mark.parametrize("flag", ["--root", "--age-days", "--now"])
+def test_valued_flag_followed_by_flag_exits_two(tmp_path, flag):
+    """A valued flag immediately followed by ANOTHER flag (e.g. `--root --json`) is a missing
+    value, NOT a swallow: the next flag must not be consumed as the value (it would silently
+    scan the wrong root). ⇒ exit 2 (the bad-flag lane), no hang."""
+    cp = run_script([str(SCRIPT), flag, "--json"], home=tmp_path)
+    assert cp.returncode == 2
+
+
+def test_non_numeric_now_falls_back_to_clock(tmp_path):
+    """Edge 13: a NON-numeric (non-flag) --now value falls back to the real clock with a
+    notice (exit 0) — NOT a fail-open: the real clock cannot mark a recently-touched run aged.
+    A run with a RECENT mtime stays NOT aged under the wall-clock fallback."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "now-bad")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    (d / "codex-raw-x.log").write_text("z", encoding="utf-8")
+    _backdate(d, epoch=int(time.time()))  # touched ~now ⇒ never aged vs the real clock
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", "nope", "--age-days", "14", "--json"],
+        home=root,
+    )
+    assert cp.returncode == 0
+    objs = [json.loads(l) for l in cp.stdout.splitlines() if l.strip()]
+    o = _by_id(objs)["now-bad"]
+    assert o["pastThreshold"] is False        # real-clock fallback ⇒ recent run not aged
+    assert o["tierL"]["reason"] == "not-aged"
+
+
+def test_non_numeric_age_days_falls_back_to_14(tmp_path):
+    """Edge 13: a NON-numeric (non-flag) --age-days value falls back to 14 with a notice
+    (exit 0) — never to 0. A run RECENT (1 day) stays NOT aged under the 14d fallback."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "age-bad")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    (d / "codex-raw-x.log").write_text("z", encoding="utf-8")
+    _backdate(d, epoch=RECENT)  # 1 day old
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "nope", "--json"],
+        home=root,
+    )
+    assert cp.returncode == 0
+    objs = [json.loads(l) for l in cp.stdout.splitlines() if l.strip()]
+    o = _by_id(objs)["age-bad"]
+    assert o["pastThreshold"] is False        # fell back to 14d, not 0 ⇒ recent not aged
+    assert o["tierL"]["reason"] == "not-aged"
 
 
 def test_missing_root_exits_zero(tmp_path):
@@ -399,6 +474,47 @@ def test_tierW_unpushed_skips(tmp_path):
     _backdate(d)
     _, objs = _scan(root)
     assert _child(_by_id(objs)["unp"], "phase1")["reason"] == "unpushed"
+
+
+def test_tierW_detached_head_unpushed_skips(tmp_path):
+    """BLOCKING (W7b completeness): a CLEAN checkout whose ONLY local commit is reachable
+    solely from a DETACHED HEAD (no branch holds it) and is NOT on any remote ⇒ skip:unpushed,
+    NEVER eligible. The run is done + W4-authorized by a parseable completedAt (so the child
+    reaches W7b). The buggy `--branches` probe sees no BRANCH carrying the commit ⇒ wrongly
+    reports clean ⇒ eligible ⇒ Phase 2 --apply would lose the commit (report==apply fail-open).
+    The fix (`--all`, covering HEAD + stash) flags it. mutation-verified RED against
+    `--branches`, GREEN against `--all`."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "detached")
+    _state(d, stage="done", waiting=None, baseRef="main")  # UNRESOLVABLE repo
+    (d / "completedAt").write_text("2025-01-01T00:00:00Z\n", encoding="utf-8")  # W4-authorizes
+    _detached_unpushed_checkout(d / "wt" / "phase1")
+    _backdate(d)
+    _, objs = _scan(root)
+    c = _child(_by_id(objs)["detached"], "phase1")
+    assert c["reason"] == "unpushed", (
+        "a detached-HEAD-only unpushed commit must be flagged (W7b completeness)"
+    )
+    assert c["eligible"] is False
+
+
+def test_tierW_dangling_gitdir_unreadable_or_unprovable(tmp_path):
+    """Fail-safe pin: a drive-owned child whose `.git` is a DANGLING symlink (target absent)
+    is never eligible — registration cannot be proven from an unreadable pointer. It resolves
+    to skip:registration-unprovable (W5: a `.git` dirent exists but is not a readable pointer
+    file) and never reaches W7/eligible."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "dangling-git")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    (d / "completedAt").write_text("2025-01-01T00:00:00Z\n", encoding="utf-8")
+    child = d / "wt" / "phase1"
+    child.mkdir(parents=True)
+    os.symlink(str(tmp_path / "nonexistent-target"), str(child / ".git"))  # dangling
+    _backdate(d)
+    _, objs = _scan(root)
+    c = _child(_by_id(objs)["dangling-git"], "phase1")
+    assert c["eligible"] is False
+    assert c["reason"] == "registration-unprovable"
 
 
 # --------------------------------------------------------------------------- #
