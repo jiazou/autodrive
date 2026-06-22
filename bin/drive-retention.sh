@@ -513,9 +513,19 @@ apply_tier_W_child() {
   local dir="$d/wt/$name"
 
   # Step 1 — re-verify guard (TOCTOU), BEFORE any destructive verb (DP-A2). The verdict was
-  # computed earlier in this run; re-assert against LIVE state that the child is STILL
-  # not-registered AND clean. If EITHER re-check fails ⇒ skipped-changed, NO destructive verb.
+  # computed earlier in this run; re-assert against LIVE state the FULL eligibility gate the
+  # classifier used — not just registration + cleanliness, but ALSO the run-level liveness gate
+  # (L1 waiting-quiet, L2 no-open-inflight, L3 done). A run resumed in the TOCTOU window (sets
+  # `.waiting` / writes an `inflight-*.marker` / un-sets its done signal) WITHOUT registering or
+  # dirtying its worktree must NOT be trashed (the "don't sweep an active run's worktree"
+  # hazard). Re-run the SAME predicates classify_run uses (is_waiting_quiet / has_open_inflight
+  # / is_done — reused, not duplicated). If ANY re-check fails ⇒ skipped-changed, NO destructive
+  # verb. Re-checking age too would be fine, but the load-bearing parity is the liveness +
+  # registration + cleanliness gates that admit a LIVE run; age cannot un-age in the window.
   local reg clean
+  is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
+  has_open_inflight "$d" && { printf 'skipped-changed'; return; }
+  is_done "$d" || { printf 'skipped-changed'; return; }
   reg="$(wt_registered_anywhere "$d" "$name")"
   if [ "$reg" != "not-registered" ]; then printf 'skipped-changed'; return; fi
   clean="$(wt_cleanliness "$dir")"
@@ -559,14 +569,17 @@ apply_tier_L() {
 emit_json_run() {
   local d="$1" runId="${1##*/}"
 
-  # Tier-L logs JSON array + total bytes.
-  local logs_json="[]" total_bytes=0 line name bytes
+  # Tier-L logs JSON array + total bytes — rendered from the PRE-deletion snapshot
+  # (TIERL_LOGS_SNAPSHOT / TIERL_BYTES_SNAPSHOT, captured in classify_run BEFORE --apply), so
+  # report==apply field parity holds: --apply reports the set it SWEPT, not an empty post-delete
+  # re-enumeration (finding 2).
+  local logs_json="[]" total_bytes="$TIERL_BYTES_SNAPSHOT" name bytes entry
   local logs_acc=""
-  while IFS=$'\t' read -r name bytes; do
-    [ -n "$name" ] || continue
+  for entry in "${TIERL_LOGS_SNAPSHOT[@]:-}"; do
+    [ -n "$entry" ] || continue
+    name="${entry%%$'\t'*}"; bytes="${entry##*$'\t'}"
     logs_acc="$logs_acc$(jq -cn --arg n "$name" --argjson b "${bytes:-0}" '{name:$n,bytes:$b}'),"
-    total_bytes=$((total_bytes + ${bytes:-0}))
-  done < <(heavy_logs "$d")
+  done
   [ -n "$logs_acc" ] && logs_json="[${logs_acc%,}]"
 
   local tierL_eligible="false" tierL_reason=""
@@ -629,11 +642,13 @@ report_run() {
     "$AGE_REPORT_DAYS" "$AGE_ANCHOR" "$AGE_DAYS" "$past_disp"
 
   if [ "$TIERL_VERDICT" = "eligible" ]; then
-    local nfiles=0 total=0 name bytes verb="WOULD-SWEEP"
-    while IFS=$'\t' read -r name bytes; do
-      [ -n "$name" ] || continue
-      nfiles=$((nfiles + 1)); total=$((total + ${bytes:-0}))
-    done < <(heavy_logs "$d")
+    # Count from the PRE-deletion snapshot (finding 2), NOT a post-trash re-enumeration that
+    # would print "SWEPT <0 files, ~0 MB>" under --apply.
+    local nfiles=0 total="$TIERL_BYTES_SNAPSHOT" entry verb="WOULD-SWEEP"
+    for entry in "${TIERL_LOGS_SNAPSHOT[@]:-}"; do
+      [ -n "$entry" ] || continue
+      nfiles=$((nfiles + 1))
+    done
     # Under --apply the verb reflects what HAPPENED (the additive action outcome).
     if [ "$APPLY" -eq 1 ]; then
       case "$TIERL_ACTION" in
@@ -688,6 +703,19 @@ classify_run() {
   if is_aged; then PAST_THRESHOLD=1; else PAST_THRESHOLD=0; fi
 
   TIERL_VERDICT="$(classify_tier_L "$d")"
+
+  # Snapshot the Tier-L heavy-log set + total bytes ONCE, BEFORE any --apply deletion (finding
+  # 2). The renderers (emit_json_run/report_run) and the summary read this snapshot, NOT a fresh
+  # heavy_logs() — otherwise --apply would re-enumerate AFTER trashing and report logs:[] /
+  # bytes:0 / "SWEPT <0 files>", breaking report==apply field parity. Captured here for BOTH
+  # report and apply mode so the rendered fields are identical (only `action`/verbs differ).
+  TIERL_LOGS_SNAPSHOT=(); TIERL_BYTES_SNAPSHOT=0
+  local _hl_name _hl_bytes
+  while IFS=$'\t' read -r _hl_name _hl_bytes; do
+    [ -n "$_hl_name" ] || continue
+    TIERL_LOGS_SNAPSHOT+=("$_hl_name"$'\t'"${_hl_bytes:-0}")
+    TIERL_BYTES_SNAPSHOT=$((TIERL_BYTES_SNAPSHOT + ${_hl_bytes:-0}))
+  done < <(heavy_logs "$d")
 
   TW_NAMES=(); TW_VERDICTS=(); TW_OWNED=(); TW_REG=(); TW_ACTIONS=()
   if [ -d "$d/wt" ]; then
@@ -757,10 +785,9 @@ for run_dir in "$ROOT"/*; do
   # several sub-MB reclaimable logs as ~0 MB total).
   if [ "$TIERL_VERDICT" = "eligible" ]; then
     tierL_runs=$((tierL_runs + 1))
-    while IFS=$'\t' read -r lname lbytes; do
-      [ -n "$lname" ] || continue
-      tierL_bytes_total=$((tierL_bytes_total + ${lbytes:-0}))
-    done < <(heavy_logs "$run_dir")
+    # Use the PRE-deletion snapshot (finding 2): under --apply the logs are already trashed, so
+    # a fresh heavy_logs() would tally ~0 MB and under-report what was reclaimed.
+    tierL_bytes_total=$((tierL_bytes_total + TIERL_BYTES_SNAPSHOT))
   else
     skipped=$((skipped + 1))   # Tier-L skip for this run
   fi

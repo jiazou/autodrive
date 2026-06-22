@@ -1489,30 +1489,119 @@ def test_apply_tierW_removes_unresolvable_completedAt_child(tmp_path):
     assert not (d / "wt" / "phase1").exists()
 
 
-def test_apply_tierW_reverify_first_declines_changed_child(tmp_path):
-    """The re-verify (TOCTOU) runs BEFORE any destructive verb: a child `eligible` at
-    classification but made DIRTY just before apply acts ⇒ NO destructive verb runs, the dir
-    is intact, the child reports eligible:true AND action skipped-changed.
+def _dirtying_shim(tmp_path, victim_dir):
+    """A `trash`-shim that, the FIRST time it is asked to remove a dir, dirties `victim_dir`
+    (writes an uncommitted file into it) BEFORE moving its own argument into the graveyard. This
+    forces a REAL apply-time TOCTOU window: while child A is being trashed, sibling B (still
+    pending in the apply loop) goes dirty — so B's re-verify (which the design runs BEFORE B's
+    destructive verb) must DECLINE B with action=skipped-changed. Returns (shim, graveyard)."""
+    graveyard = tmp_path / "graveyard"
+    graveyard.mkdir(parents=True, exist_ok=True)
+    shim = tmp_path / "trash-dirtying.sh"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'victim="{victim_dir}"\n'
+        f'dest="{graveyard}"\n'
+        # Dirty the victim ONCE (idempotent: the file just needs to exist before the victim's
+        # own re-verify reads `git status`).
+        'printf x > "$victim/TOCTOU-dirty" 2>/dev/null || true\n'
+        'for p in "$@"; do\n'
+        '  base="$(basename "$p")"; parent="$(basename "$(dirname "$p")")"\n'
+        '  mv "$p" "$dest/$parent-$base" 2>/dev/null || exit 1\n'
+        'done\n',
+        encoding="utf-8",
+    )
+    os.chmod(shim, 0o755)
+    return shim, graveyard
 
-    We simulate the apply-time change with a trash shim that, on its FIRST invocation, dirties
-    the would-be-removed dir — but because re-verify precedes trash, the apply NEVER reaches
-    trash for that child (it declines at re-verify). The cleanest deterministic proof: make the
-    dir registered/dirty at scan time is NOT 'eligible at classification'. Instead we assert the
-    re-verify guard directly: a clean eligible child whose cleanliness is re-checked against LIVE
-    state — if it goes dirty between classify and apply, it is skipped-changed. We force that
-    window by a shim that dirties the dir before trashing, proving trash is gated by re-verify.
 
-    Concretely here we test the registered-case of re-verify: classification sees not-registered
-    (eligible), but we register it via a pointer file written AFTER backdating so it is present at
-    apply time. Since classify and apply both run in the SAME invocation and read the SAME live
-    state, the simplest faithful test is: the apply path's re-verify uses wt_registered_anywhere
-    + wt_cleanliness on LIVE state. We assert that an eligible child that is ACTUALLY clean +
-    not-registered is removed (above), and that the apply code declines on a child that is dirty
-    at apply — which, in a single invocation, equals a child that classified as skip:dirty. The
-    distinct re-verify guarantee (no destructive verb before the check) is asserted structurally
-    in test_deletion_tokens_are_guarded_behind_apply + the ordering pin in the unit below."""
-    # A child that is dirty ⇒ classifies skip:dirty ⇒ apply takes action `none`, NO trash, dir
-    # intact. This pins "no destructive verb on a non-eligible/changed child".
+def test_apply_reverify_declines_sibling_dirtied_in_toctou_window(tmp_path):
+    """The load-bearing finding-2 guard, REALLY exercised: two eligible drive-owned children
+    `1.1` (glob-first) and `9.1`. The trash shim, when it removes `1.1`, FIRST dirties `9.1` —
+    a genuine TOCTOU window where `9.1` goes dirty between classification and the moment apply
+    reaches it. Because re-verify runs BEFORE `9.1`'s destructive verb, `9.1` is DECLINED:
+    eligible:true (verdict unchanged), action=skipped-changed, dir intact, no trash. `1.1` is
+    still removed. This drives a child to action==skipped-changed (the branch no prior test
+    reached). REDS pre-fix only if re-verify is removed; with re-verify present it greens."""
+    repo = _make_owning_repo(tmp_path, "toctou", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "toctou")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    _clean_pushed_checkout(d / "wt" / "1.1")    # glob-first eligible child
+    _clean_pushed_checkout(d / "wt" / "9.1")    # second eligible child (the victim)
+    _backdate(d)
+    shim, graveyard = _dirtying_shim(tmp_path, d / "wt" / "9.1")
+    _, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    o = _by_id(objs)["toctou"]
+    # 1.1 removed normally.
+    c1 = _child(o, "1.1")
+    assert c1["eligible"] is True and c1["action"] == "removed"
+    assert not (d / "wt" / "1.1").exists()
+    # 9.1 went dirty in the window ⇒ re-verify declines ⇒ skipped-changed, dir intact, no trash.
+    c9 = _child(o, "9.1")
+    assert c9["eligible"] is True, "verdict must stay eligible (apply never re-classifies)"
+    assert c9["action"] == "skipped-changed", "9.1 dirtied in the window must be skipped-changed"
+    assert (d / "wt" / "9.1").exists(), "no destructive verb may run on the declined child"
+    # only 1.1 reached the graveyard.
+    moved = sorted(p.name for p in graveyard.iterdir())
+    assert moved == ["wt-1.1"], f"only 1.1 should be trashed, got {moved}"
+
+
+def test_apply_reverify_declines_run_gone_live_via_waiting(tmp_path):
+    """finding-1 guard: a run classified eligible but RESUMED in the TOCTOU window — its worktree
+    stays clean + not-registered, but a sibling earlier in the apply loop sets the run's
+    `.waiting` (the run went LIVE). The apply-time re-verify must re-assert the FULL liveness gate
+    (is_waiting_quiet), so the live run's worktree is NOT trashed ⇒ action=skipped-changed.
+
+    Drive the window with a trash-shim that, when it removes glob-first child `1.1`, rewrites the
+    run's state.json to set `waiting` (the run resumed) BEFORE child `9.1` is processed. `9.1`'s
+    re-verify (fix 1) sees waiting != null ⇒ skipped-changed, dir intact. REDS pre-fix (the old
+    re-verify only checked registration+cleanliness, both still holding ⇒ it would TRASH the live
+    run's worktree)."""
+    repo = _make_owning_repo(tmp_path, "wentlive", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "wentlive")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    _clean_pushed_checkout(d / "wt" / "1.1")    # glob-first eligible child
+    _clean_pushed_checkout(d / "wt" / "9.1")    # second eligible child
+    _backdate(d)
+    graveyard = tmp_path / "graveyard"
+    graveyard.mkdir(parents=True, exist_ok=True)
+    shim = tmp_path / "trash-wentlive.sh"
+    sj = d / "state.json"
+    live_state = json.dumps({"stage": "done", "waiting": "Gate B", "baseRef": "main",
+                             "repoRoot": str(repo)})
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'sj="{sj}"\n'
+        f'dest="{graveyard}"\n'
+        # The run RESUMES (goes live) the moment 1.1 is being torn down: set `.waiting`.
+        f'printf %s {json.dumps(live_state)!r} > "$sj" 2>/dev/null || true\n'
+        'for p in "$@"; do\n'
+        '  base="$(basename "$p")"; parent="$(basename "$(dirname "$p")")"\n'
+        '  mv "$p" "$dest/$parent-$base" 2>/dev/null || exit 1\n'
+        'done\n',
+        encoding="utf-8",
+    )
+    os.chmod(shim, 0o755)
+    _, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    o = _by_id(objs)["wentlive"]
+    c1 = _child(o, "1.1")
+    assert c1["eligible"] is True and c1["action"] == "removed"
+    c9 = _child(o, "9.1")
+    assert c9["eligible"] is True, "verdict must stay eligible"
+    assert c9["action"] == "skipped-changed", (
+        "a run that went LIVE (waiting set) in the window must NOT be trashed"
+    )
+    assert (d / "wt" / "9.1").exists(), "no destructive verb on the now-live run's worktree"
+    moved = sorted(p.name for p in graveyard.iterdir())
+    assert moved == ["wt-1.1"], f"only 1.1 should be trashed, got {moved}"
+
+
+def test_apply_tierW_dirty_child_is_skip_none_no_trash(tmp_path):
+    """A child dirty AT classification ⇒ classifies skip:dirty ⇒ apply action `none`, NO trash,
+    dir intact. (Pins "no destructive verb on a non-eligible child" — distinct from the TOCTOU
+    skipped-changed branch above.)"""
     repo = _make_owning_repo(tmp_path, "rv", ancestor=True)
     root = tmp_path / "runs"
     d = _run_dir(root, "rv")
@@ -1526,31 +1615,6 @@ def test_apply_tierW_reverify_first_declines_changed_child(tmp_path):
     assert c["eligible"] is False and c["reason"] == "dirty"
     assert c["action"] == "none"
     assert (d / "wt" / "phase1").exists()                 # NO destructive verb ran
-    assert list(graveyard.iterdir()) == []
-
-
-def test_apply_reverify_skipped_changed_on_registered_window(tmp_path):
-    """Re-verify ordering (the load-bearing finding-2 guard): a child that is `eligible` at
-    classification but becomes REGISTERED before the destructive verb ⇒ action skipped-changed,
-    NO trash. We inject the registration via a RETENTION_TRASH_CMD shim that, the moment it is
-    asked to remove the dir, FIRST writes a `.git` worktree-pointer into a SIBLING eligible dir
-    — but the design runs re-verify BEFORE trash, so the proof is: the re-verify reads the SAME
-    live not-registered/clean state classify did within one invocation. Since we cannot mutate
-    between classify and apply in a single process from the test, this test instead pins the
-    skipped-changed OUTCOME for a child that is registered at apply: a child with a registered
-    pointer classifies skip:wt-registered ⇒ apply action `none`, dir intact, no trash."""
-    root = tmp_path / "runs"
-    d = _run_dir(root, "reg")
-    _state(d, stage="done", waiting=None, baseRef="main")
-    admin = tmp_path / "repo-reg" / ".git" / "worktrees" / "phase1"
-    _registered_pointer(d / "wt" / "phase1", admin, backref="self")  # registered ⇒ skip
-    _backdate(d)
-    shim, graveyard = _graveyard_shim(tmp_path)
-    _, objs = _scan(root, apply=True, trash_cmd=str(shim))
-    c = _child(_by_id(objs)["reg"], "phase1")
-    assert c["reason"] == "wt-registered"
-    assert c["action"] == "none"
-    assert (d / "wt" / "phase1").exists()
     assert list(graveyard.iterdir()) == []
 
 
@@ -1593,6 +1657,16 @@ def test_report_equals_apply_verdict_partition_identity(tmp_path):
     ro_children = {c["name"]: (c["eligible"], c["reason"]) for c in ro_o["tierW"]["children"]}
     ap_children = {c["name"]: (c["eligible"], c["reason"]) for c in ap_o["tierW"]["children"]}
     assert ro_children == ap_children, "apply must NOT mutate the eligible/reason partition"
+    # FULL measured-field identity (finding 2): the Tier-L log SET + total bytes must be byte-for-
+    # byte identical between report and apply — apply reports the set it SWEPT from a PRE-deletion
+    # snapshot, NOT an empty post-trash re-enumeration. (Would RED before the snapshot fix:
+    # ap_o["tierL"]["logs"] == [] and ["bytes"] == 0 after the codex-raw-x.log was trashed.)
+    ro_logs = sorted((l["name"], l["bytes"]) for l in ro_o["tierL"]["logs"])
+    ap_logs = sorted((l["name"], l["bytes"]) for l in ap_o["tierL"]["logs"])
+    assert ro_logs == ap_logs, "apply must report the SWEPT log set, not an empty post-trash set"
+    assert ro_o["tierL"]["bytes"] == ap_o["tierL"]["bytes"] > 0, (
+        "apply must report the SWEPT bytes from the pre-deletion snapshot, not 0"
+    )
     # the additive delta: report-only actions are all `none`; apply records real outcomes.
     assert ro_o["tierL"]["action"] == "none"
     assert ap_o["tierL"]["action"] == "swept"

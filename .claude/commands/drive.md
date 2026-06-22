@@ -179,21 +179,22 @@ verdict / merge / gate.
     sequence as drive-ship.md, anchored on the same proven-removal gate. The resume's
     existing stale-worktree removal for NON-terminal pauses (above) is UNCHANGED — those run
     `git worktree remove` WITHOUT a `completedAt` (the run is not done). The done-path adds:
-    1. **`cd` OUT of any `wt/<name>` to a VERIFIED-STABLE dir FIRST**, BEFORE any destructive
-       verb. Select the cd target with an explicit `-d` VALIDITY check on `repoRoot` —
-       mirror the helper's guard `[ -d "$rr" ]` EXACTLY; do NOT treat "`repoRoot` is set" as
-       sufficient (a stale/deleted-but-present `state.repoRoot` makes `cd` FAIL, leaving the
-       shell inside a to-be-removed worktree, and the absolute-path removals would delete the
-       live cwd). `target = ( repoRoot non-empty AND [ -d "$repoRoot" ] ) ? "$repoRoot" :
-       "$RUN_DIR"` (the `$RUN_DIR` fallback covers `repoRoot` UNSET AND PRESENT-but-invalid);
-       VERIFY `[ -d "$RUN_DIR" ]` before relying on it; the `cd` is itself CHECKED (`cd
-       "$target" || <fail-closed>`). **Fail-closed branch — if NO valid stable dir can be
-       entered** (neither a valid `repoRoot` nor a valid `$RUN_DIR`): run NO destructive verb
-       (no `git worktree remove`, no `trash`), leave the worktrees, and DO NOT write
-       `completedAt` / `stage="done"` — the run stays NOT-done / not-sweepable, re-attempted
-       on a later resume. (`repoRoot` is NOT re-derived — D7 write-once; this is only the
-       `-d` guard on the existing value.) The destructive steps 2-5 run ONLY AFTER a
-       successful `cd` to a verified-stable dir OUTSIDE any worktree being removed.
+    1. **Require a `-d`-VALID `repoRoot`, then `cd` OUT of any `wt/<name>` to it FIRST**, BEFORE
+       any destructive verb. Validate `repoRoot` with an explicit `-d` check — mirror the
+       helper's guard `[ -d "$rr" ]` EXACTLY; do NOT treat "`repoRoot` is set" as sufficient (a
+       stale/deleted-but-present `state.repoRoot` makes the `git -C "<repoRoot>" worktree
+       remove` calls FAIL yet leaves `trash` reachable — NOT fail-closed — and the absolute-path
+       removals could delete the live cwd). **The destructive teardown REQUIRES a `-d`-valid
+       `repoRoot`: if `repoRoot` is empty OR NOT `[ -d "$repoRoot" ]`, fail-closed for the WHOLE
+       teardown — run NO `git worktree remove`/`prune`, NO `trash`, and DO NOT write
+       `completedAt` / `stage="done"`.** Only with a valid `repoRoot`: select `target =
+       "$repoRoot"` (a stable dir OUTSIDE every `wt/<name>` being removed); the `cd` is itself
+       CHECKED (`cd "$target" || <fail-closed>`). **Fail-closed branch — invalid `repoRoot` OR a
+       failed `cd`:** run NO destructive verb (no `git worktree remove`, no `trash`), leave the
+       worktrees, and DO NOT write `completedAt` / `stage="done"` — the run stays NOT-done /
+       not-sweepable, re-attempted on a later resume. (`repoRoot` is NOT re-derived — D7
+       write-once; this is only the `-d` guard on the existing value.) The destructive steps 2-5
+       run ONLY AFTER a `-d`-valid `repoRoot` AND a successful `cd` to it.
     2. Remove ALL drive-owned worktrees via `git -C "<repoRoot>" worktree remove --force` +
        `git -C "<repoRoot>" worktree prune` (extend the stale-only removal above to ALL
        drive-owned at done).

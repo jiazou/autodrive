@@ -144,29 +144,35 @@ marker MUST be the LAST thing, written only after EVERY required removal is PROV
 
 1. Push `featureBranch`; open ONE PR (`gh pr create --base <baseRef>` / `glab`). Record the
    PR url to `state.ship.prUrl`.
-2. **`cd` OUT of `wt/ship` to a VERIFIED-STABLE dir FIRST**, BEFORE the removal loop. The
-   ship coordinator's cwd is `$RUN_DIR/wt/ship` — itself a drive-owned name the loop removes;
-   the removal would delete the live cwd if cwd is still inside it. Select the cd target with
-   an explicit `-d` VALIDITY check on `repoRoot` — mirror the helper's guard `[ -d "$rr" ]`
-   EXACTLY; do NOT treat "`repoRoot` is set" as sufficient (a stale/deleted-but-present
-   `state.repoRoot` would make `cd` FAIL, leaving the shell inside `wt/ship`).
-   `target = ( repoRoot non-empty AND [ -d "$repoRoot" ] ) ? "$repoRoot" : "$RUN_DIR"` (the
-   `$RUN_DIR` fallback covers `repoRoot` UNSET AND PRESENT-but-invalid); VERIFY
-   `[ -d "$RUN_DIR" ]` before relying on it; the `cd` is itself CHECKED (`cd "$target" ||
-   <fail-closed>`). **Fail-closed branch — if NO valid stable dir can be entered** (neither a
-   valid `repoRoot` nor a valid `$RUN_DIR`): run NO destructive verb (no `git worktree
-   remove`, no `trash`), leave the worktrees, and DO NOT write `completedAt` / `stage="done"`
-   — the run stays NOT-done / not-sweepable; report the failure; a later resume re-attempts.
-   The destructive loop (steps 3-6) runs ONLY AFTER a successful `cd` to a verified-stable dir
-   OUTSIDE any worktree being removed.
-3. **Remove ALL drive-owned worktrees of the run, in the owning repo, capturing per-tree
-   removal success.** For each `$RUN_DIR/wt/<name>` whose `<name>` is drive-owned: `git -C
-   "<repoRoot>" worktree remove --force "$RUN_DIR/wt/<name>" 2>/dev/null`; then once `git -C
-   "<repoRoot>" worktree prune`; then `trash "$RUN_DIR/wt/<name>"` the dead dirs (drive-owned
-   names only — never ad-hoc names). **For EACH drive-owned `<name>`, VERIFY removal completed:
-   confirm `[ ! -e "$RUN_DIR/wt/<name>" ]`** — the per-tree removal-success proof. (Removing
-   `wt/ship` itself succeeds because the command runs `-C "<repoRoot>"`, not inside the
-   worktree, and cwd is already out of it per step 2; including it is idempotent.)
+2. **Require a `-d`-VALID `repoRoot`, then `cd` OUT of `wt/ship` to a VERIFIED-STABLE dir
+   FIRST**, BEFORE the removal loop. The ship coordinator's cwd is `$RUN_DIR/wt/ship` — itself
+   a drive-owned name the loop removes; the removal would delete the live cwd if cwd is still
+   inside it, AND the removal loop runs `git -C "<repoRoot>"`, so an invalid `repoRoot` cannot
+   unregister anything. Validate `repoRoot` with an explicit `-d` check — mirror the helper's
+   guard `[ -d "$rr" ]` EXACTLY; do NOT treat "`repoRoot` is set" as sufficient (a
+   stale/deleted-but-present `state.repoRoot` makes the `git worktree remove` calls FAIL yet
+   leaves `trash` reachable — NOT fail-closed). **The destructive teardown REQUIRES a
+   `-d`-valid `repoRoot`: if `repoRoot` is empty OR NOT `[ -d "$repoRoot" ]`, fail-closed for
+   the WHOLE teardown — run NO `git worktree remove`/`prune`, NO `trash`, and DO NOT write
+   `completedAt` / `stage="done"`.** Only with a valid `repoRoot`: select the cd target
+   `target = "$repoRoot"` (a stable dir OUTSIDE every `wt/<name>` being removed); the `cd` is
+   itself CHECKED (`cd "$target" || <fail-closed>`). **Fail-closed branch — invalid `repoRoot`
+   OR a failed `cd`:** run NO destructive verb (no `git worktree remove`, no `trash`), leave
+   the worktrees, and DO NOT write `completedAt` / `stage="done"` — the run stays NOT-done /
+   not-sweepable; report the failure; a later resume re-attempts (it can re-derive nothing — D7
+   write-once — but a transient `repoRoot`-unmounted condition may clear). The destructive loop
+   (steps 3-6) runs ONLY AFTER a `-d`-valid `repoRoot` AND a successful `cd` to it.
+3. **Remove ALL drive-owned worktrees of the run, in the owning (now `-d`-valid) repo,
+   capturing per-tree removal success.** For each `$RUN_DIR/wt/<name>` whose `<name>` is
+   drive-owned: `git -C "<repoRoot>" worktree remove --force "$RUN_DIR/wt/<name>"
+   2>/dev/null`; then once `git -C "<repoRoot>" worktree prune`; then `trash
+   "$RUN_DIR/wt/<name>"` the dead dirs (drive-owned names only — never ad-hoc names). **For
+   EACH drive-owned `<name>`, VERIFY removal completed: confirm `[ ! -e "$RUN_DIR/wt/<name>"
+   ]`** — the per-tree removal-success proof. (Removing `wt/ship` itself succeeds because the
+   command runs `-C "<repoRoot>"`, not inside the worktree, and cwd is already out of it per
+   step 2; including it is idempotent.) Because step 2 already proved `repoRoot` is `-d`-valid,
+   the `git -C "<repoRoot>"` unregister is genuine — never a silently-failed no-op that leaves
+   `trash` to reclaim a still-registered tree.
 4. **GATE: write `completedAt` ONLY IF every required drive-owned worktree removal in step 3
    is PROVEN done** (all `$RUN_DIR/wt/<name>` dirs gone). If ANY drive-owned worktree could
    NOT be removed (still exists on disk after the loop), DO NOT write `completedAt` and DO NOT

@@ -120,6 +120,18 @@ def test_drive_ship_after_approval_ordered_gated_teardown():
     assert re.search(r"DO NOT write .?completedAt", span), (
         "AC8(f): fail-closed must NOT write completedAt"
     )
+    # (f, finding-3): a stale-but-present repoRoot must fail-closed for the WHOLE teardown — NOT
+    # merely cd to a fallback and still run `git -C "<repoRoot>"` + `trash`. Pin the explicit
+    # "invalid/empty repoRoot ⇒ whole teardown fail-closed (no trash)" requirement.
+    assert re.search(r"fail-closed for\s+the WHOLE\s+teardown", span, re.DOTALL), (
+        "AC8(f): an invalid/empty repoRoot must fail-closed the WHOLE teardown (finding 3)"
+    )
+    assert re.search(r"empty OR NOT", span), (
+        "AC8(f): the fail-closed condition must trigger on empty OR -d-invalid repoRoot"
+    )
+    assert re.search(r"NO `?trash`?", span), (
+        "AC8(f): the invalid-repoRoot fail-closed must run NO trash"
+    )
     # the marker is GATED on proven removal, not merely sequenced.
     assert re.search(r"ONLY IF every required.*removal.*PROVEN", span, re.DOTALL), (
         "AC8(d): completedAt must be GATED on proven removal"
@@ -131,8 +143,12 @@ def test_drive_ship_after_approval_ordered_gated_teardown():
 # --------------------------------------------------------------------------- #
 def test_drive_md_resume_worktrees_done_path_ordered_gated():
     text = DRIVE_MD.read_text(encoding="utf-8")
+    # `_section` lstrips each line before matching, so the end-markers must ALSO be
+    # leading-space-free or they never fire and the span runs to EOF (the AC10 section-bounding
+    # would be dead — finding 5). These markers match the lstripped bullet lines that follow the
+    # Done-via-resume teardown block (`  - **Each slice`, `  - **Phase `, `- **Fresh run`).
     span = _section(text, "Done-via-resume teardown",
-                    end_markers=["  - **Each slice", "  - **Phase ", "- **Fresh run"])
+                    end_markers=["- **Each slice", "- **Phase ", "- **Fresh run"])
     _ordered(
         span,
         "cd",
@@ -149,6 +165,17 @@ def test_drive_md_resume_worktrees_done_path_ordered_gated():
     assert "Fail-closed" in span or "fail-closed" in span, "AC10(f): resume fail-closed branch"
     assert re.search(r"DO NOT write .?completedAt", span), (
         "AC10(f): resume fail-closed must NOT write completedAt"
+    )
+    # (f, finding-3): mirror AC8 — a stale-but-present repoRoot fail-closes the WHOLE resume
+    # teardown (no `git -C "<repoRoot>"` + `trash` after a silently-failed unregister).
+    assert re.search(r"fail-closed for\s+the WHOLE\s+teardown", span, re.DOTALL), (
+        "AC10(f): an invalid/empty repoRoot must fail-closed the WHOLE resume teardown (finding 3)"
+    )
+    assert re.search(r"empty OR NOT", span), (
+        "AC10(f): the fail-closed condition must trigger on empty OR -d-invalid repoRoot"
+    )
+    assert re.search(r"NO `?trash`?", span), (
+        "AC10(f): the resume invalid-repoRoot fail-closed must run NO trash"
     )
     assert re.search(r"ONLY IF every required.*removal.*PROVEN", span, re.DOTALL), (
         "AC10: resume completedAt must be GATED on proven removal"
