@@ -2141,96 +2141,151 @@ def test_apply_human_report_skipped_changed_render_branch(tmp_path):
     assert re.search(r"Tier-W removed 1 worktrees across 1 runs", summary), summary
 
 
-def _marker_on_first_trash_shim(tmp_path, run_dir):
-    """A `trash`-shim that MOVES its argument into the graveyard AND, on its FIRST invocation,
-    writes an `inflight-*.marker` into `run_dir` so the run goes LIVE mid-loop. Returns
-    (shim, graveyard). Simulates a run resuming AFTER apply_tier_L's late pre-loop re-check has
-    passed and AFTER the first heavy log was trashed — the per-iteration re-check must then STOP
-    the loop (no further trash)."""
-    graveyard = tmp_path / "graveyard"
-    graveyard.mkdir(parents=True, exist_ok=True)
-    shim = tmp_path / "trash-marker-shim.sh"
-    shim.write_text(
+def _marker_on_late_recheck_jq_shim(tmp_path, run_dir, run_id):
+    """A `jq` wrapper that writes an `inflight-*.marker` into `run_dir` ON THE THIRD
+    `is_waiting_quiet` read of THIS run's state.json, then delegates to the real jq.
+
+    apply_tier_L (and classify_run) read `.waiting == null` exactly three times for an eligible
+    quiet run, in this fixed order: (1) classify_run's liveness check, (2) apply_tier_L Step 1
+    (full re-verify), (3) apply_tier_L Step 2 (the SINGLE late re-check immediately before the
+    trash loop). Arming on read #3 makes the run go LIVE in the window AFTER Step 1 passed but
+    BEFORE the destructive loop — exactly the window the late re-check exists to catch. The marker
+    is written before jq #3 returns, so the late re-check's own `has_open_inflight` glob (which
+    runs right after its is_waiting_quiet) sees it ⇒ skipped-changed, NOTHING trashed. Returns the
+    wrapper DIR (prepend to PATH). Faithful: the real liveness predicates run against live state;
+    the marker genuinely appears in the Step1→loop window, not pre-seeded.
+
+    Mutation-verify: remove the late re-check (Step 2) and read #3 never fires ⇒ the marker is
+    never written/seen ⇒ the snapshot is swept (the all-or-nothing skip assertions RED)."""
+    real_jq = subprocess.run(["which", "jq"], capture_output=True, text=True).stdout.strip()
+    wrap_dir = tmp_path / "jqwrap"
+    wrap_dir.mkdir(parents=True, exist_ok=True)
+    ctr = tmp_path / ".wq-count"
+    (wrap_dir / "jq").write_text(
         "#!/usr/bin/env bash\n"
-        f'dest="{graveyard}"\n'
+        f'realjq="{real_jq}"\n'
+        f'ctr="{ctr}"\n'
         f'rundir="{run_dir}"\n'
-        f'flag="{tmp_path}/.first-trash-done"\n'
-        'for p in "$@"; do\n'
-        '  base="$(basename "$p")"; parent="$(basename "$(dirname "$p")")"\n'
-        '  mv "$p" "$dest/$parent-$base" 2>/dev/null || exit 1\n'
-        '  if [ ! -e "$flag" ]; then\n'
-        '    : > "$flag"\n'
-        # The run resumes the instant the first log is gone: write its inflight marker.
-        '    printf x > "$rundir/inflight-implement-x.marker" 2>/dev/null || true\n'
-        '  fi\n'
-        'done\n',
+        'is_waiting=0; hits_run=0\n'
+        'for a in "$@"; do\n'
+        '  case "$a" in *".waiting == null"*) is_waiting=1 ;; esac\n'
+        f'  case "$a" in *{run_id}/state.json) hits_run=1 ;; esac\n'
+        'done\n'
+        'if [ "$is_waiting" = 1 ] && [ "$hits_run" = 1 ]; then\n'
+        '  n=0; [ -f "$ctr" ] && n="$(cat "$ctr")"; n=$((n + 1)); printf %s "$n" > "$ctr"\n'
+        # On the THIRD waiting-quiet read (the late re-check) the run resumes — writes its marker.
+        '  if [ "$n" -eq 3 ]; then printf x > "$rundir/inflight-implement-x.marker" 2>/dev/null || true; fi\n'
+        'fi\n'
+        'exec "$realjq" "$@"\n',
         encoding="utf-8",
     )
-    os.chmod(shim, 0o755)
-    return shim, graveyard
+    os.chmod(wrap_dir / "jq", 0o755)
+    return wrap_dir
 
 
-def test_apply_tierL_mid_loop_resume_stops_further_trashing(tmp_path):
-    """fix-2(P1): apply_tier_L re-checks the cheap liveness signals at the TOP OF EACH iteration,
-    mirroring apply_tier_W_child's late pre-trash re-check. A run that goes LIVE mid-loop (between
-    trashing one heavy log and the next) must STOP trashing further logs ⇒ action=skipped-changed,
-    the not-yet-trashed logs intact.
+def test_apply_tierL_all_or_nothing_late_recheck_declines_zero_trashed(tmp_path):
+    """ALL-OR-NOTHING (round-3 revert of the round-2 per-iteration partial sweep): apply_tier_L
+    has NO per-iteration re-check. It does ONE late liveness re-check immediately before the trash
+    loop (mirroring apply_tier_W_child), then sweeps the WHOLE snapshot or NOTHING — never a
+    partial sweep. A run that goes LIVE in the Step1→loop window (after Step 1 passed, before the
+    loop) is caught by the late re-check ⇒ action=skipped-changed with ZERO logs trashed (none
+    reach the graveyard) — no log is trashed before the decline.
 
-    Injection: a graveyard shim that, on its FIRST trash (codex-raw-a.log, glob-first), writes an
-    inflight-*.marker into the run dir. The per-iteration re-check at the next iteration then sees
-    the marker and declines ⇒ codex-raw-b.log survives. REDS pre-fix (the old loop trashed the
-    whole snapshot unconditionally, so codex-raw-b.log would also be swept)."""
-    repo = _make_owning_repo(tmp_path, "midloop", ancestor=True)
+    Faithful injection: a `jq` wrapper that writes an `inflight-*.marker` on the late re-check's
+    `is_waiting_quiet` read of state.json (the 3rd such read for an eligible quiet run). Step 1
+    saw a quiet, marker-free run (passes); the late re-check sees the open marker and declines.
+
+    Mutation-verify: removing the late re-check makes the 3rd read never happen ⇒ the marker is
+    never seen ⇒ the snapshot is swept (action=swept, both logs in the graveyard) — this test REDS.
+    """
+    repo = _make_owning_repo(tmp_path, "aon", ancestor=True)
     root = tmp_path / "runs"
-    d = _run_dir(root, "midloop")
-    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
-    (d / "codex-raw-a.log").write_text("z" * 100, encoding="utf-8")  # trashed first
-    (d / "codex-raw-b.log").write_text("y" * 100, encoding="utf-8")  # must survive (loop stops)
-    _backdate(d)
-    shim, graveyard = _marker_on_first_trash_shim(tmp_path, d)
-    cp = run_script(
-        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14",
-         "--json", "--apply"],
-        home=root, env={"RETENTION_TRASH_CMD": str(shim)},
-    )
-    objs = [json.loads(l) for l in cp.stdout.splitlines() if l.strip()]
-    o = _by_id(objs)["midloop"]
-    # Classification stayed eligible (apply never re-classifies); the mid-loop re-check declined.
-    assert o["tierL"]["eligible"] is True
-    assert o["tierL"]["action"] == "skipped-changed", (
-        "a run that goes LIVE mid-loop must STOP — action=skipped-changed"
-    )
-    # The first log WAS trashed (it preceded the resume); the second log was NOT (loop stopped).
-    assert not (d / "codex-raw-a.log").exists(), "first log was trashed before the resume"
-    assert (d / "codex-raw-b.log").exists(), (
-        "the loop must STOP after the mid-loop resume — codex-raw-b.log must survive"
-    )
-    moved = {p.name for p in graveyard.iterdir()}
-    assert any("codex-raw-a.log" in m for m in moved)
-    assert not any("codex-raw-b.log" in m for m in moved), (
-        f"codex-raw-b.log must not reach the graveyard: {moved}"
-    )
-
-
-def test_apply_human_report_tierL_skipped_changed_render_branch(tmp_path):
-    """fix-2(P2): the human-output `SKIPPED (changed)` render branch for Tier-L (only the Tier-W
-    one was pinned). A run that goes LIVE in the apply-time window is declined
-    (action=skipped-changed) and its Tier-L line renders `SKIPPED (changed)` (NOT SWEPT). Pins the
-    Tier-L verb-render branch distinct from the JSON action field."""
-    repo = _make_owning_repo(tmp_path, "tlscr", ancestor=True)
-    root = tmp_path / "runs"
-    d = _run_dir(root, "tlscr")
+    d = _run_dir(root, "aon")
     _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
     (d / "codex-raw-a.log").write_text("z" * 100, encoding="utf-8")
     (d / "codex-raw-b.log").write_text("y" * 100, encoding="utf-8")
     _backdate(d)
-    shim, _ = _marker_on_first_trash_shim(tmp_path, d)
+    wrap_dir = _marker_on_late_recheck_jq_shim(tmp_path, d, "aon")
+    shim, graveyard = _graveyard_shim(tmp_path)
+    env = {"RETENTION_TRASH_CMD": str(shim),
+           "PATH": f"{wrap_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14",
+         "--json", "--apply"],
+        home=root, env=env,
+    )
+    objs = [json.loads(l) for l in cp.stdout.splitlines() if l.strip()]
+    o = _by_id(objs)["aon"]
+    assert o["tierL"]["eligible"] is True, "verdict must stay eligible (apply never re-classifies)"
+    assert o["tierL"]["action"] == "skipped-changed", (
+        "a run that goes LIVE before the late re-check must DECLINE — action=skipped-changed"
+    )
+    # ALL-OR-NOTHING: NEITHER log is trashed (no partial sweep — no log reaches the graveyard).
+    assert (d / "codex-raw-a.log").exists(), "no log may be trashed before the decline (all-or-nothing)"
+    assert (d / "codex-raw-b.log").exists(), "no log may be trashed before the decline (all-or-nothing)"
+    moved = {p.name for p in graveyard.iterdir()}
+    assert moved == set(), f"a declined Tier-L apply must trash NOTHING: {moved}"
+
+
+def test_apply_tierL_skipped_changed_human_render_all_or_nothing(tmp_path):
+    """The human-output Tier-L `SKIPPED (changed)` render branch under all-or-nothing semantics: a
+    run declined by the late re-check renders `SKIPPED (changed)` (NOT SWEPT) AND trashes nothing
+    (0 logs reach the graveyard — no partial sweep). Pins the Tier-L verb-render branch (distinct
+    from the JSON action field) to the reverted all-or-nothing behavior."""
+    repo = _make_owning_repo(tmp_path, "aonh", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "aonh")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-a.log").write_text("z" * 100, encoding="utf-8")
+    (d / "codex-raw-b.log").write_text("y" * 100, encoding="utf-8")
+    _backdate(d)
+    wrap_dir = _marker_on_late_recheck_jq_shim(tmp_path, d, "aonh")
+    shim, graveyard = _graveyard_shim(tmp_path)
+    env = {"RETENTION_TRASH_CMD": str(shim),
+           "PATH": f"{wrap_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
     cp = run_script(
         [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14", "--apply"],
-        home=root, env={"RETENTION_TRASH_CMD": str(shim)},
+        home=root, env=env,
     )
     assert cp.returncode == 0
     lines = cp.stdout.splitlines()
     tierL_line = next(l for l in lines if "Tier-L (heavy logs):" in l)
     assert "SKIPPED (changed)" in tierL_line, tierL_line
     assert "SWEPT" not in tierL_line
+    # All-or-nothing: NOTHING trashed on the declined run.
+    assert {p.name for p in graveyard.iterdir()} == set()
+    assert (d / "codex-raw-a.log").exists() and (d / "codex-raw-b.log").exists()
+
+
+def test_apply_tierL_all_or_nothing_quiet_run_sweeps_all_logs_and_counts(tmp_path):
+    """ALL-OR-NOTHING (happy path): a normal quiet eligible run sweeps EVERY snapshot log
+    (action=swept), all logs reach the graveyard, and the top-level summary counts the run +
+    its bytes. Pairs with the decline test above: swept ⇒ all logs counted, skipped-changed ⇒
+    zero — there is no partial-sweep state to under/over-count."""
+    repo = _make_owning_repo(tmp_path, "aonsweep", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "aonsweep")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-a.log").write_text("z" * 100, encoding="utf-8")
+    (d / "codex-raw-b.log").write_text("y" * 100, encoding="utf-8")
+    (d / "codex-harden-1.log").write_text("w" * 100, encoding="utf-8")
+    _backdate(d)
+    shim, graveyard = _graveyard_shim(tmp_path)
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14", "--apply"],
+        home=root, env={"RETENTION_TRASH_CMD": str(shim)},
+    )
+    assert cp.returncode == 0
+    lines = cp.stdout.splitlines()
+    # EVERY snapshot log was trashed → none remain, all three reached the graveyard.
+    for f in ("codex-raw-a.log", "codex-raw-b.log", "codex-harden-1.log"):
+        assert not (d / f).exists(), f"{f} must be swept"
+    moved = {p.name for p in graveyard.iterdir()}
+    for f in ("codex-raw-a.log", "codex-raw-b.log", "codex-harden-1.log"):
+        assert any(f in m for m in moved), f"{f} must reach the graveyard: {moved}"
+    # Human line renders SWEPT with all 3 files; summary counts the run (1) — swept ⇒ all counted.
+    tierL_line = next(l for l in lines if "Tier-L (heavy logs):" in l)
+    assert "SWEPT <3 files" in tierL_line, tierL_line
+    summary = lines[-1]
+    m = re.search(r"Tier-L reclaimed ~\d+ MB across (\d+) runs", summary)
+    assert m and int(m.group(1)) == 1, f"a swept run must be counted: {summary}"

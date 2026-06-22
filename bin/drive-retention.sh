@@ -583,27 +583,31 @@ apply_tier_L() {
   has_open_inflight "$d" && { printf 'skipped-changed'; return; }
   is_done "$d" || { printf 'skipped-changed'; return; }
 
-  # Step 2 — late re-check IMMEDIATELY before the destructive trash loop, mirroring
-  # apply_tier_W_child Step 4. The Step-1 full re-verify MINIMIZES but cannot CLOSE the
-  # check-then-act window: a run that goes live AFTER its Step-1 predicate is read (`.waiting`
-  # set / an inflight marker written / done cleared after lines 582-584) would otherwise still
-  # flow into the loop. A check-then-act window is IRREDUCIBLE in a lockless shell GC — we
-  # MINIMIZE it (not close it) by re-checking the cheapest, earliest-written liveness signals
-  # (is_waiting_quiet + has_open_inflight) right before the loop AND at the TOP OF EACH iteration,
-  # so a run that resumes mid-loop STOPS trashing further logs ⇒ skipped-changed (no further
-  # trash). A resuming session writes its inflight marker / `.waiting` BEFORE doing real work,
-  # so this catches the realistic resume. The residual sub-syscall window between the per-iteration
-  # re-check and each trash is ACCEPTED: the GC is report-only by default; `--apply` is a manual,
-  # ≥14-day-aged, done-run one-shot.
+  # Step 2 — SINGLE late re-check IMMEDIATELY before the destructive trash loop, mirroring
+  # apply_tier_W_child Step 4 (one late check, then commit to the trash). The Step-1 full
+  # re-verify MINIMIZES but cannot CLOSE the check-then-act window: a run that goes live AFTER
+  # its Step-1 predicate is read (`.waiting` set / an inflight marker written / done cleared
+  # after lines 582-584) would otherwise still flow into the loop. A check-then-act window is
+  # IRREDUCIBLE in a lockless shell GC — we MINIMIZE it (not close it) by re-checking the
+  # cheapest, earliest-written liveness signals (is_waiting_quiet + has_open_inflight) right
+  # before the loop. There is deliberately NO per-iteration re-check: this apply is ALL-OR-NOTHING
+  # (mirroring apply_tier_W_child, which removes its worktree in one trash call) — once past this
+  # late re-check we sweep the WHOLE snapshot, so the action is always one of {swept, trash-failed}
+  # (cleared the late check) or skipped-changed (didn't), never a partial sweep that would
+  # under-count the reclaim. The mid-loop window — a run going live AFTER this late re-check but
+  # while the loop is trashing — is the SAME irreducible lockless-TOCTOU residual already accepted
+  # and documented for apply_tier_W_child (Step 4): such a run may still have its full snapshot
+  # swept. We ACCEPT it for the same reasons — the GC is report-only by default; `--apply` is a
+  # manual, ≥14-day-aged, done-run one-shot. We MINIMIZE this window (single late re-check), we do
+  # not CLOSE it. On either signal going live here ⇒ skipped-changed, NO trash.
   is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
   has_open_inflight "$d" && { printf 'skipped-changed'; return; }
 
-  # Step 3 — trash the SNAPSHOT set captured at classification (not a live re-enum), re-checking
-  # the cheapest liveness signals at the top of each iteration (mid-loop resume ⇒ stop).
+  # Step 3 — trash the SNAPSHOT set captured at classification (not a live re-enum) ALL-OR-NOTHING:
+  # we are committed past the late re-check, so every snapshot log is trashed. trash-failed (soft,
+  # keep going) is the only non-`swept` outcome reachable here — no skipped-changed, no partial state.
   for entry in "${TIERL_LOGS_SNAPSHOT[@]:-}"; do
     [ -n "$entry" ] || continue
-    is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
-    has_open_inflight "$d" && { printf 'skipped-changed'; return; }
     name="${entry%%$'\t'*}"
     $TRASH_CMD "$d/$name" 2>/dev/null || outcome="trash-failed"
   done
