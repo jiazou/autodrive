@@ -141,11 +141,25 @@ parse_ts() {
 }
 
 # Echo the parseable completedAt epoch for a run, rc1 if missing/unparseable. $1=run_dir
+# STRICT parse (fail-safe): the marker is written with a trailing newline, so only a
+# leading/trailing whitespace run is trimmed — interior whitespace is NEVER stripped.
+# Stripping ALL whitespace would make near-valid corruption parse as a VALID timestamp
+# (`2025-01-01T00:00:00 Z` → `2025-01-01T00:00:00Z`, `123 456` → `123456`), wrongly
+# satisfying the DONE gate AND W4 authorization on a corrupt marker — a fail-open against
+# the "unparseable completedAt ⇒ fail-safe SKIP, never a positive signal" contract. So after
+# trimming the surrounding whitespace, any REMAINING interior whitespace ⇒ UNPARSEABLE (rc1);
+# only then is the token handed to parse_ts (which itself anchors the epoch/ISO grammar).
 completedat_epoch() {
   local f="$1/completedAt" content
   [ -f "$f" ] || return 1
   content="$(head -n1 "$f" 2>/dev/null)"
-  content="$(printf '%s' "$content" | tr -d '[:space:]')"
+  # Trim ONLY leading/trailing whitespace (the trailing newline marker-write adds).
+  content="${content#"${content%%[![:space:]]*}"}"   # strip leading whitespace
+  content="${content%"${content##*[![:space:]]}"}"   # strip trailing whitespace
+  # Any interior whitespace remaining ⇒ corrupt / near-valid ⇒ UNPARSEABLE (fail-safe).
+  case "$content" in
+    *[[:space:]]*) return 1 ;;
+  esac
   parse_ts "$content"
 }
 
@@ -166,7 +180,15 @@ completedat_authorizes() {
 # that would sweep a recently-active run whose age evidence we cannot read). $1=run_dir
 eventlog_newest_epoch() {
   local log="$1/event-log.jsonl" best="" at e
-  [ -e "$log" ] || { printf ''; return 0; }   # genuinely absent ⇒ empty, NOT a read failure
+  # A DANGLING symlink (`-L` true, `-e` false) is a READ FAILURE, NOT genuinely-absent: `-e`
+  # alone treats it as absent ⇒ age falls back to a stale mtime ⇒ a run could look aged (a
+  # fail-open). Treat it the SAME as an unreadable present log ⇒ rc1 (caller NOW-anchors,
+  # never falsely aged). Genuinely-absent (no symlink AND no file) legitimately contributes
+  # no event-log timestamp ⇒ empty, rc0.
+  if [ ! -e "$log" ]; then
+    [ -L "$log" ] && return 1            # dangling symlink ⇒ read failure ⇒ NOW anchor
+    printf ''; return 0                  # genuinely absent ⇒ empty, NOT a read failure
+  fi
   # Present but unreadable ⇒ READ FAILURE (rc1): a dirent exists (caught by -e above) but it
   # is not a regular readable file, OR a `cat` of it errors (perm-denied / unreadable). Both
   # the file-test AND an actual read are checked — a present log we cannot read its bytes is

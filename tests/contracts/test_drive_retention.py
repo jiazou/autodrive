@@ -627,6 +627,60 @@ def test_completedAt_authorizes_w4_unresolvable_repo(tmp_path):
     assert _by_id(objs)["ca-ok"]["owningRepo"] is None
 
 
+@pytest.mark.parametrize("content", [
+    "2025-01-01T00:00:00 Z\n",   # interior whitespace before the Z
+    "123 456\n",                 # interior whitespace between digits
+    "2025-01-01T00:00:00\tZ\n",  # interior TAB
+])
+def test_interior_whitespace_completedAt_does_not_authorize(tmp_path, content):
+    """A completedAt with INTERIOR whitespace / near-valid corruption is UNPARSEABLE ⇒ NOT a
+    positive done/W4 signal (the run does not become DONE-authorized / eligible on that marker
+    alone). The pre-fix code stripped ALL whitespace (`tr -d '[:space:]'`), making such
+    corruption parse as a VALID timestamp ⇒ fail-open on the DONE gate AND W4 authorization.
+    Here `stage != done`, so the marker is the ONLY possible done signal: it must not satisfy
+    Wd/L3 (run ⇒ skip:not-done) nor W4 (child never authorized). Mutation-verify: RED against
+    the `tr -d '[:space:]'` strip (which made `2025-01-01T00:00:00 Z` → a valid epoch ⇒
+    not-done would have flipped to eligible / a W4-authorized clean child)."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "ca-interior-ws")
+    _state(d, stage="execute", waiting=None, baseRef="main")  # NOT done; marker is the only signal
+    (d / "completedAt").write_text(content, encoding="utf-8")
+    _clean_pushed_checkout(d / "wt" / "phase1")  # would pass W7b if W4 ever authorized
+    _backdate(d)
+    _, objs = _scan(root)
+    o = _by_id(objs)["ca-interior-ws"]
+    # The corrupt marker is no done signal ⇒ Tier-L skip:not-done (Wd/L3 fail-safe).
+    assert o["tierL"]["eligible"] is False
+    assert o["tierL"]["reason"] == "not-done"
+    # Tier-W stops at the Wd DONE gate too — never authorized, never eligible.
+    c = _child(o, "phase1")
+    assert c["eligible"] is False
+    assert c["reason"] == "not-done"
+
+
+def test_completedAt_satisfies_done_gate_when_stage_not_done(tmp_path):
+    """The DONE-gate OR-branch (Wd / L3): `state.stage != "done"` BUT a PARSEABLE completedAt
+    is present ⇒ the run passes the DONE gate via the completedAt branch (is_done = parseable
+    completedAt OR stage==done). Combined with waiting-null + no-inflight + aged + W4-authorized
+    (completedAt also covers W4) + W7b-clean ⇒ Tier-W eligible and Tier-L eligible. Pins the
+    acceptance-significant completedAt OR-branch of the DONE gate (not just the stage==done arm)."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "ca-done-branch")
+    _state(d, stage="execute", waiting=None, baseRef="main")  # NOT done by stage; UNRESOLVABLE
+    (d / "completedAt").write_text("2025-01-01T00:00:00Z\n", encoding="utf-8")  # parseable ⇒ done + W4
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(d / "wt" / "phase1")
+    _backdate(d)
+    _, objs = _scan(root)
+    o = _by_id(objs)["ca-done-branch"]
+    # Tier-L: done via completedAt (stage!=done) + aged ⇒ eligible.
+    assert o["tierL"]["eligible"] is True
+    # Tier-W: Wd via completedAt + W4 via completedAt + W7b clean ⇒ eligible.
+    c = _child(o, "phase1")
+    assert c["eligible"] is True
+    assert c["reason"] == ""
+
+
 def test_torn_completedAt_does_not_authorize(tmp_path):
     """An UNPARSEABLE completedAt authorizes nothing: a clean dir under an UNRESOLVABLE repo
     falls through to W4 ⇒ skip:unresolvable-repo (the marker did not flip it eligible)."""
@@ -947,6 +1001,30 @@ def test_unreadable_eventlog_not_treated_as_aged(tmp_path):
     assert o["tierL"]["eligible"] is False
     assert o["tierL"]["reason"] == "not-aged"
     assert o["ageAnchor"] == "event-log"   # the unreadable log supplied the (now) anchor
+
+
+def test_dangling_eventlog_symlink_not_treated_as_aged(tmp_path):
+    """Fail-safe: a DANGLING event-log.jsonl SYMLINK (target absent) is a read failure, NOT a
+    genuinely-absent log. The pre-fix `-e` test treated it as absent ⇒ age fell back to the
+    stale OLD mtime ⇒ the run looked aged ⇒ Tier-L eligible (a fail-open). A dangling symlink
+    may have pointed at a log with a RECENT timestamp, so it must NOW-anchor (age 0, never
+    aged, never swept). Distinct from genuine absence (no symlink + no file), which legitimately
+    contributes no event-log timestamp. Mutation-verify: RED against the old `[ -e ]`-only
+    guard (dangling symlink ⇒ empty ⇒ mtime fallback ⇒ aged ⇒ eligible)."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "dangling-log")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")  # would be Tier-L sweepable if aged
+    os.symlink(str(tmp_path / "nonexistent-eventlog-target"),
+               str(d / "event-log.jsonl"))   # dangling symlink (target absent)
+    _backdate(d, epoch=OLD)                   # old mtime — the ONLY other readable age input is stale
+    _, objs = _scan(root)
+    o = _by_id(objs)["dangling-log"]
+    # Dangling symlink ⇒ NOW anchor ⇒ NOT aged ⇒ NOT swept (fail-safe).
+    assert o["pastThreshold"] is False
+    assert o["tierL"]["eligible"] is False
+    assert o["tierL"]["reason"] == "not-aged"
+    assert o["ageAnchor"] == "event-log"   # the dangling log supplied the (NOW) anchor
 
 
 # --------------------------------------------------------------------------- #
