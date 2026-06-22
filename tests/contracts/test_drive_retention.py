@@ -878,6 +878,331 @@ def test_age_days_zero_passes_age_gate(tmp_path):
     assert _by_id(objs0)["recent"]["tierL"]["eligible"] is True
 
 
+# --------------------------------------------------------------------------- #
+# LENS-2 fix 1: a present non-null `waiting` (false / 0 / string) is NOT live-quiet
+# --------------------------------------------------------------------------- #
+@pytest.mark.parametrize("waiting_val", [False, 0, "gateB"])
+def test_waiting_false_or_zero_is_not_live_quiet(tmp_path, waiting_val):
+    """LENS-2 fail-safe: `state_field` collapsed JSON false/0/null to empty, so `waiting:false`
+    (and `waiting:0`) passed the liveness gate as 'not waiting' and a done+aged+clean run could
+    reach `eligible` on BOTH tiers. A present-and-non-null `waiting` (false/0/string) means the
+    run is NOT live-quiet ⇒ skip:waiting on BOTH tiers, never eligible.
+    Mutation-verify: RED against the old `[ -z "$(state_field waiting)" ]` gate (which let
+    false/0 through ⇒ Tier-L eligible / Tier-W not 'waiting')."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "wq")
+    _state(d, stage="done", waiting=waiting_val, baseRef="main")  # present, non-null
+    (d / "completedAt").write_text("2025-01-01T00:00:00Z\n", encoding="utf-8")  # would W4-authorize
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(d / "wt" / "phase1")                   # would pass W7b if reached
+    _backdate(d)
+    _, objs = _scan(root)
+    o = _by_id(objs)["wq"]
+    # BOTH tiers refuse with the waiting reason — never eligible.
+    assert o["tierL"]["eligible"] is False
+    assert o["tierL"]["reason"] == "waiting"
+    c = _child(o, "phase1")
+    assert c["eligible"] is False
+    assert c["reason"] == "waiting"
+
+
+def test_waiting_null_is_live_quiet(tmp_path):
+    """Companion to the above: an EXPLICIT JSON null `waiting` (and an ABSENT key) IS live-quiet
+    — the gate must pass for null/absent, only refuse a present non-null value."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "wq-null")
+    _state(d, stage="done", waiting=None, baseRef="main")  # explicit JSON null
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _backdate(d)
+    _, objs = _scan(root)
+    assert _by_id(objs)["wq-null"]["tierL"]["eligible"] is True  # null ⇒ not 'waiting'
+
+
+# --------------------------------------------------------------------------- #
+# LENS-2 fix 2: an UNREADABLE event-log.jsonl is NOT conflated with empty (age fail-safe)
+# --------------------------------------------------------------------------- #
+def test_unreadable_eventlog_not_treated_as_aged(tmp_path):
+    """LENS-2 fail-safe: a PRESENT-but-UNREADABLE event-log.jsonl (perm-denied) holding a RECENT
+    timestamp was conflated with an empty log ⇒ age fell back to the stale OLD mtime ⇒ the run
+    was wrongly judged aged ⇒ eligible. A read FAILURE must NOT be treated as aged: the
+    unreadable log may hold a recent timestamp, so the run is treated as recent (NOT aged) and
+    NEVER swept. Mutation-verify: RED against the old `eventlog_newest_epoch` that returned
+    empty on a read failure (⇒ mtime fallback ⇒ aged ⇒ Tier-L eligible)."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "unreadable-log")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    recent_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(RECENT))
+    log = d / "event-log.jsonl"
+    log.write_text(json.dumps({"event": "dispatch", "at": recent_iso}) + "\n", encoding="utf-8")
+    os.chmod(log, 0o000)        # present but UNREADABLE
+    _backdate(d, epoch=OLD)     # old mtime — the ONLY readable age input is stale
+    try:
+        _, objs = _scan(root)
+    finally:
+        os.chmod(log, 0o644)    # restore so tmp cleanup can read it
+    o = _by_id(objs)["unreadable-log"]
+    # The unreadable log could hold a recent ts ⇒ fail-safe: NOT aged, NOT eligible.
+    assert o["pastThreshold"] is False
+    assert o["tierL"]["eligible"] is False
+    assert o["tierL"]["reason"] == "not-aged"
+    assert o["ageAnchor"] == "event-log"   # the unreadable log supplied the (now) anchor
+
+
+# --------------------------------------------------------------------------- #
+# LENS-2 fix 3: resolve_owning_repo filters ad-hoc-named registered children
+# --------------------------------------------------------------------------- #
+def test_resolve_owning_repo_ignores_adhoc_registered_child(tmp_path):
+    """LENS-2 fail-safe: the gitdir fallback trusted the FIRST registered wt/<name>/.git with NO
+    drive-owned-name filter, so an ad-hoc child (e.g. `converter`) registered into a FOREIGN repo
+    resolved the owning repo to that repo ⇒ the ancestry probe ran in the WRONG repo and could
+    falsely authorize a sibling drive-owned child. Only a DRIVE-OWNED-named registered child may
+    resolve the owning repo. With only an ad-hoc registered child, the owning repo is UNRESOLVABLE
+    ⇒ the drive-owned no-pointer child (no completedAt) is skip:unresolvable-repo, NOT eligible.
+    Mutation-verify: RED against pre-fix (owningRepo == the foreign repo; phase1 eligible via the
+    foreign ancestry probe)."""
+    # A foreign repo where drive/<runId> IS an ancestor of main (so the WRONG-repo probe would
+    # falsely say 'yes'). runId == the run-dir name below.
+    foreign = _make_owning_repo(tmp_path, "adhoc-repo", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "adhoc-repo")
+    _state(d, stage="done", waiting=None, baseRef="main")  # NO repoRoot ⇒ gitdir fallback
+    # Ad-hoc-named child registered (path-equality) into the FOREIGN repo's admin entry.
+    admin = foreign / ".git" / "worktrees" / "converter"
+    _registered_pointer(d / "wt" / "converter", admin, backref="self")
+    # A drive-owned no-pointer child whose ancestry the foreign repo would (wrongly) authorize.
+    (d / "wt" / "phase1").mkdir(parents=True)
+    _backdate(d)
+    _, objs = _scan(root)
+    o = _by_id(objs)["adhoc-repo"]
+    assert o["owningRepo"] is None   # ad-hoc child must NOT resolve the owning repo
+    # phase1 has no completedAt and no resolvable repo ⇒ unresolvable-repo, NEVER eligible.
+    c = _child(o, "phase1")
+    assert c["eligible"] is False
+    assert c["reason"] == "unresolvable-repo"
+    # the ad-hoc child itself is W6-skipped
+    assert _child(o, "converter")["reason"] == "not-drive-owned"
+
+
+# --------------------------------------------------------------------------- #
+# LENS-2 fix 4 (codex P1): human-summary tallies — skips counted on BOTH tiers,
+# bytes summed THEN converted to MB (no per-run floor)
+# --------------------------------------------------------------------------- #
+def test_human_summary_counts_tierW_skip_under_tierL_eligible(tmp_path):
+    """Codex P1: `skipped` only incremented when Tier-L was non-eligible, so a Tier-W-skipped
+    child under a Tier-L-ELIGIBLE run was omitted from the advertised skipped count. A run with
+    an eligible Tier-L (would-sweep logs) AND a skipped Tier-W child must contribute the Tier-W
+    skip to the count. Mutation-verify: RED against pre-fix (skipped==0 ⇒ '0 runs/items skipped')."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "tl-elig-tw-skip")
+    _state(d, stage="done", waiting=None, baseRef="main")  # UNRESOLVABLE repo
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")  # Tier-L eligible (aged+done)
+    (d / "wt" / "converter").mkdir(parents=True)                     # Tier-W skip (not-drive-owned)
+    _backdate(d)
+    cp_h = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14"],
+        home=root,
+    )
+    assert cp_h.returncode == 0
+    summary = cp_h.stdout.strip().splitlines()[-1]
+    assert summary.startswith("summary:")
+    # Tier-L eligible (so NOT counted as a Tier-L skip), but the Tier-W child IS a skip ⇒ ≥1.
+    m = re.search(r"·\s*(\d+)\s+runs/items skipped", summary)
+    assert m is not None, summary
+    assert int(m.group(1)) >= 1, f"Tier-W skip under Tier-L-eligible must be counted: {summary}"
+
+
+def test_human_summary_bytes_summed_then_converted(tmp_path):
+    """Codex P1: `tierL_mb` floored each run's bytes (`/1048576`) BEFORE summing, so several
+    sub-MB reclaimable logs reported ~0 MB total. With bytes summed THEN converted once, three
+    runs each holding a ~0.5 MB log sum to ~1 MB (not floor(0.5)*3 == 0). Mutation-verify: RED
+    against pre-fix (reports ~0 MB)."""
+    root = tmp_path / "runs"
+    half_mb = "x" * (600 * 1024)   # ~0.586 MB each; three of them sum to ~1.7 MB
+    for i in range(3):
+        d = _run_dir(root, f"sub-mb-{i}")
+        _state(d, stage="done", waiting=None, baseRef="main")
+        (d / "codex-raw-x.log").write_text(half_mb, encoding="utf-8")
+        _backdate(d)
+    cp_h = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14"],
+        home=root,
+    )
+    assert cp_h.returncode == 0
+    summary = cp_h.stdout.strip().splitlines()[-1]
+    m = re.search(r"reclaim ~(\d+) MB", summary)
+    assert m is not None, summary
+    assert int(m.group(1)) >= 1, f"per-run flooring lost sub-MB logs: {summary}"
+
+
+# --------------------------------------------------------------------------- #
+# LENS-1 missing tests: AC1 missing-jq / missing-state.json; AC4 repoRoot beats gitdir;
+# AC7 Tier-W gate-order on the W tier; AC12 completedAt-anchor + future-clamp
+# --------------------------------------------------------------------------- #
+def test_missing_jq_exits_zero_no_classify(tmp_path):
+    """AC1: jq absent ⇒ the script cannot classify; it prints a stderr notice and exits 0
+    (best-effort, D3 — a missing tool must never abort a new run's setup). Simulated via a
+    restricted PATH containing only the dirs needed to run bash but NOT jq."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "any")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    _backdate(d)
+    # Build a symlink farm exposing the real interpreters/tools the script needs at startup
+    # (sh/bash/date/grep/printf-via-coreutils) but deliberately OMITTING jq.
+    binshim = tmp_path / "binshim"
+    binshim.mkdir()
+    import shutil
+    for tool in ["bash", "sh", "env", "date", "grep", "cat", "head", "stat", "sed",
+                 "dirname", "git", "tr", "printf"]:
+        p = shutil.which(tool)
+        if p:
+            try:
+                os.symlink(p, binshim / tool)
+            except FileExistsError:
+                pass
+    assert shutil.which("jq", path=str(binshim)) is None  # jq is NOT on the shim PATH
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14", "--json"],
+        home=root, env={"PATH": str(binshim)},
+    )
+    assert cp.returncode == 0
+    assert cp.stdout.strip() == ""          # nothing classified
+    assert "jq not found" in cp.stderr
+
+
+def test_missing_state_json_exits_zero_skips(tmp_path):
+    """AC1: a run dir with NO state.json ⇒ exit 0, conservative skip — no done signal ⇒
+    skip:not-done on Tier-L (fail-safe), reported, never crashes."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "no-state")  # no state.json at all
+    (d / "codex-raw-x.log").write_text("z", encoding="utf-8")
+    _backdate(d)
+    cp, objs = _scan(root)
+    assert cp.returncode == 0
+    o = _by_id(objs)["no-state"]
+    assert o["tierL"]["eligible"] is False
+    assert o["tierL"]["reason"] == "not-done"
+
+
+def test_owning_repo_reporoot_beats_conflicting_gitdir(tmp_path):
+    """AC4 precedence: state.repoRoot (primary) WINS over a CONFLICTING registered gitdir
+    (fallback). A run with BOTH a valid state.repoRoot AND a registered wt/<n>/.git pointing at
+    a DIFFERENT repo must resolve owningRepo to the repoRoot, not the gitdir's repo."""
+    primary = _make_owning_repo(tmp_path, "primary-repo", ancestor=True)
+    other = tmp_path / "other-repo"
+    admin = other / ".git" / "worktrees" / "phase1"
+    root = tmp_path / "runs"
+    d = _run_dir(root, "rr-wins")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(primary))
+    _registered_pointer(d / "wt" / "phase1", admin, backref="self")  # conflicting gitdir → other
+    _backdate(d)
+    _, objs = _scan(root)
+    assert _by_id(objs)["rr-wins"]["owningRepo"] == str(primary)     # primary beats fallback
+
+
+def test_tierW_w1_waiting_wins_before_w4(tmp_path):
+    """AC7 (Tier-W gate-order): W1 (waiting) wins BEFORE W4 — a waiting run with a drive-owned
+    no-pointer child reports skip:waiting on the child (not unresolvable-repo / not-ancestor)."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "w-order")
+    _state(d, stage="done", waiting="gateB", baseRef="main")
+    (d / "wt" / "phase1").mkdir(parents=True)
+    _backdate(d)
+    _, objs = _scan(root)
+    assert _child(_by_id(objs)["w-order"], "phase1")["reason"] == "waiting"
+
+
+def test_tierW_w2_inflight_wins_before_w4(tmp_path):
+    """AC7 (Tier-W gate-order): W2 (inflight-open) wins BEFORE W4 on the W tier."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "i-order")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    (d / "inflight-x.marker").write_text("", encoding="utf-8")
+    (d / "wt" / "phase1").mkdir(parents=True)
+    _backdate(d)
+    _, objs = _scan(root)
+    assert _child(_by_id(objs)["i-order"], "phase1")["reason"] == "inflight-open"
+
+
+def test_tierW_w3_not_aged_wins_before_w4(tmp_path):
+    """AC7 (Tier-W gate-order): W3 (not-aged) wins BEFORE W4 on the W tier — a RECENT run with a
+    drive-owned no-pointer child reports skip:not-aged on the child, not an authorization reason."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "a-order")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    (d / "wt" / "phase1").mkdir(parents=True)
+    _backdate(d, epoch=RECENT)
+    _, objs = _scan(root)
+    assert _child(_by_id(objs)["a-order"], "phase1")["reason"] == "not-aged"
+
+
+def test_age_anchor_completedAt_when_newest(tmp_path):
+    """AC12: when a PARSEABLE completedAt is the NEWEST of the three age inputs, ageAnchor reports
+    `completedAt`. (Old mtime, no event-log; a recent completedAt is the max.)"""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "ca-anchor")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    recent_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(RECENT))
+    (d / "completedAt").write_text(recent_iso + "\n", encoding="utf-8")  # recent ⇒ the max
+    _backdate(d, epoch=OLD)   # old mtime, no event-log ⇒ completedAt is newest
+    _, objs = _scan(root)
+    o = _by_id(objs)["ca-anchor"]
+    assert o["ageAnchor"] == "completedAt"
+    assert o["pastThreshold"] is False   # recent completedAt ⇒ not aged
+
+
+def test_age_future_timestamp_clamps_to_zero(tmp_path):
+    """AC12: a FUTURE max age input (event-log timestamp after --now) clamps age to 0 ⇒
+    pastThreshold:false ⇒ a future-touched run is NEVER swept (no negative-age crash)."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "future")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    future_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(NOW + 100 * DAY))
+    (d / "event-log.jsonl").write_text(
+        json.dumps({"event": "dispatch", "at": future_iso}) + "\n", encoding="utf-8")
+    _backdate(d, epoch=OLD)
+    _, objs = _scan(root)
+    o = _by_id(objs)["future"]
+    assert o["ageDays"] == 0              # clamped, no negative age
+    assert o["pastThreshold"] is False
+
+
+# --------------------------------------------------------------------------- #
+# P2 tests: dangling inflight-*.marker symlink; W5 .git-is-a-DIRECTORY not-registered
+# --------------------------------------------------------------------------- #
+def test_dangling_inflight_marker_symlink_counts_as_open(tmp_path):
+    """P2: a DANGLING inflight-*.marker symlink (target absent) still counts as an open marker
+    (`-e || -L`), mirroring drive-conformance.sh ⇒ skip:inflight-open on both tiers."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "dangling-inflight")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    (d / "wt" / "phase1").mkdir(parents=True)
+    os.symlink(str(tmp_path / "nonexistent-marker-target"),
+               str(d / "inflight-finalize.marker"))  # dangling symlink
+    _backdate(d)
+    _, objs = _scan(root)
+    o = _by_id(objs)["dangling-inflight"]
+    assert o["tierL"]["reason"] == "inflight-open"
+    assert _child(o, "phase1")["reason"] == "inflight-open"
+
+
+def test_w5_git_is_a_directory_is_not_registered(tmp_path):
+    """P2: a full-checkout `wt/<name>/.git` DIRECTORY (not a worktree gitdir pointer FILE) ⇒
+    not-registered (registered:false) — the only fall-through to W7 — distinct from total .git
+    absence. A clean such checkout under a W4-authorized run is therefore W7b-eligible."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "git-dir")
+    _state(d, stage="done", waiting=None, baseRef="main")  # UNRESOLVABLE
+    (d / "completedAt").write_text("2025-01-01T00:00:00Z\n", encoding="utf-8")  # W4-authorizes
+    _clean_pushed_checkout(d / "wt" / "phase1")  # a real git checkout ⇒ wt/phase1/.git is a DIR
+    assert (d / "wt" / "phase1" / ".git").is_dir()
+    _backdate(d)
+    _, objs = _scan(root)
+    c = _child(_by_id(objs)["git-dir"], "phase1")
+    assert c["registered"] is False              # .git DIRECTORY ⇒ not-registered (not unprovable)
+    assert c["eligible"] is True                 # clean + W4-authorized ⇒ eligible via W7b
+
+
 def test_human_report_smoke(tmp_path):
     """The default (non-JSON) report carries the run/Tier headers + summary line."""
     root = tmp_path / "runs"

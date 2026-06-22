@@ -103,6 +103,25 @@ state_field() {
   printf '%s' "$v"
 }
 
+# rc0 iff the run is LIVE-QUIET on the waiting axis: state.json's `.waiting` is ABSENT or
+# explicitly JSON null. ANY PARSEABLE present-and-non-null `.waiting` (including `false`,
+# `0`, or a string) means the run is NOT live-quiet ⇒ rc1 (the caller emits skip:waiting).
+# `state_field` collapses false/0/null to empty, so it CANNOT distinguish `waiting:false`
+# (NOT live-quiet) from an absent field — gate on `.waiting == null` directly instead.
+# Mirrors the sibling drive-conformance.sh, which treats a non-null `waiting` as malformed.
+# A MISSING / torn / unreadable state.json (jq error) is NOT a present non-null waiting — it
+# is treated as quiet here and caught downstream by the DONE gate (a torn state can never
+# produce a done signal ⇒ skip:not-done — the documented edge-2 fail-safe, kept CONSISTENT
+# across tiers). $1=run_dir
+is_waiting_quiet() {
+  local sj="$1/state.json" v
+  [ -f "$sj" ] || return 0          # no state.json ⇒ no waiting field ⇒ quiet (caught by DONE gate)
+  # `.waiting == null` is true for BOTH an absent key and an explicit null — exactly the two
+  # live-quiet cases. A jq error on torn JSON ⇒ rc≠0 ⇒ treat as quiet (DONE gate catches it).
+  v="$(jq -r 'if (.waiting == null) then "quiet" else "set" end' "$sj" 2>/dev/null)" || return 0
+  [ "$v" = "quiet" ]
+}
+
 # Parse a timestamp string to a unix epoch. Echoes the epoch on success, rc1 on failure.
 # Accepts either a bare integer (already epoch) or an ISO-8601 string (e.g.
 # 2026-06-22T10:11:00Z). $1=string
@@ -139,10 +158,20 @@ completedat_authorizes() {
 # Newest event-log timestamp epoch = MAX over ALL parseable .at values across EVERY line
 # (NOT the last line — a torn/backdated tail line could otherwise hide a newer earlier
 # timestamp, and appending does not bump run-dir mtime ⇒ a fail-open on age). Echoes the
-# epoch or empty if no parseable line. $1=run_dir
+# epoch or empty if no parseable line. rc1 on a READ FAILURE of a PRESENT log (file exists
+# but is unreadable / cannot be read by jq) — distinct from a genuinely-absent/empty log
+# (which is rc0 + empty). A read failure must NOT be conflated with empty: an unreadable
+# log may hold a RECENT timestamp, so the caller fails the age gate safe (treats the run as
+# recent, never aged ⇒ never swept) rather than falling back to a stale mtime (a fail-open
+# that would sweep a recently-active run whose age evidence we cannot read). $1=run_dir
 eventlog_newest_epoch() {
   local log="$1/event-log.jsonl" best="" at e
-  [ -f "$log" ] || { printf ''; return; }
+  [ -e "$log" ] || { printf ''; return 0; }   # genuinely absent ⇒ empty, NOT a read failure
+  # Present but unreadable ⇒ READ FAILURE (rc1): a dirent exists (caught by -e above) but it
+  # is not a regular readable file, OR a `cat` of it errors (perm-denied / unreadable). Both
+  # the file-test AND an actual read are checked — a present log we cannot read its bytes is
+  # a read failure, never conflated with a genuinely-empty log.
+  { [ -f "$log" ] && [ -r "$log" ] && cat "$log" >/dev/null 2>&1; } || return 1
   # PER-LINE tolerant parse: `-R` reads each raw line, `fromjson?` yields nothing for an
   # unparseable (torn / non-JSON) line instead of erroring the whole pipeline. A whole-file
   # `jq '.at'` errors on the FIRST invalid line and STOPS — dropping every timestamp AFTER
@@ -155,6 +184,7 @@ eventlog_newest_epoch() {
     if [ -z "$best" ] || [ "$e" -gt "$best" ]; then best="$e"; fi
   done < <(jq -R -r 'fromjson? | .at // empty' "$log" 2>/dev/null)
   printf '%s' "$best"
+  return 0
 }
 
 # Run-dir mtime epoch. $1=run_dir
@@ -168,10 +198,16 @@ mtime_epoch() {
 # globs AGE_EPOCH (the max), AGE_ANCHOR (which input supplied it: mtime|event-log|completedAt).
 # $1=run_dir
 compute_age() {
-  local d="$1" m el ca best="" anchor="mtime"
+  local d="$1" m el ca best="" anchor="mtime" el_rc
   m="$(mtime_epoch "$d")"
-  el="$(eventlog_newest_epoch "$d")"
+  el="$(eventlog_newest_epoch "$d")"; el_rc=$?
   ca="$(completedat_epoch "$d" 2>/dev/null)" || ca=""
+
+  # FAIL-SAFE: a PRESENT-but-UNREADABLE event-log (rc1) may hold a RECENT timestamp we cannot
+  # read. Do NOT fall back to a stale mtime (which would wrongly age the run ⇒ sweep a
+  # recently-active run). Treat the unreadable log as supplying a NOW anchor — most-recent-
+  # wins ⇒ age 0 ⇒ never aged ⇒ never swept. The anchor is reported as `event-log`.
+  if [ "$el_rc" -ne 0 ]; then el="$NOW"; fi
 
   if [ -n "$m" ]; then best="$m"; anchor="mtime"; fi
   if [ -n "$el" ] && { [ -z "$best" ] || [ "$el" -gt "$best" ]; }; then best="$el"; anchor="event-log"; fi
@@ -271,6 +307,12 @@ resolve_owning_repo() {
     for child in "$d"/wt/*; do
       [ -d "$child" ] || continue
       name="${child##*/}"
+      # Only a DRIVE-OWNED-named registered child may resolve the owning repo (DP6 intends
+      # the repo /drive cut the run's branches from). A real run carries ad-hoc children
+      # (converter/scripts/test_projects — edge 10); trusting one's gitdir would resolve the
+      # owning repo to a FOREIGN repo, so the ancestry probe would run in the WRONG repo and
+      # could falsely authorize a sibling drive-owned child. Filter ad-hoc names out here.
+      is_drive_owned_name "$name" || continue
       reg="$(wt_registered_anywhere "$d" "$name")"
       [ "$reg" = "registered" ] || continue
       admin="$(head -n1 "$child/.git" 2>/dev/null)"
@@ -336,7 +378,7 @@ wt_cleanliness() {
 # ----------------------------------------------------------------------------- #
 classify_tier_L() {
   local d="$1"
-  [ -z "$(state_field "$d" waiting)" ] || { printf 'skip:waiting'; return; }
+  is_waiting_quiet "$d" || { printf 'skip:waiting'; return; }
   has_open_inflight "$d" && { printf 'skip:inflight-open'; return; }
   is_done "$d" || { printf 'skip:not-done'; return; }
   is_aged || { printf 'skip:not-aged'; return; }
@@ -375,7 +417,7 @@ classify_tier_W_child() {
   esac
 
   # W1/W2/Wd/W3 — run-level liveness + DONE + age.
-  [ -z "$(state_field "$d" waiting)" ] || { printf 'skip:waiting'; return; }
+  is_waiting_quiet "$d" || { printf 'skip:waiting'; return; }
   has_open_inflight "$d" && { printf 'skip:inflight-open'; return; }
   is_done "$d" || { printf 'skip:not-done'; return; }
   is_aged || { printf 'skip:not-aged'; return; }
@@ -560,7 +602,7 @@ classify_run() {
 # ----------------------------------------------------------------------------- #
 runs_scanned=0
 tierL_runs=0
-tierL_mb=0
+tierL_bytes_total=0
 tierW_worktrees=0
 tierW_runs=0
 skipped=0
@@ -579,17 +621,18 @@ for run_dir in "$ROOT"/*; do
     report_run "$run_dir" 2>/dev/null
   fi
 
-  # Summary tallies.
+  # Summary tallies. Tier-L and Tier-W are counted INDEPENDENTLY (each tier's skip is its
+  # own "item skipped"); a Tier-W skip under a Tier-L-eligible run is NOT lost. Bytes are
+  # SUMMED across runs and converted to MB ONCE at the end (per-run flooring would report
+  # several sub-MB reclaimable logs as ~0 MB total).
   if [ "$TIERL_VERDICT" = "eligible" ]; then
     tierL_runs=$((tierL_runs + 1))
-    local_total=0
     while IFS=$'\t' read -r lname lbytes; do
       [ -n "$lname" ] || continue
-      local_total=$((local_total + ${lbytes:-0}))
+      tierL_bytes_total=$((tierL_bytes_total + ${lbytes:-0}))
     done < <(heavy_logs "$run_dir")
-    tierL_mb=$((tierL_mb + local_total / 1048576))
   else
-    skipped=$((skipped + 1))
+    skipped=$((skipped + 1))   # Tier-L skip for this run
   fi
 
   run_has_wt_elig=0
@@ -598,6 +641,8 @@ for run_dir in "$ROOT"/*; do
     if [ "${TW_VERDICTS[$i]}" = "eligible" ]; then
       tierW_worktrees=$((tierW_worktrees + 1))
       run_has_wt_elig=1
+    else
+      skipped=$((skipped + 1))   # Tier-W child skip — counted independently of Tier-L
     fi
     i=$((i + 1))
   done
@@ -605,6 +650,7 @@ for run_dir in "$ROOT"/*; do
 done
 
 if [ "$JSON" -ne 1 ]; then
+  tierL_mb=$((tierL_bytes_total / 1048576))
   printf 'summary: %s runs scanned · Tier-L would reclaim ~%s MB across %s runs · Tier-W would remove %s worktrees across %s runs · %s runs/items skipped\n' \
     "$runs_scanned" "$tierL_mb" "$tierL_runs" "$tierW_worktrees" "$tierW_runs" "$skipped"
 fi
