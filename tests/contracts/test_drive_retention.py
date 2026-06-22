@@ -1241,6 +1241,54 @@ def test_human_summary_verbs_are_apply_aware(tmp_path):
     )
 
 
+def test_apply_summary_tallies_actual_outcomes_not_eligible_verdicts(tmp_path):
+    """A destructive tool MUST NOT claim it reclaimed space / removed worktrees that are still on
+    disk. Under --apply the top-level summary swaps verbs to past-tense ("reclaimed"/"removed"),
+    so its tallies MUST count ACTUAL action outcomes (swept/removed), NOT the pre-apply `eligible`
+    verdicts. With a trash command that always fails, an eligible Tier-L log + eligible Tier-W
+    worktree both stay on disk (action=trash-failed); the summary must report 0 reclaimed MB /
+    0 removed worktrees and count both as skipped — NOT "reclaimed ~N MB / removed 1".
+
+    Mutation-verify: this REDs against the pre-fix tally (which counted from `eligible` and
+    over-claimed "reclaimed ~N MB · removed 1 worktrees · 0 skipped"). Per-run detail lines were
+    already correct (FAILED (trash)); only the aggregate summary over-claimed."""
+    repo = _make_owning_repo(tmp_path, "overclaim", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "overclaim")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-x.log").write_text("x" * (2 * 1024 * 1024), encoding="utf-8")  # ~2 MB
+    _clean_pushed_checkout(d / "wt" / "phase1")
+    _backdate(d)
+    fail = _failing_shim(tmp_path)
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14", "--apply"],
+        home=root, env={"RETENTION_TRASH_CMD": str(fail)},
+    )
+    assert cp.returncode == 0
+    # The data really is still on disk — the summary must not say otherwise.
+    assert (d / "codex-raw-x.log").exists()
+    assert (d / "wt" / "phase1").exists()
+    summary = cp.stdout.strip().splitlines()[-1]
+    assert summary.startswith("summary:"), summary
+    # Tier-L: 0 MB reclaimed across 0 runs (the trash failed).
+    mL = re.search(r"Tier-L reclaimed ~(\d+) MB across (\d+) runs", summary)
+    assert mL is not None, summary
+    assert mL.group(1) == "0" and mL.group(2) == "0", (
+        f"over-claims reclaimed bytes/runs for a trash-failed log: {summary}"
+    )
+    # Tier-W: 0 worktrees removed (the trash failed; the dir remains).
+    mW = re.search(r"Tier-W removed (\d+) worktrees across (\d+) runs", summary)
+    assert mW is not None, summary
+    assert mW.group(1) == "0" and mW.group(2) == "0", (
+        f"over-claims removed worktrees for a trash-failed child: {summary}"
+    )
+    # The not-acted-on items are accounted for as skipped, not silently dropped.
+    mS = re.search(r"·\s*(\d+)\s+runs/items skipped", summary)
+    assert mS is not None and int(mS.group(1)) >= 2, (
+        f"trash-failed Tier-L + Tier-W items must be counted as skipped: {summary}"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # LENS-1 missing tests: AC1 missing-jq / missing-state.json; AC4 repoRoot beats gitdir;
 # AC7 Tier-W gate-order on the W tier; AC12 completedAt-anchor + future-clamp
@@ -1480,6 +1528,121 @@ def test_apply_tierL_trashes_only_heavy_logs_keeps_history(tmp_path):
         assert (d / f).exists(), f"history file {f} must be kept"
 
 
+def test_apply_tierL_snapshot_not_live_reenum_new_log_not_swept(tmp_path):
+    """fix-1(a): apply_tier_L sweeps the classification-time SNAPSHOT, NOT a fresh live
+    heavy_logs() re-enumeration. A heavy log that appears AFTER the snapshot is captured (so it
+    was never previewed in the report) must NOT be swept — report == apply.
+
+    Faithful injection: a `stat` wrapper that, while the snapshot stats `codex-raw-classified.log`,
+    CREATES a NEW `codex-raw-late.log` in the run dir — i.e. a heavy log appears in the window
+    between the snapshot's glob (already expanded, so it excludes the late log) and apply. The
+    snapshot sweep iterates only the captured set ⇒ the late log survives. REDS pre-fix (the old
+    `< <(heavy_logs "$d")` re-enumerated live at apply time and would have swept the late log)."""
+    repo = _make_owning_repo(tmp_path, "snap", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "snap")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-classified.log").write_text("z" * 100, encoding="utf-8")  # in the snapshot
+    _backdate(d)
+    late = d / "codex-raw-late.log"
+    # A `stat` wrapper: on a stat of codex-raw-classified.log (during the snapshot capture, whose
+    # glob has already expanded), create the late log, THEN delegate to the real stat. The late
+    # log thus exists for a live re-enum at apply time, but NOT in the snapshot's captured set.
+    real_stat = subprocess.run(["which", "stat"], capture_output=True, text=True).stdout.strip()
+    statwrap_dir = tmp_path / "statwrap"
+    statwrap_dir.mkdir(parents=True, exist_ok=True)
+    statwrap = statwrap_dir / "stat"
+    statwrap.write_text(
+        "#!/usr/bin/env bash\n"
+        f'late="{late}"\n'
+        f'realstat="{real_stat}"\n'
+        'for a in "$@"; do\n'
+        '  case "$a" in\n'
+        '    *codex-raw-classified.log) printf z > "$late" 2>/dev/null || true ;;\n'
+        '  esac\n'
+        'done\n'
+        'exec "$realstat" "$@"\n',
+        encoding="utf-8",
+    )
+    os.chmod(statwrap, 0o755)
+    shim, graveyard = _graveyard_shim(tmp_path)
+    env = {"RETENTION_TRASH_CMD": str(shim),
+           "PATH": f"{statwrap_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14",
+         "--json", "--apply"],
+        home=root, env=env,
+    )
+    objs = [json.loads(l) for l in cp.stdout.splitlines() if l.strip()]
+    o = _by_id(objs)["snap"]
+    assert o["tierL"]["action"] == "swept"
+    # The classified log was swept (it was in the snapshot) ...
+    assert not (d / "codex-raw-classified.log").exists()
+    # ... but the late log, created after the snapshot, is NOT swept (snapshot, not re-enum).
+    assert late.exists(), "a heavy log created after the snapshot must NOT be swept"
+    moved = {p.name for p in graveyard.iterdir()}
+    assert not any("late" in m for m in moved), f"late log must not reach the graveyard: {moved}"
+
+
+def test_apply_tierL_declines_run_gone_live_after_classification(tmp_path):
+    """fix-1(b): apply_tier_L re-verifies run-level liveness BEFORE trashing, mirroring
+    apply_tier_W_child. A run resumed (goes live) AFTER Tier-L classification but before the
+    Tier-L sweep must NOT have its heavy logs swept ⇒ action=skipped-changed, logs intact.
+
+    Faithful injection: a `stat` wrapper that, while the snapshot is being captured (it stats the
+    `codex-raw-*.log`), writes an `inflight-*.marker` into the run dir — the run resumes in the
+    classification→apply window. apply_tier_L's re-verify (has_open_inflight) then declines. The
+    snapshot stat runs AFTER classify_tier_L's liveness check (so classification stays eligible)
+    and BEFORE apply_tier_L (so the marker is present at apply time). REDS pre-fix (the old
+    apply_tier_L had NO liveness recheck and would sweep the now-live run's logs)."""
+    repo = _make_owning_repo(tmp_path, "tllive", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "tllive")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _backdate(d)
+    # A `stat` wrapper: on a stat of a codex-raw log (the snapshot capture), the run resumes →
+    # write an inflight marker, THEN delegate to the real stat. Real stat is resolved with the
+    # wrapper dir stripped from PATH so we don't self-recurse.
+    real_stat = subprocess.run(["which", "stat"], capture_output=True, text=True).stdout.strip()
+    statwrap_dir = tmp_path / "statwrap"
+    statwrap_dir.mkdir(parents=True, exist_ok=True)
+    statwrap = statwrap_dir / "stat"
+    statwrap.write_text(
+        "#!/usr/bin/env bash\n"
+        f'rundir="{d}"\n'
+        f'realstat="{real_stat}"\n'
+        # If any arg references a codex-raw log, the run goes LIVE (writes an inflight marker)
+        # before delegating — this fires during the snapshot, after classification.
+        'for a in "$@"; do\n'
+        '  case "$a" in\n'
+        '    *codex-raw-*.log) printf x > "$rundir/inflight-implement-x.marker" 2>/dev/null || true ;;\n'
+        '  esac\n'
+        'done\n'
+        'exec "$realstat" "$@"\n',
+        encoding="utf-8",
+    )
+    os.chmod(statwrap, 0o755)
+    graveyard = tmp_path / "graveyard"
+    graveyard.mkdir(parents=True, exist_ok=True)
+    shim, _ = _graveyard_shim(tmp_path)
+    env = {"RETENTION_TRASH_CMD": str(shim),
+           "PATH": f"{statwrap_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14",
+         "--json", "--apply"],
+        home=root, env=env,
+    )
+    objs = [json.loads(l) for l in cp.stdout.splitlines() if l.strip()]
+    o = _by_id(objs)["tllive"]
+    # Classification still saw a quiet run (eligible); the apply-time re-verify saw the marker.
+    assert o["tierL"]["eligible"] is True, "verdict must stay eligible (apply never re-classifies)"
+    assert o["tierL"]["action"] == "skipped-changed", (
+        "a run that went LIVE (inflight marker) after Tier-L classification must NOT be swept"
+    )
+    assert (d / "codex-raw-x.log").exists(), "no destructive verb on the now-live run's logs"
+
+
 # --------------------------------------------------------------------------- #
 # AC3: Tier-W apply removes an eligible no-pointer clean worktree (re-verify FIRST
 # sequence); a skip:* child is UNTOUCHED; re-verify-ordering on a changed child.
@@ -1607,14 +1770,24 @@ def test_apply_reverify_declines_run_gone_live_via_waiting(tmp_path):
     graveyard.mkdir(parents=True, exist_ok=True)
     shim = tmp_path / "trash-wentlive.sh"
     sj = d / "state.json"
-    live_state = json.dumps({"stage": "done", "waiting": "Gate B", "baseRef": "main",
-                             "repoRoot": str(repo)})
+    # A REAL JSON OBJECT (single-encoded) written to state.json — NOT a double-encoded JSON
+    # string literal (which would make jq error on `.waiting`, exercising "broken state =>
+    # skipped-changed" instead of the waiting recheck). Persist it to a file the shim copies
+    # so the shell never re-quotes / re-encodes the JSON.
+    live_state_file = tmp_path / "wentlive-state.json"
+    live_state_file.write_text(
+        json.dumps({"stage": "done", "waiting": "Gate B", "baseRef": "main",
+                    "repoRoot": str(repo)}),
+        encoding="utf-8",
+    )
     shim.write_text(
         "#!/usr/bin/env bash\n"
         f'sj="{sj}"\n'
         f'dest="{graveyard}"\n'
-        # The run RESUMES (goes live) the moment 1.1 is being torn down: set `.waiting`.
-        f'printf %s {json.dumps(live_state)!r} > "$sj" 2>/dev/null || true\n'
+        f'live="{live_state_file}"\n'
+        # The run RESUMES (goes live) the moment 1.1 is being torn down: set `.waiting` by
+        # overwriting state.json with the real live JSON object.
+        'cp "$live" "$sj" 2>/dev/null || true\n'
         'for p in "$@"; do\n'
         '  base="$(basename "$p")"; parent="$(basename "$(dirname "$p")")"\n'
         '  mv "$p" "$dest/$parent-$base" 2>/dev/null || exit 1\n'
@@ -1836,31 +2009,53 @@ def test_apply_action_values_in_closed_enum(tmp_path):
 # not stop the others; exit 0.
 # --------------------------------------------------------------------------- #
 def test_apply_never_aborts_scan_on_bad_run(tmp_path):
-    """A run whose apply hits a failing trash (and a torn-state run) amid GOOD runs ⇒ all good
-    runs are still processed and exit is 0. We mix a failing-trash run + a good report run; the
-    failing one must not abort the scan of the other."""
-    repo_g = _make_owning_repo(tmp_path, "good", ancestor=True)
+    """AC6 cross-run isolation: a REAL apply FAILURE on one run (a `trash` that exits non-zero,
+    via _failing_shim) must NOT abort the scan — the OTHER runs are still processed and exit is 0.
+    Two eligible runs share one failing trash command: the failure on the first leaves its data
+    on disk (action=trash-failed) but the scan continues and the second run is still classified +
+    applied. (Mutation-verify: if a per-run apply failure aborted the scan, the second run would
+    be missing from the output / its action unprocessed.)
+
+    Both runs hit the SAME failing trash, so BOTH log a trash-failed outcome — the point is that
+    BOTH are PROCESSED (present in the output, classified, action recorded), not that one succeeds.
+    A torn-state run is also mixed in to confirm a classification error likewise never aborts."""
+    repo_a = _make_owning_repo(tmp_path, "runA", ancestor=True)
+    repo_b = _make_owning_repo(tmp_path, "runB", ancestor=True)
     root = tmp_path / "runs"
-    # good run with an eligible heavy log
-    g = _run_dir(root, "good")
-    _state(g, stage="done", waiting=None, baseRef="main", repoRoot=str(repo_g))
-    (g / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
-    _backdate(g)
+    # runA: eligible heavy log + eligible worktree; its apply will hit the failing trash.
+    a = _run_dir(root, "runA")
+    _state(a, stage="done", waiting=None, baseRef="main", repoRoot=str(repo_a))
+    (a / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(a / "wt" / "phase1")
+    _backdate(a)
+    # runB: a SECOND eligible run that must STILL be processed after runA's apply failure.
+    b = _run_dir(root, "runB")
+    _state(b, stage="done", waiting=None, baseRef="main", repoRoot=str(repo_b))
+    (b / "codex-raw-y.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(b / "wt" / "phase1")
+    _backdate(b)
     # a torn-state run (classification errors → skip), still must not abort
     torn = _run_dir(root, "torn")
     (torn / "state.json").write_text('{"stage": "done", "wait', encoding="utf-8")
-    (torn / "codex-raw-y.log").write_text("z" * 100, encoding="utf-8")
+    (torn / "codex-raw-z.log").write_text("z" * 100, encoding="utf-8")
     _backdate(torn)
-    shim, graveyard = _graveyard_shim(tmp_path)
-    cp, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    fail = _failing_shim(tmp_path)
+    cp, objs = _scan(root, apply=True, trash_cmd=str(fail))
     assert cp.returncode == 0
     ids = _by_id(objs)
-    assert "good" in ids and "torn" in ids
-    # good run's log was swept; torn run skipped (not-done) and untouched.
-    assert ids["good"]["tierL"]["action"] == "swept"
-    assert not (g / "codex-raw-x.log").exists()
+    # Every run was PROCESSED despite runA's apply failure (the isolation guarantee).
+    assert {"runA", "runB", "torn"} <= set(ids), f"a failing apply aborted the scan: {set(ids)}"
+    # runA's apply really failed (data left on disk), but did not abort the scan.
+    assert ids["runA"]["tierL"]["action"] == "trash-failed"
+    assert (a / "codex-raw-x.log").exists()
+    # runB was STILL classified AND applied after runA's failure — the load-bearing assertion.
+    assert ids["runB"]["tierL"]["eligible"] is True
+    assert ids["runB"]["tierL"]["action"] == "trash-failed"
+    assert _child(ids["runB"], "phase1")["eligible"] is True
+    assert _child(ids["runB"], "phase1")["action"] == "trash-failed"
+    # torn run classified (skip), untouched.
     assert ids["torn"]["tierL"]["eligible"] is False
-    assert (torn / "codex-raw-y.log").exists()
+    assert (torn / "codex-raw-z.log").exists()
 
 
 def test_apply_human_report_verbs(tmp_path):
@@ -1882,3 +2077,65 @@ def test_apply_human_report_verbs(tmp_path):
     out = cp.stdout
     assert "SWEPT" in out and "WOULD-SWEEP" not in out
     assert "REMOVED" in out and "WOULD-REMOVE" not in out
+
+
+def test_apply_human_report_failed_trash_render_and_aggregate(tmp_path):
+    """The human-output `FAILED (trash)` render branch (Tier-L AND Tier-W) plus the action-aware
+    aggregate: a trash that always fails leaves both the heavy log and the worktree on disk, so
+    the per-tier lines render `FAILED (trash)` (NOT SWEPT/REMOVED) and the summary counts 0
+    reclaimed / 0 removed (the trash-failed items fall to skipped)."""
+    repo = _make_owning_repo(tmp_path, "ftr", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "ftr")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(d / "wt" / "phase1")
+    _backdate(d)
+    fail = _failing_shim(tmp_path)
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14", "--apply"],
+        home=root, env={"RETENTION_TRASH_CMD": str(fail)},
+    )
+    assert cp.returncode == 0
+    lines = cp.stdout.splitlines()
+    tierL_line = next(l for l in lines if "Tier-L (heavy logs):" in l)
+    tierW_line = next(l for l in lines if "wt/phase1:" in l)
+    assert "FAILED (trash)" in tierL_line, tierL_line
+    assert "SWEPT" not in tierL_line
+    assert "FAILED (trash)" in tierW_line, tierW_line
+    assert "REMOVED" not in tierW_line
+    # action-aware aggregate: nothing actually reclaimed/removed; both counted as skipped.
+    summary = lines[-1]
+    assert re.search(r"Tier-L reclaimed ~0 MB across 0 runs", summary), summary
+    assert re.search(r"Tier-W removed 0 worktrees across 0 runs", summary), summary
+    mS = re.search(r"·\s*(\d+)\s+runs/items skipped", summary)
+    assert mS is not None and int(mS.group(1)) >= 2, summary
+
+
+def test_apply_human_report_skipped_changed_render_branch(tmp_path):
+    """The human-output `SKIPPED (changed)` render branch (Tier-W): a sibling child dirtied in the
+    apply-time TOCTOU window is declined (action=skipped-changed) and its per-child line renders
+    `SKIPPED (changed)` (NOT REMOVED). Pins the verb-render branch distinct from the JSON action
+    field. The action-aware aggregate counts only the truly-removed child as removed."""
+    repo = _make_owning_repo(tmp_path, "scr", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "scr")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    _clean_pushed_checkout(d / "wt" / "1.1")    # glob-first eligible child (removed)
+    _clean_pushed_checkout(d / "wt" / "9.1")    # second eligible child (dirtied in window)
+    _backdate(d)
+    shim, _ = _dirtying_shim(tmp_path, d / "wt" / "9.1")
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14", "--apply"],
+        home=root, env={"RETENTION_TRASH_CMD": str(shim)},
+    )
+    assert cp.returncode == 0
+    lines = cp.stdout.splitlines()
+    l11 = next(l for l in lines if "wt/1.1:" in l)
+    l91 = next(l for l in lines if "wt/9.1:" in l)
+    assert "REMOVED" in l11, l11
+    assert "SKIPPED (changed)" in l91, l91
+    assert "REMOVED" not in l91
+    # aggregate: exactly one worktree removed (1.1); the declined 9.1 falls to skipped.
+    summary = lines[-1]
+    assert re.search(r"Tier-W removed 1 worktrees across 1 runs", summary), summary

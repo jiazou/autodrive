@@ -563,15 +563,32 @@ apply_tier_W_child() {
   fi
 }
 
-# Tier-L apply for ONE run when TIERL_VERDICT == eligible: trash every heavy log. Echoes
-# `swept` if ALL trashed, `trash-failed` if ANY trash failed (soft-fail, continue). History
-# files are NEVER in heavy_logs, so they are structurally untouchable. $1=run_dir
+# Tier-L apply for ONE run when TIERL_VERDICT == eligible: trash every heavy log captured in
+# the classification-time SNAPSHOT (TIERL_LOGS_SNAPSHOT), NOT a fresh heavy_logs() re-enum.
+# Sweeping the snapshot guarantees apply trashes EXACTLY the previewed set (report == apply):
+# a heavy log created AFTER classification is never swept (it was never in the snapshot / the
+# report). Echoes `swept` if ALL trashed, `trash-failed` if ANY trash failed (soft-fail,
+# continue), or `skipped-changed` if the apply-time liveness re-verify declines. History files
+# are NEVER in heavy_logs, so they are structurally untouchable. $1=run_dir
 apply_tier_L() {
-  local d="$1" name bytes outcome="swept"
-  while IFS=$'\t' read -r name bytes; do
-    [ -n "$name" ] || continue
+  local d="$1" entry name outcome="swept"
+
+  # Step 1 — re-verify guard (TOCTOU), BEFORE any destructive verb (DP-A2), mirroring
+  # apply_tier_W_child. The Tier-L verdict was computed earlier in this run; re-assert the
+  # run-level liveness gate against LIVE state. A run resumed in the window (sets `.waiting` /
+  # writes an inflight marker / un-sets its done signal) must NOT have its logs swept (the
+  # "don't sweep an active run's worktree" hazard, extended to its heavy logs). On ANY failure
+  # ⇒ skipped-changed, NO destructive verb. (Age cannot un-age in the window — not re-checked.)
+  is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
+  has_open_inflight "$d" && { printf 'skipped-changed'; return; }
+  is_done "$d" || { printf 'skipped-changed'; return; }
+
+  # Step 2 — trash the SNAPSHOT set captured at classification (not a live re-enum).
+  for entry in "${TIERL_LOGS_SNAPSHOT[@]:-}"; do
+    [ -n "$entry" ] || continue
+    name="${entry%%$'\t'*}"
     $TRASH_CMD "$d/$name" 2>/dev/null || outcome="trash-failed"
-  done < <(heavy_logs "$d")
+  done
   printf '%s' "$outcome"
 }
 
@@ -666,9 +683,10 @@ report_run() {
     # Under --apply the verb reflects what HAPPENED (the additive action outcome).
     if [ "$APPLY" -eq 1 ]; then
       case "$TIERL_ACTION" in
-        swept)        verb="SWEPT" ;;
-        trash-failed) verb="FAILED (trash)" ;;
-        *)            verb="SWEPT" ;;
+        swept)           verb="SWEPT" ;;
+        trash-failed)    verb="FAILED (trash)" ;;
+        skipped-changed) verb="SKIPPED (changed)" ;;
+        *)               verb="SWEPT" ;;
       esac
     fi
     printf '  Tier-L (heavy logs): %s <%s files, ~%s MB>\n' "$verb" "$nfiles" "$((total / 1048576))"
@@ -797,23 +815,36 @@ for run_dir in "$ROOT"/*; do
   # own "item skipped"); a Tier-W skip under a Tier-L-eligible run is NOT lost. Bytes are
   # SUMMED across runs and converted to MB ONCE at the end (per-run flooring would report
   # several sub-MB reclaimable logs as ~0 MB total).
-  if [ "$TIERL_VERDICT" = "eligible" ]; then
+  #
+  # The summary must tell the TRUTH about what the chosen verbs claim. In report mode the verbs
+  # are hypothetical ("would reclaim/remove") so the tally counts every AUTHORIZED `eligible`
+  # verdict. Under --apply the verbs are past-tense ("reclaimed/removed") so the tally MUST count
+  # only what ACTUALLY happened — the action outcomes `swept`/`removed`. A `trash-failed` /
+  # `skipped-changed` item left the data on disk; counting it under "reclaimed/removed" would
+  # over-claim reclaimed space and worktrees the destructive tool did NOT remove. The
+  # not-acted-on item is tallied under "runs/items skipped" instead (which also matches the
+  # apply verbs), so nothing is silently dropped.
+  if [ "$TIERL_VERDICT" = "eligible" ] \
+       && { [ "$APPLY" -ne 1 ] || [ "$TIERL_ACTION" = "swept" ]; }; then
     tierL_runs=$((tierL_runs + 1))
     # Use the PRE-deletion snapshot (finding 2): under --apply the logs are already trashed, so
     # a fresh heavy_logs() would tally ~0 MB and under-report what was reclaimed.
     tierL_bytes_total=$((tierL_bytes_total + TIERL_BYTES_SNAPSHOT))
   else
-    skipped=$((skipped + 1))   # Tier-L skip for this run
+    skipped=$((skipped + 1))   # Tier-L skip (or, under --apply, an eligible tier that did NOT sweep)
   fi
 
   run_has_wt_elig=0
   i=0
   while [ "$i" -lt "${#TW_VERDICTS[@]:-0}" ]; do
-    if [ "${TW_VERDICTS[$i]}" = "eligible" ]; then
+    if [ "${TW_VERDICTS[$i]}" = "eligible" ] \
+         && { [ "$APPLY" -ne 1 ] || [ "${TW_ACTIONS[$i]:-none}" = "removed" ]; }; then
       tierW_worktrees=$((tierW_worktrees + 1))
       run_has_wt_elig=1
     else
-      skipped=$((skipped + 1))   # Tier-W child skip — counted independently of Tier-L
+      # Tier-W child skip — counted independently of Tier-L. Under --apply this also catches an
+      # eligible child whose action was skipped-changed/trash-failed (the dir remained on disk).
+      skipped=$((skipped + 1))
     fi
     i=$((i + 1))
   done
