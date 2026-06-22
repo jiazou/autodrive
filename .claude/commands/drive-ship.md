@@ -137,8 +137,46 @@ End PR bodies with:
 
 ## After approval
 
-Push `featureBranch`; open ONE PR (`gh pr create --base <baseRef>` / `glab`). Record
-the PR url to `state.ship.prUrl`.
-Update `$RUN_DIR/state.json` (`lastGate="B"`, `stage="done"`). `git worktree
-remove` the ship worktree. Report the PR link and the `$RUN_DIR` path (kept for
-the run record). The user's main working tree was never touched.
+The decisive invariant is **`completedAt`-after-removal-SUCCESS, NOT stage-ordering**: the
+helper's `is_done()` treats a parseable `completedAt` ALONE as done (independent of `stage`),
+so a `completedAt` written before removals finished would itself make the run sweepable. The
+marker MUST be the LAST thing, written only after EVERY required removal is PROVEN done.
+
+1. Push `featureBranch`; open ONE PR (`gh pr create --base <baseRef>` / `glab`). Record the
+   PR url to `state.ship.prUrl`.
+2. **`cd` OUT of `wt/ship` to a VERIFIED-STABLE dir FIRST**, BEFORE the removal loop. The
+   ship coordinator's cwd is `$RUN_DIR/wt/ship` — itself a drive-owned name the loop removes;
+   the removal would delete the live cwd if cwd is still inside it. Select the cd target with
+   an explicit `-d` VALIDITY check on `repoRoot` — mirror the helper's guard `[ -d "$rr" ]`
+   EXACTLY; do NOT treat "`repoRoot` is set" as sufficient (a stale/deleted-but-present
+   `state.repoRoot` would make `cd` FAIL, leaving the shell inside `wt/ship`).
+   `target = ( repoRoot non-empty AND [ -d "$repoRoot" ] ) ? "$repoRoot" : "$RUN_DIR"` (the
+   `$RUN_DIR` fallback covers `repoRoot` UNSET AND PRESENT-but-invalid); VERIFY
+   `[ -d "$RUN_DIR" ]` before relying on it; the `cd` is itself CHECKED (`cd "$target" ||
+   <fail-closed>`). **Fail-closed branch — if NO valid stable dir can be entered** (neither a
+   valid `repoRoot` nor a valid `$RUN_DIR`): run NO destructive verb (no `git worktree
+   remove`, no `trash`), leave the worktrees, and DO NOT write `completedAt` / `stage="done"`
+   — the run stays NOT-done / not-sweepable; report the failure; a later resume re-attempts.
+   The destructive loop (steps 3-6) runs ONLY AFTER a successful `cd` to a verified-stable dir
+   OUTSIDE any worktree being removed.
+3. **Remove ALL drive-owned worktrees of the run, in the owning repo, capturing per-tree
+   removal success.** For each `$RUN_DIR/wt/<name>` whose `<name>` is drive-owned: `git -C
+   "<repoRoot>" worktree remove --force "$RUN_DIR/wt/<name>" 2>/dev/null`; then once `git -C
+   "<repoRoot>" worktree prune`; then `trash "$RUN_DIR/wt/<name>"` the dead dirs (drive-owned
+   names only — never ad-hoc names). **For EACH drive-owned `<name>`, VERIFY removal completed:
+   confirm `[ ! -e "$RUN_DIR/wt/<name>" ]`** — the per-tree removal-success proof. (Removing
+   `wt/ship` itself succeeds because the command runs `-C "<repoRoot>"`, not inside the
+   worktree, and cwd is already out of it per step 2; including it is idempotent.)
+4. **GATE: write `completedAt` ONLY IF every required drive-owned worktree removal in step 3
+   is PROVEN done** (all `$RUN_DIR/wt/<name>` dirs gone). If ANY drive-owned worktree could
+   NOT be removed (still exists on disk after the loop), DO NOT write `completedAt` and DO NOT
+   write `stage="done"` — STOP and report the un-removable worktree (fail-safe: the run stays
+   NOT-done / not-sweepable, no orphan-attesting marker). Only when all removals are proven
+   done: `printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$RUN_DIR/completedAt"` (one clean
+   ISO-8601 line + trailing newline — EXACTLY the format the helper parses strictly; interior
+   whitespace would make it unparseable).
+5. **THEN** update `$RUN_DIR/state.json` (`lastGate="B"`, `stage="done"`) via the standard
+   temp-file+`mv`. `stage="done"` after the marker is belt-and-suspenders, NOT the
+   load-bearing gate (the gate is the proven-removal `completedAt` in step 4).
+6. Report the PR link and the `$RUN_DIR` path (kept for the run record), run from
+   `<repoRoot>`. The user's main working tree was never touched.

@@ -175,7 +175,7 @@ so every worktree reaches it by absolute path; not committed, not portable):
 ```
 task.md / design.md          -- premise; HIGH-LEVEL design (goal · approach · ## Phases)
 design-phase<P>.md           -- per-phase DETAILED design (interfaces, edge cases, Slices)
-state.json                   -- run model: runId, baseRef, featureBranch, stage, phase,
+state.json                   -- run model: runId, baseRef, featureBranch, repoRoot, stage, phase,
                                 phaseBaseSha, concurrencyCap, designReview, budget, per-slice
                                 {step,reviewCount,owns,deps} (populated per-phase by /drive-design),
                                 phaseDesign{round,status,redesigns} per phase (status

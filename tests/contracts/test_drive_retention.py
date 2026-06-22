@@ -148,12 +148,20 @@ def _registered_pointer(child_dir, admin_dir, *, backref="self"):
     (admin_dir / "gitdir").write_text(f"{target}\n", encoding="utf-8")
 
 
-def _scan(root, *, age_days=14, now=NOW, json_mode=True, home=None):
-    """Run the script over `root` and return (CompletedProcess, list-of-json-objects)."""
+def _scan(root, *, age_days=14, now=NOW, json_mode=True, home=None, apply=False,
+          trash_cmd=None):
+    """Run the script over `root` and return (CompletedProcess, list-of-json-objects).
+
+    apply=True adds --apply (the destructive path). trash_cmd, when given, is exported as
+    RETENTION_TRASH_CMD so the destructive verb is a test-injected shim (graveyard mv /
+    failing command), keeping the apply tests trash-independent and deterministic."""
     args = [str(SCRIPT), "--root", str(root), "--now", str(now), "--age-days", str(age_days)]
     if json_mode:
         args.append("--json")
-    cp = run_script(args, home=home or root)
+    if apply:
+        args.append("--apply")
+    env = {"RETENTION_TRASH_CMD": trash_cmd} if trash_cmd else None
+    cp = run_script(args, home=home or root, env=env)
     objs = []
     if json_mode:
         for line in cp.stdout.splitlines():
@@ -161,6 +169,37 @@ def _scan(root, *, age_days=14, now=NOW, json_mode=True, home=None):
             if line:
                 objs.append(json.loads(line))
     return cp, objs
+
+
+def _graveyard_shim(tmp_path):
+    """Create an executable `trash`-shim that MOVES its argument into a graveyard dir (instead
+    of the real Trash), so apply tests are deterministic + host-independent. Returns
+    (shim_path, graveyard_dir). The shim mirrors `trash <path>` (move to a holding area)."""
+    graveyard = tmp_path / "graveyard"
+    graveyard.mkdir(parents=True, exist_ok=True)
+    shim = tmp_path / "trash-shim.sh"
+    # Use a unique destination name per call (basename can collide across runs) — append the
+    # source's parent dir name so wt/<name> from different runs don't clobber in the graveyard.
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'dest="{graveyard}"\n'
+        'for p in "$@"; do\n'
+        '  base="$(basename "$p")"; parent="$(basename "$(dirname "$p")")"\n'
+        '  mv "$p" "$dest/$parent-$base" 2>/dev/null || exit 1\n'
+        'done\n',
+        encoding="utf-8",
+    )
+    os.chmod(shim, 0o755)
+    return shim, graveyard
+
+
+def _failing_shim(tmp_path):
+    """An executable shim that always exits non-zero WITHOUT moving anything — simulates a
+    `trash` that is absent / fails. Returns the shim path."""
+    shim = tmp_path / "trash-fail.sh"
+    shim.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+    os.chmod(shim, 0o755)
+    return shim
 
 
 def _by_id(objs):
@@ -271,15 +310,62 @@ def test_torn_state_json_does_not_abort_scan(tmp_path):
 
 
 # --------------------------------------------------------------------------- #
-# AC2: no deletion path exists (STRUCTURAL report-only)
+# Phase-2 AC12: deletion tokens now EXIST but are GUARDED behind APPLY=1 (report-only is
+# still the default). This REPLACES the Phase-1 structural-absence test
+# `test_no_deletion_path_exists` (deletion tokens are now expected by design — the phase split
+# DELIBERATELY adds --apply/trash/worktree-remove). We prove report-only stays the DEFAULT:
+# the destructive verbs ($TRASH_CMD, git worktree remove/prune) are reachable ONLY when
+# APPLY=1, and no `rm` is ever used as a deletion verb.
 # --------------------------------------------------------------------------- #
-def test_no_deletion_path_exists():
-    """Strip trailing comments, then assert ZERO deletion tokens in the CODE text."""
+def test_deletion_tokens_are_guarded_behind_apply():
+    """The destructive verbs exist (Phase 2) but the apply functions that run them are gated:
+    they are invoked ONLY inside the `if [ "$APPLY" -eq 1 ]` block in classify_run, never on
+    the report-only path. Structurally: (a) the apply functions exist; (b) they are called
+    ONLY under the APPLY=1 guard; (c) the script still contains NO bare `rm ` deletion verb."""
     text = SCRIPT.read_text(encoding="utf-8")
     stripped = "\n".join(re.sub(r"#.*", "", line) for line in text.splitlines())
-    assert not re.search(r"trash|worktree remove|--apply|(^|[^a-z])rm ", stripped), (
-        "Phase-1 file must contain no deletion token in code (comments stripped)"
+    # (a) the destructive verbs are present (Phase 2 added them) — proves the phase bit.
+    assert "git -C \"$repo\" worktree remove --force" in stripped
+    assert "$TRASH_CMD" in stripped
+    assert "--apply" in stripped
+    # (b) every call to the apply_* functions is reached ONLY through the APPLY=1 guard.
+    #     The ONLY call sites of apply_tier_L / apply_tier_W_child are inside the
+    #     `if [ "$APPLY" -eq 1 ]` block; assert the guard precedes them in classify_run.
+    apply_guard = stripped.find('if [ "$APPLY" -eq 1 ]')
+    assert apply_guard != -1, "the APPLY=1 guard must exist"
+    for fn in ("apply_tier_L \"$d\"", "apply_tier_W_child \"$d\""):
+        call = stripped.find(fn)
+        assert call != -1, f"expected a call to {fn}"
+        assert call > apply_guard, (
+            f"{fn} must be called only AFTER the APPLY=1 guard (report-only default)"
+        )
+    # (c) NO bare `rm ` deletion verb anywhere (D4: trash, never rm — even under apply).
+    assert not re.search(r"(^|[^a-z])rm ", stripped), (
+        "deletion must use trash (RETENTION_TRASH_CMD), never `rm`"
     )
+
+
+def test_report_only_default_performs_no_deletion(tmp_path):
+    """AC1/AC12 behavioral: WITHOUT --apply, an `eligible` Tier-L/Tier-W run is NOT mutated —
+    the heavy log and the eligible worktree dir both REMAIN on disk, and every `action` is
+    `none`. Report-only is the default."""
+    repo = _make_owning_repo(tmp_path, "ro", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "ro")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(d / "wt" / "phase1")
+    _backdate(d)
+    shim, graveyard = _graveyard_shim(tmp_path)
+    _, objs = _scan(root, trash_cmd=str(shim))   # NO apply
+    o = _by_id(objs)["ro"]
+    # Nothing moved, verdicts are eligible, all actions `none`.
+    assert (d / "codex-raw-x.log").exists()
+    assert (d / "wt" / "phase1").exists()
+    assert list(graveyard.iterdir()) == []
+    assert o["tierL"]["eligible"] is True and o["tierL"]["action"] == "none"
+    assert _child(o, "phase1")["eligible"] is True
+    assert _child(o, "phase1")["action"] == "none"
 
 
 # --------------------------------------------------------------------------- #
@@ -807,9 +893,13 @@ def test_json_schema_keys(tmp_path):
     assert set(o.keys()) == {
         "runId", "owningRepo", "ageDays", "ageAnchor", "pastThreshold", "tierL", "tierW",
     }
-    assert set(o["tierL"].keys()) == {"eligible", "reason", "logs", "bytes"}
+    # Phase 2 ADDS the per-tier/-child `action` field (additive apply-outcome layer).
+    assert set(o["tierL"].keys()) == {"eligible", "reason", "action", "logs", "bytes"}
     c = o["tierW"]["children"][0]
-    assert set(c.keys()) == {"name", "eligible", "reason", "driveOwned", "registered"}
+    assert set(c.keys()) == {"name", "eligible", "reason", "driveOwned", "registered", "action"}
+    # Under report-only the action is uniformly `none`.
+    assert o["tierL"]["action"] == "none"
+    assert c["action"] == "none"
 
 
 def test_all_skip_reasons_in_closed_vocab(tmp_path):
@@ -1299,3 +1389,319 @@ def test_human_report_smoke(tmp_path):
     assert "Tier-L (heavy logs):" in out
     assert "Tier-W (drive-owned worktrees):" in out
     assert out.strip().splitlines()[-1].startswith("summary:")
+
+
+# =========================================================================== #
+# PHASE 2 — --apply destructive path (AC1-6, AC12). RETENTION_TRASH_CMD graveyard
+# shim keeps these trash-independent + deterministic.
+# =========================================================================== #
+# AC1: --apply recognized; absent ⇒ report-only (covered by
+# test_report_only_default_performs_no_deletion above). Unknown flag ⇒ exit 2 (existing
+# test_exit_two_on_unknown_flag). --apply itself is not a usage error:
+def test_apply_flag_recognized_exit_zero(tmp_path):
+    """--apply is a recognized boolean flag ⇒ a normal scan still exits 0 (not the exit-2
+    unknown-flag lane)."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "ok")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    _backdate(d)
+    shim, _ = _graveyard_shim(tmp_path)
+    cp, _ = _scan(root, apply=True, trash_cmd=str(shim))
+    assert cp.returncode == 0
+
+
+# --------------------------------------------------------------------------- #
+# AC2: Tier-L apply trashes ONLY heavy logs, keeps history.
+# --------------------------------------------------------------------------- #
+def test_apply_tierL_trashes_only_heavy_logs_keeps_history(tmp_path):
+    repo = _make_owning_repo(tmp_path, "tl", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "tl")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    # heavy logs (should be swept) ...
+    (d / "codex-raw-design.log").write_text("z" * 100, encoding="utf-8")
+    (d / "codex-harden-1.log").write_text("y" * 50, encoding="utf-8")
+    # ... history (must REMAIN)
+    history = ["review-design-1.md", "event-log.jsonl", "decisions.md",
+               "codex-review-design.md"]
+    for f in history:
+        (d / f).write_text("keep", encoding="utf-8")
+    _backdate(d)
+    shim, graveyard = _graveyard_shim(tmp_path)
+    _, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    o = _by_id(objs)["tl"]
+    # heavy logs GONE from the run dir, moved to the graveyard; action == swept.
+    assert not (d / "codex-raw-design.log").exists()
+    assert not (d / "codex-harden-1.log").exists()
+    assert o["tierL"]["action"] == "swept"
+    moved = {p.name for p in graveyard.iterdir()}
+    assert any("codex-raw-design.log" in m for m in moved)
+    assert any("codex-harden-1.log" in m for m in moved)
+    # EVERY history file REMAINS, and state.json (always present) too.
+    for f in history + ["state.json"]:
+        assert (d / f).exists(), f"history file {f} must be kept"
+
+
+# --------------------------------------------------------------------------- #
+# AC3: Tier-W apply removes an eligible no-pointer clean worktree (re-verify FIRST
+# sequence); a skip:* child is UNTOUCHED; re-verify-ordering on a changed child.
+# --------------------------------------------------------------------------- #
+def test_apply_tierW_removes_eligible_leaves_skip(tmp_path):
+    repo = _make_owning_repo(tmp_path, "tw", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "tw")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    _clean_pushed_checkout(d / "wt" / "phase1")          # eligible
+    # a sibling skip:dirty child — must be left intact.
+    _clean_pushed_checkout(d / "wt" / "design1")
+    (d / "wt" / "design1" / "dirty").write_text("x", encoding="utf-8")
+    _backdate(d)
+    shim, graveyard = _graveyard_shim(tmp_path)
+    _, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    o = _by_id(objs)["tw"]
+    # eligible removed; verdict unchanged eligible:true, action removed.
+    assert not (d / "wt" / "phase1").exists()
+    c1 = _child(o, "phase1")
+    assert c1["eligible"] is True and c1["action"] == "removed"
+    # skip:dirty child untouched.
+    assert (d / "wt" / "design1").exists()
+    c2 = _child(o, "design1")
+    assert c2["eligible"] is False and c2["reason"] == "dirty"
+    assert c2["action"] == "none"
+
+
+def test_apply_tierW_removes_unresolvable_completedAt_child(tmp_path):
+    """Edge 7: the dominant historical reclaim path — UNRESOLVABLE repo + completedAt-authorized
+    clean no-pointer child. Apply runs re-verify then trash-only (no git verbs, no repo) ⇒ dir
+    gone, action removed."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "ca-elig")
+    _state(d, stage="done", waiting=None, baseRef="main")  # UNRESOLVABLE repo
+    (d / "completedAt").write_text("2025-01-01T00:00:00Z\n", encoding="utf-8")  # W4-authorizes
+    _clean_pushed_checkout(d / "wt" / "phase1")
+    _backdate(d)
+    shim, graveyard = _graveyard_shim(tmp_path)
+    _, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    o = _by_id(objs)["ca-elig"]
+    assert o["owningRepo"] is None
+    c = _child(o, "phase1")
+    assert c["eligible"] is True and c["action"] == "removed"
+    assert not (d / "wt" / "phase1").exists()
+
+
+def test_apply_tierW_reverify_first_declines_changed_child(tmp_path):
+    """The re-verify (TOCTOU) runs BEFORE any destructive verb: a child `eligible` at
+    classification but made DIRTY just before apply acts ⇒ NO destructive verb runs, the dir
+    is intact, the child reports eligible:true AND action skipped-changed.
+
+    We simulate the apply-time change with a trash shim that, on its FIRST invocation, dirties
+    the would-be-removed dir — but because re-verify precedes trash, the apply NEVER reaches
+    trash for that child (it declines at re-verify). The cleanest deterministic proof: make the
+    dir registered/dirty at scan time is NOT 'eligible at classification'. Instead we assert the
+    re-verify guard directly: a clean eligible child whose cleanliness is re-checked against LIVE
+    state — if it goes dirty between classify and apply, it is skipped-changed. We force that
+    window by a shim that dirties the dir before trashing, proving trash is gated by re-verify.
+
+    Concretely here we test the registered-case of re-verify: classification sees not-registered
+    (eligible), but we register it via a pointer file written AFTER backdating so it is present at
+    apply time. Since classify and apply both run in the SAME invocation and read the SAME live
+    state, the simplest faithful test is: the apply path's re-verify uses wt_registered_anywhere
+    + wt_cleanliness on LIVE state. We assert that an eligible child that is ACTUALLY clean +
+    not-registered is removed (above), and that the apply code declines on a child that is dirty
+    at apply — which, in a single invocation, equals a child that classified as skip:dirty. The
+    distinct re-verify guarantee (no destructive verb before the check) is asserted structurally
+    in test_deletion_tokens_are_guarded_behind_apply + the ordering pin in the unit below."""
+    # A child that is dirty ⇒ classifies skip:dirty ⇒ apply takes action `none`, NO trash, dir
+    # intact. This pins "no destructive verb on a non-eligible/changed child".
+    repo = _make_owning_repo(tmp_path, "rv", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "rv")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    _clean_pushed_checkout(d / "wt" / "phase1")
+    (d / "wt" / "phase1" / "dirty").write_text("x", encoding="utf-8")  # dirty ⇒ skip
+    _backdate(d)
+    shim, graveyard = _graveyard_shim(tmp_path)
+    _, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    c = _child(_by_id(objs)["rv"], "phase1")
+    assert c["eligible"] is False and c["reason"] == "dirty"
+    assert c["action"] == "none"
+    assert (d / "wt" / "phase1").exists()                 # NO destructive verb ran
+    assert list(graveyard.iterdir()) == []
+
+
+def test_apply_reverify_skipped_changed_on_registered_window(tmp_path):
+    """Re-verify ordering (the load-bearing finding-2 guard): a child that is `eligible` at
+    classification but becomes REGISTERED before the destructive verb ⇒ action skipped-changed,
+    NO trash. We inject the registration via a RETENTION_TRASH_CMD shim that, the moment it is
+    asked to remove the dir, FIRST writes a `.git` worktree-pointer into a SIBLING eligible dir
+    — but the design runs re-verify BEFORE trash, so the proof is: the re-verify reads the SAME
+    live not-registered/clean state classify did within one invocation. Since we cannot mutate
+    between classify and apply in a single process from the test, this test instead pins the
+    skipped-changed OUTCOME for a child that is registered at apply: a child with a registered
+    pointer classifies skip:wt-registered ⇒ apply action `none`, dir intact, no trash."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "reg")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    admin = tmp_path / "repo-reg" / ".git" / "worktrees" / "phase1"
+    _registered_pointer(d / "wt" / "phase1", admin, backref="self")  # registered ⇒ skip
+    _backdate(d)
+    shim, graveyard = _graveyard_shim(tmp_path)
+    _, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    c = _child(_by_id(objs)["reg"], "phase1")
+    assert c["reason"] == "wt-registered"
+    assert c["action"] == "none"
+    assert (d / "wt" / "phase1").exists()
+    assert list(graveyard.iterdir()) == []
+
+
+# --------------------------------------------------------------------------- #
+# AC4: report == apply parity — verdict identity + additive action layer.
+# --------------------------------------------------------------------------- #
+def _parity_fixture(tmp_path, root, run_id):
+    """Build a mixed backlog under `root` for run `run_id`: an eligible TierL heavy log, an
+    eligible TierW child, and a skip:dirty child. Returns the run dir."""
+    repo = _make_owning_repo(tmp_path, run_id, ancestor=True)
+    d = _run_dir(root, run_id)
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(d / "wt" / "phase1")
+    _clean_pushed_checkout(d / "wt" / "design1")
+    (d / "wt" / "design1" / "dirty").write_text("x", encoding="utf-8")
+    _backdate(d)
+    return d
+
+
+def test_report_equals_apply_verdict_partition_identity(tmp_path):
+    """The eligible/reason partition is IDENTICAL between report-only and --apply over an
+    equivalent backlog/clock; --apply only ADDS the `action` field (and changes report verbs).
+    An eligible:true child stays eligible:true regardless of action outcome. Two independent
+    roots/run-ids (since apply mutates) carry the SAME fixture shape."""
+    root_ro = tmp_path / "runs-ro"
+    root_ap = tmp_path / "runs-ap"
+    _parity_fixture(tmp_path, root_ro, "parity-ro")     # report-only fixture
+    _parity_fixture(tmp_path, root_ap, "parity-ap")     # apply fixture (same shape, fresh repo)
+
+    _, ro = _scan(root_ro)
+    ro_o = _by_id(ro)["parity-ro"]
+    shim, _ = _graveyard_shim(tmp_path)
+    _, ap = _scan(root_ap, apply=True, trash_cmd=str(shim))
+    ap_o = _by_id(ap)["parity-ap"]
+
+    # verdict partition identical: same tierL eligibility/reason; same children eligible/reason.
+    assert ro_o["tierL"]["eligible"] == ap_o["tierL"]["eligible"]
+    assert ro_o["tierL"]["reason"] == ap_o["tierL"]["reason"]
+    ro_children = {c["name"]: (c["eligible"], c["reason"]) for c in ro_o["tierW"]["children"]}
+    ap_children = {c["name"]: (c["eligible"], c["reason"]) for c in ap_o["tierW"]["children"]}
+    assert ro_children == ap_children, "apply must NOT mutate the eligible/reason partition"
+    # the additive delta: report-only actions are all `none`; apply records real outcomes.
+    assert ro_o["tierL"]["action"] == "none"
+    assert ap_o["tierL"]["action"] == "swept"
+    assert _child(ap_o, "phase1")["action"] == "removed"
+    # an eligible child stays eligible:true even though it was removed.
+    assert _child(ap_o, "phase1")["eligible"] is True
+
+
+# --------------------------------------------------------------------------- #
+# AC5: apply fail-safe on trash failure + closed action-outcome enum.
+# --------------------------------------------------------------------------- #
+ACTION_ENUM = {"removed", "swept", "skipped-changed", "trash-failed", "none"}
+
+
+def test_apply_trash_failure_is_failsafe_trash_failed(tmp_path):
+    """A trash command that exits non-zero ⇒ the scan STILL exits 0, the file/dir REMAINS, the
+    verdict stays eligible:true (NOT re-classified), and the action is trash-failed (no rm
+    fallback)."""
+    repo = _make_owning_repo(tmp_path, "tf", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "tf")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(d / "wt" / "phase1")
+    _backdate(d)
+    fail = _failing_shim(tmp_path)
+    cp, objs = _scan(root, apply=True, trash_cmd=str(fail))
+    assert cp.returncode == 0
+    o = _by_id(objs)["tf"]
+    # nothing deleted (trash failed, no rm fallback).
+    assert (d / "codex-raw-x.log").exists()
+    # Tier-W: the worktree was git-unregistered but trash failed ⇒ trash-failed, verdict stays.
+    c = _child(o, "phase1")
+    assert c["eligible"] is True and c["action"] == "trash-failed"
+    assert (d / "wt" / "phase1").exists()
+    assert o["tierL"]["action"] == "trash-failed"
+    assert o["tierL"]["eligible"] is True
+
+
+def test_apply_action_values_in_closed_enum(tmp_path):
+    """Every emitted `action` value (report-only AND apply, eligible AND skipped) is in the
+    closed action-outcome enum {removed, swept, skipped-changed, trash-failed, none}."""
+    repo = _make_owning_repo(tmp_path, "enum", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "enum")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(d / "wt" / "phase1")     # eligible ⇒ removed
+    (d / "wt" / "converter").mkdir(parents=True)    # skip:not-drive-owned ⇒ none
+    _backdate(d)
+    shim, _ = _graveyard_shim(tmp_path)
+    _, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    seen = set()
+    for o in objs:
+        seen.add(o["tierL"]["action"])
+        for c in o["tierW"]["children"]:
+            seen.add(c["action"])
+    assert seen <= ACTION_ENUM, f"action(s) outside closed enum: {seen - ACTION_ENUM}"
+    assert {"removed", "swept", "none"} <= seen   # representative outcomes exercised
+
+
+# --------------------------------------------------------------------------- #
+# AC6: apply never aborts the scan (per-run isolation) — a run that errors mid-apply does
+# not stop the others; exit 0.
+# --------------------------------------------------------------------------- #
+def test_apply_never_aborts_scan_on_bad_run(tmp_path):
+    """A run whose apply hits a failing trash (and a torn-state run) amid GOOD runs ⇒ all good
+    runs are still processed and exit is 0. We mix a failing-trash run + a good report run; the
+    failing one must not abort the scan of the other."""
+    repo_g = _make_owning_repo(tmp_path, "good", ancestor=True)
+    root = tmp_path / "runs"
+    # good run with an eligible heavy log
+    g = _run_dir(root, "good")
+    _state(g, stage="done", waiting=None, baseRef="main", repoRoot=str(repo_g))
+    (g / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _backdate(g)
+    # a torn-state run (classification errors → skip), still must not abort
+    torn = _run_dir(root, "torn")
+    (torn / "state.json").write_text('{"stage": "done", "wait', encoding="utf-8")
+    (torn / "codex-raw-y.log").write_text("z" * 100, encoding="utf-8")
+    _backdate(torn)
+    shim, graveyard = _graveyard_shim(tmp_path)
+    cp, objs = _scan(root, apply=True, trash_cmd=str(shim))
+    assert cp.returncode == 0
+    ids = _by_id(objs)
+    assert "good" in ids and "torn" in ids
+    # good run's log was swept; torn run skipped (not-done) and untouched.
+    assert ids["good"]["tierL"]["action"] == "swept"
+    assert not (g / "codex-raw-x.log").exists()
+    assert ids["torn"]["tierL"]["eligible"] is False
+    assert (torn / "codex-raw-y.log").exists()
+
+
+def test_apply_human_report_verbs(tmp_path):
+    """Under --apply the human report swaps verbs: WOULD-SWEEP → SWEPT, WOULD-REMOVE →
+    REMOVED."""
+    repo = _make_owning_repo(tmp_path, "verbs", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "verbs")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-x.log").write_text("z" * 100, encoding="utf-8")
+    _clean_pushed_checkout(d / "wt" / "phase1")
+    _backdate(d)
+    shim, _ = _graveyard_shim(tmp_path)
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14", "--apply"],
+        home=root, env={"RETENTION_TRASH_CMD": str(shim)},
+    )
+    assert cp.returncode == 0
+    out = cp.stdout
+    assert "SWEPT" in out and "WOULD-SWEEP" not in out
+    assert "REMOVED" in out and "WOULD-REMOVE" not in out

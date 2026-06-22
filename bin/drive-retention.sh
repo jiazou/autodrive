@@ -1,15 +1,24 @@
 #!/usr/bin/env bash
-# drive-retention.sh — REPORT-ONLY retention classifier for /drive run residue.
+# drive-retention.sh — retention classifier (+ optional --apply teardown) for /drive run residue.
 #
-# Phase 1 of drive-retention-hygiene. Enumerates sibling run dirs under the
-# harness-runs root and, per run, classifies what WOULD be swept and why — emitting a
-# structured per-run / per-tier report. It performs NO deletion of any kind: there is
-# no --apply flag, no `trash`, no `git worktree remove`, no removal of any run content
-# in this file. Phase 2 adds the destructive path; Phase 1 is structurally incapable of
-# deleting (the report is the safety preview of what Phase 2 --apply will sweep).
+# Enumerates sibling run dirs under the harness-runs root and, per run, classifies what
+# WOULD be swept and why — emitting a structured per-run / per-tier report. With --apply it
+# PERFORMS the destructive teardown for every `eligible` verdict (Phase 2). WITHOUT --apply
+# it is byte-for-byte report-only (no deletion of any kind).
+#
+# The classifier verdict (`eligible` / `skip:*`) is the SOLE authority for what --apply
+# destroys and is IDENTICAL in report and apply mode — --apply NEVER re-classifies it
+# (`report == apply` invariant). --apply adds a SEPARATE per-child/tier `action` outcome
+# (closed enum {removed, swept, skipped-changed, trash-failed, none}) recording what
+# happened; a fail-safe re-check or trash failure changes only the `action`, never the verdict.
+#
+# Destructive verbs (`trash`, `git worktree remove`, `git worktree prune`) are reachable
+# ONLY under APPLY=1. History (.md/.json/.jsonl) is NEVER touched (heavy_logs covers only
+# codex-raw-*.log / codex-harden-*.log). Deletion uses `trash` (RETENTION_TRASH_CMD seam,
+# default `trash`), NEVER `rm`.
 #
 # Usage:
-#   drive-retention.sh [--root <dir>] [--age-days <N=14>] [--now <epoch>] [--json]
+#   drive-retention.sh [--root <dir>] [--age-days <N=14>] [--now <epoch>] [--json] [--apply]
 #
 # Best-effort isolation (D3): this is NOT `set -euo pipefail`. A per-run classification
 # failure becomes a SKIP with a reason; the scan ALWAYS exits 0. The ONLY non-zero exit
@@ -31,6 +40,13 @@ ROOT="${HARNESS_RUNS_ROOT:-$HOME/.claude/harness-runs}"
 AGE_DAYS=14
 NOW=""
 JSON=0
+APPLY=0
+
+# The destructive command. Production default `trash` (D4, never `rm`). The
+# RETENTION_TRASH_CMD env seam lets tests inject an mv-to-graveyard shim so the apply-path
+# tests stay trash-independent and deterministic (DP-A3); it is word-split so a shim like
+# `mv -t /graveyard` works as `$TRASH_CMD <path>`.
+TRASH_CMD="${RETENTION_TRASH_CMD:-trash}"
 
 # Each valued flag bounds-checks for a value BEFORE `shift 2`: a valued flag as the
 # trailing token (no value) is a CLI usage error ⇒ exit 2 (same lane as an unknown flag).
@@ -53,9 +69,10 @@ while [ $# -gt 0 ]; do
     --age-days) need_value --age-days "$#" "$2"; AGE_DAYS="$2"; shift 2 ;;
     --now)      need_value --now "$#" "$2"; NOW="$2"; shift 2 ;;
     --json)     JSON=1; shift ;;
+    --apply)    APPLY=1; shift ;;
     *)
       echo "drive-retention.sh: unknown flag: $1" >&2
-      echo "usage: drive-retention.sh [--root <dir>] [--age-days <N>] [--now <epoch>] [--json]" >&2
+      echo "usage: drive-retention.sh [--root <dir>] [--age-days <N>] [--now <epoch>] [--json] [--apply]" >&2
       exit 2
       ;;
   esac
@@ -482,6 +499,59 @@ heavy_logs() {
 }
 
 # ----------------------------------------------------------------------------- #
+# Apply (destructive) actions — reachable ONLY under APPLY=1. Each echoes the action
+# outcome (a value in the closed enum {removed, swept, skipped-changed, trash-failed,
+# none}). These NEVER mutate the classifier verdict (report == apply invariant): they only
+# REPORT what the destructive sequence DID for an already-`eligible` child/tier.
+# ----------------------------------------------------------------------------- #
+
+# Tier-W apply for ONE `eligible` drive-owned child. Sequence: re-verify (TOCTOU) FIRST,
+# BEFORE any destructive verb → git worktree remove --force → prune → trash. Echoes the
+# action outcome. $1=run_dir $2=child-name $3=owning-repo (may be empty = UNRESOLVABLE).
+apply_tier_W_child() {
+  local d="$1" name="$2" repo="$3"
+  local dir="$d/wt/$name"
+
+  # Step 1 — re-verify guard (TOCTOU), BEFORE any destructive verb (DP-A2). The verdict was
+  # computed earlier in this run; re-assert against LIVE state that the child is STILL
+  # not-registered AND clean. If EITHER re-check fails ⇒ skipped-changed, NO destructive verb.
+  local reg clean
+  reg="$(wt_registered_anywhere "$d" "$name")"
+  if [ "$reg" != "not-registered" ]; then printf 'skipped-changed'; return; fi
+  clean="$(wt_cleanliness "$dir")"
+  if [ "$clean" != "clean" ]; then printf 'skipped-changed'; return; fi
+
+  # Step 2-3 — unregister through git in the owning repo (only when resolvable). A
+  # not-registered child has no admin entry, so this is frequently a no-op; rc ignored.
+  # When OWNING_REPO is empty (the dominant historical UNRESOLVABLE / completedAt path)
+  # there is no repo to run git in and no registration to undo ⇒ SKIP steps 2-3.
+  if [ -n "$repo" ]; then
+    git -C "$repo" worktree remove --force "$dir" 2>/dev/null
+    git -C "$repo" worktree prune 2>/dev/null
+  fi
+
+  # Step 4 — trash the dead dir (D4: trash, never rm). On success ⇒ removed; on failure ⇒
+  # trash-failed (fail-safe: the dir remains, the next GC re-attempts; NO rm fallback).
+  if $TRASH_CMD "$dir" 2>/dev/null; then
+    printf 'removed'
+  else
+    printf 'trash-failed'
+  fi
+}
+
+# Tier-L apply for ONE run when TIERL_VERDICT == eligible: trash every heavy log. Echoes
+# `swept` if ALL trashed, `trash-failed` if ANY trash failed (soft-fail, continue). History
+# files are NEVER in heavy_logs, so they are structurally untouchable. $1=run_dir
+apply_tier_L() {
+  local d="$1" name bytes outcome="swept"
+  while IFS=$'\t' read -r name bytes; do
+    [ -n "$name" ] || continue
+    $TRASH_CMD "$d/$name" 2>/dev/null || outcome="trash-failed"
+  done < <(heavy_logs "$d")
+  printf '%s' "$outcome"
+}
+
+# ----------------------------------------------------------------------------- #
 # Output rendering
 # ----------------------------------------------------------------------------- #
 
@@ -503,22 +573,23 @@ emit_json_run() {
   if [ "$TIERL_VERDICT" = "eligible" ]; then tierL_eligible="true"; else tierL_reason="${TIERL_VERDICT#skip:}"; fi
 
   # Tier-W children array.
-  local children_json="[]" children_acc="" child verdict elig reason owned regfield
+  local children_json="[]" children_acc="" child verdict elig reason owned regfield action
   local i=0
   while [ "$i" -lt "${#TW_NAMES[@]:-0}" ]; do
     child="${TW_NAMES[$i]}"
     verdict="${TW_VERDICTS[$i]}"
     owned="${TW_OWNED[$i]}"
     regfield="${TW_REG[$i]}"   # true | false | unprovable
+    action="${TW_ACTIONS[$i]:-none}"   # additive apply-outcome; `none` under report-only
     if [ "$verdict" = "eligible" ]; then elig="true"; reason=""; else elig="false"; reason="${verdict#skip:}"; fi
     if [ "$regfield" = "unprovable" ]; then
       children_acc="$children_acc$(jq -cn --arg n "$child" --argjson e "$elig" --arg r "$reason" \
-        --argjson o "$owned" --arg reg "unprovable" \
-        '{name:$n,eligible:$e,reason:$r,driveOwned:$o,registered:$reg}'),"
+        --argjson o "$owned" --arg reg "unprovable" --arg a "$action" \
+        '{name:$n,eligible:$e,reason:$r,driveOwned:$o,registered:$reg,action:$a}'),"
     else
       children_acc="$children_acc$(jq -cn --arg n "$child" --argjson e "$elig" --arg r "$reason" \
-        --argjson o "$owned" --argjson reg "$regfield" \
-        '{name:$n,eligible:$e,reason:$r,driveOwned:$o,registered:$reg}'),"
+        --argjson o "$owned" --argjson reg "$regfield" --arg a "$action" \
+        '{name:$n,eligible:$e,reason:$r,driveOwned:$o,registered:$reg,action:$a}'),"
     fi
     i=$((i + 1))
   done
@@ -536,12 +607,13 @@ emit_json_run() {
     --argjson pastThreshold "$past" \
     --argjson tierL_eligible "$tierL_eligible" \
     --arg tierL_reason "$tierL_reason" \
+    --arg tierL_action "${TIERL_ACTION:-none}" \
     --argjson tierL_logs "$logs_json" \
     --argjson tierL_bytes "$total_bytes" \
     --argjson children "$children_json" \
     '{runId:$runId, owningRepo:$owningRepo, ageDays:$ageDays, ageAnchor:$ageAnchor,
       pastThreshold:$pastThreshold,
-      tierL:{eligible:$tierL_eligible, reason:$tierL_reason, logs:$tierL_logs, bytes:$tierL_bytes},
+      tierL:{eligible:$tierL_eligible, reason:$tierL_reason, action:$tierL_action, logs:$tierL_logs, bytes:$tierL_bytes},
       tierW:{children:$children}}'
 }
 
@@ -557,12 +629,20 @@ report_run() {
     "$AGE_REPORT_DAYS" "$AGE_ANCHOR" "$AGE_DAYS" "$past_disp"
 
   if [ "$TIERL_VERDICT" = "eligible" ]; then
-    local nfiles=0 total=0 name bytes
+    local nfiles=0 total=0 name bytes verb="WOULD-SWEEP"
     while IFS=$'\t' read -r name bytes; do
       [ -n "$name" ] || continue
       nfiles=$((nfiles + 1)); total=$((total + ${bytes:-0}))
     done < <(heavy_logs "$d")
-    printf '  Tier-L (heavy logs): WOULD-SWEEP <%s files, ~%s MB>\n' "$nfiles" "$((total / 1048576))"
+    # Under --apply the verb reflects what HAPPENED (the additive action outcome).
+    if [ "$APPLY" -eq 1 ]; then
+      case "$TIERL_ACTION" in
+        swept)        verb="SWEPT" ;;
+        trash-failed) verb="FAILED (trash)" ;;
+        *)            verb="SWEPT" ;;
+      esac
+    fi
+    printf '  Tier-L (heavy logs): %s <%s files, ~%s MB>\n' "$verb" "$nfiles" "$((total / 1048576))"
   else
     printf '  Tier-L (heavy logs): SKIP (%s)\n' "${TIERL_VERDICT#skip:}"
   fi
@@ -571,11 +651,20 @@ report_run() {
   if [ "${#TW_NAMES[@]:-0}" -eq 0 ]; then
     printf '    (no wt/ children)\n'
   else
-    local i=0 child verdict
+    local i=0 child verdict action verb
     while [ "$i" -lt "${#TW_NAMES[@]}" ]; do
-      child="${TW_NAMES[$i]}"; verdict="${TW_VERDICTS[$i]}"
+      child="${TW_NAMES[$i]}"; verdict="${TW_VERDICTS[$i]}"; action="${TW_ACTIONS[$i]:-none}"
       if [ "$verdict" = "eligible" ]; then
-        printf '    wt/%s: WOULD-REMOVE\n' "$child"
+        verb="WOULD-REMOVE"
+        if [ "$APPLY" -eq 1 ]; then
+          case "$action" in
+            removed)         verb="REMOVED" ;;
+            skipped-changed) verb="SKIPPED (changed)" ;;
+            trash-failed)    verb="FAILED (trash)" ;;
+            *)               verb="REMOVED" ;;
+          esac
+        fi
+        printf '    wt/%s: %s\n' "$child" "$verb"
       else
         printf '    wt/%s: SKIP (%s)\n' "$child" "${verdict#skip:}"
       fi
@@ -600,7 +689,7 @@ classify_run() {
 
   TIERL_VERDICT="$(classify_tier_L "$d")"
 
-  TW_NAMES=(); TW_VERDICTS=(); TW_OWNED=(); TW_REG=()
+  TW_NAMES=(); TW_VERDICTS=(); TW_OWNED=(); TW_REG=(); TW_ACTIONS=()
   if [ -d "$d/wt" ]; then
     for child in "$d"/wt/*; do
       [ -e "$child" ] || [ -L "$child" ] || continue
@@ -615,6 +704,25 @@ classify_run() {
         not-registered) TW_REG+=("false") ;;
         *)              TW_REG+=("unprovable") ;;
       esac
+      TW_ACTIONS+=("none")   # default; overwritten below ONLY under --apply for an eligible child
+    done
+  fi
+
+  # Action outcomes (apply-only). The classifier verdicts above are FINAL and UNCHANGED;
+  # apply acts on EXACTLY those `eligible` strings and records a SEPARATE action outcome.
+  # Under report-only (APPLY=0) every action stays `none` ⇒ the report partition is the
+  # byte-for-byte Phase-1 partition (report == apply: verdict identity).
+  TIERL_ACTION="none"
+  if [ "$APPLY" -eq 1 ]; then
+    if [ "$TIERL_VERDICT" = "eligible" ]; then
+      TIERL_ACTION="$(apply_tier_L "$d")"
+    fi
+    local i=0
+    while [ "$i" -lt "${#TW_VERDICTS[@]:-0}" ]; do
+      if [ "${TW_VERDICTS[$i]}" = "eligible" ]; then
+        TW_ACTIONS[i]="$(apply_tier_W_child "$d" "${TW_NAMES[$i]}" "$OWNING_REPO")"
+      fi
+      i=$((i + 1))
     done
   fi
 }
