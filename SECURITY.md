@@ -114,7 +114,7 @@ actually produces. They are documented in full in `docs/drive-enforcement.md`.
   rare structured option value (e.g. `git merge --into-name phaseInt/<bogus>/1 …`) is forgery-
   class. The multi-runId **octopus deny** still fail-closes a decoy that names a *different* run
   (slice and phaseInt alike); a same-run decoy with a wrong phase id is an over-gate at worst.
-- **Pathologically escaped/quoted brace-range dot pair.** The range detector keys on two
+- **Escaped or quoted brace-range dot pair.** The range detector keys on two
   consecutive unquoted dots; an escaped pair like `{1\..2}` (which bash leaves literal)
   may be over-DENIED. This is an over-deny in the *safe* direction on a token `/drive`
   never emits, not a bypass.

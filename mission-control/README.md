@@ -5,17 +5,17 @@
 > skip it entirely if you don't use Obsidian. Point it at your own vault with the `MC_VAULT`
 > environment variable (see **Setup** below); it defaults to `~/Documents/Vault`.
 
-Mission Control is the **operating layer** on top of an existing Obsidian task *system*. The
-task system (PARA vault, per-project `Tasks/`, Bases dashboards) holds the *what*; Mission
-Control adds the recurring *loops* and the **session tracking** that make the system actually
-get operated — and that let you context-switch across many parallel Claude sessions without
-losing the thread. Morning briefing skill: **`harvest`**.
+Mission Control sits on top of an existing Obsidian task *system*. The task system (PARA
+vault, per-project `Tasks/`, Bases dashboards) holds the *what*; Mission Control adds the
+scheduled commands and the **session tracking** that keep it running day to day — and that
+help you keep track of many parallel Claude sessions at once. Morning briefing skill:
+**`harvest`**.
 
 ## The core insight (why this exists)
 
 A task system you must remember to run decays — it accumulates unreviewed tasks and stale daily
-notes until it's abandoned. Mission Control is the harness that runs the recurring loops and
-surfaces what needs you, so operating the system doesn't depend on memory.
+notes until it's abandoned. Mission Control runs the scheduled commands and shows you what
+needs attention, so keeping the system current doesn't depend on memory.
 
 ## Data model
 
@@ -83,8 +83,8 @@ SwiftBar at the plugin, and merges the passive-capture hooks into `~/.claude/set
 
 ## How to run it (the operating model)
 
-**You don't run Mission Control. It runs itself, and you query it when you want to.**
-There is no daemon, no background process to start, and no terminal you need to keep open.
+**You don't run Mission Control. It runs on a schedule, and you query it when you want to.**
+A launchd job triggers it for you — there's no daemon you manage and no terminal to keep open.
 Every `mc` command runs once and exits. Install once, then forget the plumbing.
 
 Three things run on their own after install, with nothing open:
