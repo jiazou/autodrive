@@ -583,9 +583,27 @@ apply_tier_L() {
   has_open_inflight "$d" && { printf 'skipped-changed'; return; }
   is_done "$d" || { printf 'skipped-changed'; return; }
 
-  # Step 2 — trash the SNAPSHOT set captured at classification (not a live re-enum).
+  # Step 2 — late re-check IMMEDIATELY before the destructive trash loop, mirroring
+  # apply_tier_W_child Step 4. The Step-1 full re-verify MINIMIZES but cannot CLOSE the
+  # check-then-act window: a run that goes live AFTER its Step-1 predicate is read (`.waiting`
+  # set / an inflight marker written / done cleared after lines 582-584) would otherwise still
+  # flow into the loop. A check-then-act window is IRREDUCIBLE in a lockless shell GC — we
+  # MINIMIZE it (not close it) by re-checking the cheapest, earliest-written liveness signals
+  # (is_waiting_quiet + has_open_inflight) right before the loop AND at the TOP OF EACH iteration,
+  # so a run that resumes mid-loop STOPS trashing further logs ⇒ skipped-changed (no further
+  # trash). A resuming session writes its inflight marker / `.waiting` BEFORE doing real work,
+  # so this catches the realistic resume. The residual sub-syscall window between the per-iteration
+  # re-check and each trash is ACCEPTED: the GC is report-only by default; `--apply` is a manual,
+  # ≥14-day-aged, done-run one-shot.
+  is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
+  has_open_inflight "$d" && { printf 'skipped-changed'; return; }
+
+  # Step 3 — trash the SNAPSHOT set captured at classification (not a live re-enum), re-checking
+  # the cheapest liveness signals at the top of each iteration (mid-loop resume ⇒ stop).
   for entry in "${TIERL_LOGS_SNAPSHOT[@]:-}"; do
     [ -n "$entry" ] || continue
+    is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
+    has_open_inflight "$d" && { printf 'skipped-changed'; return; }
     name="${entry%%$'\t'*}"
     $TRASH_CMD "$d/$name" 2>/dev/null || outcome="trash-failed"
   done

@@ -2139,3 +2139,98 @@ def test_apply_human_report_skipped_changed_render_branch(tmp_path):
     # aggregate: exactly one worktree removed (1.1); the declined 9.1 falls to skipped.
     summary = lines[-1]
     assert re.search(r"Tier-W removed 1 worktrees across 1 runs", summary), summary
+
+
+def _marker_on_first_trash_shim(tmp_path, run_dir):
+    """A `trash`-shim that MOVES its argument into the graveyard AND, on its FIRST invocation,
+    writes an `inflight-*.marker` into `run_dir` so the run goes LIVE mid-loop. Returns
+    (shim, graveyard). Simulates a run resuming AFTER apply_tier_L's late pre-loop re-check has
+    passed and AFTER the first heavy log was trashed — the per-iteration re-check must then STOP
+    the loop (no further trash)."""
+    graveyard = tmp_path / "graveyard"
+    graveyard.mkdir(parents=True, exist_ok=True)
+    shim = tmp_path / "trash-marker-shim.sh"
+    shim.write_text(
+        "#!/usr/bin/env bash\n"
+        f'dest="{graveyard}"\n'
+        f'rundir="{run_dir}"\n'
+        f'flag="{tmp_path}/.first-trash-done"\n'
+        'for p in "$@"; do\n'
+        '  base="$(basename "$p")"; parent="$(basename "$(dirname "$p")")"\n'
+        '  mv "$p" "$dest/$parent-$base" 2>/dev/null || exit 1\n'
+        '  if [ ! -e "$flag" ]; then\n'
+        '    : > "$flag"\n'
+        # The run resumes the instant the first log is gone: write its inflight marker.
+        '    printf x > "$rundir/inflight-implement-x.marker" 2>/dev/null || true\n'
+        '  fi\n'
+        'done\n',
+        encoding="utf-8",
+    )
+    os.chmod(shim, 0o755)
+    return shim, graveyard
+
+
+def test_apply_tierL_mid_loop_resume_stops_further_trashing(tmp_path):
+    """fix-2(P1): apply_tier_L re-checks the cheap liveness signals at the TOP OF EACH iteration,
+    mirroring apply_tier_W_child's late pre-trash re-check. A run that goes LIVE mid-loop (between
+    trashing one heavy log and the next) must STOP trashing further logs ⇒ action=skipped-changed,
+    the not-yet-trashed logs intact.
+
+    Injection: a graveyard shim that, on its FIRST trash (codex-raw-a.log, glob-first), writes an
+    inflight-*.marker into the run dir. The per-iteration re-check at the next iteration then sees
+    the marker and declines ⇒ codex-raw-b.log survives. REDS pre-fix (the old loop trashed the
+    whole snapshot unconditionally, so codex-raw-b.log would also be swept)."""
+    repo = _make_owning_repo(tmp_path, "midloop", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "midloop")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-a.log").write_text("z" * 100, encoding="utf-8")  # trashed first
+    (d / "codex-raw-b.log").write_text("y" * 100, encoding="utf-8")  # must survive (loop stops)
+    _backdate(d)
+    shim, graveyard = _marker_on_first_trash_shim(tmp_path, d)
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14",
+         "--json", "--apply"],
+        home=root, env={"RETENTION_TRASH_CMD": str(shim)},
+    )
+    objs = [json.loads(l) for l in cp.stdout.splitlines() if l.strip()]
+    o = _by_id(objs)["midloop"]
+    # Classification stayed eligible (apply never re-classifies); the mid-loop re-check declined.
+    assert o["tierL"]["eligible"] is True
+    assert o["tierL"]["action"] == "skipped-changed", (
+        "a run that goes LIVE mid-loop must STOP — action=skipped-changed"
+    )
+    # The first log WAS trashed (it preceded the resume); the second log was NOT (loop stopped).
+    assert not (d / "codex-raw-a.log").exists(), "first log was trashed before the resume"
+    assert (d / "codex-raw-b.log").exists(), (
+        "the loop must STOP after the mid-loop resume — codex-raw-b.log must survive"
+    )
+    moved = {p.name for p in graveyard.iterdir()}
+    assert any("codex-raw-a.log" in m for m in moved)
+    assert not any("codex-raw-b.log" in m for m in moved), (
+        f"codex-raw-b.log must not reach the graveyard: {moved}"
+    )
+
+
+def test_apply_human_report_tierL_skipped_changed_render_branch(tmp_path):
+    """fix-2(P2): the human-output `SKIPPED (changed)` render branch for Tier-L (only the Tier-W
+    one was pinned). A run that goes LIVE in the apply-time window is declined
+    (action=skipped-changed) and its Tier-L line renders `SKIPPED (changed)` (NOT SWEPT). Pins the
+    Tier-L verb-render branch distinct from the JSON action field."""
+    repo = _make_owning_repo(tmp_path, "tlscr", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "tlscr")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    (d / "codex-raw-a.log").write_text("z" * 100, encoding="utf-8")
+    (d / "codex-raw-b.log").write_text("y" * 100, encoding="utf-8")
+    _backdate(d)
+    shim, _ = _marker_on_first_trash_shim(tmp_path, d)
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14", "--apply"],
+        home=root, env={"RETENTION_TRASH_CMD": str(shim)},
+    )
+    assert cp.returncode == 0
+    lines = cp.stdout.splitlines()
+    tierL_line = next(l for l in lines if "Tier-L (heavy logs):" in l)
+    assert "SKIPPED (changed)" in tierL_line, tierL_line
+    assert "SWEPT" not in tierL_line
