@@ -32,11 +32,16 @@ AGE_DAYS=14
 NOW=""
 JSON=0
 
+# Each valued flag bounds-checks for a value BEFORE `shift 2`: a valued flag as the
+# trailing token (no value) is a CLI usage error ⇒ exit 2 (same lane as an unknown flag).
+# Without this, `shift 2` with only one positional left does NOT shift, so $1 stays the
+# flag and the loop spins forever (a hang — neither exit 0 nor exit 2; would block
+# GC-at-setup). A missing flag value is the same class of caller error as an unknown flag.
 while [ $# -gt 0 ]; do
   case "$1" in
-    --root)     ROOT="$2"; shift 2 ;;
-    --age-days) AGE_DAYS="$2"; shift 2 ;;
-    --now)      NOW="$2"; shift 2 ;;
+    --root)     [ $# -ge 2 ] || { echo "drive-retention.sh: --root needs a value" >&2; exit 2; }; ROOT="$2"; shift 2 ;;
+    --age-days) [ $# -ge 2 ] || { echo "drive-retention.sh: --age-days needs a value" >&2; exit 2; }; AGE_DAYS="$2"; shift 2 ;;
+    --now)      [ $# -ge 2 ] || { echo "drive-retention.sh: --now needs a value" >&2; exit 2; }; NOW="$2"; shift 2 ;;
     --json)     JSON=1; shift ;;
     *)
       echo "drive-retention.sh: unknown flag: $1" >&2
@@ -128,13 +133,17 @@ completedat_authorizes() {
 eventlog_newest_epoch() {
   local log="$1/event-log.jsonl" best="" at e
   [ -f "$log" ] || { printf ''; return; }
-  # jq -r over every line; .at per line, unparseable lines drop out via 2>/dev/null and
-  # the `// empty` guard. Each emitted .at is then parsed (it may be ISO-8601 or epoch).
+  # PER-LINE tolerant parse: `-R` reads each raw line, `fromjson?` yields nothing for an
+  # unparseable (torn / non-JSON) line instead of erroring the whole pipeline. A whole-file
+  # `jq '.at'` errors on the FIRST invalid line and STOPS — dropping every timestamp AFTER
+  # it (a newer .at past a torn line would be lost ⇒ a recently-touched run looks aged ⇒
+  # age fail-open). With `-R 'fromjson? | .at // empty'` a torn line is skipped and the
+  # other lines' .at values still count. Each emitted .at is parsed (ISO-8601 or epoch).
   while IFS= read -r at; do
     [ -n "$at" ] || continue
     e="$(parse_ts "$at")" || continue
     if [ -z "$best" ] || [ "$e" -gt "$best" ]; then best="$e"; fi
-  done < <(jq -r '.at // empty' "$log" 2>/dev/null)
+  done < <(jq -R -r 'fromjson? | .at // empty' "$log" 2>/dev/null)
   printf '%s' "$best"
 }
 

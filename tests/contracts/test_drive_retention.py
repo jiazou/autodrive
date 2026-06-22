@@ -164,6 +164,15 @@ def test_exit_two_on_unknown_flag(tmp_path):
     assert cp.returncode == 2
 
 
+@pytest.mark.parametrize("flag", ["--root", "--age-days", "--now"])
+def test_trailing_valued_flag_exits_two_not_hang(tmp_path, flag):
+    """A valued flag as the TRAILING token (no value) is a CLI usage error ⇒ exit 2 promptly,
+    NOT an infinite hang. `run_script` has a 30s timeout; a hang would raise TimeoutExpired
+    (and would have blocked GC-at-setup)."""
+    cp = run_script([str(SCRIPT), flag], home=tmp_path)
+    assert cp.returncode == 2
+
+
 def test_missing_root_exits_zero(tmp_path):
     cp = run_script([str(SCRIPT), "--root", str(tmp_path / "nope")], home=tmp_path)
     assert cp.returncode == 0
@@ -355,6 +364,23 @@ def test_tierW_sole_eligible_conjunction(tmp_path):
     c = _child(_by_id(objs)["elig"], "phase1")
     assert c["eligible"] is True
     assert c["reason"] == ""
+
+
+def test_tierW_unreadable_skips(tmp_path):
+    """W7b unreadable fail-safe (AC7): a drive-owned no-pointer child that is NOT a readable
+    git working tree (`git -C <dir> status` fails) ⇒ skip:unreadable, NEVER eligible. The run
+    is W4-authorized by a parseable completedAt (so the child reaches W7b), and the existing
+    dir is a plain non-repo directory (no .git) so the cleanliness probe cannot read it."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "unreadable")
+    _state(d, stage="done", waiting=None, baseRef="main")  # UNRESOLVABLE repo
+    (d / "completedAt").write_text("2025-01-01T00:00:00Z\n", encoding="utf-8")  # W4-authorizes
+    (d / "wt" / "phase1").mkdir(parents=True)  # plain dir, no .git ⇒ not-registered, not a repo
+    _backdate(d)
+    _, objs = _scan(root)
+    c = _child(_by_id(objs)["unreadable"], "phase1")
+    assert c["reason"] == "unreadable"
+    assert c["eligible"] is False
 
 
 def test_tierW_unpushed_skips(tmp_path):
@@ -554,6 +580,28 @@ def test_age_max_over_all_eventlog_lines_not_last(tmp_path):
     _, objs = _scan(root)
     o = _by_id(objs)["age-log"]
     assert o["pastThreshold"] is False        # the recent earlier line wins ⇒ not aged
+    assert o["ageAnchor"] == "event-log"
+
+
+def test_age_torn_line_before_recent_line_still_counts(tmp_path):
+    """Robustness to a TORN line PRECEDING a valid recent line: a whole-file `jq '.at'`
+    errors on the first invalid line and STOPS, dropping every timestamp after it (the recent
+    line would be lost ⇒ the run looks aged ⇒ age FAIL-OPEN). With per-line tolerant parsing
+    the torn line is skipped and the later recent line still makes the run NOT aged."""
+    root = tmp_path / "runs"
+    d = _run_dir(root, "age-torn-first")
+    _state(d, stage="done", waiting=None, baseRef="main")
+    recent_iso = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(RECENT))
+    log = (
+        "this is a torn/unparseable leading line\n"                                  # torn FIRST
+        + json.dumps({"event": "dispatch", "at": "2020-01-01T00:00:00Z"}) + "\n"     # old
+        + json.dumps({"event": "verdict", "at": recent_iso}) + "\n"                  # recent, AFTER torn
+    )
+    (d / "event-log.jsonl").write_text(log, encoding="utf-8")
+    _backdate(d, epoch=OLD)   # old mtime ⇒ only the event-log can make it recent
+    _, objs = _scan(root)
+    o = _by_id(objs)["age-torn-first"]
+    assert o["pastThreshold"] is False        # recent line survives the torn line ⇒ NOT aged
     assert o["ageAnchor"] == "event-log"
 
 
