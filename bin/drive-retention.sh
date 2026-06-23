@@ -545,16 +545,22 @@ apply_tier_W_child() {
   # Step 4 — late re-check IMMEDIATELY before the destructive trash. The Step-1 full re-verify
   # MINIMIZES but cannot CLOSE the check-then-act window: a run that goes live AFTER its Step-1
   # predicate is read (`.waiting` set after line 526, an inflight marker written after 527, done
-  # cleared after 528) would otherwise still flow to trash. A check-then-act window is IRREDUCIBLE
-  # in a lockless shell GC — we MINIMIZE it (not close it) by re-checking the cheapest,
-  # earliest-written liveness signals (is_waiting_quiet + has_open_inflight) right before
-  # $TRASH_CMD, shrinking the surviving window to ~one syscall. A resuming session writes its
+  # cleared after 528), OR a dir DIRTIED after its Step-1 cleanliness read (line 533) — and the
+  # reg=="not-registered" path makes the `worktree remove --force` above a no-op, so a dir
+  # dirtied in the window survives INTACT to the trash — would otherwise still flow to trash.
+  # A check-then-act window is IRREDUCIBLE in a lockless shell GC — we MINIMIZE it (not close it)
+  # by re-checking, right before $TRASH_CMD, BOTH the cheapest earliest-written liveness signals
+  # (is_waiting_quiet + has_open_inflight) AND cleanliness (wt_cleanliness) — symmetric with the
+  # Step-1 gate — shrinking each surviving window to ~one syscall. A resuming session writes its
   # inflight marker / `.waiting` BEFORE doing real work, so this catches the realistic resume.
-  # The residual sub-syscall window between this re-check and the trash is ACCEPTED: the GC is
-  # report-only by default; `--apply` is a manual, ≥14-day-aged, done-run one-shot (followup in
-  # $RUN_DIR/followups.md). On either signal going live ⇒ skipped-changed, NO trash.
+  # The residual sub-syscall window between this re-check and the trash is ACCEPTED for liveness
+  # AND cleanliness alike: the GC is report-only by default; `--apply` is a manual, ≥14-day-aged,
+  # done-run one-shot (followup in $RUN_DIR/followups.md). On any signal going live OR the dir
+  # going dirty ⇒ skipped-changed, NO trash.
   is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
   has_open_inflight "$d" && { printf 'skipped-changed'; return; }
+  clean="$(wt_cleanliness "$dir")"
+  [ "$clean" = "clean" ] || { printf 'skipped-changed'; return; }
 
   # Step 5 — trash the dead dir (D4: trash, never rm). On success ⇒ removed; on failure ⇒
   # trash-failed (fail-safe: the dir remains, the next GC re-attempts; NO rm fallback).

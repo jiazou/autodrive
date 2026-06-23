@@ -1874,6 +1874,74 @@ def test_apply_late_recheck_declines_run_gone_live_after_step1(tmp_path):
     assert sorted(p.name for p in graveyard.iterdir()) == [], "nothing should be trashed"
 
 
+def test_apply_late_recheck_declines_same_child_dirtied_after_step1(tmp_path):
+    """finalize-round-2 guard: the SAME-CHILD post-Step-1 CLEANLINESS window, symmetric with the
+    liveness window above (test_apply_late_recheck_declines_run_gone_live_after_step1).
+
+    The Step-1 re-verify reads `wt_cleanliness` (line 533); the dir can then go DIRTY BEFORE its
+    own destructive verb. Because we only reach the trash when reg=="not-registered" (a standalone
+    checkout), the `git worktree remove --force` is a no-op, so a dir dirtied in the Step1→trash
+    window survives INTACT to $TRASH_CMD and is trashed with uncommitted content. The late
+    cleanliness re-check (mirrors line 534, run right before the trash) catches it ⇒
+    skipped-changed, NO trash, dir intact.
+
+    Injection is faithful (same git-wrapper idiom as the liveness test): a `git` wrapper on PATH,
+    on `worktree remove`, writes an uncommitted file INTO the victim child's working tree then
+    delegates to the real git — so the dir genuinely goes dirty in the Step1→trash window (not
+    pre-seeded; Step-1's cleanliness read already passed). A single child guarantees Step-1 ran
+    clean for THIS child. REDS pre-fix: with the late cleanliness re-check removed, the dirtied
+    dir is trashed (action `removed`) even though it now carries uncommitted content."""
+    repo = _make_owning_repo(tmp_path, "latedirty", ancestor=True)
+    root = tmp_path / "runs"
+    d = _run_dir(root, "latedirty")
+    _state(d, stage="done", waiting=None, baseRef="main", repoRoot=str(repo))
+    victim = d / "wt" / "1.1"
+    _clean_pushed_checkout(victim)              # the single clean eligible child
+    _backdate(d)
+    graveyard = tmp_path / "graveyard"
+    graveyard.mkdir(parents=True, exist_ok=True)
+    shim, _ = _graveyard_shim(tmp_path)
+    # A `git` wrapper that, on `worktree remove`, dirties the victim child's working tree (the dir
+    # goes DIRTY in the Step1→trash window) BEFORE delegating to the real git. Real git resolved
+    # via `which` with the wrapper dir stripped from PATH so we don't self-recurse.
+    real_git = subprocess.run(["which", "git"], capture_output=True, text=True).stdout.strip()
+    gitwrap_dir = tmp_path / "gitwrap"
+    gitwrap_dir.mkdir(parents=True, exist_ok=True)
+    gitwrap = gitwrap_dir / "git"
+    gitwrap.write_text(
+        "#!/usr/bin/env bash\n"
+        f'victim="{victim}"\n'
+        f'realgit="{real_git}"\n'
+        # Detect a `worktree remove` invocation; on it, dirty the victim's working tree.
+        'for a in "$@"; do\n'
+        '  if [ "$a" = "remove" ]; then\n'
+        '    printf x > "$victim/TOCTOU-dirty" 2>/dev/null || true\n'
+        '    break\n'
+        '  fi\n'
+        'done\n'
+        'exec "$realgit" "$@"\n',
+        encoding="utf-8",
+    )
+    os.chmod(gitwrap, 0o755)
+    env = {"RETENTION_TRASH_CMD": str(shim),
+           "PATH": f"{gitwrap_dir}{os.pathsep}{os.environ.get('PATH', '')}"}
+    cp = run_script(
+        [str(SCRIPT), "--root", str(root), "--now", str(NOW), "--age-days", "14",
+         "--json", "--apply"],
+        home=root, env=env,
+    )
+    objs = [json.loads(l) for l in cp.stdout.splitlines() if l.strip()]
+    o = _by_id(objs)["latedirty"]
+    c = _child(o, "1.1")
+    assert c["eligible"] is True, "verdict must stay eligible (apply never re-classifies)"
+    assert c["action"] == "skipped-changed", (
+        "a child dirtied AFTER Step-1 but before trash must be caught by the late cleanliness "
+        "re-check ⇒ skipped-changed"
+    )
+    assert (d / "wt" / "1.1").exists(), "no destructive verb may run once the dir went dirty"
+    assert sorted(p.name for p in graveyard.iterdir()) == [], "nothing should be trashed"
+
+
 def test_apply_tierW_dirty_child_is_skip_none_no_trash(tmp_path):
     """A child dirty AT classification ⇒ classifies skip:dirty ⇒ apply action `none`, NO trash,
     dir intact. (Pins "no destructive verb on a non-eligible child" — distinct from the TOCTOU
