@@ -287,6 +287,18 @@ is_drive_owned_name() {
   return 1
 }
 
+# Parse a git `.git`-pointer line (`gitdir: <path>` or `gitdir:<path>`) and echo the
+# stripped admin path, or EMPTY for any non-`gitdir:` line (including an empty line from a
+# read failure). The two `gitdir:` forms differ only by the optional space after the colon.
+# Callers decide the empty-path fall-through (unprovable vs continue). $1=pointer-line
+parse_gitdir_admin() {
+  case "$1" in
+    gitdir:\ *) printf '%s' "${1#gitdir: }" ;;
+    gitdir:*)   printf '%s' "${1#gitdir:}" ;;
+    *)          printf '' ;;
+  esac
+}
+
 # Three-way registration of a run's wt/<name>/.git by PATH EQUALITY (DP9). Echoes
 # `registered` | `not-registered` | `unprovable`. $1=run_dir $2=child-name
 #   not-registered : NO wt/<name>/.git pointer file at all (the ONLY fall-through to W7).
@@ -309,13 +321,8 @@ wt_registered_anywhere() {
   if [ ! -e "$ptr" ] && [ ! -L "$ptr" ]; then printf 'not-registered'; return; fi
   if [ ! -f "$ptr" ]; then printf 'unprovable'; return; fi
 
-  local line admin backref selfpath
-  line="$(head -n1 "$ptr" 2>/dev/null)" || { printf 'unprovable'; return; }
-  case "$line" in
-    gitdir:\ *) admin="${line#gitdir: }" ;;
-    gitdir:*)   admin="${line#gitdir:}" ;;
-    *)          printf 'unprovable'; return ;;
-  esac
+  local admin backref
+  admin="$(parse_gitdir_admin "$(head -n1 "$ptr" 2>/dev/null)")"
   [ -n "$admin" ] || { printf 'unprovable'; return; }
   # The admin entry's gitdir back-reference must exist and its content must path-equal THIS
   # run's wt/<name>/.git.
@@ -323,8 +330,7 @@ wt_registered_anywhere() {
   [ -f "$backref" ] || { printf 'unprovable'; return; }
   backref="$(head -n1 "$backref" 2>/dev/null)" || { printf 'unprovable'; return; }
   backref="$(printf '%s' "$backref" | sed 's/[[:space:]]*$//')"
-  selfpath="$ptr"
-  if [ "$backref" = "$selfpath" ]; then
+  if [ "$backref" = "$ptr" ]; then
     printf 'registered'
   else
     printf 'unprovable'
@@ -354,12 +360,8 @@ resolve_owning_repo() {
       is_drive_owned_name "$name" || continue
       reg="$(wt_registered_anywhere "$d" "$name")"
       [ "$reg" = "registered" ] || continue
-      admin="$(head -n1 "$child/.git" 2>/dev/null)"
-      case "$admin" in
-        gitdir:\ *) admin="${admin#gitdir: }" ;;
-        gitdir:*)   admin="${admin#gitdir:}" ;;
-        *) continue ;;
-      esac
+      admin="$(parse_gitdir_admin "$(head -n1 "$child/.git" 2>/dev/null)")"
+      [ -n "$admin" ] || continue
       # admin = <repo>/.git/worktrees/<id> → strip trailing /worktrees/<id>
       repo="${admin%/worktrees/*}"   # <repo>/.git
       repo="${repo%/.git}"           # <repo>
@@ -583,23 +585,16 @@ apply_tier_L() {
   has_open_inflight "$d" && { printf 'skipped-changed'; return; }
   is_done "$d" || { printf 'skipped-changed'; return; }
 
-  # Step 2 — SINGLE late re-check IMMEDIATELY before the destructive trash loop, mirroring
-  # apply_tier_W_child Step 4 (one late check, then commit to the trash). The Step-1 full
-  # re-verify MINIMIZES but cannot CLOSE the check-then-act window: a run that goes live AFTER
-  # its Step-1 predicate is read (`.waiting` set / an inflight marker written / done cleared
-  # after lines 582-584) would otherwise still flow into the loop. A check-then-act window is
-  # IRREDUCIBLE in a lockless shell GC — we MINIMIZE it (not close it) by re-checking the
-  # cheapest, earliest-written liveness signals (is_waiting_quiet + has_open_inflight) right
-  # before the loop. There is deliberately NO per-iteration re-check: this apply is ALL-OR-NOTHING
-  # (mirroring apply_tier_W_child, which removes its worktree in one trash call) — once past this
-  # late re-check we sweep the WHOLE snapshot, so the action is always one of {swept, trash-failed}
-  # (cleared the late check) or skipped-changed (didn't), never a partial sweep that would
-  # under-count the reclaim. The mid-loop window — a run going live AFTER this late re-check but
-  # while the loop is trashing — is the SAME irreducible lockless-TOCTOU residual already accepted
-  # and documented for apply_tier_W_child (Step 4): such a run may still have its full snapshot
-  # swept. We ACCEPT it for the same reasons — the GC is report-only by default; `--apply` is a
-  # manual, ≥14-day-aged, done-run one-shot. We MINIMIZE this window (single late re-check), we do
-  # not CLOSE it. On either signal going live here ⇒ skipped-changed, NO trash.
+  # Step 2 — SINGLE late re-check IMMEDIATELY before the destructive trash loop. The
+  # irreducible-lockless-TOCTOU rationale (why a late re-check MINIMIZES but cannot CLOSE the
+  # window, and why the residual is ACCEPTED) is stated canonically in apply_tier_W_child
+  # Step 4 — see there. Tier-L-specific contract: there is deliberately NO per-iteration
+  # re-check, because this apply is ALL-OR-NOTHING (mirroring apply_tier_W_child's single
+  # trash call) — once past this late re-check we sweep the WHOLE snapshot, so the action is
+  # always one of {swept, trash-failed} or skipped-changed (didn't clear the late check),
+  # NEVER a partial sweep that would under-count the reclaim. The mid-loop window (a run going
+  # live while the loop is trashing) is the SAME accepted residual documented in Step 4. On
+  # either signal going live here ⇒ skipped-changed, NO trash.
   is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
   has_open_inflight "$d" && { printf 'skipped-changed'; return; }
 
@@ -641,7 +636,7 @@ emit_json_run() {
   # Tier-W children array.
   local children_json="[]" children_acc="" child verdict elig reason owned regfield action
   local i=0
-  while [ "$i" -lt "${#TW_NAMES[@]:-0}" ]; do
+  while [ "$i" -lt "${#TW_NAMES[@]}" ]; do
     child="${TW_NAMES[$i]}"
     verdict="${TW_VERDICTS[$i]}"
     owned="${TW_OWNED[$i]}"
@@ -717,7 +712,7 @@ report_run() {
   fi
 
   printf '  Tier-W (drive-owned worktrees):\n'
-  if [ "${#TW_NAMES[@]:-0}" -eq 0 ]; then
+  if [ "${#TW_NAMES[@]}" -eq 0 ]; then
     printf '    (no wt/ children)\n'
   else
     local i=0 child verdict action verb
@@ -800,7 +795,7 @@ classify_run() {
       TIERL_ACTION="$(apply_tier_L "$d")"
     fi
     local i=0
-    while [ "$i" -lt "${#TW_VERDICTS[@]:-0}" ]; do
+    while [ "$i" -lt "${#TW_VERDICTS[@]}" ]; do
       if [ "${TW_VERDICTS[$i]}" = "eligible" ]; then
         TW_ACTIONS[i]="$(apply_tier_W_child "$d" "${TW_NAMES[$i]}" "$OWNING_REPO")"
       fi
@@ -858,7 +853,7 @@ for run_dir in "$ROOT"/*; do
 
   run_has_wt_elig=0
   i=0
-  while [ "$i" -lt "${#TW_VERDICTS[@]:-0}" ]; do
+  while [ "$i" -lt "${#TW_VERDICTS[@]}" ]; do
     if [ "${TW_VERDICTS[$i]}" = "eligible" ] \
          && { [ "$APPLY" -ne 1 ] || [ "${TW_ACTIONS[$i]:-none}" = "removed" ]; }; then
       tierW_worktrees=$((tierW_worktrees + 1))
