@@ -191,6 +191,13 @@ def test_drive_review_exports_tmpdir_around_codex():
     assert "mkdir -p" in span and "$RUN_DIR/tmp" in span, (
         "AC13: a one-time mkdir -p $RUN_DIR/tmp before the codex call"
     )
-    assert re.search(r'TMPDIR="?\$RUN_DIR/tmp"? codex exec', span), (
-        "AC13: TMPDIR=$RUN_DIR/tmp must wrap the codex exec call"
+    exec_m = re.search(r'TMPDIR="?\$RUN_DIR/tmp"? codex exec', span)
+    assert exec_m, "AC13: TMPDIR=$RUN_DIR/tmp must wrap the codex exec call"
+    # The mkdir MUST precede the TMPDIR-wrapped codex exec — otherwise TMPDIR would
+    # point at a not-yet-created dir, defeating the scratch-namespacing goal. A
+    # presence-only check would still pass with the mkdir moved AFTER the exec.
+    mkdir_m = re.search(r'mkdir -p "?\$RUN_DIR/tmp"?', span)
+    assert mkdir_m, "AC13: a one-time mkdir -p $RUN_DIR/tmp before the codex call"
+    assert mkdir_m.start() < exec_m.start(), (
+        "AC13: mkdir -p $RUN_DIR/tmp must PRECEDE the TMPDIR=$RUN_DIR/tmp codex exec call"
     )
