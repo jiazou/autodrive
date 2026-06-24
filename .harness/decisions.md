@@ -2663,3 +2663,17 @@ the user reopened that gate. Behavior-preserving: zero code lines changed (verif
 full suite 383 green. Classification: Taste (de-slop). The load-bearing fail-safe *why* sentences
 were preserved — the dual-voice review's job is to confirm none were over-cut. Re-promote ledgers
 fresh after convergence.
+## Run drive/p3-followup-cleanup (2026-06-23) — clear two deferred P3 followups
+
+- **Two parallel slices (fan-out), not one.** [Mechanical] Disjoint files
+  (`test/drive-merge-gate.test.sh` vs `bin/drive-conformance.sh`), no shared contract, no ordering →
+  fan-out seam; parallel worktrees. Slice ids 1.1, 1.2. (pragmatic, bias-to-action)
+- **Rename FULL symbol at both sites; leave already-correct comments.** [Mechanical] Banner/registration
+  comments already said "finalize"; edited only the def + callsite. (explicit-over-clever, DRY)
+- **B is comment-only; mirror docs/live-logic, no logic touch.** [Mechanical] Per D33 the L484+ logic is
+  correct; scoped strictly to the L449–451 comment block; executable diff empty. (completeness w/o boiling ocean)
+- **No new test coverage; reuse existing suites + grep as the regression guard.** [Mechanical] No exact-prose
+  pin guards either edit; a banner-prose pin would be over-design. (right-size at design)
+- **Finalize: codex P2 (remove the rewritten banner) VETOED.** [Mechanical] The banner IS task (B)'s
+  deliverable; removal would restore the stale pre-finalize comment / drop slice 1.2's acceptance criterion →
+  vetoed, non-blocking. Both voices zero P1; finalize CONVERGED at the free confirming round (0 fix rounds).
