@@ -1201,7 +1201,7 @@ test_ship_body_token_keys_head_not_body() {
 # ---------------------------------------------------------------------------------
 # Finding #2: ship deny remediation names `/drive-finalize`, not `/drive-review ship`.
 # ---------------------------------------------------------------------------------
-test_ship_deny_names_phase_not_ship() {
+test_ship_deny_names_finalize_not_ship() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
   run_gate "gh pr create --title x --body y" "$repo"; out="$GATE_OUT"
@@ -2197,7 +2197,7 @@ main() {
   # finding #1: ship runId from HEAD, not body token
   test_ship_body_token_keys_head_not_body
   # finding #2: ship deny remediation names /drive-finalize
-  test_ship_deny_names_phase_not_ship
+  test_ship_deny_names_finalize_not_ship
   # finding #3: explicit non-drive push target not gated; bare drive push gated
   test_push_origin_main_not_ship
   test_push_bare_on_drive_is_ship
