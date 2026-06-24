@@ -446,9 +446,15 @@ EOF
     ;;
 
   ship)
-    # Existential R (D12): EXISTS a counting phase/integration review with
-    # reviewed-sha R s.t. (a) R is ancestor of tip, (b) git diff R..tip ⊆ allowlist,
-    # (c) R..tip is at most one commit. Do NOT pick highest-N (mis-selects across phases).
+    # Two-stage ship gate (mirrors docs/drive-enforcement.md:63-74):
+    # (b-i) PRECONDITION: ≥1 COUNTING phase-integration review must exist — a converged,
+    #   SHA-bound, codex-backed review-phase* (else "no-phase-review"); a run that never
+    #   produced one never legitimately reached finalize.
+    # (b-ii) TERMINAL candidate-R: the CONVERGED finalize artifact (highest-N
+    #   review-finalize-N.md, CONVERGED, with codex-review-finalize.md), whose reviewed-sha
+    #   R must satisfy (a) R is ancestor of tip, (b) git diff R..tip ⊆ the ship-ledger
+    #   allowlist, (c) R..tip is at most one commit. No converged finalize → candidate_R=""
+    #   → ship blocks (no-review).
     if ! tip="$(rev "$featureBranch")"; then
       echo "error: cannot resolve featureBranch $featureBranch" >&2; exit 2
     fi
