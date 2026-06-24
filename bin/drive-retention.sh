@@ -20,7 +20,7 @@
 # Usage:
 #   drive-retention.sh [--root <dir>] [--age-days <N=14>] [--now <epoch>] [--json] [--apply]
 #
-# Best-effort isolation (D3): this is NOT `set -euo pipefail`. A per-run classification
+# Best-effort isolation: this is NOT `set -euo pipefail`. A per-run classification
 # failure becomes a SKIP with a reason; the scan ALWAYS exits 0. The ONLY non-zero exit
 # is 2 on an unknown CLI flag (a caller programming error at the CLI boundary, surfaced
 # before enumeration begins).
@@ -30,8 +30,8 @@
 #   Tier-W  per-CHILD drive-owned worktree eligibility under wt/. Full git-truth gate.
 # Every unverifiable/error input routes to a SKIP (fail-safe) — no fail-open path exists.
 
-# Deliberately NO `set -e` / `set -u` / `set -o pipefail` (best-effort contract, D3 /
-# DP3). No `set -u` also sidesteps the same-line `local a=$1 b=$a` expansion gotcha.
+# Deliberately NO `set -e` / `set -u` / `set -o pipefail` (best-effort contract). No
+# `set -u` also sidesteps the same-line `local a=$1 b=$a` expansion gotcha.
 
 # ----------------------------------------------------------------------------- #
 # CLI parse
@@ -42,9 +42,9 @@ NOW=""
 JSON=0
 APPLY=0
 
-# The destructive command. Production default `trash` (D4, never `rm`). The
+# The destructive command. Production default `trash`, never `rm`. The
 # RETENTION_TRASH_CMD env seam lets tests inject an mv-to-graveyard shim so the apply-path
-# tests stay trash-independent and deterministic (DP-A3); it is word-split so a shim like
+# tests stay trash-independent and deterministic; it is word-split so a shim like
 # `mv -t /graveyard` works as `$TRASH_CMD <path>`.
 TRASH_CMD="${RETENTION_TRASH_CMD:-trash}"
 
@@ -93,7 +93,7 @@ if ! printf '%s' "$AGE_DAYS" | grep -qE '^[0-9]+$'; then
 fi
 AGE_SECS=$((AGE_DAYS * 86400))
 
-# jq is required to classify. Absent ⇒ best-effort notice + exit 0 (D3: a missing tool
+# jq is required to classify. Absent ⇒ best-effort notice + exit 0 (a missing tool
 # must never abort a new run's setup).
 if ! command -v jq >/dev/null 2>&1; then
   echo "drive-retention.sh: jq not found on PATH; cannot classify (best-effort, nothing done)" >&2
@@ -128,8 +128,7 @@ state_field() {
 # Mirrors the sibling drive-conformance.sh, which treats a non-null `waiting` as malformed.
 # A MISSING / torn / unreadable state.json (jq error) is NOT a present non-null waiting — it
 # is treated as quiet here and caught downstream by the DONE gate (a torn state can never
-# produce a done signal ⇒ skip:not-done — the documented edge-2 fail-safe, kept CONSISTENT
-# across tiers). $1=run_dir
+# produce a done signal ⇒ skip:not-done, kept CONSISTENT across tiers). $1=run_dir
 is_waiting_quiet() {
   local sj="$1/state.json" v
   [ -f "$sj" ] || return 0          # no state.json ⇒ no waiting field ⇒ quiet (caught by DONE gate)
@@ -299,7 +298,7 @@ parse_gitdir_admin() {
   esac
 }
 
-# Three-way registration of a run's wt/<name>/.git by PATH EQUALITY (DP9). Echoes
+# Three-way registration of a run's wt/<name>/.git by PATH EQUALITY. Echoes
 # `registered` | `not-registered` | `unprovable`. $1=run_dir $2=child-name
 #   not-registered : NO wt/<name>/.git pointer file at all (the ONLY fall-through to W7).
 #   registered     : pointer resolves to <repo>/.git/worktrees/<id> AND that admin entry's
@@ -312,10 +311,9 @@ wt_registered_anywhere() {
   local ptr="$d/wt/$name/.git"
   # The worktree-registration POINTER is a FILE containing `gitdir: <path>`.
   #   - `.git` is a DIRECTORY, or there is NO `.git` at all ⇒ "no pointer file" ⇒
-  #     not-registered (the ONLY fall-through to W7 — a restored/recreated full checkout,
-  #     edge 11).
+  #     not-registered (the ONLY fall-through to W7 — a restored/recreated full checkout).
   #   - a `.git` dirent EXISTS but is not a readable regular file (a DANGLING symlink, an
-  #     unreadable pointer) ⇒ a pointer is present yet unprovable ⇒ unprovable (edge 5).
+  #     unreadable pointer) ⇒ a pointer is present yet unprovable ⇒ unprovable.
   #   - a readable `.git` regular file ⇒ proceed to the path-equality test below.
   if [ -d "$ptr" ]; then printf 'not-registered'; return; fi
   if [ ! -e "$ptr" ] && [ ! -L "$ptr" ]; then printf 'not-registered'; return; fi
@@ -337,7 +335,7 @@ wt_registered_anywhere() {
   fi
 }
 
-# Owning-repo resolution (DP6): state.repoRoot (non-null AND existing dir) ELSE the first
+# Owning-repo resolution: state.repoRoot (non-null AND existing dir) ELSE the first
 # path-verified registered wt/<name>/.git gitdir → <repo> ELSE empty (UNRESOLVABLE).
 # Echoes <repo-root> or empty. $1=run_dir
 resolve_owning_repo() {
@@ -352,9 +350,9 @@ resolve_owning_repo() {
     for child in "$d"/wt/*; do
       [ -d "$child" ] || continue
       name="${child##*/}"
-      # Only a DRIVE-OWNED-named registered child may resolve the owning repo (DP6 intends
-      # the repo /drive cut the run's branches from). A real run carries ad-hoc children
-      # (converter/scripts/test_projects — edge 10); trusting one's gitdir would resolve the
+      # Only a DRIVE-OWNED-named registered child may resolve the owning repo (the repo
+      # /drive cut the run's branches from). A real run carries ad-hoc children
+      # (converter/scripts/test_projects); trusting one's gitdir would resolve the
       # owning repo to a FOREIGN repo, so the ancestry probe would run in the WRONG repo and
       # could falsely authorize a sibling drive-owned child. Filter ad-hoc names out here.
       is_drive_owned_name "$name" || continue
@@ -371,7 +369,7 @@ resolve_owning_repo() {
   printf ''
 }
 
-# Live READ-ONLY ancestry probe (DP5). Echoes `yes` | `no` | `unprovable`. ALWAYS attempts
+# Live READ-ONLY ancestry probe. Echoes `yes` | `no` | `unprovable`. ALWAYS attempts
 # the probe when the repo is resolvable (no baseRef pre-check — let git's rc decide):
 #   rc0 → yes (ancestor) · rc1 → no (not ancestor) · rc>1 (incl. baseRef absent / git error) → unprovable
 # $1=run_dir $2=repo_root
@@ -391,7 +389,7 @@ is_ancestor_in_owning_repo() {
 
 # W7b cleanliness probe of an EXISTING unregistered (no-pointer) dir. Echoes
 # `clean` | `dirty` | `unpushed` | `unreadable`. ALWAYS required for an existing dir,
-# REGARDLESS of completedAt (DP8). $1=dir
+# REGARDLESS of completedAt. $1=dir
 wt_cleanliness() {
   local dir="$1" porcelain rc
   command -v git >/dev/null 2>&1 || { printf 'unreadable'; return; }
@@ -514,7 +512,7 @@ apply_tier_W_child() {
   local d="$1" name="$2" repo="$3"
   local dir="$d/wt/$name"
 
-  # Step 1 — re-verify guard (TOCTOU), BEFORE any destructive verb (DP-A2). The verdict was
+  # Step 1 — re-verify guard (TOCTOU), BEFORE any destructive verb. The verdict was
   # computed earlier in this run; re-assert against LIVE state the FULL eligibility gate the
   # classifier used — not just registration + cleanliness, but ALSO the run-level liveness gate
   # (L1 waiting-quiet, L2 no-open-inflight, L3 done). A run resumed in the TOCTOU window (sets
@@ -542,10 +540,9 @@ apply_tier_W_child() {
     git -C "$repo" worktree prune 2>/dev/null
   fi
 
-  # Step 4 — late re-check IMMEDIATELY before the destructive trash. The Step-1 full re-verify
+  # Step 4 — late re-check IMMEDIATELY before the destructive trash. The Step-1 re-verify
   # MINIMIZES but cannot CLOSE the check-then-act window: a run that goes live AFTER its Step-1
-  # predicate is read (`.waiting` set after line 526, an inflight marker written after 527, done
-  # cleared after 528), OR a dir DIRTIED after its Step-1 cleanliness read (line 533) — and the
+  # liveness predicates are read, OR a dir DIRTIED after its Step-1 cleanliness read — and the
   # reg=="not-registered" path makes the `worktree remove --force` above a no-op, so a dir
   # dirtied in the window survives INTACT to the trash — would otherwise still flow to trash.
   # A check-then-act window is IRREDUCIBLE in a lockless shell GC — we MINIMIZE it (not close it)
@@ -555,14 +552,13 @@ apply_tier_W_child() {
   # inflight marker / `.waiting` BEFORE doing real work, so this catches the realistic resume.
   # The residual sub-syscall window between this re-check and the trash is ACCEPTED for liveness
   # AND cleanliness alike: the GC is report-only by default; `--apply` is a manual, ≥14-day-aged,
-  # done-run one-shot (followup in $RUN_DIR/followups.md). On any signal going live OR the dir
-  # going dirty ⇒ skipped-changed, NO trash.
+  # done-run one-shot. On any signal going live OR the dir going dirty ⇒ skipped-changed, NO trash.
   is_waiting_quiet "$d" || { printf 'skipped-changed'; return; }
   has_open_inflight "$d" && { printf 'skipped-changed'; return; }
   clean="$(wt_cleanliness "$dir")"
   [ "$clean" = "clean" ] || { printf 'skipped-changed'; return; }
 
-  # Step 5 — trash the dead dir (D4: trash, never rm). On success ⇒ removed; on failure ⇒
+  # Step 5 — trash the dead dir (trash, never rm). On success ⇒ removed; on failure ⇒
   # trash-failed (fail-safe: the dir remains, the next GC re-attempts; NO rm fallback).
   if $TRASH_CMD "$dir" 2>/dev/null; then
     printf 'removed'
@@ -581,7 +577,7 @@ apply_tier_W_child() {
 apply_tier_L() {
   local d="$1" entry name outcome="swept"
 
-  # Step 1 — re-verify guard (TOCTOU), BEFORE any destructive verb (DP-A2), mirroring
+  # Step 1 — re-verify guard (TOCTOU), BEFORE any destructive verb, mirroring
   # apply_tier_W_child. The Tier-L verdict was computed earlier in this run; re-assert the
   # run-level liveness gate against LIVE state. A run resumed in the window (sets `.waiting` /
   # writes an inflight marker / un-sets its done signal) must NOT have its logs swept (the
@@ -626,7 +622,7 @@ emit_json_run() {
   # Tier-L logs JSON array + total bytes — rendered from the PRE-deletion snapshot
   # (TIERL_LOGS_SNAPSHOT / TIERL_BYTES_SNAPSHOT, captured in classify_run BEFORE --apply), so
   # report==apply field parity holds: --apply reports the set it SWEPT, not an empty post-delete
-  # re-enumeration (finding 2).
+  # re-enumeration.
   local logs_json="[]" total_bytes="$TIERL_BYTES_SNAPSHOT" name bytes entry
   local logs_acc=""
   for entry in "${TIERL_LOGS_SNAPSHOT[@]:-}"; do
@@ -696,7 +692,7 @@ report_run() {
     "$AGE_REPORT_DAYS" "$AGE_ANCHOR" "$AGE_DAYS" "$past_disp"
 
   if [ "$TIERL_VERDICT" = "eligible" ]; then
-    # Count from the PRE-deletion snapshot (finding 2), NOT a post-trash re-enumeration that
+    # Count from the PRE-deletion snapshot, NOT a post-trash re-enumeration that
     # would print "SWEPT <0 files, ~0 MB>" under --apply.
     local nfiles=0 total="$TIERL_BYTES_SNAPSHOT" entry verb="WOULD-SWEEP"
     for entry in "${TIERL_LOGS_SNAPSHOT[@]:-}"; do
@@ -759,8 +755,8 @@ classify_run() {
 
   TIERL_VERDICT="$(classify_tier_L "$d")"
 
-  # Snapshot the Tier-L heavy-log set + total bytes ONCE, BEFORE any --apply deletion (finding
-  # 2). The renderers (emit_json_run/report_run) and the summary read this snapshot, NOT a fresh
+  # Snapshot the Tier-L heavy-log set + total bytes ONCE, BEFORE any --apply deletion.
+  # The renderers (emit_json_run/report_run) and the summary read this snapshot, NOT a fresh
   # heavy_logs() — otherwise --apply would re-enumerate AFTER trashing and report logs:[] /
   # bytes:0 / "SWEPT <0 files>", breaking report==apply field parity. Captured here for BOTH
   # report and apply mode so the rendered fields are identical (only `action`/verbs differ).
@@ -825,7 +821,7 @@ for run_dir in "$ROOT"/*; do
   runs_scanned=$((runs_scanned + 1))
 
   # Per-run isolation: any unexpected failure inside classification is swallowed (the loop
-  # continues), never aborting the scan (D3). classify_run + the renderers are best-effort.
+  # continues), never aborting the scan. classify_run + the renderers are best-effort.
   classify_run "$run_dir" 2>/dev/null
 
   if [ "$JSON" -eq 1 ]; then
@@ -850,7 +846,7 @@ for run_dir in "$ROOT"/*; do
   if [ "$TIERL_VERDICT" = "eligible" ] \
        && { [ "$APPLY" -ne 1 ] || [ "$TIERL_ACTION" = "swept" ]; }; then
     tierL_runs=$((tierL_runs + 1))
-    # Use the PRE-deletion snapshot (finding 2): under --apply the logs are already trashed, so
+    # Use the PRE-deletion snapshot: under --apply the logs are already trashed, so
     # a fresh heavy_logs() would tally ~0 MB and under-report what was reclaimed.
     tierL_bytes_total=$((tierL_bytes_total + TIERL_BYTES_SNAPSHOT))
   else
