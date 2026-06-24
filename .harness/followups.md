@@ -358,3 +358,67 @@ made SAFE by the round-2 idempotency fixes. A focused follow-up should tighten t
   yield an illegal ref/path. Surfaced by codex during the collision-guard review.
   **Suggested:** pin a deterministic slug rule (lowercase, `[a-z0-9-]`, collapse/truncate)
   where runId is minted. **Severity:** low.
+
+
+<!-- ===== promoted from /drive run drive-retention-hygiene-20260622T073209 (2026-06-24T01:35:55Z) ===== -->
+# Followups — drive-retention-hygiene
+
+- MANUAL ONE-SHOT: 166 loose /tmp/codex_*/autoplan_* scratch files (~ad-hoc interactive, NOT pipeline-emitted) — sweep manually with `trash /tmp/codex_* /tmp/autoplan_*`. Not pipeline scope (D5).
+- VERIFY (phase design): confirm the codex CLI honors TMPDIR for its own session scratch before adding the optional TMPDIR=$RUN_DIR/tmp export to drive-review.md (+ other direct-codex callers); if it does not, drop the edit as inert (Open Q2).
+- OUT OF SCOPE (noted): decant Step 7 (#57) already owns registered-worktree + merged/closed-branch pruning; this task must not duplicate or touch branch pruning.
+- DISCOVERY: this retention branch forked from #56 (781913f), BEFORE #57 landed on main (0fd3310). #57's decant Step 7 will be in the merge base — design assumes its presence and stays non-overlapping. Implementer should confirm no merge conflict in skills/decant/SKILL.md (this task does not edit it).
+
+- PHASE-2 HANDOFF (from phase-1 design): the live `merge-base --is-ancestor <baseRef>` Tier-W ancestry backstop is DEFERRED to Phase 2's --apply path (Phase 1 reports skip:no-completedAt-and-no-ancestry instead of fabricating an ancestry verdict with no consumer). Phase 2 must add the ancestry probe in the owning repo AND handle a missing remote-tracking baseRef as ancestry-unprovable => SKIP (design.md Repo-ownership bullet).
+- GROUND-TRUTH (phase-1 design, verified on disk): state.repoRoot is null on every existing run; registered wt/<name>/.git is a gitdir-pointer file (e.g. `gitdir: /Users/.../unity2rbxlx/.git/worktrees/wt`); no completedAt markers exist yet; event-log lines carry `"at":"<ISO8601 Z>"`; trash is /usr/bin/trash. Reusable teardown mechanics: `git worktree remove --force <dir> 2>/dev/null; git worktree prune` (drive-ship.md:44, drive.md:938) — Phase 2 CALLS these, Phase 1 does not.
+
+## Slice 1.1 round-2 — deferred
+- **missing-jq / missing-git tool-absence pins.** The script handles a missing jq (notice + exit 0, :81) and missing git (W4→`ancestry-unprovable`, W7b→`unreadable`, fail-safe) correctly and the reviewer verified both live, but no test pins them. A PATH-restricted simulation (hiding jq/git) wasn't added this round to avoid a brittle env-mutation pattern that could falsely red on CI hosts lacking a clean way to shadow tools. The dangling/unreadable `.git` fail-safe IS pinned. Consider a `PATH=`-shadowed test or a `_helpers` tool-absence harness if the cleanliness/jq guards are touched again.
+
+## Slice 1.1 round-3 — deferred (residual, NOT a fail-open)
+- **W7b reflog-only unpushed gap (acceptable NIT, Phase-2 awareness).** `wt_cleanliness`'s `git log --all --not --remotes` covers HEAD + branches + tags + refs/stash, but NOT a commit reachable only from the reflog (HEAD was `reset --hard`/`checkout`'d off it). This is intentionally-discarded work (working tree sits at the clean pushed HEAD), not crash-residue (a crash leaves work ON HEAD as a detached commit, which `--all` catches). Adding `--reflog` would over-skip every recently-reset worktree as `unpushed` (a conservative over-skip, never a fail-OPEN). Phase 1 is report-only; Phase 2's removal is `git worktree remove --force` which discards the reflog anyway. No action needed unless Phase 2 wants belt-and-suspenders.
+
+## [Phase 2 / --apply] W7b reflog-only & standalone-checkout residue (from slice 1.1 codex r3 BLOCKING, overruled-to-followup in Phase 1)
+codex r3 flagged: W7b `git log --all --not --remotes` does NOT catch a commit reachable ONLY from the reflog (e.g. local commit then `git reset --hard origin/main`) — such a clean checkout would report `eligible`, and Phase-2 `--apply` deletion would drop recoverable local history. OVERRULED as a Phase-1 P1 because: (a) Phase 1 is REPORT-ONLY (no deletion → no data loss); (b) the `eligible` outcome via the no-pointer→W7b path requires the dir to be a STANDALONE `.git`-DIRECTORY checkout — a real /drive worktree leftover has a pointer file (→registered/unprovable) or no `.git` (→`git status` fails→`skip:unreadable`), so this case is NOT producible by the /drive lifecycle; (c) the naive `--reflog` fix is NET-NEGATIVE — post-squash reflog SHAs would flag nearly every worktree `unpushed`, neutering Tier-W reclaim.
+PHASE 2 MUST: model the real residue classes locus 1 actually leaves, and decide the standalone-checkout / reflog-only W7b case before `--apply` deletes — recommend treating a no-pointer `wt/<name>` that has its OWN `.git` directory (a non-/drive standalone repo) as AMBIGUOUS → skip, rather than a blanket `--reflog` (which over-skips). Re-confirm whether the `eligible` Tier-W path is even reachable by genuine /drive residue (real leftovers may all route to registered/unreadable), and if not, document that Tier-W reclaim is effectively completedAt-gated.
+## slop (deferred to finalize)
+- bin/drive-retention.sh:444,507,597 — `${#ARRAY[@]:-0}` the `:-0` is dead/redundant
+- bin/drive-retention.sh:429 — `line` declared but never used in emit_json_run
+- bin/drive-retention.sh:257 — `selfpath="$ptr"` needless indirection
+- bin/drive-retention.sh:388-392 — `case "$anc"` has no default arm (add explicit `*) ancestry-unprovable`)
+- bin/drive-retention.sh:283-289/246-249 — duplicated gitdir-admin parse+strip in wt_registered_anywhere & resolve_owning_repo; extract a helper (DRY)
+- bin/drive-retention.sh:35-42, 146-151, 319-324 — (codex) slop refs
+- tests/contracts/test_drive_retention.py:1-12, 479-486, 761-763 — (codex) slop refs
+- bin/drive-retention.sh:109 + tests/contracts/test_drive_retention.py:886-891 — comment/test overclaim `0` collapse (jq `0//empty`→0; real bypass false/null) [codex harden r2]
+- bin/drive-retention.sh:112-114 — torn-state "never done signal" comment drifts vs :230-232 completedAt acceptance [codex harden r2]
+
+--- Phase 2 design follow-ups ---
+- gh-PR-state historical worktree reclaim (design.md Open Question 5): squash-merge defeats the ancestry backstop, so Tier-W reclaims ~no historical worktrees; consulting `gh pr` state (like #57) would reclaim them but adds a gh dependency to an unattended GC. Deferred unless the reclaim gap proves material — new runs self-clean via completedAt.
+- D5 /tmp/codex_* interactive-scratch backlog: manual one-shot cleanup (out of pipeline scope). If DP-A6's TMPDIR export is deferred (codex CLI does not honor TMPDIR on host), record that here too.
+
+## phasedesign2 r3 review — sub-threshold (NIT, non-blocking)
+- §D/§E removal-success proof uses `[ ! -e "$RUN_DIR/wt/<name>" ]`; `-e` reads a
+  dangling symlink as "gone", so a (highly implausible) dangling symlink left at
+  `wt/<name>` would be treated as a successful removal and allow `completedAt`.
+  Benign — a worktree is never a symlink and a dangling symlink is not a registered
+  worktree, so W4's attestation is not materially violated. At implement, mirror the
+  helper's own `-e`/`-L` discipline (drive-retention.sh:292) with a `-L`-aware check
+  if cheap.
+
+## Slice 2.1 round-2 — residual (accepted)
+- **Irreducible lockless-TOCTOU residual in `apply_tier_W_child`.** The apply path now re-checks the cheapest, earliest-written liveness signals (`is_waiting_quiet` + `has_open_inflight`) IMMEDIATELY before the destructive `$TRASH_CMD` (bin/drive-retention.sh, after `git worktree remove/prune`), MINIMIZING the check-then-act window to a sub-syscall gap between that re-check and the trash. A check-then-act window is IRREDUCIBLE in a lockless shell GC — it is MINIMIZED, never closed/eliminated. The residual is ACCEPTED: the GC is report-only by default and `--apply` is a manual, ≥14-day-aged, done-run one-shot. Closing it fully would require a lock (deliberately not added — no over-engineering). If `--apply` ever becomes automated/unattended, revisit with a per-run advisory lock (flock on `$RUN_DIR/.gc.lock`) around the re-check→trash span.
+
+## slice 2.1 P2 (for HARDEN phase 2) — apply summary over-claims
+bin/drive-retention.sh:800,827 — apply-mode top-level summary tallies from pre-apply `eligible` verdicts + swaps verbs to reclaimed/removed, so trash-failed/skipped-changed cases over-claim bytes/worktrees reclaimed though they remain on disk (per-run detail is correct). Fix: tally summary from actual action outcomes (removed/swept only).
+- bin/drive-retention.sh:515,543,576,586 — apply-path comments/structure; de-slop pass
+- bin/drive-retention.sh (apply_tier_W_child + apply_tier_L) — duplicated 2-line late-recheck liveness pair across both apply fns; extract a shared helper (Claude harden r4)
+- tests/contracts/test_drive_retention.py:1532,1588,1813,2145,2187 — test-helper/structure de-slop (codex harden r4)
+
+## finalize round 1 — deferred (non-cheap / inverse-of-deslop; NON-BLOCKING)
+- bin/drive-retention.sh `case "$anc"` (no default arm) — NOT applied: adding a defensive `*)`
+  arm is the inverse of de-slop, and the producer `is_ancestor_in_owning_repo` is a closed
+  yes|no|unprovable enum so no out-of-enum value reaches it. Taste; leave as-is.
+- bin/drive-retention.sh JSON renderer vs human renderer (verdict/action→output mapping
+  duplicated; extra per-entry jq in the JSON path) [codex P2] — NOT applied in-run: consolidating
+  the two renderers is a refactor on a destructive script's OUTPUT CONTRACT (heavily string-pinned),
+  so behavior-change risk outweighs the DRY win for a finalize de-slop pass. Revisit as a standalone
+  reuse cleanup.

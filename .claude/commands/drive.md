@@ -172,6 +172,44 @@ verdict / merge / gate.
     `git worktree remove --force`. A detached `wt/design<P>`
     worktree (the per-phase design read worktree) is never live across a pause → always
     `git worktree remove --force` it.
+
+    **Done-via-resume teardown (mirrors drive-ship.md § After approval).** When the resume
+    is the leg that brings the run to its terminal DONE state (it lands `stage="done"`),
+    apply the SAME cd-out → remove → verify-removal → gated-`completedAt` → done-last
+    sequence as drive-ship.md, anchored on the same proven-removal gate. The resume's
+    existing stale-worktree removal for NON-terminal pauses (above) is UNCHANGED — those run
+    `git worktree remove` WITHOUT a `completedAt` (the run is not done). The done-path adds:
+    1. **Require a `-d`-VALID `repoRoot`, then `cd` OUT of any `wt/<name>` to it FIRST**, BEFORE
+       any destructive verb. Validate `repoRoot` with an explicit `-d` check — mirror the
+       helper's guard `[ -d "$rr" ]` EXACTLY; do NOT treat "`repoRoot` is set" as sufficient (a
+       stale/deleted-but-present `state.repoRoot` makes the `git -C "<repoRoot>" worktree
+       remove` calls FAIL yet leaves `trash` reachable — NOT fail-closed — and the absolute-path
+       removals could delete the live cwd). **The destructive teardown REQUIRES a `-d`-valid
+       `repoRoot`: if `repoRoot` is empty OR NOT `[ -d "$repoRoot" ]`, fail-closed for the WHOLE
+       teardown — run NO `git worktree remove`/`prune`, NO `trash`, and DO NOT write
+       `completedAt` / `stage="done"`.** Only with a valid `repoRoot`: select `target =
+       "$repoRoot"` (a stable dir OUTSIDE every `wt/<name>` being removed); the `cd` is itself
+       CHECKED (`cd "$target" || <fail-closed>`). **Fail-closed branch — invalid `repoRoot` OR a
+       failed `cd`:** run NO destructive verb (no `git worktree remove`, no `trash`), leave the
+       worktrees, and DO NOT write `completedAt` / `stage="done"` — the run stays NOT-done /
+       not-sweepable, re-attempted on a later resume. (`repoRoot` is NOT re-derived — D7
+       write-once; this is only the `-d` guard on the existing value.) The destructive steps 2-5
+       run ONLY AFTER a `-d`-valid `repoRoot` AND a successful `cd` to it.
+    2. Remove ALL drive-owned worktrees via `git -C "<repoRoot>" worktree remove --force` +
+       `git -C "<repoRoot>" worktree prune` (extend the stale-only removal above to ALL
+       drive-owned at done).
+    3. `trash` the dead drive-owned `wt/<name>` dirs, and **VERIFY each `$RUN_DIR/wt/<name>`
+       is gone on disk** (`[ ! -e "$RUN_DIR/wt/<name>" ]` — the per-tree removal-success proof).
+    4. **GATE: write `completedAt` ONLY IF every required drive-owned worktree removal is
+       PROVEN done** (all `wt/<name>` dirs gone) and not already present. If ANY removal could
+       not complete (a dir still exists), DO NOT write `completedAt` and DO NOT write
+       `stage="done"`; the run stays NOT-done / not-sweepable (fail-safe), re-attempted later.
+       The marker is `printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$RUN_DIR/completedAt"`
+       (one clean ISO line + trailing newline — the strict format the helper parses). The
+       gate is load-bearing because the helper's `is_done()` keys off a parseable
+       `completedAt` ALONE: a marker written before removals finished would itself make the
+       run sweepable.
+    5. Write `stage="done"` LAST (after the marker).
   - **Each slice, by `step`:** `queued` → leave it for the phase-loop to dispatch.
     `implementing` → if `git rev-list <phaseBaseSha>..slice/<runId>/<id>` is non-empty and
     slice-local tests pass, promote to `awaiting_review`, else re-dispatch IMPLEMENT.
@@ -228,7 +266,7 @@ verdict / merge / gate.
 
 ```json
 { "runId": "<id>", "task": "<task>", "stage": "premises",
-  "baseRef": "main", "featureBranch": "drive/<id>",
+  "baseRef": "main", "featureBranch": "drive/<id>", "repoRoot": "<git rev-parse --show-toplevel>",
   "phase": 1, "phaseList": [], "phaseBaseSha": null, "concurrencyCap": 4, "designReview": 0,
   "budget": { "ceilingCalls": null, "ceilingMin": null, "calls": 0, "startedAt": "<iso>" },
   "slices": {}, "phaseDesign": {}, "phaseReview": {}, "finalizeRound": 0, "lastGate": null,
@@ -244,12 +282,36 @@ interpolation corrupts the file. Construct it with a JSON tool, e.g.
 same for every later write. Apply the same rule anywhere run text is embedded in
 JSON (event-log lines, etc.).
 
+**Record `repoRoot` (write-once at fresh-run setup).** Set `repoRoot = git rev-parse
+--show-toplevel` (the driven repo — `/drive` runs inside it, so cwd at setup IS the driven
+repo). Build it JSON-safely via `jq` like every other field (the never-string-substitute rule
+above). It is **write-once at fresh-run setup and NEVER re-derived on resume** — a resume
+re-pasted from any cwd reuses the persisted value. It feeds the retention helper's
+`resolve_owning_repo` and the ship/resume teardown's cd-target selection.
+
 **Atomic write — every `state.json` write goes through a temp file + `mv`.** Write to
 `$RUN_DIR/.tmp.state.json.$$` (or equivalent) and `mv` it over `state.json`; never an
 in-place redirect/truncate (`> state.json`) that can leave a torn file if the turn dies
 mid-write. Resume reads `state.json` as a routing hint and a torn hint must never
 half-parse — `--mode state-lint` would flag it `unparseable-state`. Mirrors the marker
 tmp + `mv` discipline.
+
+**GC-at-setup (best-effort, REPORT-ONLY, backgrounded).** AFTER the first `state.json`
+write completes (NEVER on the `mkdir` claim critical path — a GC failure must never abort a
+new run's setup), fire a best-effort retention sweep of stale sibling runs:
+
+```
+( bin/drive-retention.sh >>"$RUN_DIR/retention-gc.log" 2>&1 || true ) &
+```
+
+It is **REPORT-ONLY (no `--apply`)** per the Gate-A resolution (report-only default
+accepted): it emits the would-sweep report to `$RUN_DIR/retention-gc.log` for visibility and
+performs NO deletion. It is **swallowed** (`|| true`, stdout+stderr to `retention-gc.log` so
+it never pollutes the coordinator's turn) and **backgrounded (`&`)** so setup never blocks on
+a slow scan. The helper is always-exit-0 and time-bounded. The firing run's own residue is
+live (not aged, not done) so it is never swept; every other live sibling is protected by the
+classifier's waiting/inflight/done/age gates. The destructive `--apply` sweep is a manual
+one-shot (run the helper by hand, report-then-`--apply`), NOT wired into this at-setup call.
 
 Update `state.json` after every transition. Increment `budget.calls` on each
 subagent/codex dispatch; if `ceilingCalls`/`ceilingMin` is set and exceeded → STOP

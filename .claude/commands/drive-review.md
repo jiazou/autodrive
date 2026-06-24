@@ -141,10 +141,13 @@ commits). Bind it by scope:
 ## Step 2 — Cross-model codex pass (direct CLI, per-scope log)
 
 Run codex DIRECTLY from the main context — NEVER inside a subagent that waits on it.
-Use a **per-scope** log so parallel slice reviews don't collide:
+Use a **per-scope** log so parallel slice reviews don't collide. First, ONCE per run,
+`mkdir -p "$RUN_DIR/tmp"`; then export `TMPDIR=$RUN_DIR/tmp` around the `codex exec` call
+so codex's scratch tempfiles land in the run dir instead of the shared `/tmp` (D5 — the
+codex CLI honors `TMPDIR`):
 
 ```
-codex exec "Review <scope>. For 'design': audit $RUN_DIR/design.md — high-level only
+TMPDIR="$RUN_DIR/tmp" codex exec "Review <scope>. For 'design': audit $RUN_DIR/design.md — high-level only
 (sound goal/approach + ordered ## Phases, no phase cycle; FLAG over-split P1 — a phase beyond
 the first with no fan-out/staged-risk justification, a test/docs-only phase, or mere sequential
 dependency with no foundation needing its own verify; and under-split P2 — one phase bundling a
