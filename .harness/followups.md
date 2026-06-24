@@ -422,3 +422,9 @@ bin/drive-retention.sh:800,827 — apply-mode top-level summary tallies from pre
   the two renderers is a refactor on a destructive script's OUTPUT CONTRACT (heavily string-pinned),
   so behavior-change risk outweighs the DRY win for a finalize de-slop pass. Revisit as a standalone
   reuse cleanup.
+## Run drive/p3-followup-cleanup (2026-06-23)
+
+- [VETOED][P2 slop] bin/drive-conformance.sh:449 — codex flagged the rewritten ship)-case banner as
+  "comment-only churn." OVERRULED at the integrated path: the banner IS this run's deliverable (the old
+  banner described the stale pre-finalize "EXISTS a counting phase review" model); removing it would
+  restore the stale comment or drop slice 1.2's acceptance criterion → VETOED, non-blocking, KEEP.
