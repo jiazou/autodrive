@@ -10,13 +10,27 @@ the current harness auto-summarizes context (sessions no longer hard-die), subag
 in the background by default and are reliable, Workflow-tool orchestration + fresh-session
 triggers exist, and the Claude 5 family is 1M-context.
 
-**Framing (the strategic lens):** the model/harness now natively owns the *orchestration
-mechanics* autodrive hand-rolls (spawn/parallelize/collect/retry) — that layer is the
-redundant part to shed. What stays load-bearing is the *policy + verification* layer the
-model cannot self-supply: git-truth omission-proof gates, independent second-voice review,
-fail-closed ship gating, durable $RUN_DIR state, human gates A/B. Refactor direction:
-autodrive stops micromanaging dispatch and becomes the verification harness around a
-natively-orchestrating model.
+**Framing (the strategic lens):** autodrive is THREE layers, and the new model/harness
+makes exactly one of them redundant.
+1. *Dispatch mechanics* (spawn/babysit/collect/retry, concurrencyCap loops, STATUS text
+   contracts, flakiness workarounds, context-survival machinery) — natively owned by the
+   harness now; shed it (C1/C5/C8/C11 target this layer).
+2. *Direction control* — the phase structure itself: premises → high-level plan (Gate A)
+   → per-phase design against the REAL prior-phase code → per-slice assumption check with
+   the REDESIGN escalation, plus role separation via deliberately-spawned fresh-context
+   agents (designer ≠ implementer ≠ reviewer; reviewer never sees implementer rationale).
+   NOT redundant — it *appreciates* with model capability: an action-biased model executes
+   further per unit time down a wrong heading, so cheap direction checks before expensive
+   commitment matter more, not less. A model that spawns agents natively does the whole
+   task in one perspective; the pipeline's agent spawning is context isolation as an
+   epistemic tool (fresh-context checks beat self-critique), not dispatch plumbing. The
+   plan/design artifacts are also precisely the "full task specification up front" that
+   maximizes long-horizon model performance.
+3. *Verification + enforcement* — git-truth omission-proof gates, independent second
+   voice, fail-closed ship gating, durable $RUN_DIR state, human gates A/B. NOT redundant;
+   gates verify the thing was done right, layer 2 verifies it's the right thing.
+Refactor direction: keep layers 2–3, shed layer 1 — the coordinator states contracts and
+checks direction at the seams; the model/harness owns how work gets dispatched.
 
 ### Tier 1 — wrong today, small fixes
 - [ ] **C6 (P1/small)** drive-ship.md:133 hardcodes `Co-Authored-By: Claude Opus 4.8` into
