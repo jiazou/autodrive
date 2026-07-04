@@ -2,6 +2,18 @@
 
 Architectural follow-ups deferred by /drive finalize passes.
 
+## Trellis pattern adoption — from docs/trellis-analysis.md (2026-07-04)
+
+- [ ] **TR-2 (S/L2)** Per-turn `<drive-state>` breadcrumb: a UserPromptSubmit hook reading
+  `$RUN_DIR/state.json` (runId, stage, phase, waiting, next expected command), breadcrumb
+  bodies pinned by a contract test — kills T-1 (coordinator drift corrected pre-violation,
+  between gate denies; survives auto-summarization context loss); lands on `bin/` new hook +
+  `bin/install-drive-hooks.sh` + `tests/contracts`; x-ref C11 (extend, not duplicate: C11
+  trims /goal ceremony, TR-2 adds hook-supplied steering; land compatibly with C11's pinned
+  clauses); rec detail: docs/trellis-analysis.md §Recommendations. **Trigger:** next /drive
+  run that trips a coordinator-drift STOP, a merge-gate deny on a forgotten review, or a
+  Stop-hook nag loop.
+
 ## Fable 5 / Claude 5 harness compatibility audit (2026-07-03)
 
 12 verified findings (none refuted on a two-lens adversarial verify). Baseline: the
