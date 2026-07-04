@@ -209,8 +209,8 @@ order:
 3. **Set** `waiting="rebirth"`, then present a human pause with a paste-ready `/drive
    <runId>` resume line + a re-armed `/goal`, and end the turn.
 
-This is a **prompted human handshake, not a self-restart** — the harness has no
-programmatic session-spawn; a fresh session is started by the human pasting the resume line.
+This is a **prompted human handshake, not a self-restart** — by design the harness does
+not spawn sessions programmatically; a fresh session is started by the human pasting the resume line.
 Resume is a *continue*: the new session rebinds `state.sessionId` to itself, consumes the
 marker, re-proves (both modes), re-arms, clears `waiting`, and drives on.
 

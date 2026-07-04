@@ -443,9 +443,22 @@ def test_window_uses_model_of_latest_usage_line_not_a_later_usageless_line(fake_
     Transcript: a usage-bearing Opus-4.8 line at 909_200 tokens (>= 1M*0.85 -> over its
     1M window), then a LATER usage-less assistant line with a DIFFERENT model
     (`claude-haiku-4`, no usage). Pre-fix the hook read the model from the latest line
-    (haiku -> default 200_000 window) while the tokens came from the opus line, so the
-    %/window in the steer described the wrong window. Post-fix both come from the opus
-    line: the steer fires (909_200 >= 850_000) and reports the 1_000_000-token window."""
+    (haiku -> the then-bare `haiku` 200k entry; now the `haiku-4` entry) while the
+    tokens came from the opus line, so the %/window in the steer described the wrong
+    window. Post-fix both come from the opus line: the steer fires (909_200 >= 850_000)
+    and reports the 1_000_000-token window."""
+    # PREMISE PIN: this test discriminates only while the trailing model's window
+    # differs from the usage-line model's. If a future table change gave claude-haiku-4
+    # the same window as claude-opus-4-8, the assertions below would pass even with the
+    # line-binding bug reintroduced — red loudly instead of losing power silently.
+    sys.path.insert(0, str(_helpers.REPO_ROOT / "bin"))
+    import rebirth_thresholds as rt
+    th = rt.load_thresholds()
+    assert rt.resolve_window("claude-haiku-4", th) == 200_000 \
+        != rt.resolve_window("claude-opus-4-8", th), (
+        "premise lost: the trailing model claude-haiku-4 must resolve a window "
+        "different from the opus usage line's 1M for this line-binding test to "
+        "discriminate — re-anchor the trailing model to a retained 200k family")
     trans = fake_home / "model-token-mismatch.jsonl"
     trans.write_text(
         '{"type": "assistant", "message": {"model": "claude-opus-4-8", '

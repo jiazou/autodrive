@@ -170,9 +170,9 @@ flags **only** slices merged into the **current live `phaseInt/<runId>/<P>`** th
 lack a counting review. Because it reports only merged-but-unreviewed work, it can
 *never* false-block a run that is merely idle, queued, in-flight, or paused at Gate A/B
 — and it does not depend on reaped slice branches. Violations → `{"decision":"block",
-"reason":…}`. It persists up to Claude Code's 8-consecutive-block cap, after which the
-platform overrides and the run surfaces to the human (correct escalation, not infinite
-persistence). It exists to catch the narrow window where hooks were installed mid-run
+"reason":…}`. It persists across turns until the audit is clean; the human can always
+interrupt, and any platform consecutive-block limit overrides it (correct escalation, not
+infinite persistence). It exists to catch the narrow window where hooks were installed mid-run
 inside an in-flight phase; the merge → advance → ship gate chain is the actual
 guarantee.
 
@@ -454,18 +454,18 @@ these are its known limits, stated rather than overclaimed:
   counters) are never a proof input — the load-bearing position is always re-derived from
   artifacts. **Out of scope (followup):** deep cross-validation of each slice's `owns`/`deps`
   GRAPH against git truth — state-lint validates presence + routability, not graph correctness.
-- **Prompted, not programmatic.** The rebirth handshake is a HUMAN handshake — the harness has
-  no programmatic self-restart/session-spawn; a fresh session is started by the human pasting
-  the `/drive <runId>` resume line. The handoff only *proves + presents*; re-entry is external.
+- **Prompted, not programmatic.** The rebirth handshake is a HUMAN handshake by design — the
+  harness does not use programmatic self-restart/session-spawn; a fresh session is started by
+  the human pasting the `/drive <runId>` resume line. The handoff only *proves + presents*; re-entry is external.
 - **Legacy-run residual.** Runs whose artifacts predate Phase 1 have no in-flight/epoch
   markers; marker-absence reads as "safe" and `redesigns` falls back to the `state.json` hint.
   Acceptable — such runs never had marker discipline.
 - **Stale pre-redesign CONVERGED review residual (now closed).** The epoch-aware
   phasedesign-gate now rejects a stale pre-redesign CONVERGED `review-phasedesign<P>-N.md`
   after a REDESIGN (it resolves the current epoch) — a hole closed as a side effect.
-- **Window-table maintenance.** An unknown model falls back to `defaultWindow=200000`
-  (conservative — earlier-firing). A new large-window model needs one `windows[].match` entry
-  in `bin/rebirth-thresholds.json`.
+- **Window-table maintenance.** An unknown model falls back to `defaultWindow=1000000`
+  (fail-open — a future 200k model never arms until it gets a `windows[].match` entry in
+  `bin/rebirth-thresholds.json`; owned by the C1 arming-by-window-match follow-up).
 - **`-r<digits>`-suffixed phase id.** The epoch delimiter `-r<digits>` makes a phase id that
   itself ends in `-r<digits>` ambiguous against an epoch token; the conformance gate
   fail-closes (flags) such ids, so they are effectively unsupported.

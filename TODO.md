@@ -28,13 +28,13 @@ layer 3 (C4 C6 C7 C10) — the coordinator states contracts and checks direction
 seams; the model/harness owns how work gets dispatched.
 
 ### Tier 1 — wrong today, small fixes
-- [ ] **C6 (P1/small/L3)** drive-ship.md:133 hardcodes `Co-Authored-By: Claude Opus 4.8` into
+- [x] **C6 (P1/small/L3)** drive-ship.md:133 hardcodes `Co-Authored-By: Claude Opus 4.8` into
   every shipped commit — sole occurrence, nothing pins it; make harness-agnostic.
-- [ ] **C4 (P2/small/L3)** Prose sweep: "Claude Code cannot self-initiate a fresh session"
+- [x] **C4 (P2/small/L3)** Prose sweep: "Claude Code cannot self-initiate a fresh session"
   (CLAUDE.md, docs/flow.md, docs/drive-enforcement.md; decisions.md D3) is stale — reword
   as capability-conditional; annotate D3 premise-stale (don't rewrite); also fix the
   8-consecutive-block-cap comments in bin/drive-stop-guard.sh + bin/drive-stop-hook.py.
-- [ ] **C2 (P2/medium/L1)** bin/rebirth-thresholds.json maps bare "Sonnet" → 200k, but
+- [x] **C2 (P2/medium/L1)** bin/rebirth-thresholds.json maps bare "Sonnet" → 200k, but
   Sonnet 5 / Sonnet 4.6 are 1M models (rebirth steer would fire at ~17% real usage);
   claude-fable-5 gets defaultWindow=1M only by fallthrough (happens to be correct: 1M).
   Version-qualify the legacy 200k substrings, add verified Claude-5-family entries, keep

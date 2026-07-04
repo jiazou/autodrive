@@ -129,8 +129,10 @@ it (if unreachable, emit `(run graph unavailable: drive.md not found)` and conti
 paraphrase); (3) surface the diff summary + proposed PR text and WAIT for approval. Do
 NOT push or open the PR until approved.
 
-End commit messages with:
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+End commit messages with this trailer, substituting <model> = the shipping session's own
+model name as reported by its environment (e.g. `Claude Fable 5`); if unavailable, use
+`Claude`:
+Co-Authored-By: <model> <noreply@anthropic.com>
 
 End PR bodies with:
 🤖 Generated with [Claude Code](https://claude.com/claude-code)

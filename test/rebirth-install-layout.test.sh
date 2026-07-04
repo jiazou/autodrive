@@ -161,14 +161,22 @@ rm -rf "$LINK_DIR" "$TRANS_IL"
 
 # 4c. AC6 anti-drift: the inline `case` window numbers the install relies on MUST equal the
 #     json's, so the fallback yields the SAME answer as a source-tree json read. The table is
-#     a denylist (known-200k families listed; everything else defaults to 1M), so pin BOTH
-#     the default window (1_000_000, resolves Opus/unknown) and a denylist family (Sonnet, 200k).
-inline_default_window="$(grep -oE 'WINDOW=1000000' "$STATUSLINE" | head -1 | sed 's/WINDOW=//')"
+#     an ORDERED rule list (verified-1M entries first, then version-qualified 200k families;
+#     unmatched -> 1M default), so pin the default arm, the 200k family rule, AND the 1M rule.
+# The default-arm extraction anchors on the `*)` line itself — never a bare value grep,
+# which would silently re-anchor to the (same-valued) 1M arm.
+inline_default_window="$(grep -E '^[[:space:]]*\*\)' "$STATUSLINE" | grep -oE 'WINDOW=[0-9]+' | head -1 | sed 's/WINDOW=//')"
 json_default_window="$(jq -r '.defaultWindow' "$DATA")"
-check "AC6 anti-drift: inline default window == json defaultWindow (1M, fallback matches)" "${inline_default_window:-X}" "${json_default_window:-Y}"
+check "AC6 anti-drift: inline default arm window == json defaultWindow (1M, fallback matches)" "${inline_default_window:-X}" "${json_default_window:-Y}"
 inline_sonnet_window="$(grep -oE 'WINDOW=200000' "$STATUSLINE" | head -1 | sed 's/WINDOW=//')"
-json_sonnet_window="$(jq -r '.windows[] | select(.match | index("Sonnet")) | .window' "$DATA")"
-check "AC6 anti-drift: inline 200k window == json Sonnet window (denylist matches)" "${inline_sonnet_window:-X}" "${json_sonnet_window:-Y}"
+json_sonnet_window="$(jq -r '.windows[] | select(.match | index("Sonnet 4.5")) | .window' "$DATA")"
+check "AC6 anti-drift: inline 200k window == json Sonnet 4.5 window (200k family matches)" "${inline_sonnet_window:-X}" "${json_sonnet_window:-Y}"
+# 1M RULE (windows[0]) vs the inline 1M ARM — anchored on a 1M-rule model token line
+# (NOT the `*)` line: both carry 1000000, so an unanchored grep would duplicate the
+# default-arm check by value coincidence).
+inline_1m_window="$(grep -E '"Fable 5"' "$STATUSLINE" | grep -oE 'WINDOW=[0-9]+' | head -1 | sed 's/WINDOW=//')"
+json_1m_window="$(jq -r '.windows[0].window' "$DATA")"
+check "AC6 anti-drift: inline 1M arm window == json windows[0].window (1M rule matches)" "${inline_1m_window:-X}" "${json_1m_window:-Y}"
 
 # --- 5. The installers deploy the rebirth files by REFERENCE, not by copy --
 # The installers register the hook in-place and symlink statusline; they must NOT

@@ -56,29 +56,46 @@ def thresholds():
 # --------------------------------------------------------------------------- #
 # Window resolution: display-name, model-id, default
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("model", ["Opus 4.8", "Opus 4.7"])
+# 1M models: the verified-1M rule lists them explicitly, FIRST (rule order is
+# load-bearing — `Sonnet 4.6` contains the 200k entry `Sonnet 4`; the boundary-pair
+# samples below prove the 1M side wins). `Opus 4.6` is the reclassified model
+# (200k -> 1M per the 2026-06-24 model reference).
+@pytest.mark.parametrize("model", [
+    "Opus 4.8", "Opus 4.7", "Opus 4.6",
+    "Fable 5", "Sonnet 5", "Sonnet 4.6",
+])
 def test_resolve_window_display_name(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 1_000_000
 
 
 @pytest.mark.parametrize("model", [
     "claude-opus-4-8", "claude-opus-4-7", "opus-4.8", "opus-4.7",
+    "claude-opus-4-6", "claude-fable-5", "claude-sonnet-5", "claude-sonnet-4-6",
 ])
 def test_resolve_window_model_id(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 1_000_000
 
 
-# Known-200k families are listed explicitly (the denylist); everything else — including
-# an unknown/future model and an absent model field — defaults to 1M.
+# Known-200k families are listed as ORDERED rules AFTER the 1M rule — version-qualified
+# (`Sonnet 4`, `Haiku 4`), never bare; everything unlisted — including an unknown/future
+# model and an absent model field — defaults to 1M. `Sonnet 4`/`claude-sonnet-4-20250514`
+# is the boundary-pair partner of Sonnet 4.6: it must STAY 200k while 4.6 resolves 1M.
 @pytest.mark.parametrize("model", [
     "claude-sonnet-4-5", "Sonnet 4.5", "claude-haiku-4-5", "Haiku 4",
     "claude-opus-4-1", "Opus 4.5",
+    "Sonnet 4", "claude-sonnet-4-20250514",
 ])
 def test_resolve_window_known_200k(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 200_000
 
 
-@pytest.mark.parametrize("model", ["Some Future Model", "claude-opus-9", "", None])
+# Bare `Sonnet`/`Haiku` removal proof: the old table's bare substrings matched EVERY
+# sonnet/haiku (the C2 bug — 1M Sonnet 5/4.6 resolved 200k); post-fix a bare family
+# name matches nothing and falls to the 1M default.
+@pytest.mark.parametrize("model", [
+    "Some Future Model", "claude-opus-9", "", None,
+    "Sonnet", "Haiku",
+])
 def test_resolve_window_default_is_1m(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 1_000_000
 
@@ -177,7 +194,13 @@ def _statusline_case_window(model):
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash required")
-@pytest.mark.parametrize("model", ["Opus 4.8", "Opus 4.7", "Sonnet 4.5", "Haiku"])
+@pytest.mark.parametrize("model", [
+    "Opus 4.8", "Opus 4.7", "Sonnet 4.5", "Haiku 4.5",
+    # order-sensitive boundary pair + new-entry + reclassified models: every model whose
+    # first-match-wins resolution could silently diverge between the json path and the
+    # bash case runs through BOTH surfaces here.
+    "Fable 5", "Sonnet 5", "Sonnet 4.6", "Sonnet 4", "Opus 4.6",
+])
 def test_json_window_matches_statusline_case(thresholds, model):
     """The python resolver (json table) and statusline.sh's inline case resolve the
     IDENTICAL window for the same display-name model — the AC6 no-drift pin."""
@@ -290,17 +313,22 @@ def test_drift_class_resolver_agrees_with_jq(tmp_path, name):
 
 
 def test_mutating_json_changes_resolution(tmp_path):
-    """Proves neither number is hardcoded: a window/fraction edit to the data file
-    changes the resolver's output (it reads the file, not a constant)."""
+    """Proves no number is hardcoded AND the entries are load-bearing: a per-rule
+    window edit to the data file changes the resolver's output for a model listed in
+    THAT rule (it reads the file, not a constant). Table shape: windows[0] is the
+    verified-1M rule (Fable 5, Sonnet 5/4.6, Opus 4.8/4.7/4.6), windows[1] the
+    version-qualified 200k rule (Sonnet 4.5/4, Haiku 4, Opus 4.5/4.1); unmatched
+    models fall to defaultWindow."""
     data = json.loads(THRESHOLDS_JSON.read_text(encoding="utf-8"))
-    data["windows"][0]["window"] = 42
+    data["windows"][0]["window"] = 13
+    data["windows"][1]["window"] = 42
     data["defaultWindow"] = 7
     data["hardHighWaterFraction"] = 0.5
     mutated = tmp_path / "rebirth-thresholds.json"
     mutated.write_text(json.dumps(data), encoding="utf-8")
     t = rt.load_thresholds(str(mutated))
-    # windows[0] is the known-200k denylist (matches Sonnet/Haiku); Opus falls to default.
-    assert rt.resolve_window("Sonnet 4.5", t) == 42
-    assert rt.resolve_window("Opus 4.8", t) == 7
+    assert rt.resolve_window("Fable 5", t) == 13          # 1M-rule entry is live
+    assert rt.resolve_window("Sonnet 4.5", t) == 42       # 200k-rule entry is live
+    assert rt.resolve_window("Some Unknown Model", t) == 7  # unmatched -> default
     _w, hard, _s = rt.resolve_thresholds("Sonnet 4.5", t)
     assert hard == 42 * 0.5

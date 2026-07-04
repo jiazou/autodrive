@@ -13,6 +13,8 @@ Resolution contract (mirrors statusline's bash, restated in python — D24/D25/D
               `case "$MODEL" in *"Opus 4.8"*` semantics), and the match list carries
               BOTH the display-name form (`Opus 4.8`, what statusline feeds) and the
               model-id form (`opus-4-8`, what the hook reads from the transcript).
+              Rule order is load-bearing: 1M rules precede the 200k substrings they
+              prefix-collide with (`Sonnet 4.6` contains `Sonnet 4`); first match wins.
   hard = window * hardHighWaterFraction ; soft = window * softThresholdFraction
   Comparisons are on the raw token count vs the fractional byte threshold
   (tokens >= window * fraction) to avoid integer-pct rounding at the boundary.

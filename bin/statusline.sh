@@ -28,10 +28,13 @@ WINDOW=$(jq -r --arg model "$MODEL" --arg modelid "$MODEL_ID" '
 if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
 # Inline fallback (kept at column 0 so it is the same `case` shape the data file
 # mirrors): same windows as rebirth-thresholds.json, used only when the file is
-# unreadable. AC6 pins this `case` and the json to identical numbers.
+# unreadable. AC6 pins this `case` and the json to identical numbers. Arm order
+# mirrors the json rule order; the 1M arm MUST precede the 200k arm — `Sonnet 4.6`
+# contains `Sonnet 4`.
 case "$MODEL" in
-    *"Haiku"*|*"Sonnet"*|*"Opus 4.6"*|*"Opus 4.5"*|*"Opus 4.1"*)   WINDOW=200000 ;;
-    *)                                                             WINDOW=1000000 ;;
+    *"Fable 5"*|*"Sonnet 5"*|*"Sonnet 4.6"*|*"Opus 4.8"*|*"Opus 4.7"*|*"Opus 4.6"*) WINDOW=1000000 ;;
+    *"Sonnet 4"*|*"Haiku 4"*|*"Opus 4.5"*|*"Opus 4.1"*)                             WINDOW=200000 ;;
+    *)                                                                              WINDOW=1000000 ;;
 esac
 fi
 # The 1M-context beta is authoritative when active: Claude Code marks it as `[1m]` in

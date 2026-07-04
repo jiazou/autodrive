@@ -745,6 +745,11 @@ Ran codex adversarial review of the r3 diff; it found 4 real issues (2 High bypa
 **Reasoning:** Spike-verified there is NO programmatic session-spawn/restart/headless re-entry anywhere in the harness; a Stop hook can only block/allow, not launch a session. Re-entry must be human/externally initiated. We don't fabricate a capability the platform lacks.
 **Reversibility:** medium
 **Classification:** Taste
+**Premise-stale (2026-07-04, todo-triage-20260704T135831, TODO audit C4):** the spike
+finding "NO programmatic session-spawn exists" no longer holds — the platform has since
+shipped fresh-session triggers (e.g. create_trigger with create_new_session_on_fire).
+Option (a) stands as the CHOSEN design (human-initiated resume), no longer a platform
+impossibility. Body above unchanged.
 
 ### 2026-06-10 -- D4: Reuse the waiting / Present-human-pause / run-graph / /goal machinery; add waiting="rebirth"
 **Stage:** plan
