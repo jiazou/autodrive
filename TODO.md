@@ -5,8 +5,9 @@ Architectural follow-ups deferred by /drive finalize passes.
 ## Trellis pattern adoption — from docs/trellis-analysis.md (2026-07-04)
 
 - [ ] **TR-2 (S/L2)** Per-turn `<drive-state>` breadcrumb: a UserPromptSubmit hook reading
-  `$RUN_DIR/state.json` (runId, stage, phase, waiting, next expected command), breadcrumb
-  bodies pinned by a contract test — kills T-1 (coordinator drift corrected pre-violation,
+  `$RUN_DIR/state.json`'s real fields (runId, stage, phase, waiting) and deriving the expected
+  next step from stage/phase (as the run-graph does), breadcrumb bodies pinned by a contract
+  test — kills T-1 (coordinator drift corrected pre-violation,
   between gate denies; survives auto-summarization context loss); lands on `bin/` new hook +
   `bin/install-drive-hooks.sh` + `tests/contracts`; x-ref C11 (extend, not duplicate: C11
   trims /goal ceremony, TR-2 adds hook-supplied steering; land compatibly with C11's pinned
