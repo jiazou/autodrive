@@ -91,6 +91,16 @@ def test_completeness_gate_authority_and_fail_closed():
     assert "NO override or partial mode exists" in sec
 
 
+def test_completeness_gate_marker_absent_done_path():
+    """`is_done()` accepts stage=="done" with the marker entirely ABSENT — the command must
+    state it as an accepted (non-degraded) done path with its exact header rendering."""
+    sec = _norm(_section(_text(), r"^## 2 — Completeness gate"))
+    assert "EITHER signal alone passes" in sec
+    assert "`completed: stage=done (marker absent)`" in sec
+    assert 'marker is entirely ABSENT and `stage == "done"`' in sec
+    assert "stats and Overlap compute normally" in sec
+
+
 def test_completeness_gate_degraded_done_paths():
     sec = _norm(_section(_text(), r"^## 2 — Completeness gate"))
     assert "`n/a (state.json unreadable)`" in sec
@@ -152,6 +162,7 @@ def test_stats_sourced_and_best_effort():
     assert "BEST-EFFORT by contract" in sec
     assert "NO stat requires a specific event kind" in sec
     assert "underivable ⇒ `n/a`, never a STOP" in sec
+    assert "gates + timestamps · dispatches by kind · wall-clock" in sec
     assert "earliest → latest parseable `at`" in sec
     assert "NO STOP-cause stat is emitted" in sec
     assert "CODEX_UNAVAILABLE" in sec and "prefix match" in sec
@@ -252,6 +263,15 @@ def test_proposal_five_fields():
         assert field in sec, f"proposal field {field} missing"
     assert "`single-instance` flag" in sec
     assert "extend > new" in sec
+
+
+def test_class_to_destination_routing():
+    """Deleting the routing matrix must red: the Destination vocabulary and its
+    class→destination source (§Self-Improvement matrix + process-signal → TODO.md)."""
+    sec = _norm(_section(_text(), r"^## 7 — Write the ONE output"))
+    assert ("OPERATING.md | project CLAUDE.md/docs | skill/command file <name> | "
+            "auto-memory | TODO.md") in sec
+    assert "OPERATING.md §Self-Improvement's matrix + process-signal → TODO.md" in sec
 
 
 def test_proposal_bar_conditional_on_signal():

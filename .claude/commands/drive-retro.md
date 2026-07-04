@@ -26,10 +26,13 @@ given → STOP: print usage plus the available run ids (`ls -1t "$RUNS_ROOT"`, n
 The run is COMPLETED iff the standalone marker FILE `$RUN_DIR/completedAt` — a file drive-ship.md
 writes, never a `state.json` key — carries a parseable timestamp (first line, surrounding
 whitespace trimmed; any remaining interior whitespace ⇒ unparseable), OR `state.json.stage ==
-"done"`: `is_done()` in `bin/drive-retention.sh`, the real done-authority. Neither signal → STOP
-without writing, reporting `stage`/`waiting` when readable. NO override or partial mode exists
-(v1 is completed-run-only; in-flight/stuck-run mining is a followups.md follow-on, not a mode).
-Two degraded done paths PROCEED:
+"done"`: `is_done()` in `bin/drive-retention.sh`, the real done-authority. EITHER signal alone
+passes; the header's `completed:` field renders the accepted path — the marker content when
+parseable, else `completed: stage=done (marker absent)` when the marker is entirely ABSENT and
+`stage == "done"` (a full accepted done path: stats and Overlap compute normally).
+Neither signal → STOP without writing, reporting `stage`/`waiting` when readable. NO override or
+partial mode exists (v1 is completed-run-only; in-flight/stuck-run mining is a followups.md
+follow-on, not a mode). Two degraded done paths PROCEED:
 - Marker parseable, `state.json` missing/unreadable → every `state.json`-sourced stat row renders
   `n/a (state.json unreadable)`; repoRoot-dependent Overlap entries render `not checked (repoRoot
   unknown)`. The output header never degrades (it has no state-derived field).
@@ -85,9 +88,10 @@ count is surfaced in the output header. Missing/empty log → degrade, don't abo
   `hardenRound`/`finalizeRound` counters against `harden-<P>-N.md` / `review-finalize-N.md` files
   carrying `## AppliedEdits: yes` (the file counts are the fallback when `state.json` is
   unreadable). Any counter-vs-file-count mismatch is itself reported as signal.
-- Event-log stats are BEST-EFFORT by contract: computed over whatever objects/fields the decoder
-  yields; NO stat requires a specific event kind; underivable ⇒ `n/a`, never a STOP. Wall-clock =
-  earliest → latest parseable `at` across all decoded objects.
+- Event-log stats (gates + timestamps · dispatches by kind · wall-clock) are BEST-EFFORT by
+  contract: computed over whatever objects/fields the decoder yields; NO stat requires a specific
+  event kind; underivable ⇒ `n/a`, never a STOP. Wall-clock = earliest → latest parseable `at`
+  across all decoded objects.
 - NO STOP-cause stat is emitted (not durable on a completed run); the durable residuals stand in:
   final non-null `waiting`, stranded `inflight-*.marker`, `redesign-*.marker` epochs.
 - Codex-degraded scopes: `codex-review-<scope>.md`/`codex-harden-<P>.md` whose FIRST LINE begins
