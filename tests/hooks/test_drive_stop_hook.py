@@ -707,9 +707,10 @@ def test_failopen_steer_helper_unexpected_exception(fake_home, monkeypatch):
 def test_failopen_unknown_model_over_default_window_steers(fake_home):
     """Sibling of the above: an unknown model resolving to the default 1_000_000 window
     whose sum EXCEEDS 1_000_000*0.85=850_000 DOES steer — proving the default-window
-    branch is live (not a silent skip). Unknown models default to 1M (the denylist covers
-    the known-200k families and the `[1m]` marker covers an active beta); a genuinely
-    unknown 200k-window model firing late is the accepted residual of the default-1M policy."""
+    branch is live (not a silent skip). Unknown models default to 1M (the version-qualified
+    ordered 200k rules cover the known-200k families and the `[1m]` marker covers an active
+    beta); a genuinely unknown 200k-window model firing late is the accepted residual of
+    the default-1M policy."""
     trans = fake_home / "unknown-model-hi.jsonl"
     trans.write_text(
         '{"type": "assistant", "message": {"model": "mystery-model-9", '

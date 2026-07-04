@@ -71,6 +71,12 @@ def test_resolve_window_display_name(thresholds, model):
 @pytest.mark.parametrize("model", [
     "claude-opus-4-8", "claude-opus-4-7", "opus-4.8", "opus-4.7",
     "claude-opus-4-6", "claude-fable-5", "claude-sonnet-5", "claude-sonnet-4-6",
+    # dot-form order/reclassification pins (verified vs the live table 2026-07-04):
+    # `sonnet-4.6` contains the 200k entry `sonnet-4` — a rule-order swap resolves it
+    # 200k (RED); `opus-4.6` pins the reclassified model's dot form — the PRE-FIX 200k
+    # rule listed `opus-4.6` literally, so a table revert reds it (no order partner:
+    # no retained 200k entry is a substring of it).
+    "sonnet-4.6", "opus-4.6",
 ])
 def test_resolve_window_model_id(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 1_000_000
@@ -84,6 +90,10 @@ def test_resolve_window_model_id(thresholds, model):
     "claude-sonnet-4-5", "Sonnet 4.5", "claude-haiku-4-5", "Haiku 4",
     "claude-opus-4-1", "Opus 4.5",
     "Sonnet 4", "claude-sonnet-4-20250514",
+    # dot-form 200k-side partner of the sonnet-4 boundary: must STAY 200k while
+    # `sonnet-4.6` (above) resolves 1M — reds if the 1M rule ever gains an entry that
+    # substring-matches it (an over-broad 1M sonnet entry).
+    "sonnet-4.5",
 ])
 def test_resolve_window_known_200k(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 200_000
@@ -98,6 +108,21 @@ def test_resolve_window_known_200k(thresholds, model):
 ])
 def test_resolve_window_default_is_1m(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 1_000_000
+
+
+def test_no_bare_family_match_entry_any_casing(thresholds):
+    """Table-shape half of the bare-family removal proof: NO rule carries a bare
+    `sonnet`/`haiku` match element in ANY casing. Matching is case-sensitive substring,
+    so the behavioral proof above (display-form `Sonnet`/`Haiku` fall to the default)
+    would stay GREEN past a stray lowercase `"sonnet"`/`"haiku"` entry — which would
+    still match every sonnet/haiku model ID (the C2 bug reintroduced on the id path).
+    Every Sonnet/Haiku-containing entry must be version-qualified."""
+    for rule in thresholds["windows"]:
+        for entry in rule["match"]:
+            assert entry.lower() not in ("sonnet", "haiku"), (
+                f"bare family match entry {entry!r} in the {rule['window']} rule — "
+                "Sonnet/Haiku entries must be version-qualified (C2)"
+            )
 
 
 # --------------------------------------------------------------------------- #
