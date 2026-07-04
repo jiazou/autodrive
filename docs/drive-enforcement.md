@@ -229,8 +229,9 @@ the continuation hook never re-attaches and the run could rebirth at most once.
 **Detection data file.** Window-by-model thresholds live in `bin/rebirth-thresholds.json`,
 read by both the statusline and the Stop hook. It is **canonical-by-reference** — installers
 symlink `bin/`, never copy it, so the data file + its resolver (`bin/rebirth_thresholds.py`)
-resolve by sibling path with **no install or sync step** (§ Installation). To support a new
-large-window model, add one `windows[].match` entry there.
+resolve by sibling path with **no install or sync step** (§ Installation). Known
+200k-window model families get `windows[].match` entries; an unknown model falls back to
+`defaultWindow` (1M) — see the window-table residual note under § Rebirth residuals.
 
 ## Installation
 
