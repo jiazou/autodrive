@@ -78,17 +78,23 @@ depth: deep · hypothesis: a `<workflow-state>` breadcrumb keyed off `state.json
 every user prompt. It resolves the active task, reads `task.json.status`, and emits a short
 `<workflow-state>` block whose body is parsed from `[workflow-state:STATUS]` tag blocks embedded
 in `packages/cli/src/templates/trellis/workflow.md` — the single source of truth; the script
-deliberately has **no fallback dict**, degrading to a generic "refer to workflow.md" line so a
+deliberately has **no fallback dict**, degrading to a generic pointer-at-workflow.md line so a
 broken workflow.md is visible rather than masked. Two properties are load-bearing:
 
 1. **Pre-violation timing.** The breadcrumb arrives *before* the model acts each turn, telling it
 which phase it is in and which required steps apply — versus catching a deviation after the fact.
-2. **A test-enforced prompt-layer invariant.** workflow.md's embedded contract comment states, and
-`packages/cli/test/regression.test.ts` enforces, that every walkthrough step marked `[required ·
-once]` must have a matching enforcement line in its phase's `[workflow-state:*]` block — because
-"the breadcrumb is the only per-turn channel; if a mandatory step isn't mentioned there, the AI
-silently skips it" (two real skip bugs are named in that comment). The same tests pin degradation
-behavior and per-status block content. Trellis also documents its own dead code honestly: the
+2. **A partially test-pinned prompt-layer contract.** workflow.md's embedded contract comment
+asserts a general invariant — every walkthrough step marked `[required · once]` must be reflected
+in its phase's `[workflow-state:*]` block, on the stated grounds that the breadcrumb is the sole
+per-turn channel and a mandatory step absent from it gets silently skipped; the comment attributes
+two historical step-skip bugs (a planning-gate skip and a commit-step skip) to exactly that gap.
+What `packages/cli/test/regression.test.ts` mechanically enforces is **narrower** than that
+comment: it pins the two historically-bitten instances (the in_progress block must mention the
+Phase-3.4 commit step; the planning block must mention the artifact gates and manifest curation)
+plus block presence and generic-degradation behavior — no test iterates the required steps, so the
+universal mapping is the comment's self-description, not test truth (E1 correction: design.md and
+an earlier draft of this section relayed it as test-enforced). Trellis also documents its own
+dead code honestly: the
 `[workflow-state:completed]` block never fires because `task.py archive` flips status and moves
 the directory in the same call.
 
@@ -98,8 +104,8 @@ continuation instruction, (c) the human-pasted per-leg `/goal`, and (d) the PreT
 (`bin/drive-merge-gate.sh`), which block specific *transitions* but say nothing turn-to-turn.
 Between a gate deny and a stop, a drifting coordinator gets zero mid-flight correction. Under
 auto-summarization, drive.md's instructions can also fall out of the effective context mid-run —
-exactly when a per-turn breadcrumb would re-anchor them (TODO C9 documents a real instance of
-coordinator memory erasure by summarization).
+exactly when a per-turn breadcrumb would re-anchor them (TODO C9 documents the hazard:
+auto-summarization can erase coordinator memory mid-run).
 
 **Analysis.** The hypothesis survives: the mechanisms are complementary, not competing.
 Autodrive's gates are *enforcement* (L3, deny at the boundary); the breadcrumb is *direction* (L2,
@@ -107,10 +113,11 @@ steer before the boundary is ever hit). A `<drive-state>` block derived from `$R
 (runId, stage, phase, per-slice steps, `waiting`, next expected command) is cheap to compute — the
 state file already exists precisely so that context loss cannot destroy run state. The harness
 owns the `UserPromptSubmit` surface (absorbed plumbing), but the *content* — autodrive's run-state
-semantics — is not plausibly absorbable. Trellis's test-enforced invariant also maps 1:1 onto
-autodrive's existing contract-pin practice (`tests/contracts` string-pins over drive*.md): a
-breadcrumb implementation should pin "every stage in drive.md's pipeline has a breadcrumb body"
-the same way.
+semantics — is not plausibly absorbable. Trellis's instance-pinning practice maps directly onto
+autodrive's existing contract-pin practice (`tests/contracts` string-pins over drive*.md) — and an
+autodrive implementation can go one better than trellis's comment-only universal claim by
+mechanically pinning coverage itself: a contract test that iterates drive.md's pipeline stages and
+asserts each has a breadcrumb body.
 
 **Verdict:** *adopt-pattern* (TR-2): S-effort, kills T-1 pre-violation, lands on `bin/` +
 `bin/install-drive-hooks.sh` + a contract test. Runner-up for Phase-2 selection (see
@@ -125,7 +132,7 @@ Trellis tasks live in `.trellis/tasks/<MM-DD-name>/` with a `task.json` status m
 tiering (`prd.md` always; `design.md` + `implement.md` required only for complex tasks —
 `packages/cli/src/templates/trellis/workflow.md` §Planning Artifacts), parent/child task trees
 (`parent` field; explicitly *not* a dependency system), and lifecycle hooks
-(`task.json.hooks.after_create/start/finish/archive`, workflow.md §Task Lifecycle Hooks).
+(`task.json.hooks.after_create/start/finish/archive`, workflow.md §Customizing Trellis).
 Autodrive's `$RUN_DIR/state.json` carries a strictly richer run model (per-slice steps and review
 counters, per-phase design/review/harden status, redesign epochs, budget), the event-log timeline
 covers what lifecycle hooks would, and the three design tiers (whole-run plan → per-phase detailed
@@ -143,18 +150,20 @@ depth: compact · hypothesis: (i) autodrive's enforcement is strictly stronger (
 
 **Enforcement.** Trellis verifies via a self-fixing check sub-agent (`trellis-check`, dispatched
 at step 2.2 with a mandatory full-scope final pass — workflow.md §2.2), prompt-level `[required ·
-once]` invariants, consent gates, and a batched no-amend/no-push commit protocol (workflow.md
-§3.4: "Do not amend. Do not push."). Autodrive verifies via dual-voice review (independent Claude
+once]` invariants, consent gates, and a batched commit protocol that forbids amending and pushing
+(workflow.md §3.4). Autodrive verifies via dual-voice review (independent Claude
 reviewer + codex), harden/finalize passes, and — categorically beyond trellis — **git-truth,
 SHA-bound, fail-closed deny gates** (docs/drive-enforcement.md: reviews are proven by
 `reviewed-sha` artifacts checked against the actual refs being merged, never coordinator-writable
 state). Trellis's compliance layer is ultimately prompt trust; a forgetful model can skip a
 `[required]` step and nothing blocks the commit. So hypothesis (i) is **falsified only at the
-margins**: autodrive is strictly stronger *at the boundaries it gates*, but trellis enforces at a
-layer autodrive does not occupy at all — the per-turn channel, backed by real regression tests
-(`packages/cli/test/regression.test.ts` pinning workflow.md's required-step ↔ breadcrumb sync).
-Autodrive's contract-pin suite pins drive.md prose, but no per-turn channel exists to pin.
-Dimension 2's rec closes exactly that gap.
+margins, and the margin is thinner than trellis's own docs suggest**: autodrive is strictly
+stronger *at the boundaries it gates*, while trellis occupies a layer autodrive does not — the
+per-turn channel — with regression tests that pin selected breadcrumb behaviors (the two
+historically-bitten steps, block presence, degradation; dim 2's E1 correction), NOT the universal
+required-step ↔ breadcrumb sync its workflow.md comment claims. Autodrive's contract-pin suite
+pins drive.md prose, but no per-turn channel exists to pin. Dimension 2's rec closes exactly that
+gap.
 
 **Economics.** Autodrive's idealized-run floor is **44 slash-command invocations — exact for the
 idealized 2-phase × 2-slice × 3-round example in docs/flow.md, and a floor *for that shape***
@@ -180,20 +189,22 @@ depth: deep · hypothesis: required per-task write-back + `trellis mem` transcri
 `packages/cli/src/templates/trellis/scripts/add_session.py`, auto-rotating at a 2000-line cap
 (workflow.md §Workspace System). (3) *Permanent spec* — `.trellis/spec/`, promoted to by workflow
 step **3.3 Spec update `[required · once]`**: every task must load the `trellis-update-spec` skill
-and "even if the conclusion is 'nothing to update', walk through the judgment"; step 3.4's
-spec-sync preamble re-asks the question before commit (workflow.md §3.3–3.4). Alongside sits
+and walk through the update-worthiness judgment even when the outcome is that nothing needs
+updating; step 3.4's spec-sync preamble re-asks the question before commit (workflow.md §3.3–3.4).
+Alongside sits
 **`trellis mem`** (`packages/core/src/mem/`, CLI in `packages/cli/src/commands/mem.ts`): local,
 read-only indexing/search/task-boundary-slicing over native agent transcript JSONL, with adapters
 for Claude Code, Codex, and Pi (`packages/core/src/mem/adapters/claude.ts`, `codex.ts`, `pi.ts`;
 `opencode.ts` is a documented degraded no-op — OpenCode moved to SQLite and the native-dep reader
 was reverted). The consumption instinct ships as the `trellis-session-insight` bundled skill
 (`packages/cli/src/templates/common/bundled-skills/trellis-session-insight/SKILL.md`) —
-pattern-spotting across past sessions ("do I keep making the same mistake on X").
+pattern-spotting across past sessions, e.g. answering whether the same class of mistake keeps
+recurring.
 
 **The asymmetry, stated precisely.** Trellis forces the **write-back** (3.3 is `[required ·
-once]`, per-task) but leaves **mining** discretionary — session-insight is explicitly a capability
-skill, "a tool, not a ceremony" (its SKILL.md's words). Loop closure comes from making promotion
-un-skippable at a workflow boundary, not from automated analysis.
+once]`, per-task) but leaves **mining** discretionary — session-insight frames itself as a
+capability to reach for when the moment warrants, not a required workflow step. Loop closure comes
+from making promotion un-skippable at a workflow boundary, not from automated analysis.
 
 **Autodrive counterpart.** Auto-memory + `/decant` → OPERATING.md promotion. Decant is wired into
 the pipeline at every context-clear boundary (drive.md §I1 step 5.5) and at run-wrap, but as
@@ -228,8 +239,9 @@ on `PreToolUse(Task|Agent)`. For each sub-agent role it inlines the task's *cura
 `implement.jsonl` / `check.jsonl` list exactly which spec/research files that role gets — plus
 role-appropriate task artifacts, marking the payload `<!-- trellis-hook-injected -->`. The agent
 templates carry a pull-based fallback:
-`packages/cli/src/templates/claude/agents/trellis-implement.md` instructs "if the marker is
-absent, read `implement.jsonl` and each listed file yourself" (hook injection can miss on
+`packages/cli/src/templates/claude/agents/trellis-implement.md` tells the agent that when the
+marker is absent it must locate the active task itself and read the manifest plus each listed
+artifact directly (hook injection can miss on
 `--continue` resume, disabled hooks, etc.). The design intent per the script's own docstring:
 context assembly is code-controlled, not prompt-controlled, so the sub-agent's inputs are
 deterministic per role.
@@ -265,8 +277,9 @@ depth: compact · hypothesis: `trellis channel` + parent/child task trees offer 
 
 One corroborating detail worth keeping: the channel skill's own hard-won warning
 (`packages/cli/src/templates/common/bundled-skills/trellis-channel/SKILL.md`) — completion signals
-must be trellis-*emitted* system events (`--kind done`), never a worker-echoed tag, because "LLM
-workers commonly write the tag string into prose instead of running the actual CLI command." That
+must be trellis-*emitted* system events (`--kind done`), never a worker-echoed tag, because in
+trellis's experience an LLM worker often narrates the completion tag as prose instead of actually
+running the signalling command. That
 is an independent confirmation of C8's complaint against autodrive's own `STATUS:` first-line
 contract and of the schema-validated-returns precondition. **Verdict:** *ignore* (TR-7); x-ref C8
 (corroborates, adds no new work).
@@ -284,7 +297,7 @@ claude-code, cursor, opencode, codex, kilo, kiro, gemini, antigravity, devin, qo
 copilot, droid, pi, reasonix, zcode, trae; wired in `packages/cli/src/configurators/`; the
 README's marketing table says 16 — source count wins). Its consent surfaces are two-stage
 (task-creation consent ≠ implementation consent, workflow.md §Request Triage and §Guardrails; a
-plan-confirm batched commit with "Do not amend. Do not push.") — structurally the same two-gate
+plan-confirm batched commit protocol that forbids amend and push) — structurally the same two-gate
 discipline as autodrive's Gate A/Gate B, so nothing to adopt there.
 
 **Counter-question, answered.** What autodrive loses by not being repo-native/cross-agent: (a)
