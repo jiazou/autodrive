@@ -539,3 +539,21 @@ bin/drive-retention.sh:800,827 — apply-mode top-level summary tallies from pre
 ## Design-doc handoff audit (ship, 2026-07-05)
 
 HANDOFF: [/drive-retro] new command `.claude/commands/drive-retro.md` shipped (v1: manual, completed-run-only, no shipped code) — the automatic run-wrap wiring (a drive.md Completion-step edit invoking it BEFORE the wrap-decant, per finalize-todo.md) must land in drive.md before the retro loop is closed; string-pin contract tests apply.
+
+## Run drive-ctx-summary-20260705-035515 (2026-07-05) — context-of-execution summary + /goal removal
+
+
+## Out-of-scope discoveries
+
+- **Mission Control's own "session goal" concept is a separate, unrelated `goal`**
+  (`mission-control/bin/harvest.py`, `tests/mc/test_today.py`, `tests/mc` fixtures). It is the
+  harvest/standup session-label feature, NOT the `/drive` `/goal` printout. Confirmed unrelated
+  during blast-radius scan — intentionally NOT touched by this run. Logged so a future grep for
+  `goal` does not mistake it for a dangling `/drive` reference.
+
+- **`drive-design.md` line 24 "goal"** ("the high-level design — find phase `<P>`'s
+  scope/boundary/goal") is the design-goal noun, unrelated to the `/goal` command. Not touched.
+
+- **`.harness/decisions.md` / `.harness/followups.md`** contain historical `/goal` references
+  (records of prior lever-2 rebirth work). These are append-only run-history ledgers, not live
+  spec; leaving them is correct (they record what was decided at the time). Not edited.
