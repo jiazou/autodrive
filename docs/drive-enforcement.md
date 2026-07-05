@@ -243,9 +243,12 @@ someone else's dir contents.
   EnterWorktree)** — an **interception** residual, distinct from invocation-failure. The whole
   worktree closure rests on one runtime assumption the fixtures cannot prove: that the platform
   actually FIRES a matchable PreToolUse event for a real isolated `Agent` / `EnterWorktree`
-  dispatch. Piping a fixture into the hook exercises hook LOGIC, not platform interception. Bound
-  at implement time by a LIVE check (AC-16): drive one real isolated `Agent` + one
-  `EnterWorktree` through the installed hook and observe the `deny`.
+  dispatch. Piping a fixture into the hook exercises hook LOGIC, not platform interception. A
+  live deny capture (AC-16) needs the gate wired into the live `~/.claude/settings.json` — the
+  **Gate-B activation ops step, out of this slice's scope** — so this slice records no live
+  evidence and claims none. Per AC-16's fallback, the criterion is **discharged by this named
+  interception residual** (NOT by proof); the residual plus the implement-time live observation
+  taken when activation lands are the binding.
 - **Forgery-class self-evasions** (consistent with the chain's omission-proof-not-forgery-proof
   model → component D): a coordinator that writes `stage:"done"`, **or corrupts/truncates/
   chmod's its OWN `state.json`** (silencing its own activation predicate — the same class as

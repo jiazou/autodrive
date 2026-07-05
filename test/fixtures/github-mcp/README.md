@@ -54,5 +54,9 @@ a temp run repo's `origin` at that owner/repo so the MCP write is scoped as same
 **Fixtures test hook LOGIC, not platform INTERCEPTION.** Piping `agent-worktree.json` /
 `enter-worktree.json` into the hook exercises the hook's control flow, not whether the
 platform actually FIRES a PreToolUse event for a real isolated `Agent` / `EnterWorktree`
-dispatch. That interception is a distinct, named residual bound by the implement-time
-live check (AC-16), not by these fixtures — see `docs/drive-enforcement.md`.
+dispatch. That interception is a distinct, named residual
+(`platform-may-not-fire-PreToolUse-on-native-worktree-tools`). A live deny capture (AC-16)
+would require the gate wired into the live `~/.claude/settings.json` — the Gate-B activation
+ops step, out of this slice's scope — so no live evidence is captured here. Per AC-16's
+fallback the criterion is **discharged by that named residual** (not proven), not by these
+fixtures — see `docs/drive-enforcement.md`.

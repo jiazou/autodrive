@@ -153,7 +153,9 @@ named residuals (full detail in `docs/drive-enforcement.md`):
 - **`platform-may-not-fire-PreToolUse-on-native-worktree-tools`** (Agent-with-isolation AND
   EnterWorktree) — an **interception** residual (distinct from invocation-failure): the
   fixtures prove hook logic, not that the platform routes real isolated `Agent`/`EnterWorktree`
-  traffic to the hook. Bound by an implement-time live check.
+  traffic to the hook. A live deny capture requires the gate wired into the live
+  `~/.claude/settings.json` (the Gate-B activation ops step, out of this slice's scope), so
+  AC-16 is **discharged by this named residual**, not by a proof captured here.
 - **Forgery-class self-evasions** (→ component D): a coordinator that writes `stage:"done"`,
   **corrupts/truncates its OWN `state.json`** (silencing its own activation predicate), or
   lands work in a **second clone whose `origin` was rewritten/removed** (no origin key, no

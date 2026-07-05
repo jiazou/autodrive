@@ -81,6 +81,29 @@ out="$(printf '%s' "$(cat "$FX/agent-plain.json")" | HOME="$HOT_HOME" bash "$GAT
 check "AC-2 hot path (plain Agent) emits NO stdout" "$out" ""
 check "AC-2 hot path exits 0 even with harness-runs as a regular file" "$hrc" "0"
 
+# AC-2 (DISCRIMINATING): a plain Agent dispatched DURING an active /drive run in the SAME
+# repo (the real hot path, hit on every fan-out) must STILL take the hot path — exit 0
+# BEFORE the run scan. The load-bearing proof is a CORRUPT run dir placed alongside the
+# fresh active run: the hot path never scans, so NO stderr warning is emitted. If the
+# hot-path early exit regressed, the scan WOULD run and warn about the corrupt dir on stderr
+# (the CLASS guard keeps stdout silent, but the stderr side-effect leaks), so we assert
+# stderr is ALSO empty. This RE-verifies the mechanism the file-not-a-dir case cannot: it
+# reds under the line-97 (ISO_TYPE null → exit) mutation even WITH the CLASS defense-in-depth.
+D2HOME="$WORK/ac2-home"; mkdir -p "$D2HOME/.claude/harness-runs"
+D2REPO="$WORK/ac2-repo"; mk_repo "$D2REPO" "https://github.com/ac2org/ac2repo.git"
+mkdir -p "$D2HOME/.claude/harness-runs/run-ac2"
+printf '{"stage":"execute","repoRoot":"%s"}\n' "$D2REPO" > "$D2HOME/.claude/harness-runs/run-ac2/state.json"
+printf '' > "$D2HOME/.claude/harness-runs/run-ac2/event-log.jsonl"
+mkdir -p "$D2HOME/.claude/harness-runs/run-ac2-corrupt"
+printf 'GARBAGE {{{ not json' > "$D2HOME/.claude/harness-runs/run-ac2-corrupt/state.json"
+printf '' > "$D2HOME/.claude/harness-runs/run-ac2-corrupt/event-log.jsonl"
+D2ERR="$WORK/ac2.err"
+D2PAYLOAD="$(jq -c --arg c "$D2REPO" '.cwd=$c' "$FX/agent-plain.json")"
+out="$(printf '%s' "$D2PAYLOAD" | HOME="$D2HOME" bash "$GATE" 2>"$D2ERR")"; d2rc=$?
+check "AC-2 (discriminating) plain Agent in active same-repo run → NO stdout" "$out" ""
+check "AC-2 (discriminating) exits 0" "$d2rc" "0"
+check "AC-2 (discriminating) hot path took NO run scan (stderr empty; corrupt dir unscanned)" "$(cat "$D2ERR")" ""
+
 # =====================================================================================
 # AC-3 — live matching run: 8 MCP writes + agent-worktree + enter-worktree → deny;
 #         each reason carries its verbatim retry path + the runId.
@@ -244,6 +267,81 @@ contains "AC-8 jq-absent deny mentions jq" "$out" "jq is required"
 out="$(printf '' | bash "$GATE" 2>/dev/null)"; erc=$?
 check "AC-8 empty stdin → deny" "$(is_deny "$out")" "yes"
 check "AC-8 empty stdin → exit 0" "$erc" "0"
+
+# =====================================================================================
+# REVIEW-FIX HARDENING — malformed-input fail-closed (codex BLOCKING/MAJOR + Claude P2s).
+# =====================================================================================
+
+# --- Fix #1: native-worktree fail-closed on malformed/missing cwd + non-string isolation.
+rm -rf "$RUNS"/*
+WCREPO="$WORK/wc-repo"; mk_repo "$WCREPO" "https://github.com/wc/wc.git"
+mk_run run-wc "$WCREPO"
+# (a) EnterWorktree with MISSING cwd (run live) → deny (fail-closed, not silent-pass)
+out="$(run_gate '{"tool_name":"EnterWorktree","tool_input":{"name":"x"}}')"
+check "Fix1 EnterWorktree missing cwd (run live) → deny" "$(is_deny "$out")" "yes"
+contains "Fix1 missing-cwd deny is fail-closed" "$out" "cannot be resolved to a git repository"
+# (b) Agent with a NON-STRING isolation (object) is MALFORMED → worktree class; an
+#     unresolvable cwd then fail-closes → deny (pre-fix this took the hot path silently).
+out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":{},"description":"d","prompt":"p"},"cwd":"/no/such/git/dir"}')"
+check "Fix1 Agent non-string isolation (object) + unresolvable cwd → deny" "$(is_deny "$out")" "yes"
+# (c) non-string isolation but a cwd that IS the run repo → deny (worktree-class match)
+out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":[],"description":"d","prompt":"p"}}' "$WCREPO")"
+check "Fix1 non-string isolation (array) + run-repo cwd → deny" "$(is_deny "$out")" "yes"
+# (d) non-string isolation with a RESOLVABLE non-run-repo cwd → silent (identifiable, differs)
+WCOTHER="$WORK/wc-other"; mk_repo "$WCOTHER" "https://github.com/other/other.git"
+out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":true,"description":"d","prompt":"p"}}' "$WCOTHER")"
+check "Fix1 non-string isolation + resolvable non-run-repo cwd → silent (legit Edge-case-9)" "$out" ""
+# (e) a CLEAN non-"worktree" isolation string → hot path (NOT worktree class), even in-repo
+out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":"none","description":"d","prompt":"p"}}' "$WCREPO")"
+check "Fix1 clean non-worktree isolation string ('none') → hot path silent" "$out" ""
+# (f) trailing-whitespace 'worktree ' string → trimmed → worktree class → deny (run-repo cwd)
+out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":"worktree ","description":"d","prompt":"p"}}' "$WCREPO")"
+check "Fix1 isolation 'worktree ' (trailing ws) trimmed → deny (run-repo cwd)" "$(is_deny "$out")" "yes"
+
+# --- Fix #2: MCP fail-closed catches MALFORMED (non-string) owner/repo, not just EMPTY.
+rm -rf "$RUNS"/*
+MREPO="$WORK/m-repo"; mk_repo "$MREPO" "https://github.com/m/m.git"
+mk_run run-malf "$MREPO"
+for bad in '{}' '[]' 'true' 'null' '123'; do
+  out="$(run_gate "{\"tool_name\":\"mcp__github__push_files\",\"tool_input\":{\"owner\":$bad,\"repo\":$bad},\"cwd\":\"/x\"}")"
+  check "Fix2 non-string owner/repo ($bad) → deny (unextractable)" "$(is_deny "$out")" "yes"
+done
+out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":{},"repo":"m"},"cwd":"/x"}')"
+check "Fix2 object owner + valid repo → deny" "$(is_deny "$out")" "yes"
+contains "Fix2 malformed-owner deny is the unextractable branch" "$out" "no extractable owner/repo"
+out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"m","repo":[]},"cwd":"/x"}')"
+check "Fix2 valid owner + array repo → deny" "$(is_deny "$out")" "yes"
+# control: a genuinely different (well-formed) owner/repo still silent-passes (no over-deny)
+out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"someone","repo":"else"},"cwd":"/x"}')"
+check "Fix2 well-formed non-matching owner/repo → silent (no over-deny)" "$out" ""
+
+# --- Fix #5: active run with stage!=done but EMPTY/absent repoRoot → skip-with-warning;
+#            never `git -C ""` mis-attribution to the hook's own cwd.
+rm -rf "$RUNS"/*
+mkdir -p "$RUNS/run-noroot"; printf '{"stage":"execute"}\n' > "$RUNS/run-noroot/state.json"; printf '' > "$RUNS/run-noroot/event-log.jsonl"
+MISREPO="$WORK/mis-repo"; mk_repo "$MISREPO" "https://github.com/attacker/target.git"
+NRERR="$WORK/noroot.err"
+# Run the gate FROM INSIDE mis-repo (hook cwd = attacker/target) + an MCP write to
+# attacker/target. Pre-fix `git -C ""` resolved to the hook cwd → mis-attributed match → deny.
+out="$(cd "$MISREPO" && printf '%s' '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"attacker","repo":"target"},"cwd":"/x"}' | HOME="$HOME" bash "$GATE" 2>"$NRERR")"
+check "Fix5 no-repoRoot run does NOT mis-attribute to hook cwd (no over-deny)" "$out" ""
+contains "Fix5 no-repoRoot run skipped-with-warning naming it" "$(cat "$NRERR")" "run-noroot"
+contains "Fix5 warning is the no-repoRoot branch" "$(cat "$NRERR")" "no repoRoot"
+# a HEALTHY run alongside the no-repoRoot one still denies (skip is per-dir, not machine-wide)
+mk_run run-healthy3 "$MISREPO"
+out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"attacker","repo":"target"},"cwd":"/x"}')"
+check "Fix5 healthy run past the no-repoRoot one still denies" "$(is_deny "$out")" "yes"
+
+# --- Fix #6: git absent from PATH (jq present) + matched write + active run → fail-closed.
+rm -rf "$RUNS"/*
+GABSREPO="$WORK/gabs-repo"; mk_repo "$GABSREPO" "https://github.com/g/g.git"
+mk_run run-gabs "$GABSREPO"
+GSTUB="$WORK/git-absent-bin"; mkdir -p "$GSTUB"
+for b in cat jq find dirname sort basename tr; do ln -sf "$(command -v "$b")" "$GSTUB/$b"; done
+out="$(printf '%s' "$(cat "$FX/push_files.json")" | PATH="$GSTUB" HOME="$HOME" /bin/bash "$GATE" 2>/dev/null)"; grc=$?
+check "Fix6 git-absent + matched write + active run → deny (fail-closed)" "$(is_deny "$out")" "yes"
+check "Fix6 git-absent → exit 0" "$grc" "0"
+contains "Fix6 git-absent deny mentions git not found" "$out" "git was not found"
 
 # =====================================================================================
 # AC-15 — every fixture carries _provenance (source + url + retrieved); README records D9.

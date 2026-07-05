@@ -58,20 +58,28 @@ if ! command -v jq >/dev/null 2>&1; then
 fi
 
 # --- control flow step 2: ONE jq extracts all fields (newline-separated) ---------------
-# Five fields, ONE per line (read back with `IFS= read` so EMPTY MIDDLE fields are
+# Six fields, ONE per line (read back with `IFS= read` so EMPTY MIDDLE fields are
 # preserved verbatim — a tab/`@tsv` split would collapse them, since tab is IFS-
-# whitespace, and mis-shift every later field). Each field is tostring'd + has its own
-# newlines/CRs squashed to spaces so a value can never leak an extra line. Robust against
-# a non-object .tool_input; a genuine parse failure yields an empty tool_name (fail-closed).
+# whitespace, and mis-shift every later field). tool_name is tostring'd (any scalar names a
+# tool); isolation/owner/repo/cwd are extracted as STRING SCALARS ONLY (`s`) — a non-string
+# value yields "" so it is treated as UNEXTRACTABLE downstream (fail-closed), never coerced
+# to a bogus non-empty token via tostring (which would let owner:{} / cwd:[] skip the
+# fail-closed checks). The isolation TYPE is emitted separately so the Agent dispatch can
+# tell absent (hot path) from present-but-non-string (malformed → conservative worktree
+# class). Each field's own newlines/CRs are squashed to spaces so a value can never leak an
+# extra line. Robust against a non-object .tool_input; a genuine parse failure yields an
+# empty tool_name (fail-closed).
 FIELDS="$(printf '%s' "$INPUT" | jq -r '
   def f: (. // "") | tostring | gsub("[\r\n]"; " ");
+  def s: if type == "string" then gsub("[\r\n]"; " ") else "" end;
   (if (.tool_input | type) == "object" then .tool_input else {} end) as $ti
-  | (.tool_name | f), ($ti.isolation | f), ($ti.owner | f), ($ti.repo | f), (.cwd | f)
+  | (.tool_name | f), ($ti.isolation | type), ($ti.isolation | s), ($ti.owner | s), ($ti.repo | s), (.cwd | s)
 ' 2>/dev/null || true)"
 
-TOOL_NAME=""; ISOLATION=""; IN_OWNER=""; IN_REPO=""; PAYLOAD_CWD=""
+TOOL_NAME=""; ISO_TYPE=""; ISOLATION=""; IN_OWNER=""; IN_REPO=""; PAYLOAD_CWD=""
 {
   IFS= read -r TOOL_NAME
+  IFS= read -r ISO_TYPE
   IFS= read -r ISOLATION
   IFS= read -r IN_OWNER
   IFS= read -r IN_REPO
@@ -84,18 +92,35 @@ EOF
 [ -n "$TOOL_NAME" ] || emit_deny "drive-tool-gate: could not parse the tool call from stdin (empty tool_name). Failing CLOSED for write-class safety. If this recurs the hook input contract has drifted — re-run bin/install-drive-hooks.sh."
 
 # --- control flow step 3: class dispatch on tool_name ---------------------------------
-# CLASS ∈ { worktree, mcp }. Plain Agent (no worktree isolation) and any non-write tool
-# exit HERE, BEFORE any run scan (the hot-path contract). A matched mcp__ suffix absent
-# from the hook's own table denies UNCONDITIONALLY (settings/hook drift, fail-closed).
+# CLASS ∈ { worktree, mcp }. Plain Agent (isolation absent, or a clean non-"worktree"
+# isolation string) and any non-write tool exit HERE, BEFORE any run scan (the hot-path
+# contract). A matched mcp__ suffix absent from the hook's own table denies UNCONDITIONALLY
+# (settings/hook drift, fail-closed).
 CLASS=""
 SUFFIX=""
 case "$TOOL_NAME" in
   Agent)
-    if [ "$ISOLATION" = worktree ]; then
-      CLASS=worktree
-    else
-      exit 0                       # HOT PATH: plain Agent → silent, before any scan
-    fi ;;
+    # Route on the isolation TYPE (D-p2-5, fail-closed leaning):
+    #   absent (null)                     → plain Agent HOT PATH (silent, before any scan)
+    #   string == "worktree" (ws-trimmed) → worktree class
+    #   string != "worktree"              → clean non-worktree isolation → HOT PATH
+    #   present but NON-string (obj/arr/…) → MALFORMED → conservative worktree class
+    # A `tostring` compare (the pre-fix code) turned isolation:{} into "{}" != "worktree" and
+    # took the HOT PATH — silently reopening the worktree bypass. Keying on the type closes it.
+    case "$ISO_TYPE" in
+      null)
+        exit 0 ;;                  # HOT PATH: no isolation → plain Agent → silent, before any scan
+      string)
+        iso="${ISOLATION#"${ISOLATION%%[![:space:]]*}"}"   # ltrim whitespace
+        iso="${iso%"${iso##*[![:space:]]}"}"               # rtrim whitespace
+        if [ "$iso" = worktree ]; then
+          CLASS=worktree
+        else
+          exit 0                   # HOT PATH: a clean non-"worktree" isolation string → silent
+        fi ;;
+      *)
+        CLASS=worktree ;;          # malformed (present but non-string) isolation → conservative worktree class
+    esac ;;
   EnterWorktree)
     CLASS=worktree ;;
   mcp__*)
@@ -141,6 +166,15 @@ while IFS= read -r D; do
   fi
   [ -n "$stage" ] || continue        # parsed but no stage → not routable-active (silent)
   [ "$stage" = "done" ] && continue  # explicitly done → not active
+  # Require a non-empty repoRoot: a run with stage!=done but no/empty repoRoot cannot be
+  # repo-scoped, and passing "" downstream would make `git -C ""` resolve to the HOOK's own
+  # cwd — mis-attributing identity (cross-run over-deny AND silent-pass of the run's real
+  # repo). Skip-with-warning (same visibility as a corrupt dir) so it can never mis-scope.
+  rr="$(jq -r '.repoRoot // ""' "$sj" 2>/dev/null || true)"
+  if [ -z "$rr" ]; then
+    printf 'drive-tool-gate: skipping active run with no repoRoot in %s\n' "$D" >&2
+    continue
+  fi
   ACTIVE_RUNS="$ACTIVE_RUNS$D
 "
 done <<EOF
@@ -149,6 +183,22 @@ EOF
 
 # No active run → the insurance lies dormant → silent pass.
 [ -n "$ACTIVE_RUNS" ] || exit 0
+
+# first_active_run : basename of the FIRST active run dir (for fail-closed deny messages).
+first_active_run() {
+  printf '%s' "$ACTIVE_RUNS" | while IFS= read -r d; do
+    [ -n "$d" ] && { basename "$d"; break; }
+  done
+}
+
+# git is the OTHER hard dependency for repo scoping (parse_origin / common_dir_of). Reaching
+# here means CLASS ∈ {mcp,worktree} AND ≥1 run is live; with git ABSENT, repo identity cannot
+# be derived, so fail-CLOSED (mirrors the jq-absent posture) — never a silent pass of an
+# unscoped write. Nearly unreachable in practice (a machine without git cannot run /drive to
+# have a live run), but keeps the fail-closed posture uniform with D-p2-5.
+if ! command -v git >/dev/null 2>&1; then
+  emit_deny "drive-tool-gate: run $(first_active_run) is active on this repo, but git was not found in PATH so this write-class tool ($TOOL_NAME) cannot be repo-scoped against the active run. Failing CLOSED for write-class safety. Install git, or use the canonical gated Bash path (git/gh)."
+fi
 
 # --- repo-identity helpers (the PINNED canonical origin parse; shared common-dir) -----
 _ORIGIN_HOST=""; _ORIGIN_OWNER=""; _ORIGIN_REPO=""
@@ -164,6 +214,7 @@ _ORIGIN_HOST=""; _ORIGIN_OWNER=""; _ORIGIN_REPO=""
 parse_origin() {
   local d="$1" url rest authority hostport host path owner repo
   _ORIGIN_HOST=""; _ORIGIN_OWNER=""; _ORIGIN_REPO=""
+  [ -n "$d" ] || return 1                # empty dir → don't let `git -C ""` resolve to the hook cwd
   url="$(git -C "$d" remote get-url origin 2>/dev/null)" || return 1
   url="${url#"${url%%[![:space:]]*}"}"          # trim leading whitespace
   url="${url%"${url##*[![:space:]]}"}"          # trim trailing whitespace
@@ -202,6 +253,7 @@ parse_origin() {
 # realpath(<dir>/.git): a linked worktree's .git is a gitFILE pointer, not the common dir.
 common_dir_of() {
   local d="$1" cd
+  [ -n "$d" ] || return 1                # empty dir → don't let `git -C ""` resolve to the hook cwd
   cd="$(git -C "$d" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" || return 1
   [ -n "$cd" ] || return 1
   ( cd "$cd" 2>/dev/null && pwd -P ) || return 1
@@ -246,14 +298,23 @@ worktree_deny_reason() {
   printf 'drive-tool-gate: run %s is active on this repo. The native worktree tool %s creates a worktree on a harness-named branch, so the plan/phasedesign gates (`git worktree add … -b slice/…`) and the slice merge/test gates (keyed on slice/<runId>/<id> refs) never fire. Retry: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>` (gated), then dispatch the agent into that path WITHOUT worktree isolation (or `cd` into it).' "$runId" "$tool"
 }
 
+# worktree_failclosed_reason: a worktree-class tool whose cwd cannot be resolved to a git
+# repo (missing / non-string / not a repo) while a run is live → fail-CLOSED (D-p2-5): its
+# repo identity can't be scoped, so we cannot prove it is NOT the run's repo. (Edge-case-9's
+# silent pass is ONLY for a VALID, identifiable, non-run-repo cwd.)
+worktree_failclosed_reason() {
+  local tool="$1" runId="$2"
+  printf 'drive-tool-gate: run %s is active on this repo, and the native worktree tool %s was dispatched with a cwd that cannot be resolved to a git repository (missing, malformed, or not a git repo), so its repo identity cannot be scoped against the active run. Failing CLOSED for gate safety. Retry: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>` (gated), then dispatch the agent into that path WITHOUT worktree isolation (or `cd` into it).' "$runId" "$tool"
+}
+
 # --- control flow step 5: repo scoping over the active runs --------------------------
 if [ "$CLASS" = mcp ]; then
   IN_OWNER_LC="$(printf '%s' "$IN_OWNER" | tr '[:upper:]' '[:lower:]')"
   IN_REPO_LC="$(printf '%s' "$IN_REPO"  | tr '[:upper:]' '[:lower:]')"
-  # Unextractable owner/repo while ≥1 run is live → fail-CLOSED over-deny (names a run).
+  # Unextractable owner/repo (empty OR non-string → "") while ≥1 run is live → fail-CLOSED
+  # over-deny (names a run). A non-string owner/repo (owner:{} / repo:[]) is unextractable.
   if [ -z "$IN_OWNER_LC" ] || [ -z "$IN_REPO_LC" ]; then
-    _first="$(printf '%s' "$ACTIVE_RUNS" | while IFS= read -r d; do [ -n "$d" ] && { basename "$d"; break; }; done)"
-    emit_deny "drive-tool-gate: run $_first is active on this repo, and this GitHub MCP write ($TOOL_NAME) carries no extractable owner/repo to scope it. Failing CLOSED for write-class safety (over-deny). Retry via the canonical gated Bash path (git/gh) from the run's worktree."
+    emit_deny "drive-tool-gate: run $(first_active_run) is active on this repo, and this GitHub MCP write ($TOOL_NAME) carries no extractable owner/repo to scope it. Failing CLOSED for write-class safety (over-deny). Retry via the canonical gated Bash path (git/gh) from the run's worktree."
   fi
   while IFS= read -r D; do
     [ -n "$D" ] || continue
@@ -279,6 +340,11 @@ EOF
   exit 0
 fi
 
+# Defense-in-depth (fix #3): ONLY the worktree class reaches here. A regressed/empty CLASS
+# (e.g. a plain Agent that lost its hot-path early exit) must NOT fall through into a
+# worktree deny — exit silently instead of denying every fan-out dispatch.
+[ "$CLASS" = worktree ] || exit 0
+
 # CLASS = worktree (Agent isolation:"worktree" / EnterWorktree). Scope by the payload
 # cwd's repo identity: origin identity UNION common-dir fast-match against each run.
 CWD_ORIGIN_KEY=""
@@ -286,7 +352,15 @@ if parse_origin "$PAYLOAD_CWD"; then
   CWD_ORIGIN_KEY="$_ORIGIN_HOST/$_ORIGIN_OWNER/$_ORIGIN_REPO"
 fi
 CWD_COMMONDIR="$(common_dir_of "$PAYLOAD_CWD" 2>/dev/null || true)"
-# cwd not a git repo → no identity → no match possible → falls through to silent exit.
+
+# Fail-CLOSED (fix #1, D-p2-5) on an UNIDENTIFIABLE cwd — missing / non-string / not a
+# resolvable git repo (BOTH the origin key AND the common dir came back empty). With ≥1 run
+# live we cannot prove the cwd is NOT the run's repo, so DENY. A RESOLVABLE cwd (a git repo,
+# even one with no origin) keeps a non-empty origin key OR common dir and falls through to
+# the per-run match below — silent when it matches no run (the legit Edge-case-9 pass).
+if [ -z "$CWD_ORIGIN_KEY" ] && [ -z "$CWD_COMMONDIR" ]; then
+  emit_deny "$(worktree_failclosed_reason "$TOOL_NAME" "$(first_active_run)")"
+fi
 
 while IFS= read -r D; do
   [ -n "$D" ] || continue
