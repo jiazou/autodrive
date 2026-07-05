@@ -428,3 +428,114 @@ bin/drive-retention.sh:800,827 — apply-mode top-level summary tallies from pre
   "comment-only churn." OVERRULED at the integrated path: the banner IS this run's deliverable (the old
   banner described the stale pre-finalize "EXISTS a counting phase review" model); removing it would
   restore the stale comment or drop slice 1.2's acceptance criterion → VETOED, non-blocking, KEEP.
+
+
+## Run main-20260704-180725 (leverage Trellis in autodrive → /drive-retro trace-mining command) — 2026-07-05
+
+# Run followups — main-20260704-180725
+
+- [ ] **P3 (cosmetic, from harden 1-1)** docs/trellis-analysis.md:175 says the TR-9
+  graduated-stakes tier is "M/L effort" while the Recommendations table row (line 337)
+  commits to Effort = L. Align the prose to the table's single-value {S,M,L} domain.
+  Not load-bearing: TR-9 is wait-tier, so TODO routing and Phase-2 selection are
+  unaffected either way.
+
+- [ ] **P3 (cosmetic, from harden 1-2)** docs/trellis-analysis.md:322-324 vs :333 — the
+  Recommendations rules paragraph states the L1 default unconditionally ("L1-tagged recs
+  default ignore/wait unless a written non-absorption rebuttal is given") while the fixed
+  TR-4 cell scopes it ("the L1 default governs adopt-pattern recs — run-alongside is E6's
+  sanctioned L1-safe route"). The cell's scoping matches design-phase1.md E6/DP1-4 intent
+  and the resolution is stated inline, so no reader is misled and no routing/selection
+  changes under either reading — but a mechanical audit of the table against the rules
+  paragraph flags TR-4. One-clause fix: add the run-alongside carve-out to the rules
+  paragraph.
+
+## slop (deferred to finalize)
+
+- docs/trellis-analysis.md:69 — "the discipline is already ours" — first-person-possessive voice drift in an otherwise third-person analysis.
+- docs/trellis-analysis.md:97 — "Trellis also documents its own dead code honestly" — editorializing adverb; "honestly" adds no information over "documents its own dead code".
+- docs/trellis-analysis.md:180 — "the repo's moat per TODO.md's layer framing" — buzzword + loose attribution: TODO.md's framing says "Keep"/"re-target layer 3", never "moat".
+- docs/trellis-analysis.md:278 — "One corroborating detail worth keeping:" — filler self-justifying lead-in; the detail's relevance is already argued in the sentence that follows.
+- docs/trellis-analysis.md:175 — "M/L effort" for TR-9 where the table (line 337) says "L" — inconsistent effort vocabulary (also recorded as the P3 finding above).
+- docs/trellis-analysis.md:219 — bullets re-explain ranking mechanics already stated (codex).
+- docs/trellis-analysis.md:321 — table-rules paragraph repeats prior sections (codex).
+- docs/trellis-analysis.md:303 — portability section over-padded (codex).
+- docs/trellis-analysis.md:371 — trailing cleanup prose after the one-decision close (codex).
+- [ ] **P2 (from harden-regress, phase 1)** docs/trellis-analysis.md:332,348 — the TR-3
+  invocation reword says "manual, operator-invoked … like /decant today", but OPERATING.md
+  makes /decant a standing BY-DEFAULT wrap step (Claude-run, not operator-typed) and the
+  doc's own dim 5 says so; imprecise analogy, spike contract unaffected. Cheap wording fix
+  — candidate for the finalize whole-run pass.
+- docs/trellis-analysis.md:333 — "free search/slice" — marketing-ish shorthand (codex, harden r2).
+- [ ] **Process signal (this run, for TR-3/retro):** the drive stop-hook nags on every
+  turn-end while the coordinator is legitimately waiting on background codex/subagent work
+  (~8 nag turns this leg); the hook reads only state.json and cannot see harness-tracked
+  background tasks. Candidate: teach bin/drive-stop-hook.py to stay quiet when an
+  inflight-*.marker is open (the marker IS the "work in flight" signal).
+
+- [ ] **Divergence (from phase-2 design):** CLAUDE.md documents event-log.jsonl as
+  "append-only dispatch/verdict/merge/gate timeline" (JSONL), but the coordinator in
+  practice appends pretty-printed MULTI-LINE JSON objects alongside single-line records
+  (this run: 46 objects; a naive line parser flags 192 "malformed" lines). Either pin the
+  writer to compact single-line JSON in drive.md's event-append instruction, or document
+  the mixed shape. /drive-retro v1 absorbs it with a tolerant raw_decode stream parser
+  (DP2-2); fixing the writer is out of Phase 2's boundary.
+
+- [ ] **Follow-on (named in docs/trellis-analysis.md TR-3 + design-phase2.md, not built):**
+  automatic run-wrap wiring for /drive-retro — a drive.md Completion-step edit invoking it
+  in the sequence where /decant already runs. v2 candidate: cross-run aggregation.
+  DP2-5 names bin/drive-retro-stats.py if the inline parse snippet grows a second consumer.
+
+- [ ] **Follow-on (from phase-2 design r1, DP2-8 — not built):** /drive-retro in-flight
+  mode — mining a stuck/in-flight run for STOP causes (the use case the dropped v1
+  `partial` argument served). v1 is completed-run-only per TR-3; an in-flight mode needs
+  its own design (non-final stats banner, no-overwrite-of-a-completed-retro guard).
+
+- [ ] **Harness gap (from phase-2 design review r2, out of phase scope):** STOP pauses are
+  not durably recorded anywhere — Present human pause (drive.md §595) sets
+  `state.waiting = "stop:<short>"` transiently (cleared on resume) and the event-log append
+  rule covers only dispatch/verdict/merge/gate, so a completed run retains zero STOP history.
+  This blinds any post-hoc trace mining (retro v1's STOP stats had to be cut) AND the
+  in-flight retro follow-on would see only the CURRENT stop. Candidate: Present human pause
+  step 1 also appends one event-log line ({"event":"stop","reason":waiting,"at":...}) —
+  cheap, append-only, makes STOP causes first-class trace data.
+
+- .claude/commands/drive-retro.md:70 — `re.compile(r"[ \t\r\n]*")` rebuilt on every loop iteration inside the inline decode snippet; hoist the compiled pattern above the `while`
+- tests/contracts/test_drive_retro_contract.py:1 — over-explanatory module docstring
+- tests/contracts/test_drive_retro_contract.py:277 — padded `test_class_to_destination_routing` docstring
+- .claude/commands/drive-retro.md:143 — "never grounds to re-architect the rule" reads editorial- (harden-2 r2, codex P2 notes) test_drive_retro_contract.py — AC9's "decant checklist NOT duplicated" half unpinned; Step-7 recurrence grouping-key details / Draft "≤2 sentences" constraint / terminal-report contract unasserted. Non-criterion gaps; deferred.
+
+- tests/contracts/test_drive_retro_contract.py:304 — docstring restates the invariant the asserts already encode
+- tests/contracts/test_drive_retro_contract.py:236 — inline comment block narrates guard-3/guard-4 semantics the assertions already pin
+- .claude/commands/drive-retro.md:155 — section 7 packs independent contracts into overwritten bullet prose- (harden-2 r3, codex P2 notes — routed, not applied) test_drive_retro_contract.py deeper-pin gaps: AC2 exact-match branch; AC8 Evidence ≥2-citation + Draft ≤2-sentence sub-clauses; AC14 "never a STOP" guarantee. Cheap individually, but the pin treadmill is at diminishing returns (r1: 12 pins, r2: 1 rewrite; each round spawns deeper-pin wishes) — deferred rather than consuming the last harden fix round.
+
+## finalize round 1 — routed non-fix items (2026-07-05T04:10:44Z)
+
+- [ ] **P2 (codex finalize, dedup read-set breadth)** `.claude/commands/drive-retro.md:50-58` vs `:163` —
+  the Overlap dedup reference set is a FIXED read-only {OPERATING.md, TODO.md, .harness/decisions.md,
+  .harness/followups.md, MEMORY.md}, but the **Destination** vocabulary also allows `project
+  CLAUDE.md/docs` and `skill/command file <name>`, which are NOT in the read-set — so a proposal
+  targeting a skill/command file can render `Overlap: none` without that file being checked.
+  DECIDED scope (DP2-22: "an unchecked Overlap field is theater"; extend-vs-duplicate over the
+  available set) and non-load-bearing (retro emits PROPOSALS ONLY, human reviews before applying).
+  Non-blocking. Candidate clarity tweak: make the Overlap instruction say destinations outside the
+  fixed reference set render "not checked (destination not in dedup set)".
+- [ ] **P3 (Claude finalize, pseudocode micro-slop)** `.claude/commands/drive-retro.md:70` — the
+  event-log stream-decode pseudocode rebuilds `re.compile(r"[ \t\r\n]*")` inside the `while` loop;
+  hoisting it to a module-level constant is a behavior-preserving micro-opt. DEFERRED, not applied:
+  the file is a heavily string-pinned command SPEC (119 asserts) and codex flagged it as an unsafe
+  de-slop surface; the slop is illustrative pseudocode, not shipped runtime code.
+
+## finalize round 2 — routed non-fix item (2026-07-05)
+
+- [ ] **P2 (codex finalize r2, broad mining-input pinning)** `tests/contracts/test_drive_retro_contract.py`
+  `test_mining_inputs_durable_only` — round 2 added a positive pin for the load-bearing
+  `event-log.jsonl` input. The full positive set (state.json, decisions.md, followups.md,
+  finalize-todo.md, redesign-*.marker, inflight-*.marker, checkpoint-complete.marker) is NOT
+  individually pinned. Deliberately deferred: pinning every named input verbatim over-pins a
+  prose contract already reviewed through 8 phasedesign rounds; no evidence of a
+  silent-drop regression. Candidate if the input list later regresses.
+
+## Design-doc handoff audit (ship, 2026-07-05)
+
+HANDOFF: [/drive-retro] new command `.claude/commands/drive-retro.md` shipped (v1: manual, completed-run-only, no shipped code) — the automatic run-wrap wiring (a drive.md Completion-step edit invoking it BEFORE the wrap-decant, per finalize-todo.md) must land in drive.md before the retro loop is closed; string-pin contract tests apply.

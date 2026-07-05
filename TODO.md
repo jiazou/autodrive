@@ -2,6 +2,19 @@
 
 Architectural follow-ups deferred by /drive finalize passes.
 
+## Trellis pattern adoption — from docs/trellis-analysis.md (2026-07-04)
+
+- [ ] **TR-2 (S/L2)** Per-turn `<drive-state>` breadcrumb: a UserPromptSubmit hook reading
+  `$RUN_DIR/state.json`'s real fields (runId, stage, phase, waiting) and deriving the expected
+  next step from stage/phase (as the run-graph does), breadcrumb bodies pinned by a contract
+  test — kills T-1 (coordinator drift corrected pre-violation,
+  between gate denies; survives auto-summarization context loss); lands on `bin/` new hook +
+  `bin/install-drive-hooks.sh` + `tests/contracts`; x-ref C11 (extend, not duplicate: C11
+  trims /goal ceremony, TR-2 adds hook-supplied steering; land compatibly with C11's pinned
+  clauses); rec detail: docs/trellis-analysis.md §Recommendations. **Trigger:** next /drive
+  run that trips a coordinator-drift STOP, a merge-gate deny on a forgotten review, or a
+  Stop-hook nag loop.
+
 ## Fable 5 / Claude 5 harness compatibility audit (2026-07-03)
 
 12 verified findings (none refuted on a two-lens adversarial verify). Baseline: the
@@ -115,3 +128,27 @@ Full audit with per-candidate evidence and both lens verdicts: session artifact
   reading one layer without the others). Out of THIS run's blast radius to unify; consider a
   single machine-checked source of truth (e.g. generate the doc-pinned tokens from the script, or
   a single contract fixture both the script and docs are checked against) in a dedicated follow-up.
+
+# Finalize TODO routing (promoted to repo-root TODO.md at ship)
+
+- **Wire `/drive-retro` into the run-wrap sequence, ordered BEFORE the wrap-decant**
+  (user-directed, 2026-07-05). At the TRUE run-wrap only (after Gate B, once
+  `completedAt` / `stage=done` exist — retro's completeness gate requires a finished
+  run): `/drive` Completion runs `/drive-retro <runId>` first, then the standing
+  wrap-`/decant`, so retro's classified proposals in `retro-<runId>.md` are on disk as
+  INPUT EVIDENCE for decant's survey/promotion pass. Per-seam rebirth decants (I1
+  step 5.5) are unaffected — retro cannot run mid-run. Touches drive.md's Completion
+  step (string-pin contract tests apply). Supersedes the bare "automatic run-wrap
+  wiring" line in followups.md by adding the ordering contract.
+
+## /drive run main-20260704-180725 — architectural follow-ups (2026-07-05T04:10:44Z)
+
+- **`.claude/commands/drive-retro.md` + `tests/contracts/test_drive_retro_contract.py`** — the
+  feature's hard part is an algorithmic spec (tolerant stream-JSON decode, Rule-U line-level
+  extraction, recurrence grouping, proposal routing), but v1 deliberately ships PROSE + STRING
+  PINS only (TR-3's stated "no shipped code" boundary; DP2-23/AC17). Residual risk (codex ARCH,
+  finalize r1): the most failure-prone semantics can drift while all string-pin tests stay green —
+  there is no fixture-driven behavioral oracle over sample $RUN_DIR artifacts. Follow-on if
+  /drive-retro grows an executable extractor (the DP2-5 `bin/drive-retro-stats.py` path): add a
+  golden-fixture oracle over a captured $RUN_DIR so the extraction contract is behaviorally, not
+  just lexically, pinned. Out of this run's scope (would breach the no-shipped-code boundary).
