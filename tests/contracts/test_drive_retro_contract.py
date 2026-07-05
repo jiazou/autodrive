@@ -61,6 +61,29 @@ def test_drive_md_does_not_reference_drive_retro():
 
 
 # --------------------------------------------------------------------------- #
+# AC13 — SLOC cap: ≤150 lines OR a logged `drive-retro SLOC overage` entry
+# --------------------------------------------------------------------------- #
+def test_sloc_cap_or_logged_overage():
+    """AC13's OR-leg entry lives in $RUN_DIR/decisions.md — CI-unreachable, so it is
+    checked where ship PROMOTES run ledgers: the repo's .harness/decisions.md. Until
+    that promotion lands, the pre-promotion window is bounded at the 183 lines the run's
+    `drive-retro SLOC overage` entry names — growth past it is UNLOGGED overage and reds
+    until a new/updated entry lands (and this bound moves with it)."""
+    n = len(_text().splitlines())
+    if n <= 150:
+        return
+    ledger = REPO_ROOT / ".harness" / "decisions.md"
+    acknowledged = (
+        ledger.is_file()
+        and "drive-retro SLOC overage" in ledger.read_text(encoding="utf-8")
+    )
+    assert acknowledged or n <= 183, (
+        f"drive-retro.md is {n} lines (> the 150 cap), past the logged 183-line overage, "
+        "with no `drive-retro SLOC overage` entry visible in .harness/decisions.md"
+    )
+
+
+# --------------------------------------------------------------------------- #
 # AC2 — runId binding, three-way resolution, rebind-on-resolve, STOP-on-ambiguity
 # --------------------------------------------------------------------------- #
 def test_bind_section_runs_root_and_resolution():
@@ -69,11 +92,14 @@ def test_bind_section_runs_root_and_resolution():
     assert "EXACTLY ONE run dir has the argument as a name prefix" in sec
     assert "REBIND `<runId>` to that dir's FULL basename before ANY downstream use" in sec
     assert "prefix and full-id invocations of the same run write the IDENTICAL single file" in sec
+    assert "state the resolution in the terminal report" in sec
 
 
 def test_bind_section_stop_on_ambiguity_writes_nothing():
     sec = _norm(_section(_text(), r"^## 1 — Bind the run"))
     assert "zero or ≥2 matches, or no argument given → STOP" in sec
+    assert ('print usage plus the available run ids (`ls -1t "$RUNS_ROOT"`, '
+            "newest first, capped ~20)") in sec
     assert "write NOTHING" in sec
     assert "Never guess among multiple matches; never default to the latest run" in sec
 
@@ -153,9 +179,11 @@ def test_event_log_parse_contract():
     assert "raw_decode" in sec
     assert r"[ \t\r\n]*" in sec, "inter-record whitespace advance missing from the snippet"
     assert "NEVER counted" in n
+    assert "decode error at non-whitespace: skip to next newline, count ONE segment" in n
     assert "a well-formed mixed log reports 0 skipped" in n
     assert "skipped count is surfaced in the output header" in n
     assert "degrade, don't abort" in n
+    assert 'the header notes "event-log absent — timeline stats omitted"' in n
 
 
 # --------------------------------------------------------------------------- #
@@ -166,6 +194,7 @@ def test_stats_sourced_and_best_effort():
     assert "never eyeballed" in sec
     assert "pure-integer-N `review-<scope>-<N>.md` files" in sec
     assert "`## AppliedEdits: yes`" in sec
+    assert "the file counts are the fallback when `state.json` is unreadable" in sec
     assert "mismatch is itself reported as signal" in sec
     assert "BEST-EFFORT by contract" in sec
     assert "NO stat requires a specific event kind" in sec
@@ -173,7 +202,7 @@ def test_stats_sourced_and_best_effort():
     assert "gates + timestamps · dispatches by kind · wall-clock" in sec
     assert "earliest → latest parseable `at`" in sec
     assert "NO STOP-cause stat is emitted" in sec
-    assert "CODEX_UNAVAILABLE" in sec and "prefix match" in sec
+    assert "whose FIRST LINE begins with `CODEX_UNAVAILABLE` (prefix match)" in sec
 
 
 # --------------------------------------------------------------------------- #
@@ -209,8 +238,11 @@ def test_rule_u_uniform_guards():
     assert "`non-`/`non `" in sec  # guard 1: negation
     assert "RESOLVED|VETOED|OVERRULED|REFUTED|CLOSED" in sec  # guard 2
     assert "case-insensitive inside a bracket window, UPPERCASE-only elsewhere" in sec
-    # guard 3: named, carrier-scoped continuation forms + the pinned ':' adjacency
+    # guard 3: named, carrier-scoped continuation forms + the pinned ':' adjacency,
+    # the parenthesized-token-list skip, and the word-bounded lowercase-as-written match rule
+    assert "skipping one optional parenthesized token list" in sec
     assert "ONLY when it immediately follows the window with no intervening space" in sec
+    assert "matched word-bounded, lowercase-as-written" in sec
     for form in ("`remains`", "`remaining`", "`none`", "`is addressed`", "`closed`",
                  "`split correct`"):
         assert form in sec, f"continuation form {form} missing from the named list"
@@ -240,6 +272,7 @@ def test_single_output_path_and_overwrite():
     assert "Exactly ONE write: `$RUN_DIR/retro-<runId>.md`" in sec
     assert "resolved FULL basename" in sec
     assert "OVERWRITES it (no `-N` versioning)" in sec
+    assert 'say "overwrote existing retro" when it did' in sec
 
 
 def test_output_fixed_section_order():
@@ -293,6 +326,7 @@ def test_proposal_bar_conditional_on_signal():
                     "`hardenRound ≥ 1` or `finalizeRound ≥ 1`", "redesign marker",
                     "stranded inflight marker", "non-null final `waiting`"):
         assert trigger in sec, f"signal trigger '{trigger}' missing"
+    assert "or `## AppliedEdits: yes` artifacts when state is unreadable" in sec
     assert "ZERO proposals iff No-action notes states why" in sec
     assert "never invent a lesson to fill quota" in sec
 
