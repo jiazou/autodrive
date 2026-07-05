@@ -435,6 +435,16 @@ out="$(printf '%s' "$(cat "$FX/push_files.json")" | PATH="$STUB" /bin/bash "$GAT
 check "AC-8 jq-absent → deny" "$(is_deny "$out")" "yes"
 check "AC-8 jq-absent → exit 0" "$jrc" "0"
 contains "AC-8 jq-absent deny mentions jq" "$out" "jq is required"
+# jq-absent applies to EVERY matched class, not just MCP: a plain non-worktree Agent
+# (the hot path) also denies, because without jq the hook cannot parse the payload to
+# even determine isolation (design D-p2-5: fail-closed on a jq-less machine, which cannot
+# run /drive anyway). This branch is exercised by the native-Agent matcher, not just MCP.
+out="$(printf '%s' "$(cat "$FX/agent-plain.json")" | PATH="$STUB" /bin/bash "$GATE" 2>/dev/null)"; arc=$?
+check "AC-8 jq-absent plain-Agent → deny (fail-closed, all classes)" "$(is_deny "$out")" "yes"
+check "AC-8 jq-absent plain-Agent → exit 0" "$arc" "0"
+out="$(printf '%s' "$(cat "$FX/enter-worktree.json")" | PATH="$STUB" /bin/bash "$GATE" 2>/dev/null)"; wrc=$?
+check "AC-8 jq-absent EnterWorktree → deny (fail-closed)" "$(is_deny "$out")" "yes"
+check "AC-8 jq-absent EnterWorktree → exit 0" "$wrc" "0"
 out="$(printf '' | bash "$GATE" 2>/dev/null)"; erc=$?
 check "AC-8 empty stdin → deny" "$(is_deny "$out")" "yes"
 check "AC-8 empty stdin → exit 0" "$erc" "0"

@@ -14,3 +14,6 @@
 # local session/retro scratch — never publish (can contain machine-local handles)
 .context/
 __pycache__/
+
+# test-run scratch dirs (pytest/bash suites use in-tree TMPDIR) — never commit
+.tmp*/
