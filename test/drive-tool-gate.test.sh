@@ -272,29 +272,46 @@ check "AC-8 empty stdin → exit 0" "$erc" "0"
 # REVIEW-FIX HARDENING — malformed-input fail-closed (codex BLOCKING/MAJOR + Claude P2s).
 # =====================================================================================
 
-# --- Fix #1: native-worktree fail-closed on malformed/missing cwd + non-string isolation.
+# --- Fix #1 (round-2 NARROWED): native-worktree fail-closed ONLY on a missing/non-string/
+#     empty cwd FIELD. A PRESENT non-empty cwd string that resolves to no active run silent-
+#     passes (Edge-case-9) — including a valid EXISTING NON-git-repo directory. Round-1
+#     over-denied that non-git-repo case; this restores its pass while keeping the
+#     malformed-payload cases fail-closed.
 rm -rf "$RUNS"/*
 WCREPO="$WORK/wc-repo"; mk_repo "$WCREPO" "https://github.com/wc/wc.git"
 mk_run run-wc "$WCREPO"
-# (a) EnterWorktree with MISSING cwd (run live) → deny (fail-closed, not silent-pass)
+NONGIT="$WORK/wc-nongit"; mkdir -p "$NONGIT"   # an EXISTING, NON-git-repo directory
+# (a) EnterWorktree with the cwd FIELD MISSING (run live) → deny (fail-closed, not silent-pass)
 out="$(run_gate '{"tool_name":"EnterWorktree","tool_input":{"name":"x"}}')"
 check "Fix1 EnterWorktree missing cwd (run live) → deny" "$(is_deny "$out")" "yes"
-contains "Fix1 missing-cwd deny is fail-closed" "$out" "cannot be resolved to a git repository"
-# (b) Agent with a NON-STRING isolation (object) is MALFORMED → worktree class; an
-#     unresolvable cwd then fail-closes → deny (pre-fix this took the hot path silently).
-out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":{},"description":"d","prompt":"p"},"cwd":"/no/such/git/dir"}')"
-check "Fix1 Agent non-string isolation (object) + unresolvable cwd → deny" "$(is_deny "$out")" "yes"
-# (c) non-string isolation but a cwd that IS the run repo → deny (worktree-class match)
+contains "Fix1 missing-cwd deny is fail-closed" "$out" "WITHOUT a usable cwd"
+# (a2) NON-STRING cwd field (object) → PAYLOAD_CWD extracts to "" (unusable) → deny (fail-closed)
+out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":"worktree","description":"d","prompt":"p"},"cwd":{}}')"
+check "Fix1 non-string cwd field (object) → deny (fail-closed)" "$(is_deny "$out")" "yes"
+# (b) NEW (round-2, the codex-reproduced over-deny): legit Agent isolation:"worktree" with cwd
+#     = an EXISTING NON-git-repo dir during an active same-repo run → SILENT PASS (Edge-9).
+#     MUTATION-VERIFY: reverting the fix (fail-close when the cwd resolves to no git repo) REDs
+#     this — a non-git dir yields NO origin key AND NO common dir, so the round-1 code denied it.
+out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":"worktree","description":"d","prompt":"p"}}' "$NONGIT")"
+check "Fix1 (round-2) Agent isolation:worktree + existing NON-git-repo cwd → silent (Edge-9)" "$out" ""
+# (b2) NEW (round-2): same restoration for EnterWorktree + existing NON-git-repo cwd → SILENT PASS
+out="$(run_gate '{"tool_name":"EnterWorktree","tool_input":{"name":"x"}}' "$NONGIT")"
+check "Fix1 (round-2) EnterWorktree + existing NON-git-repo cwd → silent (Edge-9)" "$out" ""
+# (c) Agent NON-STRING isolation (object) is MALFORMED → worktree class; cwd that IS the run
+#     repo → deny (worktree-class match; pre-fix a tostring compare took the hot path silently)
+out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":{},"description":"d","prompt":"p"}}' "$WCREPO")"
+check "Fix1 non-string isolation (object) + run-repo cwd → deny (worktree-class routing)" "$(is_deny "$out")" "yes"
+# (d) non-string isolation (array) + a cwd that IS the run repo → deny (worktree-class match)
 out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":[],"description":"d","prompt":"p"}}' "$WCREPO")"
 check "Fix1 non-string isolation (array) + run-repo cwd → deny" "$(is_deny "$out")" "yes"
-# (d) non-string isolation with a RESOLVABLE non-run-repo cwd → silent (identifiable, differs)
+# (e) non-string isolation with a RESOLVABLE UNRELATED-git-repo cwd → silent (identifiable, differs)
 WCOTHER="$WORK/wc-other"; mk_repo "$WCOTHER" "https://github.com/other/other.git"
 out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":true,"description":"d","prompt":"p"}}' "$WCOTHER")"
-check "Fix1 non-string isolation + resolvable non-run-repo cwd → silent (legit Edge-case-9)" "$out" ""
-# (e) a CLEAN non-"worktree" isolation string → hot path (NOT worktree class), even in-repo
+check "Fix1 non-string isolation + unrelated-git-repo cwd → silent (legit Edge-case-9)" "$out" ""
+# (f) a CLEAN non-"worktree" isolation string → hot path (NOT worktree class), even in-repo
 out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":"none","description":"d","prompt":"p"}}' "$WCREPO")"
 check "Fix1 clean non-worktree isolation string ('none') → hot path silent" "$out" ""
-# (f) trailing-whitespace 'worktree ' string → trimmed → worktree class → deny (run-repo cwd)
+# (g) trailing-whitespace 'worktree ' string → trimmed → worktree class → deny (run-repo cwd)
 out="$(run_gate '{"tool_name":"Agent","tool_input":{"isolation":"worktree ","description":"d","prompt":"p"}}' "$WCREPO")"
 check "Fix1 isolation 'worktree ' (trailing ws) trimmed → deny (run-repo cwd)" "$(is_deny "$out")" "yes"
 

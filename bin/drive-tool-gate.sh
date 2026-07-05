@@ -298,13 +298,15 @@ worktree_deny_reason() {
   printf 'drive-tool-gate: run %s is active on this repo. The native worktree tool %s creates a worktree on a harness-named branch, so the plan/phasedesign gates (`git worktree add … -b slice/…`) and the slice merge/test gates (keyed on slice/<runId>/<id> refs) never fire. Retry: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>` (gated), then dispatch the agent into that path WITHOUT worktree isolation (or `cd` into it).' "$runId" "$tool"
 }
 
-# worktree_failclosed_reason: a worktree-class tool whose cwd cannot be resolved to a git
-# repo (missing / non-string / not a repo) while a run is live → fail-CLOSED (D-p2-5): its
-# repo identity can't be scoped, so we cannot prove it is NOT the run's repo. (Edge-case-9's
-# silent pass is ONLY for a VALID, identifiable, non-run-repo cwd.)
+# worktree_failclosed_reason: a worktree-class tool whose cwd FIELD is absent / non-string /
+# empty (no usable cwd string) while a run is live → fail-CLOSED (D-p2-5): a missing cwd on a
+# worktree tool may default to the session's repo, so we cannot prove it is NOT the run's
+# repo. (Edge-case-9's silent pass is for a PRESENT cwd string that resolves to no run-repo —
+# a non-git dir, an unrelated repo, or a nonexistent path — which this fail-closed no longer
+# sweeps up.)
 worktree_failclosed_reason() {
   local tool="$1" runId="$2"
-  printf 'drive-tool-gate: run %s is active on this repo, and the native worktree tool %s was dispatched with a cwd that cannot be resolved to a git repository (missing, malformed, or not a git repo), so its repo identity cannot be scoped against the active run. Failing CLOSED for gate safety. Retry: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>` (gated), then dispatch the agent into that path WITHOUT worktree isolation (or `cd` into it).' "$runId" "$tool"
+  printf 'drive-tool-gate: run %s is active on this repo, and the native worktree tool %s was dispatched WITHOUT a usable cwd (the cwd field is missing, non-string, or empty), so its repo identity cannot be scoped against the active run. Failing CLOSED for gate safety. Retry: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>` (gated), then dispatch the agent into that path WITHOUT worktree isolation (or `cd` into it).' "$runId" "$tool"
 }
 
 # --- control flow step 5: repo scoping over the active runs --------------------------
@@ -353,12 +355,16 @@ if parse_origin "$PAYLOAD_CWD"; then
 fi
 CWD_COMMONDIR="$(common_dir_of "$PAYLOAD_CWD" 2>/dev/null || true)"
 
-# Fail-CLOSED (fix #1, D-p2-5) on an UNIDENTIFIABLE cwd — missing / non-string / not a
-# resolvable git repo (BOTH the origin key AND the common dir came back empty). With ≥1 run
-# live we cannot prove the cwd is NOT the run's repo, so DENY. A RESOLVABLE cwd (a git repo,
-# even one with no origin) keeps a non-empty origin key OR common dir and falls through to
-# the per-run match below — silent when it matches no run (the legit Edge-case-9 pass).
-if [ -z "$CWD_ORIGIN_KEY" ] && [ -z "$CWD_COMMONDIR" ]; then
+# Fail-CLOSED (fix #1, D-p2-5) ONLY when the cwd FIELD itself is absent / non-string / empty
+# ($PAYLOAD_CWD came back empty from the jq `s` string-scalar extraction). A missing cwd on a
+# worktree tool may default to the session's repo, so with ≥1 run live we cannot prove it is
+# NOT the run's repo → DENY. A PRESENT non-empty cwd STRING — whether it resolves to a git
+# repo, a non-git dir, an unrelated repo, or a nonexistent path — falls through to the per-run
+# match below, which DENIES only on an origin/common-dir match and otherwise silent-passes
+# (Edge-case-9: a valid non-run-repo cwd must PASS). Discriminating on the STRING being present
+# (not on resolution succeeding) restores that Edge-9 pass while keeping the malformed-payload
+# case fail-closed.
+if [ -z "$PAYLOAD_CWD" ]; then
   emit_deny "$(worktree_failclosed_reason "$TOOL_NAME" "$(first_active_run)")"
 fi
 
