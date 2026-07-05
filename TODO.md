@@ -118,3 +118,25 @@ Full audit with per-candidate evidence and both lens verdicts: session artifact
   reading one layer without the others). Out of THIS run's blast radius to unify; consider a
   single machine-checked source of truth (e.g. generate the doc-pinned tokens from the script, or
   a single contract fixture both the script and docs are checked against) in a dedicated follow-up.
+
+## /drive run todo-triage-20260704T135831 — architectural follow-ups (2026-07-05T14:14:46Z)
+
+- **bin/install-drive-hooks.sh `is_managed` — spaced-path cross-checkout duplicate.** A
+  cross-checkout re-run from a space-containing checkout path leaves stale managed entries
+  un-stripped → duplicate hooks with no drift WARN. Pre-existing (on origin/main before this
+  run's C7 work), affects the merge-gate + stop-guard identically. Loosening the
+  metachar/`$cmd == $full` collapse matcher is a security-sensitive change needing its own
+  adversarial find-the-bypass review. Already recorded in followups + decisions D-coord-4;
+  listed here to discharge finalize's TODO-routing duty. Out of this run's diff — not fixed.
+- **bin/drive-tool-gate.sh — ungated Bash `gh pr merge`/`gh pr edit` twins + GitLab-MCP writes.**
+  The MCP `merge_pull_request`/`update_pull_request` denies close the MCP omission path, but
+  their Bash `gh pr merge`/`gh pr edit` twins stay ungated (drive-merge-gate.sh gates only
+  `pr create`/`mr create`), and GitLab-MCP write tools are the same bypass class under different
+  names, uncovered by the GitHub-named matcher. Deliberate, decision-logged asymmetry (the deny
+  wording states it truthfully); named residuals in followups. Decide in a follow-up, not a code
+  fix here.
+- **bin/statusline.sh + bin/rebirth-thresholds.json — duplicated window table.** The deployed
+  statusline is symlinked away from its `rebirth-thresholds.json` sibling, so the window
+  "single source of truth" is actually a duplicated inline `case` table (statusline.sh:34-38)
+  requiring dual maintenance with the json. AC6 pins them to identical numbers as an accepted
+  stopgap; the durable fix (a single source resolved at deploy time) is deferred (codex ARCH).
