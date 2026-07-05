@@ -256,6 +256,47 @@ check "AC-7 no-origin fallback: repo==common-dir name → deny" "$(is_deny "$out
 out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"anyone","repo":"nofo-worktree"},"cwd":"/x"}')"
 check "AC-7 no-origin fallback keys off RUN_COMMONDIR, NOT basename(repoRoot)" "$out" ""
 
+# (h) UPPERCASE `.GIT`/`.Git` suffix canonicalization (MAJOR bypass fix): a run whose origin
+#     ends `.GIT`/`.Git` MUST key IDENTICALLY to a `.git` (lowercase) clone — so a same-repo
+#     MCP write AND a second-clone worktree using the `.git` form BOTH DENY. MUTATION-VERIFY:
+#     reverting the parse_origin reorder (strip `.git` case-sensitively BEFORE lowercasing)
+#     leaves `.GIT` → `repo.git` ≠ `repo` → these RED.
+rm -rf "$RUNS"/*
+UPREPO="$WORK/up-run"; mk_repo "$UPREPO" "https://github.com/Owner/Repo.GIT"
+mk_run run-upper "$UPREPO"
+#   MCP write using the plain lowercase, no-suffix owner/repo form → deny
+out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"owner","repo":"repo"},"cwd":"/x"}')"
+check "AC-7 .GIT-suffix run vs .git-form MCP write → deny (case-insensitive .git strip)" "$(is_deny "$out")" "yes"
+#   second INDEPENDENT clone at the lowercase `.git` form → worktree-class origin-identity deny
+GITLC="$WORK/gitlc"; mk_repo "$GITLC" "git@github.com:owner/repo.git"
+out="$(run_gate "$FX/enter-worktree.json" "$GITLC")"
+check "AC-7 .GIT-suffix run vs .git second clone (worktree) → deny (origin identity)" "$(is_deny "$out")" "yes"
+#   mixed-case `.Git` suffix keys the same too
+rm -rf "$RUNS"/*
+MIXREPO="$WORK/mix-run"; mk_repo "$MIXREPO" "https://github.com/owner/repo.Git"
+mk_run run-mix "$MIXREPO"
+out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"owner","repo":"repo"},"cwd":"/x"}')"
+check "AC-7 .Git-suffix run vs .git-form MCP write → deny" "$(is_deny "$out")" "yes"
+
+# (i) WHITESPACE-padded identifiers must NOT slip (MINOR fail-closed): a padded owner / repo /
+#     cwd is semantically the SAME repo → trim → match → deny (never a silent-pass bypass).
+rm -rf "$RUNS"/*
+WSREPO="$WORK/ws-run"; mk_repo "$WSREPO" "https://github.com/wsowner/wsrepo.git"
+mk_run run-ws "$WSREPO"
+#   MCP owner with a TRAILING space to the active repo → deny (trimmed match)
+out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"wsowner ","repo":"wsrepo"},"cwd":"/x"}')"
+check "AC-7 MCP owner trailing-space → deny (trimmed match)" "$(is_deny "$out")" "yes"
+#   MCP repo with a LEADING space → deny (trimmed match)
+out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"wsowner","repo":" wsrepo"},"cwd":"/x"}')"
+check "AC-7 MCP repo leading-space → deny (trimmed match)" "$(is_deny "$out")" "yes"
+#   worktree cwd with a TRAILING space resolving to the run repo → deny (trimmed → resolves)
+WSWT="$WORK/ws-wt"; git -C "$WSREPO" worktree add -q "$WSWT" -b wswt 2>/dev/null
+out="$(run_gate "$FX/enter-worktree.json" "$WSWT ")"
+check "AC-7 worktree cwd trailing-space → deny (trimmed → common-dir match)" "$(is_deny "$out")" "yes"
+#   control: a padded but genuinely DIFFERENT owner still silent-passes (trim doesn't over-match)
+out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"someone ","repo":"else"},"cwd":"/x"}')"
+check "AC-7 padded DIFFERENT owner/repo → silent (no over-deny)" "$out" ""
+
 # =====================================================================================
 # AC-8 — jq-absent (restricted PATH) → static deny; empty stdin → deny.
 # =====================================================================================

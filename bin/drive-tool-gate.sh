@@ -50,6 +50,18 @@ emit_deny() {
   exit 0
 }
 
+# trim_ws <string> : echo the string with OUTER (leading+trailing) whitespace stripped.
+# A whitespace-padded but semantically-identical repo id (owner:"owner ", cwd:"<path> ")
+# must still MATCH the active run → deny, not slip past on the padding (a fail-OPEN
+# inconsistent with the class's malformed-input fail-closed posture). A whitespace-ONLY
+# value trims to "" → the caller's unextractable/missing fail-closed branch.
+trim_ws() {
+  local s="$1"
+  s="${s#"${s%%[![:space:]]*}"}"   # ltrim
+  s="${s%"${s##*[![:space:]]}"}"   # rtrim
+  printf '%s' "$s"
+}
+
 # --- control flow step 1: read stdin; jq absent → static deny -----------------------
 INPUT="$(cat)"
 if ! command -v jq >/dev/null 2>&1; then
@@ -237,14 +249,21 @@ parse_origin() {
       return 1 ;;
   esac
   path="${path%/}"                       # strip ONE trailing slash
-  path="${path%.git}"                    # strip a trailing .git
+  # Lowercase host + path BEFORE stripping .git (case-INSENSITIVE canonicalization). A
+  # case-SENSITIVE `.git` strip BEFORE lowercasing left an UPPERCASE suffix intact:
+  # `owner/Repo.GIT` → (unstripped) → lowercased `owner/repo.git`, while a `.git` clone →
+  # `owner/repo` — DIFFERENT keys for the SAME repo → same-repo NON-match → bypass.
+  # Lowercasing first makes `.git`/`.Git`/`.GIT` all strip to `repo`.
+  host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
+  path="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
+  path="${path%.git}"                    # strip a trailing (now-lowercase) .git
   owner="${path%%/*}"                    # first segment
   repo="${path##*/}"                     # last segment
   [ -n "$host" ] && [ -n "$owner" ] && [ -n "$repo" ] || return 1
   [ "$owner" != "$path" ] || return 1    # path had no '/' → not owner/repo → unusable
-  _ORIGIN_HOST="$(printf '%s' "$host"  | tr '[:upper:]' '[:lower:]')"
-  _ORIGIN_OWNER="$(printf '%s' "$owner" | tr '[:upper:]' '[:lower:]')"
-  _ORIGIN_REPO="$(printf '%s' "$repo"  | tr '[:upper:]' '[:lower:]')"
+  _ORIGIN_HOST="$host"
+  _ORIGIN_OWNER="$owner"
+  _ORIGIN_REPO="$repo"
   return 0
 }
 
@@ -311,8 +330,11 @@ worktree_failclosed_reason() {
 
 # --- control flow step 5: repo scoping over the active runs --------------------------
 if [ "$CLASS" = mcp ]; then
-  IN_OWNER_LC="$(printf '%s' "$IN_OWNER" | tr '[:upper:]' '[:lower:]')"
-  IN_REPO_LC="$(printf '%s' "$IN_REPO"  | tr '[:upper:]' '[:lower:]')"
+  # Trim OUTER whitespace BEFORE comparing: a padded-but-same-repo id (owner:"owner ") is
+  # semantically the SAME repo and must still MATCH → deny, not slip past on the padding.
+  # (A whitespace-ONLY owner/repo trims to "" → the unextractable fail-closed branch below.)
+  IN_OWNER_LC="$(printf '%s' "$(trim_ws "$IN_OWNER")" | tr '[:upper:]' '[:lower:]')"
+  IN_REPO_LC="$(printf '%s' "$(trim_ws "$IN_REPO")"  | tr '[:upper:]' '[:lower:]')"
   # Unextractable owner/repo (empty OR non-string → "") while ≥1 run is live → fail-CLOSED
   # over-deny (names a run). A non-string owner/repo (owner:{} / repo:[]) is unextractable.
   if [ -z "$IN_OWNER_LC" ] || [ -z "$IN_REPO_LC" ]; then
@@ -346,6 +368,12 @@ fi
 # (e.g. a plain Agent that lost its hot-path early exit) must NOT fall through into a
 # worktree deny — exit silently instead of denying every fan-out dispatch.
 [ "$CLASS" = worktree ] || exit 0
+
+# Trim OUTER whitespace from the cwd string BEFORE resolving it: a padded-but-same-repo cwd
+# ("<run-repo-path> ") makes `git -C "<path> "` miss the real dir → silent-pass bypass;
+# trimming lets it resolve and match → deny. A whitespace-ONLY cwd trims to "" → the
+# missing-cwd fail-closed branch below (correct: an all-whitespace cwd is unusable).
+PAYLOAD_CWD="$(trim_ws "$PAYLOAD_CWD")"
 
 # CLASS = worktree (Agent isolation:"worktree" / EnterWorktree). Scope by the payload
 # cwd's repo identity: origin identity UNION common-dir fast-match against each run.
