@@ -78,6 +78,20 @@ def test_resolve_window_known_200k(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 200_000
 
 
+# C2 regression pin: current-gen 1M-context models must NOT be clamped to 200k. A bare
+# "Sonnet" denylist substring silently matched Sonnet 5 / 4.6, and Opus 4.6 was explicitly
+# (wrongly) listed — both steered rebirth at ~17% of real usage. The denylist is now
+# version-qualified to genuinely-200k families (Sonnet 4.5/4.0, Opus 4.5/4.1, Haiku), so
+# these fall through to the 1M default. Without this pin the bug is invisible (the suite
+# tested only Sonnet 4.5). Guards bin/rebirth-thresholds.json + statusline.sh.
+@pytest.mark.parametrize("model", [
+    "Sonnet 5", "claude-sonnet-5", "Sonnet 4.6", "claude-sonnet-4-6",
+    "Opus 4.6", "claude-opus-4-6",
+])
+def test_resolve_window_1m_current_gen(thresholds, model):
+    assert rt.resolve_window(model, thresholds) == 1_000_000
+
+
 @pytest.mark.parametrize("model", ["Some Future Model", "claude-opus-9", "", None])
 def test_resolve_window_default_is_1m(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 1_000_000
@@ -177,10 +191,11 @@ def _statusline_case_window(model):
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash required")
-@pytest.mark.parametrize("model", ["Opus 4.8", "Opus 4.7", "Sonnet 4.5", "Haiku"])
+@pytest.mark.parametrize("model", ["Opus 4.8", "Opus 4.7", "Sonnet 5", "Sonnet 4.5", "Haiku"])
 def test_json_window_matches_statusline_case(thresholds, model):
     """The python resolver (json table) and statusline.sh's inline case resolve the
-    IDENTICAL window for the same display-name model — the AC6 no-drift pin."""
+    IDENTICAL window for the same display-name model — the AC6 no-drift pin. Includes
+    Sonnet 5 (1M) so both voices agree it is NOT clamped to 200k (C2)."""
     assert rt.resolve_window(model, thresholds) == _statusline_case_window(model)
 
 

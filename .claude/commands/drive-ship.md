@@ -130,7 +130,7 @@ paraphrase); (3) surface the diff summary + proposed PR text and WAIT for approv
 NOT push or open the PR until approved.
 
 End commit messages with:
-Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>
+Co-Authored-By: Claude <noreply@anthropic.com>
 
 End PR bodies with:
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
