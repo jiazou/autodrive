@@ -10,7 +10,7 @@ pins both classifiers to identical numbers for the same model + the same file.
 Resolution contract (mirrors statusline's bash, restated in python — D24/D25/D26):
   window(M) = first windows[i].window whose any match[j] is a substring of M, else
               defaultWindow. Matching is case-sensitive substring (statusline's
-              `case "$MODEL" in *"Opus 4.8"*` semantics), and the match list carries
+              `case "$MODEL $MODEL_ID" in *"Opus 4.8"*` semantics), and the match list carries
               BOTH the display-name form (`Opus 4.8`, what statusline feeds) and the
               model-id form (`opus-4-8`, what the hook reads from the transcript).
               Rule order is load-bearing: 1M rules precede the 200k substrings they

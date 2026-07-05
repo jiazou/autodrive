@@ -239,12 +239,20 @@ parse_origin() {
       authority="${rest%%/*}"            # [user@]host[:port]
       path="${rest#*/}"                  # owner/repo[.git][/]
       hostport="${authority##*@}"        # strip [user@] userinfo (may carry :password)
-      host="${hostport%:*}"              # strip a trailing :port (no colon → unchanged)
+      # Bracket-aware host extraction: an IPv6 literal is [addr] and itself contains ':',
+      # so a bare `%:*` strip would eat part of the address. A bracketed authority keeps
+      # everything up to and including the ']'; a normal host strips a trailing :port.
+      case "$hostport" in
+        \[*\]*) host="${hostport%%\]*}]" ;;   # bracketed IPv6 (with or without :port)
+        *)      host="${hostport%:*}" ;;       # normal host[:port] (no colon → unchanged)
+      esac
       ;;
     *:*)
-      hostport="${url##*@}"              # strip [user@]; host:owner/repo[.git]
-      host="${hostport%%:*}"             # host = up to the FIRST ':' (scp path separator)
-      path="${hostport#*:}"              # owner/repo[.git]
+      hostport="${url##*@}"              # strip [user@]; host:owner/repo[.git]  (or [ipv6]:owner/repo)
+      case "$hostport" in
+        \[*\]:*) host="${hostport%%\]:*}]"; path="${hostport#*\]:}" ;;  # bracketed IPv6 scp: ']:' separates
+        *)       host="${hostport%%:*}";    path="${hostport#*:}" ;;    # normal scp host:path
+      esac
       ;;
     *)
       return 1 ;;

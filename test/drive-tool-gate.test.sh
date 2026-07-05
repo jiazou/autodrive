@@ -427,6 +427,23 @@ for du in "git@github.com:owner/different.git//" "https://github.com/owner/diffe
 done
 check "AC-7(j) different-repo forms across the axes → silent (no over-deny)" "$fm_diff_silent" "yes"
 
+# (k) BRACKETED IPv6 origin (fail-open fix): an IPv6 literal is [addr] and itself contains
+#     ':', so the old `%:*`/`%%:*` host strip ate part of the address → a port-bearing and a
+#     port-less clone of the SAME remote parsed to DIFFERENT hosts → same-repo NON-match →
+#     silent fail-OPEN. The bracket-aware host extraction keys them IDENTICALLY. MUTATION-
+#     VERIFY: reverting parse_origin to the bare `%:*` host strip REDs this (host mismatch).
+rm -rf "$RUNS"/*
+V6RUN="$WORK/v6-run"; mk_repo "$V6RUN" "ssh://git@[2001:db8::1]:22/owner/repo.git"   # WITH :port
+mk_run run-v6 "$V6RUN"
+#   second INDEPENDENT clone of the SAME IPv6 remote, origin WITHOUT the explicit :port → deny
+V6NP="$WORK/v6-noport"; mk_repo "$V6NP" "ssh://git@[2001:db8::1]/owner/repo.git"     # NO :port
+out="$(run_gate "$FX/enter-worktree.json" "$V6NP")"
+check "AC-7(k) IPv6 :port run vs port-less clone (same remote) → deny (bracket-aware host)" "$(is_deny "$out")" "yes"
+#   control: a genuinely DIFFERENT IPv6 host → silent (bracket parse doesn't over-match)
+V6DIFF="$WORK/v6-diff"; mk_repo "$V6DIFF" "ssh://git@[2001:db8::2]/owner/repo.git"
+out="$(run_gate "$FX/enter-worktree.json" "$V6DIFF")"
+check "AC-7(k) different IPv6 host → silent (no over-deny)" "$out" ""
+
 # =====================================================================================
 # AC-8 — jq-absent (restricted PATH) → static deny; empty stdin → deny.
 # =====================================================================================
