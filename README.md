@@ -1,7 +1,15 @@
 # autodrive
 
-Autonomous engineering pipeline for Claude Code. `/drive` runs the task lifecycle
-with **gstack for planning** and **harness-owned stages for execution**.
+**AI coding agents skip code review, claim "done" on work they didn't finish, and quietly
+drop steps. `/drive` makes that structurally impossible.** It drives one task through the whole
+lifecycle — plan → implement → review → harden → ship — as an autonomous pipeline for Claude
+Code, and it **cannot skip review by omission**: the merge and ship gates are computed from git
+truth (SHA-bound review artifacts), so a coordinator that forgets or hallucinates a review is
+blocked before it can act on the result.
+
+You approve two things — the direction (Gate A) and the final diff (Gate B). The pipeline drives
+everything in between: **gstack** plans, **harness-owned stages** execute, and every review runs
+two independent voices (a Claude reviewer + `codex`) that must both sign off.
 
 - gstack `autoplan` + `plan-*-review` — autonomous planning/review brain
 - `codex` — cross-model second opinion (run via the codex CLI directly)
@@ -128,7 +136,8 @@ git clone https://github.com/jiazou/autodrive ~/workspace/autodrive
 ~/workspace/autodrive/bin/install-operating-rules.sh
 ```
 
-This is **idempotent and safe**. It:
+This is **idempotent** — safe to re-run. Note that it configures Claude Code **machine-wide,
+for every session in every directory** (full details in [SECURITY.md](SECURITY.md)). It:
 - backs up any existing `~/CLAUDE.md`, then writes a new one that `@import`s this repo's `OPERATING.md`;
 - symlinks bundled skills (e.g. `/decant`) into `~/.claude/skills/` so `OPERATING.md`'s references resolve;
 - symlinks the pipeline commands (`/drive`, `/drive-plan`, `/drive-design`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-finalize`, `/drive-ship`) into `~/.claude/commands/` so they work from **any** directory;
