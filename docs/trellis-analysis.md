@@ -66,7 +66,7 @@ invariant and `$RUN_DIR` layout. The marginal value of adopting the injection me
 *static* context is nil.
 
 **Verdict:** *ignore* for session-start/spec injection (TR-1) — the plumbing is the harness's, the
-discipline is already ours. The one genuinely differentiated use of this hook family — per-turn
+discipline is already autodrive's. The one genuinely differentiated use of this hook family — per-turn
 *state* (not spec) injection — is dimension 2's subject, where the content is autodrive-specific
 and not absorbable.
 
@@ -94,7 +94,7 @@ Phase-3.4 commit step; the planning block must mention the artifact gates and ma
 plus block presence and generic-degradation behavior — no test iterates the required steps, so the
 universal mapping is the comment's self-description, not test truth (E1 correction: design.md and
 an earlier draft of this section relayed it as test-enforced). Trellis also documents its own
-dead code honestly: the
+dead code: the
 `[workflow-state:completed]` block never fires because `task.py archive` flips status and moves
 the directory in the same call.
 
@@ -173,12 +173,12 @@ to it. Trellis's whole loop is 3 phases with a handful of required steps, and it
 drops to PRD-only. Hypothesis (ii) is **falsified**: the rigor is not justified at all stakes, and
 autodrive already says so — OPERATING.md §Engineering workflows: "Match rigor to stakes — quick
 fixes and mechanical edits need no pipeline." The existing mitigation is binary (use /drive or
-don't); trellis demonstrates a *graduated* alternative. A /drive "lite" tier is real but M/L
+don't); trellis demonstrates a *graduated* alternative. A /drive "lite" tier is real but L
 effort and its pain is already being attacked from the other side by the L1 sheds (TODO C1/C3/C11)
 — tiered *wait* (TR-9).
 
-**Verdict:** keep autodrive's enforcement architecture (it is the stronger half of the comparison
-and the repo's moat per TODO.md's layer framing); adopt nothing here directly; the per-turn gap
+**Verdict:** keep autodrive's enforcement architecture (it is the stronger half of the comparison,
+and TODO.md's layer framing says to keep and re-target layer 3); adopt nothing here directly; the per-turn gap
 routes to dimension 2, the stakes-tiering observation to TR-9 (*wait*).
 
 ## 5. Memory / journaling / trace-mining & learning loops
@@ -276,7 +276,7 @@ depth: compact · hypothesis: `trellis channel` + parent/child task trees offer 
 
 `trellis channel` (`packages/core/src/channel/`) is an event-sourced worker runtime — spawn/send/watch/interrupt (`api/spawn.ts`, `api/send.ts`, `api/watch.ts`, `api/interrupt.ts`), dispatch-and-wait on system events, worker inbox/state machinery under `internal/store/`. It exists because trellis targets 17 platforms and cannot assume a native sub-agent runtime; autodrive assumes one and gets spawn/background/notify/Monitor from the harness, with parallelism disciplined by file-ownership slices in coordinator-created worktrees. The runtime is L1 by construction, and TODO C8 already scopes the native-orchestration upgrade path (Workflow parallel() with schema-validated returns). The hypothesis **holds**; no candidate can name a T-problem.
 
-One corroborating detail worth keeping: the channel skill's own hard-won warning
+The channel skill's own hard-won warning
 (`packages/cli/src/templates/common/bundled-skills/trellis-channel/SKILL.md`) — completion signals
 must be trellis-*emitted* system events (`--kind done`), never a worker-echoed tag, because in
 trellis's experience an LLM worker often narrates the completion tag as prose instead of actually
@@ -319,9 +319,7 @@ redone.
 
 ## Recommendations
 
-Rules applied to the table: layer is by the layer SERVED; **L1-tagged recs default
-*ignore*/*wait*** unless a written non-absorption rebuttal is given; the D-12 user weight (T-5
-elevated) ranks only among layer/absorption survivors and never rebuts an L1 default (DP1-4); a
+Table-column conventions (the layer/absorption/ranking rules are as established above): a
 rec that cannot name its pain is tiered *ignore* with the literal Kills form; x-ref states
 extend-vs-duplicate on any C-item overlap.
 
@@ -329,8 +327,8 @@ extend-vs-duplicate on any C-item overlap.
 |---|---|---|---|---|---|---|---|---|---|
 | TR-1 | Replicate hook-injected session-start context/spec-pointer assembly | ignore | S | none marginal — static imports + native session context already cover it | n/a (would be a `bin/` SessionStart hook) | L1 | yes — session-start context assembly is the harness's own surface (imports, auto-memory, skills) | — (no pain ⇒ ignore) | none |
 | TR-2 | Per-turn `<drive-state>` breadcrumb: UserPromptSubmit hook reading `$RUN_DIR/state.json`'s real fields (runId, stage, phase, waiting) and deriving the expected next step from stage/phase (as the run-graph does), bodies pinned by a contract test | adopt-pattern | S | pre-violation drift correction between gate denies; survives auto-summarization context loss | `bin/` new hook + `bin/install-drive-hooks.sh` + `tests/contracts` pin | L2 | no — the hook surface is native but autodrive's run-state semantics are not plausibly shipped by the harness | Kills T-1: the coordinator is re-anchored to drive.md's expected next step every turn, before a deviation reaches a gate. | C11 — extend: C11 demotes /goal ceremony; the breadcrumb supplies the same steering with zero human re-arm; no duplicate (C11 trims prose, TR-2 adds a hook), must land compatibly with C11's pinned clauses |
-| TR-3 | `/drive-retro`: single-run trace-mining pass over `$RUN_DIR` artifacts (event-log.jsonl, review/harden rounds, STOP causes, decisions) emitting classified harness-lesson proposals | adopt-pattern | S | closes the trace→harness loop on artifacts only autodrive will ever mine; structured input beats raw transcripts | `.claude/commands/drive-retro.md` (new command; v1 manual, operator-invoked post-run — automatic wiring into the run-wrap sequence, where /decant already runs, is a deferred follow-on) | L3 | no — mines autodrive-owned run artifacts, not transcripts; no harness feature reads `$RUN_DIR` | Kills T-5: recurring review-churn themes, STOP causes, and round-count hot spots become promotion candidates instead of dying in the run dir. | none — distinct from finalize's TODO routing (finalize routes *product* findings; retro mines *process* signal) |
-| TR-4 | Run `trellis mem` alongside, unmodified, for cross-session transcript recall over past /drive sessions | run-alongside | S | free search/slice over Claude Code JSONL; covers the raw-transcript half TR-3 does not reach | operator workflow only (no repo change) | L1 | yes — native transcript recall is a plausible harness feature; the L1 default governs adopt-pattern recs — run-alongside is E6's sanctioned L1-safe route: zero build investment, so absorption strands nothing | Kills T-5 (transcript half): "have we hit this before" answered from past sessions without replaying them. | none |
+| TR-3 | `/drive-retro`: single-run trace-mining pass over `$RUN_DIR` artifacts (event-log.jsonl, review/harden rounds, durable STOP residuals, decisions) emitting classified harness-lesson proposals | adopt-pattern | S | closes the trace→harness loop on artifacts only autodrive will ever mine; structured input beats raw transcripts | `.claude/commands/drive-retro.md` (new command; v1 manual, operator-invoked post-run — automatic wiring into the run-wrap sequence, where /decant already runs, is a deferred follow-on) | L3 | no — mines autodrive-owned run artifacts, not transcripts; no harness feature reads `$RUN_DIR` | Kills T-5: recurring review-churn themes, the durable STOP residuals (final non-null `waiting`, stranded `inflight-*.marker`, `redesign-*.marker` epochs), and round-count hot spots become promotion candidates instead of dying in the run dir. | none — distinct from finalize's TODO routing (finalize routes *product* findings; retro mines *process* signal) |
+| TR-4 | Run `trellis mem` alongside, unmodified, for cross-session transcript recall over past /drive sessions | run-alongside | S | search and task-boundary slicing over Claude Code JSONL at zero build cost; covers the raw-transcript half TR-3 does not reach | operator workflow only (no repo change) | L1 | yes — native transcript recall is a plausible harness feature; the L1 default governs adopt-pattern recs — run-alongside is E6's sanctioned L1-safe route: zero build investment, so absorption strands nothing | Kills T-5 (transcript half): "have we hit this before" answered from past sessions without replaying them. | none |
 | TR-5 | Enforce the learning write-back: require decant evidence at seam-resume (trellis's required-spec-update pattern) | wait | M | turns a standing preference into a proof | seam-resume proof chain (drive.md I1 / checkpoint lint) | L3 | no — autodrive-specific proof machinery | Kills T-3: promotion can no longer be skipped at the boundary where the context dies. | none — wait condition: evidence that step-5.5 decant is actually being skipped in real runs; until then this is ceremony (OPERATING: gate edge-hardening on evidence) |
 | TR-6 | Mechanical reviewer-isolation check: abstain-biased PreToolUse warn on reviewer dispatches that embed implementer rationale/contents | wait | M | converts a silent prose-invariant violation into a visible signal | `bin/` PreToolUse hook on Agent dispatch | L3 | no — the isolation invariant is autodrive's own | Kills T-4: reviewer contamination is caught at dispatch, not inferred from review quality. | none — wait condition: a crisp discriminator + an observed T-4 violation; a vibes-gate here would false-positive (OPERATING: don't make the model the meter) |
 | TR-7 | Event-sourced worker runtime / parent-child task trees (`trellis channel` analog) | ignore | L | none over native background subagents + Monitor + file-ownership slices | n/a | L1 | yes — dispatch/orchestration is the harness's core absorption zone (C8 scopes the native path) | — (no pain ⇒ ignore) | C8 — corroborates, not duplicates: trellis's tag-vs-kind warning independently confirms C8's schema-validated-returns precondition (system-emitted completion signals, never model-echoed prose) |
@@ -344,7 +342,7 @@ TR-4 is run-alongside, TR-5/TR-6/TR-9 are wait-tier — the ≤3 cap is a ceilin
 
 **Selected: TR-3 — `/drive-retro`, a single-run trace-mining pass over `$RUN_DIR` artifacts.**
 
-- **Scope (≲150 SLOC band):** one new command file, `.claude/commands/drive-retro.md` (~100–150 lines of command prose; no shipped code). v1 mines ONE completed run's `$RUN_DIR`; cross-run aggregation is explicitly out of scope.
+- **Scope (≈150-line band):** one new command file, `.claude/commands/drive-retro.md` (shipped at 183 lines of command prose after review; no shipped code). v1 mines ONE completed run's `$RUN_DIR`; cross-run aggregation is explicitly out of scope.
 - **Landing surface:** `.claude/commands/drive-retro.md`. v1 is a MANUAL, operator-invoked post-run command — `/drive-retro <runId>` on a completed run — so no drive.md edit is required for v1. Automatic run-wrap wiring (a drive.md Completion-step edit, into the sequence where /decant already runs automatically) is a named follow-on, explicitly not part of the spike.
 - **Acceptance sketch:** given a completed run's `$RUN_DIR`, emits `retro-<runId>.md` containing (a) mechanically derived stats — review rounds per slice, redesign/STOP events, P1/P2 recurrence themes from `review-*.md`, harden findings classes, `budget.calls`; (b) ≥1 classified lesson candidate routed per OPERATING.md's Self-Improvement matrix (behavioral rule vs project doc vs skill vs auto-memory); (c) proposals only — it never mutates OPERATING.md or skill files without user sign-off.
 - **String-pin-test exposure:** v1 adds a new file only, touching no pinned artifact; several drive*.md files carry string-pinned contract tests — run `python3 -m pytest tests/contracts` locally if any drive*.md wiring is touched during implement.
