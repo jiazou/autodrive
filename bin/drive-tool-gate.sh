@@ -219,8 +219,8 @@ _ORIGIN_HOST=""; _ORIGIN_OWNER=""; _ORIGIN_REPO=""
 # key parts, lowercased. rc 0 + sets _ORIGIN_HOST/_ORIGIN_OWNER/_ORIGIN_REPO on success;
 # rc 1 (globals blanked) if the dir has no origin / is not a repo / the URL is unusable.
 # Handles BOTH transport forms (AC-7 requires scp AND URL to key identically):
-#   scp  : [user@]host:owner/repo[.git]            (the ':' separates host from PATH)
-#   URL  : scheme://[user@]host[:port]/owner/repo[.git][/]
+#   scp  : [user@]host:owner/repo[.git][/…]        (the ':' separates host from PATH)
+#   URL  : scheme://[user@]host[:port]/owner/repo[.git][/…]
 # scp: strip [user@] (up to LAST @), then host = up-to-FIRST ':', path = after it.
 # URL: authority = up-to-first '/', strip userinfo (up to LAST @), strip trailing :port.
 parse_origin() {
@@ -248,15 +248,23 @@ parse_origin() {
     *)
       return 1 ;;
   esac
-  path="${path%/}"                       # strip ONE trailing slash
-  # Lowercase host + path BEFORE stripping .git (case-INSENSITIVE canonicalization). A
-  # case-SENSITIVE `.git` strip BEFORE lowercasing left an UPPERCASE suffix intact:
-  # `owner/Repo.GIT` → (unstripped) → lowercased `owner/repo.git`, while a `.git` clone →
-  # `owner/repo` — DIFFERENT keys for the SAME repo → same-repo NON-match → bypass.
-  # Lowercasing first makes `.git`/`.Git`/`.GIT` all strip to `repo`.
+  # --- Canonical normalization (ONE robust pass; order is load-bearing) --------------
+  # Closes the WHOLE enumerated origin-form space at once. 2nd origin-norm finding: round
+  # 1 was a case-sensitive `.git` strip BEFORE lowercasing; this round a single-trailing-
+  # slash strip let `owner/repo.git//` keep an unstrippable `.git` (the trailing `/`
+  # blocked the `%.git` match) → repo derived EMPTY → same-repo NON-match → silent fail-
+  # OPEN. Both are subsumed by normalizing in this fixed order:
+  #   2. lowercase host + path (case-INSENSITIVE key — GitHub treats host/owner/repo so;
+  #      BEFORE the `.git` strip so `.git`/`.Git`/`.GIT` all become a plain `.git` suffix).
+  #   3. strip ALL trailing slashes (not one) so `owner/repo.git//` reaches its `.git`.
+  #   4. strip a single trailing (now-lowercase) `.git`.
+  #   5. strip ALL trailing slashes AGAIN (defensive: `owner/repo/.git//` → step3
+  #      `owner/repo/.git` → step4 `owner/repo/` → step5 `owner/repo`).
   host="$(printf '%s' "$host" | tr '[:upper:]' '[:lower:]')"
   path="$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')"
-  path="${path%.git}"                    # strip a trailing (now-lowercase) .git
+  while [ "${path%/}" != "$path" ]; do path="${path%/}"; done   # 3: strip ALL trailing slashes
+  path="${path%.git}"                                           # 4: strip a trailing .git
+  while [ "${path%/}" != "$path" ]; do path="${path%/}"; done   # 5: strip ALL trailing slashes again (defensive)
   owner="${path%%/*}"                    # first segment
   repo="${path##*/}"                     # last segment
   [ -n "$host" ] && [ -n "$owner" ] && [ -n "$repo" ] || return 1

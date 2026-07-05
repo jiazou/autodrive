@@ -297,6 +297,82 @@ check "AC-7 worktree cwd trailing-space → deny (trimmed → common-dir match)"
 out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"someone ","repo":"else"},"cwd":"/x"}')"
 check "AC-7 padded DIFFERENT owner/repo → silent (no over-deny)" "$out" ""
 
+# (j) THOROUGH origin-form combinatorial sweep (the 2nd origin-norm finding: a single-slash
+#     strip let `owner/repo.git//` keep an unstrippable `.git` → repo derived empty → same-repo
+#     silent fail-OPEN; the restructure closes the WHOLE space at once). Sweep the SAME repo over
+#       {scp, https, ssh://} × {no-suffix, .git, .Git, .GIT} × {0, 1, 2 trailing slashes} = 36
+#     forms, using MIXED-CASE Owner/Repo so case-insensitivity is folded into EVERY cell:
+#       - worktree class: a SECOND clone whose origin is ANY of the 36 forms → origin-identity
+#         DENY against a fixed canonical run (form-independence on the cwd side).
+#       - MCP class: an active run whose origin is ANY of the 36 forms → a plain lowercase
+#         owner/repo write DENIES (form-independence on the run side — the run-side parse).
+#     Explicitly includes the codex-reproduced `Repo.git//` double-slash cases. MUTATION-VERIFY
+#     (manual, per implement notes): reverting parse_origin to a single-slash strip REDs every
+#     `//` cell here — confirmed RED, then restored.
+FORM_TRANSPORTS="git@github.com: https://github.com/ ssh://git@github.com/"
+
+# -- worktree-class form-independence: fixed canonical run, second clone in each of 36 forms --
+rm -rf "$RUNS"/*
+FM_RUN="$WORK/fm-run"; mk_repo "$FM_RUN" "https://github.com/owner/repo.git"
+mk_run run-fm "$FM_RUN"
+fm_i=0; fm_deny_all=yes
+for t in $FORM_TRANSPORTS; do
+  for suf in "" .git .Git .GIT; do
+    for sl in "" / //; do
+      url="$t"Owner/Repo"$suf""$sl"
+      fm_i=$((fm_i+1))
+      clone="$WORK/fm-wt-$fm_i"; mk_repo "$clone" "$url"
+      out="$(run_gate "$FX/enter-worktree.json" "$clone")"
+      if [ "$(is_deny "$out")" != yes ]; then
+        echo "  form-independence WORKTREE MISS: origin='$url' did NOT deny"; fm_deny_all=no
+      fi
+    done
+  done
+done
+check "AC-7(j) worktree origin-form sweep (36 forms of same repo) → ALL deny" "$fm_deny_all" "yes"
+check "AC-7(j) worktree sweep covered 36 forms" "$fm_i" "36"
+
+# -- explicit codex-reproduced double-slash cases (named so a regression is unmissable) --
+dbl_n=0
+for u in "https://github.com/Owner/Repo.git//" "git@github.com:Owner/Repo.git//"; do
+  dbl_n=$((dbl_n+1)); clone="$WORK/fm-dbl-$dbl_n"; mk_repo "$clone" "$u"
+  out="$(run_gate "$FX/enter-worktree.json" "$clone")"
+  check "AC-7(j) reproduced double-slash origin '$u' → deny" "$(is_deny "$out")" "yes"
+done
+
+# -- MCP-class form-independence: run origin in each of 36 forms, plain owner/repo write --
+FM_MCP='{"tool_name":"mcp__github__push_files","tool_input":{"owner":"owner","repo":"repo"},"cwd":"/x"}'
+fm_j=0; fm_mcp_all=yes
+for t in $FORM_TRANSPORTS; do
+  for suf in "" .git .Git .GIT; do
+    for sl in "" / //; do
+      url="$t"Owner/Repo"$suf""$sl"
+      fm_j=$((fm_j+1))
+      rm -rf "$RUNS"/*
+      rr="$WORK/fm-run-$fm_j"; mk_repo "$rr" "$url"; mk_run "run-fm-$fm_j" "$rr"
+      out="$(run_gate "$FM_MCP")"
+      if [ "$(is_deny "$out")" != yes ]; then
+        echo "  form-independence MCP MISS: run origin='$url' did NOT deny owner/repo write"; fm_mcp_all=no
+      fi
+    done
+  done
+done
+check "AC-7(j) MCP origin-form sweep (run origin in 36 forms) → ALL deny owner/repo write" "$fm_mcp_all" "yes"
+check "AC-7(j) MCP sweep covered 36 forms" "$fm_j" "36"
+
+# -- DIFFERENT-repo control across the axes: a genuinely different repo → silent (no over-deny) --
+rm -rf "$RUNS"/*
+mk_repo "$WORK/fm-diffrun" "https://github.com/owner/repo.git"; mk_run run-fmdiff "$WORK/fm-diffrun"
+fm_diff_silent=yes; dc_n=0
+for du in "git@github.com:owner/different.git//" "https://github.com/owner/different.git/" \
+          "ssh://git@github.com/other/repo.GIT" "https://github.com/owner/repo-x.git//" \
+          "git@github.com:owner/repo2//"; do
+  dc_n=$((dc_n+1)); dc="$WORK/fm-diff-$dc_n"; mk_repo "$dc" "$du"
+  out="$(run_gate "$FX/enter-worktree.json" "$dc")"
+  [ -z "$out" ] || { echo "  DIFFERENT-repo OVER-DENY: origin='$du' denied"; fm_diff_silent=no; }
+done
+check "AC-7(j) different-repo forms across the axes → silent (no over-deny)" "$fm_diff_silent" "yes"
+
 # =====================================================================================
 # AC-8 — jq-absent (restricted PATH) → static deny; empty stdin → deny.
 # =====================================================================================
