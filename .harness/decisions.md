@@ -3177,6 +3177,7 @@ Cutting further would drop clauses AC10's section-bound pins (and the design rev
 present. Classification: Mechanical (cap vs mandated-content conflict resolved via the
 design's own narrow overage path).
 Update (slice 2.1 fix r2): now 183 lines — the round-2 marker-absent done-path clause (§2) added 4; forcing clauses unchanged.
+Update (run main-20260705-130712, retro→Completion wiring): now 184 lines — the role-paragraph reword to the auto-invoked-at-run-wrap status (§ role paragraph, +1 physical line) shifted the reviewed size 183→184; `REVIEWED_OVERAGE_LINES` moved with it. Forcing clauses unchanged.
 
 ### S2.1-a — minor drift: _helpers.py location
 Design/AC10 say "uses `tests/contracts/_helpers.py` REPO_ROOT like its siblings"; the real
