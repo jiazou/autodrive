@@ -67,6 +67,8 @@ def test_drive_retro_frontmatter_invocation_status():
     # accurate new status
     assert "Auto-invoked by /drive" in desc, "description must state retro is auto-invoked by /drive at the true run-wrap"
     assert "still operator-invocable" in desc, "description must state retro is still operator-invocable"
+    assert "completed-run-only" in desc, "description must state retro is completed-run-only"
+    assert "single-run" in desc, "description must state retro is single-run"
 
 
 def _drive_md():
@@ -123,6 +125,11 @@ def test_drive_md_wires_retro_into_completion_before_decant():
     assert "best-effort" in comp, "Completion must state the wrap sequence is best-effort/non-fatal"
     assert comp.count("note it and CONTINUE") >= 2, (
         "both wrap steps must be non-fatal: retro-failure→note it and CONTINUE, decant-failure→note it and CONTINUE"
+    )
+    # AC5 — Path A (ship, post-stage=done) is a tolerated best-effort window, manual-recovery-only
+    assert "manual re-run" in comp and "not automatically" in comp, (
+        "Completion must document Path A's post-done wrap as tolerated best-effort — "
+        "recovered only by a manual re-run, not automatically"
     )
     # (2) resume teardown runs the wrap BEFORE writing stage="done" LAST (pre-done window)
     teardown = _drive_section(text, r"Done-via-resume teardown", r"^(  - \*\*|#{1,2}\s)")
