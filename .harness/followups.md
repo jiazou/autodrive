@@ -540,6 +540,62 @@ bin/drive-retention.sh:800,827 — apply-mode top-level summary tallies from pre
 
 HANDOFF: [/drive-retro] new command `.claude/commands/drive-retro.md` shipped (v1: manual, completed-run-only, no shipped code) — the automatic run-wrap wiring (a drive.md Completion-step edit invoking it BEFORE the wrap-decant, per finalize-todo.md) must land in drive.md before the retro loop is closed; string-pin contract tests apply.
 
+
+## /drive run main-20260705-130712 — followups (promoted at ship 2026-07-05T14:24:36Z)
+
+## F1 — drive-retro.md carries stale "not built / not invoked by /drive (v1)" status notes
+Once retro is wired into Completion, drive-retro.md's frontmatter ("Not invoked by /drive
+(v1)") and its role paragraph ("automatic run-wrap wiring … is a named follow-on, not
+built") become factually stale, and the latter phrase is string-pinned by
+test_drive_retro_contract.py::test_role_paragraph_scope_guards_and_decant_boundary.
+This run scopes retro's own spec OUT (per task). Followup: refresh those status notes +
+move the pin, OR decide the notes describe retro-as-a-standalone-command and leave them.
+
+## Path A ship-side wrap reorder (drive-ship.md scope — deferred)
+Source: design-phase1.md review r3 P1-B (Claude). Path B (resume teardown) reorders the
+retro→decant wrap to run BETWEEN `completedAt` (step 4) and `stage="done"` LAST (step 5), the
+stop-hook-forced window, so the wrap is guaranteed to complete. Path A (normal Gate-B ship)
+still runs the wrap via `## Completion` AFTER `drive-ship.md § After approval` returns —
+post-`stage=done`, same coordinator turn immediately after Gate B (no context-clear seam), so
+the drop risk is a narrow, tolerated best-effort window. Applying the SAME pre-`stage=done`
+reorder to drive-ship.md's After-approval (run the wrap between its step 4 `completedAt` and
+step 5 `stage="done"`) would close it symmetrically. DEFERRED: out of this slice's scope
+(drive.md/drive-retro.md/test/ledger only); drive-ship.md internals are explicitly out of
+scope for run main-20260705-130712. Classification: Taste (best-effort hardening, not a
+correctness bug on an advisory pass).
+
+## docs/trellis-analysis.md stale /drive-retro status (surfaced by phase-1 review, out of slice scope)
+- [P2] docs/trellis-analysis.md:330 still calls `/drive-retro` "v1 manual … automatic wiring … a deferred follow-on" — now FALSE after this run wired retro into drive.md Completion. Unpinned, outside the four owned files. Refresh in a separate doc-consistency pass (finalize may route to TODO.md).
+
+## AC13 decisions.md ledger internal-consistency (phase-1 review P2, for finalize sweep)
+- [P2] .harness/decisions.md:3198,:3205 still cite `REVIEWED_OVERAGE_LINES = 183` / `n==183` (harden-2 historical entries), while this run's entry (:3180) and the live pin moved to 184. Append-only ledger, so no history rewrite — add a one-line supersede pointer on the AC13 entries (→ 184; see the SLOC-overage update) during the finalize consistency sweep so a top-down reader isn't misled.
+
+## slop (deferred to finalize)
+.claude/commands/drive.md:1203-1215 — hook-protected-window explanation restated ~3x in Completion (DRY candidate; some redundancy is deliberate P2-softening nuance)
+.claude/commands/drive.md:212 — (codex) slop note in teardown region
+.claude/commands/drive.md:1208 — (codex) slop note in Completion gate region
+tests/contracts/test_drive_retro_contract.py:71 — (codex) slop note
+tests/contracts/test_drive_retro_contract.py:91 — (codex) slop note
+.harness/decisions.md:3180 — (codex) slop note in SLOC ledger line
+tests/contracts/test_drive_retro_contract.py:87 — verbose mutation-explainer comment block (codex harden r2)
+tests/contracts/test_drive_retro_contract.py:114 — verbose mutation-explainer comment block (codex harden r2)
+
+## AC9 ledger-update entry unpinned (harden r2 P2)
+- [P2] .harness/decisions.md:3180 `drive-retro SLOC overage` update not asserted by a test; the exact `REVIEWED_OVERAGE_LINES==184` pin forces re-review on drift, and a decisions.md substring pin is CI-unreachable/vacuous-post-promotion (prior decision 3198-3200). Left unpinned by design.
+
+## Contract-pin brittleness to rewording (harden-regress r2 codex P2)
+- [P2] The AC5/AC6 (and role-paragraph) substring pins in tests/contracts/test_drive_retro_contract.py red on benign semantic rewording, not just phrase removal. By-design for string-pin contracts on load-bearing status claims (a reword should trigger re-review), but noted as a known brittleness property of the pin battery.
+
+## Finalize r1 — codex P2s (non-blocking, deliberate / by-design)
+- [P2] drive.md:~218 "Best-effort/non-fatal still holds…" (teardown step 5) restates the non-fatal
+  contract that ## Completion states globally. NOT applied: the r3 dual-voice review MANDATED
+  honest per-surface best-effort framing (teardown INSTRUCTION vs Completion cross-path OVERVIEW);
+  removing it strips reviewer-required nuance (net-negative risk). Left as deliberate per-surface
+  statement. (Codex finalize r1.)
+- [P2] test_drive_retro_contract.py contract-pin brittleness: exact token-count asserts
+  (count("/drive-retro <runId>")==1 in Completion; ==2 whole-file) + frontmatter substrings red on
+  benign rewording. By-design for load-bearing status/exclusivity claims — a reword SHOULD trigger
+  re-review. Already noted under "Contract-pin brittleness to rewording". (Codex finalize r1.)
 ## Run drive-ctx-summary-20260705-035515 (2026-07-05) — context-of-execution summary + /goal removal
 
 
