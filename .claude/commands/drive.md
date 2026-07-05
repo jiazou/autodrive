@@ -342,9 +342,8 @@ STOP, or any AskUserQuestion — and clear it (`waiting = null`) the instant you
 autonomous work. Forgetting to set it just means the hook nudges you to continue (it
 biases toward letting you stop and fails open); it never forces you past a STOP. The
 installed Stop hook is the SOLE turn-to-turn continuation mechanism; with the hook
-**absent** (it is `no-op if absent`) an autonomous leg pauses at each turn-end and the
-user types "continue" to advance — a manual-continue degradation consistent with the
-accepted no-hook posture. Set `autoContinue:false` to disable the hook for this run.
+**absent** an autonomous leg pauses at each turn-end and the user types "continue" to
+advance — a manual-continue degradation consistent with the accepted no-hook posture. Set `autoContinue:false` to disable the hook for this run.
 
 `waiting = "rebirth"` is the lone CONTINUE exception: it is set-to-pause in the
 OUTGOING session (so its turn can end at a safe boundary after a context-clear checkpoint —
