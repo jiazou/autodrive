@@ -209,7 +209,16 @@ verdict / merge / gate.
        gate is load-bearing because the helper's `is_done()` keys off a parseable
        `completedAt` ALONE: a marker written before removals finished would itself make the
        run sweepable.
-    5. Write `stage="done"` LAST (after the marker).
+    5. **Run the `## Completion` wrap sequence NOW — BEFORE writing `stage="done"`**
+       (`/drive-retro <runId>` → wrap-`/decant`). `completedAt` was written in step 4, which
+       already satisfies retro's completeness gate (`completedAt` present), so the wrap is valid
+       here; running it while `stage != "done"` and `waiting` is empty is the hook-protected
+       window — the stop-hook keeps the coordinator working across turns, closing the
+       turn-end/rebirth drop window (the hook fails open, so a hard crash is not prevented, but
+       `stage` stays not-`done` and a resume retries this teardown). Best-effort/non-fatal still
+       holds — a retro/decant failure is noted and does not block step 6.
+    6. Write `stage="done"` LAST (after the marker AND after the wrap sequence). The wrap already
+       ran, so `## Completion` emits only the Report — it is not re-invoked.
   - **Each slice, by `step`:** `queued` → leave it for the phase-loop to dispatch.
     `implementing` → if `git rev-list <phaseBaseSha>..slice/<runId>/<id>` is non-empty and
     slice-local tests pass, promote to `awaiting_review`, else re-dispatch IMPLEMENT.
@@ -1191,10 +1200,41 @@ Run the SHIP stage (`/drive-ship` — `~/.claude/commands/drive-ship.md`) on `fe
 `SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`},
 run the full suite
 (red → retry once → STOP), build the **single** commit + PR, **Gate B** (approve
-diff), then push/open PR. → `lastGate = "B"`, `stage = done`
+diff), then push/open PR. → `lastGate = "B"`, `stage = done` → then run the `## Completion`
+wrap sequence (the ship path's terminal-done site).
 
 ## Completion
 
-Report: design path, per-phase verdicts, PR link; a one-line summary of every
-decision promoted this run; `followups.md` entries; the event-log path; anything
-uncertain. Note any worktrees/branches left for inspection.
+This is the run's terminal wrap — the wrap sequence (retro then the wrap-decant) plus the
+Report. It is gated on the terminal-done signal (`$RUN_DIR/completedAt` exists OR
+`state.stage == "done"`) — the same authority retro's own completeness gate uses — so it only
+ever fires once the run is effectively done; re-invoking it is idempotent-safe (retro
+overwrites its single `retro-<runId>.md`, and the wrap-decant self-skips when nothing new was
+learned). Both terminal-done sites reach this same wrap sequence:
+- the resume `Done-via-resume teardown` (§ Run setup & resume) invokes it BETWEEN writing
+  `completedAt` and writing `stage="done"` — the hook-protected window where, with
+  `stage != "done"` and `waiting` empty, the stop-hook keeps the coordinator working across
+  turns, closing the turn-end/rebirth drop window (a hard crash is not hook-prevented, but
+  `stage` stays not-`done`, so a resume retries);
+- Stage 5's ship (§ Stage 5 — Ship) reaches it after `drive-ship.md` returns — post-`stage=done`
+  but in the same coordinator turn immediately after Gate B (no context-clear seam there). This
+  is a tolerated best-effort characteristic: a rare interruption in that narrow post-done window
+  drops the wrap for that run, recovered only by a manual re-run, not automatically.
+
+**Wrap sequence (ordered; best-effort / non-fatal, mirroring the wrap-decant's existing
+non-fatal contract — neither step may block the wrap, the Report, or each other):**
+1. `/drive-retro <runId>` — mine this run's durable `$RUN_DIR` traces into classified lesson
+   proposals at `retro-<runId>.md`, putting that file on disk as input evidence for decant's
+   survey. If retro fails or writes nothing, note it and CONTINUE.
+2. the standing wrap-`/decant` — distill this run's session learnings (it reads
+   `retro-<runId>.md` as ordinary session evidence when present — no new interface). If decant
+   fails, note it and CONTINUE.
+
+The retro-before-decant ORDER is load-bearing (retro's file feeds decant) but not gating: a
+retro failure never blocks decant. This is the TRUE run-wrap decant only — distinct from the
+per-seam I1 step-5.5 rebirth decant (UNCHANGED, retro-free: a mid-run seam fails retro's
+completeness gate).
+
+Report: design path, per-phase verdicts, PR link; a one-line summary of every decision promoted
+this run; `followups.md` entries; the event-log path; anything uncertain. Note any
+worktrees/branches left for inspection.

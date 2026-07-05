@@ -1,14 +1,15 @@
 ---
-description: RETRO pass — manual, operator-invoked trace-mining over ONE completed run's $RUN_DIR artifacts (event log, review/harden rounds, decisions, markers), emitting classified harness-lesson PROPOSALS to $RUN_DIR/retro-<runId>.md. Consults OPERATING.md / memory index / TODO.md READ-ONLY for proposal dedup. Never mutates rules, memory, or run state. Not invoked by /drive (v1).
+description: RETRO pass — trace-mining over ONE completed run's $RUN_DIR artifacts (event log, review/harden rounds, decisions, markers), emitting classified harness-lesson PROPOSALS to $RUN_DIR/retro-<runId>.md. Auto-invoked by /drive at the true run-wrap (before the wrap-/decant); still operator-invocable, completed-run-only, single-run. Consults OPERATING.md / memory index / TODO.md READ-ONLY for proposal dedup. Never mutates rules, memory, or run state.
 argument-hint: <runId>
 ---
 You are running the RETRO pass over **one completed `/drive` run**: mine its durable `$RUN_DIR`
-artifacts for harness-lesson signal and emit classified lesson **proposals**. v1 is MANUAL and
-SINGLE-RUN: operator-invoked post-run, not a `/drive` pipeline stage; cross-run aggregation is out
-of scope; automatic run-wrap wiring (a drive.md Completion-step edit) is a named follow-on, not
-built. Complement boundary: `/decant` surveys what the coordinator NOTICED (session memory);
-`/drive-retro` mines what the TRACES SHOW (`$RUN_DIR` artifacts); retro classifies WHERE a lesson
-lands (decant's scope test runs at promotion time) — retro proposes, the existing channels promote.
+artifacts for harness-lesson signal and emit classified lesson **proposals**. Retro is SINGLE-RUN
+and completed-run-only, auto-invoked at the true run-wrap and still operator-invocable, not a gated
+numbered pipeline stage; cross-run aggregation is out of scope; it is wired into drive.md Completion
+at the true run-wrap, before the wrap-`/decant`.
+Complement boundary: `/decant` surveys what the coordinator NOTICED (session memory); `/drive-retro`
+mines what the TRACES SHOW (`$RUN_DIR` artifacts); retro classifies WHERE a lesson lands (decant's
+scope test runs at promotion time) — retro proposes, the existing channels promote.
 
 ## 1 — Bind the run
 

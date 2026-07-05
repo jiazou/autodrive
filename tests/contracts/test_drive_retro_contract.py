@@ -53,17 +53,59 @@ def test_frontmatter_argument_hint_is_runid():
     assert hint is not None and hint.split(":", 1)[1].strip() == "<runId>"
 
 
-def test_drive_md_does_not_reference_drive_retro():
-    """v1 is manual: drive.md must NOT invoke /drive-retro (the data-driven command-refs
-    test discovers nothing new and needs no edit — pinned so wiring stays a follow-on)."""
-    drive_md = (REPO_ROOT / ".claude" / "commands" / "drive.md").read_text(encoding="utf-8")
-    assert not re.search(r"(?<![\w/])/drive-retro", drive_md)
+def _drive_md():
+    return (REPO_ROOT / ".claude" / "commands" / "drive.md").read_text(encoding="utf-8")
+
+
+def _drive_section(text, header_re, stop_re):
+    """Normalized text of the section matched by `header_re` up to the next `stop_re`."""
+    lines = text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if re.search(header_re, ln)), None)
+    assert start is not None, f"drive.md section /{header_re}/ not found"
+    end = next((j for j in range(start + 1, len(lines)) if re.search(stop_re, lines[j])),
+               len(lines))
+    return re.sub(r"\s+", " ", "\n".join(lines[start:end]))
+
+
+def test_drive_md_wires_retro_into_completion_before_decant():
+    """Wiring pin (inverts + strengthens the former negative pin). Anchored to the ACTUAL
+    invocation/route text so it cannot pass vacuously and reds under mutation:
+    (1) `## Completion` defines the wrap — the `/drive-retro <runId>` INVOCATION (not the
+        possessive `retro`) ORDERED before the wrap-`/decant`, gated on the terminal-done signal;
+    (2) the resume Done-via-resume teardown runs the wrap BEFORE it writes `stage="done"` LAST
+        (the pre-done, stop-hook-forced window);
+    (3) Stage 5's ship routes into `## Completion`.
+    Mutation checks (design-verified): deleting the teardown wrap step, reordering it after the
+    `stage="done"` write, or deleting the Stage 5 route each RED this test."""
+    text = _drive_md()
+    # (1) Completion defines the ordered, done-gated wrap sequence
+    comp = _drive_section(text, r"^## Completion\b", r"^#{1,2}\s")
+    r_idx = comp.find("/drive-retro <runId>")   # the INVOCATION, not "retro's ..." possessive
+    d_idx = comp.find("/decant")
+    assert r_idx >= 0, "`## Completion` must invoke `/drive-retro <runId>`"
+    assert d_idx >= 0, "`## Completion` must name the wrap-/decant"
+    assert r_idx < d_idx, "the /drive-retro <runId> invocation must precede the wrap-/decant"
+    assert "completedAt" in comp and 'stage == "done"' in comp, (
+        "Completion's wrap sequence must be gated on the terminal-done signal"
+    )
+    # (2) resume teardown runs the wrap BEFORE writing stage="done" LAST (pre-done window)
+    teardown = _drive_section(text, r"Done-via-resume teardown", r"^(  - \*\*|#{1,2}\s)")
+    route_idx = teardown.find("Run the `## Completion` wrap sequence NOW")
+    write_idx = teardown.find('Write `stage="done"` LAST')
+    assert route_idx >= 0, "the teardown must run the `## Completion` wrap sequence pre-stage=done"
+    assert "/drive-retro <runId>" in teardown, "the teardown wrap route must invoke /drive-retro"
+    assert write_idx >= 0 and route_idx < write_idx, (
+        'the wrap must run BEFORE `stage="done"` is written LAST (pre-done, stop-hook-forced)'
+    )
+    # (3) Stage 5 (ship) routes into Completion
+    stage5 = _drive_section(text, r"^### Stage 5 — Ship", r"^#{1,2}\s")
+    assert "then run the `## Completion`" in stage5, "Stage 5 (ship) must route into `## Completion`"
 
 
 # --------------------------------------------------------------------------- #
 # AC13 — SLOC cap: ≤150 lines, or exactly the reviewed overage size (exact pin)
 # --------------------------------------------------------------------------- #
-REVIEWED_OVERAGE_LINES = 183  # the dual-voice-reviewed size logged in decisions.md
+REVIEWED_OVERAGE_LINES = 184  # the dual-voice-reviewed size logged in decisions.md
 
 
 def test_sloc_cap_or_exact_reviewed_overage():
@@ -347,10 +389,11 @@ def test_role_paragraph_scope_guards_and_decant_boundary():
     text = _text()
     role = text.split("## 1 — Bind the run")[0]
     n = _norm(role)
-    assert "MANUAL and SINGLE-RUN" in n
-    assert "not a `/drive` pipeline stage" in n
-    assert "cross-run aggregation is out of scope" in n
-    assert "named follow-on, not built" in n  # automatic run-wrap wiring pointer
+    assert "SINGLE-RUN and completed-run-only" in n            # was "MANUAL and SINGLE-RUN"
+    assert "auto-invoked at the true run-wrap and still operator-invocable" in n  # corrected invocation status
+    assert "not a gated numbered pipeline stage" in n          # was "not a `/drive` pipeline stage"
+    assert "cross-run aggregation is out of scope" in n        # unchanged — still true
+    assert "wired into drive.md Completion at the true run-wrap" in n  # was "named follow-on, not built"
     # the decant complement boundary is stated in ≤3 physical lines
     lines = [ln for ln in role.splitlines() if "Complement boundary" in ln]
     assert lines, "decant complement boundary missing"
