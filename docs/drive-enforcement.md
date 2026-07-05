@@ -103,6 +103,8 @@ and the gate's `deny` must still win).
 | **impl-presence** | same `git merge … slice/<runId>/<id>` boundary — runs *alongside* the review check, per slice token | `impl-presence:<id>` | the slice diff makes **any non-deletion change** (add, modify, rename-into, copy-into, type-change — `--diff-filter=d`, i.e. exclude deletions only) to a runnable test path **OR** a commit carries a real `Drive-Test-Waiver:` trailer (a DELETED test path does **not** count — and since `--name-only` prints only a rename's destination, a rename *away from* a test path also does not count while a rename *into* one does; a dotfile basename like `test/.x.test.sh` never counts — the real runners skip dotfiles) | **fail-CLOSED** (deny) |
 | **phase-merge** | `git branch -f drive/<runId> phaseInt/<runId>/<P>` or `git merge … phaseInt/<runId>/<P>` | `phase-merge:<P>` | SHA-bound CONVERGED review for the phase-integration tip (naturally requires the post-harden review, since HARDEN re-emits `reviewed-sha`) | fail-OPEN (silent) |
 | **ship** | `gh pr create`, `glab mr create`, or any `git push` whose head is the drive branch (incl. bare `git push`, `git push -u origin HEAD`) | `ship` | a CONVERGED finalize review (`review-finalize-N.md` + codex sibling) covers the shipped tip — `R..tip` tolerated only for the single 3-file ledger commit ({`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`}); ≥1 counting phase-integration review is a precondition | **fail-CLOSED** (deny) |
+| **mcp-write** *(sibling hook `drive-tool-gate.sh`)* | a GitHub-MCP write tool matching `^mcp__.+__(update_pull_request_branch\|create_or_update_file\|create_pull_request\|merge_pull_request\|update_pull_request\|create_branch\|delete_file\|push_files)$` | *(non-conformance; active-run evidence scan)* | a `/drive` run is active on the **same repo** (`tool_input.owner`/`repo` match the run's origin, or the no-origin common-dir repo name) — deny-routes back to the gated Bash path (or "human-owned at Gate B" for the PR-lifecycle tools) | **fail-CLOSED** in-script (jq-absent / unparseable stdin / unextractable owner-repo while a run is live); **fail-OPEN** on hook-invocation failure |
+| **native-worktree** *(sibling hook `drive-tool-gate.sh`)* | `Agent` with `tool_input.isolation:"worktree"`, or `EnterWorktree` | *(non-conformance; active-run evidence scan)* | a `/drive` run is active on the actor's repo (the payload `cwd`'s **origin identity** OR shared **git common-dir** matches the run) — deny-routes to the gated `git worktree add … -b slice/<runId>/<id>` | **fail-CLOSED** in-script; **fail-OPEN** on hook-invocation failure |
 
 **Epoch-aware phasedesign gate.** A phase can be **redesigned** (a slice's assumption check
 finds the Tier-2 design stale → REDESIGN). Each redesign opens a durable **epoch** marker
@@ -153,6 +155,108 @@ test-presence is enforced against its real run.
 
 `bin/drive-hook-lib.sh` provides the pure ref→run resolution the gates source
 (`drive_runid_from_command`, `drive_runid_from_head`, `drive_run_dir`).
+
+## The non-Bash tool gate (`drive-tool-gate.sh`)
+
+`bin/drive-merge-gate.sh` fires on **Bash only**, so two tool classes could land run work
+without ever tripping a gate while a `/drive` run is active on the same repo:
+
+- **GitHub-MCP write tools** (`create_pull_request`, `push_files`, `merge_pull_request`, …)
+  reach GitHub without issuing a Bash `git`/`gh` command — the merge/ship gate never sees them.
+- **Native worktree tools** (`Agent` with `isolation:"worktree"`, `EnterWorktree`) create a
+  worktree on a **harness-named branch** (not `slice/<runId>/<id>`). **Recorded trace**
+  (verified against `bin/drive-merge-gate.sh`): no `git worktree add … -b slice/…` Bash
+  command is issued → `plan-gate`/`phasedesign-gate` never fire → the coordinator later
+  integrates with `git merge <harness-branch>`, which matches **no** slice/phaseInt token → is
+  **inert** to the merge gate → the slice review **and** the fail-closed `impl-presence`
+  test-presence check are both skipped, and impl-presence has **no ship backstop** — so the
+  per-slice test-presence invariant is voided **end-to-end**. A specific existing guarantee is
+  voided by a concrete omission chain, so the worktree matchers are **built** (trace-or-drop).
+  *(Only the `git push` landing chokepoint is HEAD-gated; `git merge` is ref-key gated ONLY
+  for `slice/`/`phaseInt/`-named branches — that asymmetry is what makes this an omission
+  chain, not a forgery.)*
+
+`bin/drive-tool-gate.sh` is a second **PreToolUse** hook (registered on the two matchers in
+the gate table above) that deny-**routes** those tools back to the gated Bash paths while a
+run is active on the actor's repo. **Deny-only composition** (like the merge gate): a deny is
+JSON + `exit 0`; every clean / non-matching / unrelated-repo path emits nothing. It sources
+nothing (`drive-hook-lib.sh` is pure ref→runId parsing — no active-run predicate to reuse).
+
+**Activation predicate (D-p2-2).** A run is **ACTIVE** iff its `~/.claude/harness-runs/<id>/`
+dir has a `state.json` that parses with `.stage` a non-empty string `!= "done"` AND a
+`state.json`|`event-log.jsonl` mtime within `DRIVE_TOOL_GATE_LIVE_HOURS` (default **24**). The
+scan is one liveness-bounded `find` then `jq` on the ≤3 survivors. The deny is then
+**repo-scoped** (concurrent-session collateral pricing — this machine runs parallel sessions,
+so a machine-wide any-run-active deny is wrong):
+
+- **MCP class** — deny iff `tool_input.owner`/`repo` (both lowercased) equal the `owner`/`repo`
+  parsed from the run's `git remote get-url origin`, **or** `tool_input.repo` equals the run's
+  **no-origin repo name** (basename of `RUN_COMMONDIR` — the git common dir — sans `/.git`; the
+  fallback when the run has no origin). A matched write whose `owner`/`repo` is **unextractable**
+  while ≥1 run is live **DENIES** (over-deny, names the run) — the class has no ship backstop.
+- **Worktree class** — deny iff the payload `cwd`'s repo identity matches an active run by
+  EITHER **origin identity** (the canonical parse of `git -C <cwd>`/`<repoRoot>` origin yields
+  the same `host/owner/repo` key — catches a second independent clone of the same GitHub repo)
+  OR **git common-dir** fast-match (`realpath(git … --git-common-dir)` — catches a linked
+  worktree of the active clone; derived symmetrically on both sides, **not**
+  `realpath(<repoRoot>/.git)`, which is a gitfile pointer when `repoRoot` is itself a worktree).
+
+The **canonical origin parse** is PINNED (the SAME parse both classes use): it handles the
+scp form `[user@]host:owner/repo[.git]` AND the URL form
+`scheme://[user@]host[:port]/owner/repo[.git][/]`, strips `[userinfo@]` and a trailing `:port`,
+lowercases `host`/`owner`/`repo`, and strips a trailing `.git`/`/` — so an SSH scp clone, an
+HTTPS clone, case differences, a trailing slash, and a `:port`+userinfo URL of the same repo
+all collapse to one key.
+
+**Per-tool deny classes (§ every reason states problem + cause + exact retry path):**
+`create_or_update_file` / `delete_file` (route to edit+commit → gated `git merge
+slice/<runId>/<id>`), `push_files` / `update_pull_request_branch` (→ gated `git push` from the
+ship worktree), `create_branch` (→ gated `git worktree add $RUN_DIR/wt/<id> -b
+slice/<runId>/<id>`), `create_pull_request` (→ gated `gh pr create`), `merge_pull_request` /
+`update_pull_request` (**PR lifecycle is human-owned at Gate B** — the deny closes the MCP
+omission path; the Bash `gh pr merge`/`gh pr edit` twins stay ungated, a deliberately-deferred
+asymmetry, not a global prohibition), and the two native worktree tools (→ gated `git worktree
+add … -b slice/…`, then dispatch without isolation). A matched `mcp__` suffix **absent from the
+hook's own table** (settings-vs-hook drift) fails **CLOSED** (generic write-class deny) — it
+never mis-routes.
+
+**D3 reconciliation (no new sentinel).** Tool inputs carry no drive ref, so ref-keying (D3)
+cannot fire — the evidence scan is the only signal available, not a substitute. It introduces
+no new sentinel: `state.json.stage` already exists for routing, staleness self-heals via the
+mtime bound (a stale "active" claim goes dormant in 24h; a parked run at Gate A/B re-arms
+automatically because resume rewrites `state.sessionId` — refreshing the mtime — before any
+dispatch), and scan errors degrade per-dir. A corrupt/unreadable **third-party** run dir is
+**skipped with one stderr warning**; fail-closed applies to the hook's OWN logic only, never to
+someone else's dir contents.
+
+**Residuals (this hook, beside the merge gate's):**
+
+- **Schema-drift silent fail-OPEN.** The matcher fingerprints a vendor-owned, fast-moving tool
+  schema. A vendor rename/addition (`push_files` → `push_files_v2`) is a clean matcher
+  non-match → the hook never fires → silent fail-OPEN, which "fail-closed on errors" cannot
+  catch. **Retirement condition:** delete this hook when the harness ships conditional/managed
+  tool policy. (Inverse drift — matcher fires, table lacks the suffix — fails CLOSED.)
+- **Hook-invocation failure fail-OPEN.** A nonzero hook exit (crash, rc 126/127, dead path
+  after a bad checkout) proceeds by platform protocol = fail-OPEN. Applies to the whole hook
+  chain; the drift preflight (§ Installation) makes the dead-path case visible at install time.
+- **`platform-may-not-fire-PreToolUse-on-native-worktree-tools` (Agent-with-isolation AND
+  EnterWorktree)** — an **interception** residual, distinct from invocation-failure. The whole
+  worktree closure rests on one runtime assumption the fixtures cannot prove: that the platform
+  actually FIRES a matchable PreToolUse event for a real isolated `Agent` / `EnterWorktree`
+  dispatch. Piping a fixture into the hook exercises hook LOGIC, not platform interception. Bound
+  at implement time by a LIVE check (AC-16): drive one real isolated `Agent` + one
+  `EnterWorktree` through the installed hook and observe the `deny`.
+- **Forgery-class self-evasions** (consistent with the chain's omission-proof-not-forgery-proof
+  model → component D): a coordinator that writes `stage:"done"`, **or corrupts/truncates/
+  chmod's its OWN `state.json`** (silencing its own activation predicate — the same class as
+  `stage:"done"`), or lands work in a **second clone whose `origin` was rewritten/removed** (no
+  origin key, no shared common dir → unrecognized). None is an omission gap for the forms
+  `/drive` emits.
+- **Origin host-alias non-reconciliation.** The parse keys on the literal `host` in `origin`, so
+  two same-repo clones using a `~/.ssh/config` host alias (`github.com-work`) vs `github.com`
+  under-match. A followup.
+- **Parked-run dormancy window.** A run parked beyond the liveness window is fail-open until
+  resume re-arms it — acceptable, a parked run isn't dispatching.
 
 ## The Stop backstop
 
@@ -239,18 +343,35 @@ resolve by sibling path with **no install or sync step** (§ Installation). Know
 bin/install-drive-hooks.sh
 ```
 
-Idempotently `jq`-injects the two hook entries into `~/.claude/settings.json`
-(PreToolUse(Bash) → `drive-merge-gate.sh`, Stop → `drive-stop-guard.sh`), keyed on the
-script path so re-running is a no-op. It writes a timestamped backup, preserves all
-existing hooks, and fails loudly on malformed JSON. A target other than the default can
-be passed as `$1` or via `$DRIVE_HOOKS_SETTINGS` (used by the tests). The repo never
-commits `~/.claude/settings.json`; the PR carries the scripts, installer, and docs.
+Idempotently `jq`-injects the **three** enforcement hooks (**four** settings entries) into
+`~/.claude/settings.json`: PreToolUse(Bash) → `drive-merge-gate.sh`, Stop →
+`drive-stop-guard.sh`, and — for the non-Bash tool gate — PreToolUse(the enumerated GitHub-MCP
+write matcher) → `drive-tool-gate.sh` **plus** PreToolUse(`^(Agent|EnterWorktree)$`) →
+`drive-tool-gate.sh`. `drive-tool-gate.sh` is the **third reserved basename** in the installer's
+strip-managed/append canonicalization; it is registered as a **bare path, no argv**. Keyed on
+the script basename so re-running is a no-op and a moved/renamed path migrates. It writes a
+timestamped backup, preserves all existing hooks, and fails loudly on malformed JSON. A target
+other than the default can be passed as `$1` or via `$DRIVE_HOOKS_SETTINGS` (used by the tests).
+
+Before the confirm prompt the installer runs a **READ-ONLY drift preflight**: it derives the
+live gate directory from the settings file and WARNs (never blocks) if the live enforcement
+worktree lacks `drive-tool-gate.sh`, lags the settings entries, or runs a `drive-merge-gate.sh`
+that differs from this checkout's — the machine-checked verification of "merged ≠ live".
+
+**Activation location is load-bearing.** The live gate hooks execute from the pinned
+`~/.claude/drive-enforcement-worktree` (detached HEAD). Merging to `main` does NOT activate the
+new hook — re-run `install-drive-hooks.sh` **from INSIDE that worktree** (after advancing it),
+because the installer's basename-keyed canonicalization would otherwise MIGRATE the live gates
+to whatever checkout you run it from. The repo never commits `~/.claude/settings.json`; the PR
+carries the scripts, installer, and docs.
 Requires `jq` on `PATH`.
 
 ### Verify it's active
 
 ```
-jq '.hooks.PreToolUse, .hooks.Stop' ~/.claude/settings.json   # both entries present
+jq '.hooks.PreToolUse, .hooks.Stop' ~/.claude/settings.json   # all four entries present
+# PreToolUse: drive-merge-gate.sh (matcher "Bash") + drive-tool-gate.sh (MCP-write matcher)
+#             + drive-tool-gate.sh (matcher "^(Agent|EnterWorktree)$"); Stop: drive-stop-guard.sh
 ```
 
 Or exercise the checker directly against any run dir:

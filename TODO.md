@@ -48,7 +48,7 @@ seams; the model/harness owns how work gets dispatched.
   In-session stranded must require positive worker-death evidence from the harness surface
   (completion notification / Monitor); at-resume rule unchanged; keep the
   test_checkpoint_contract.py pinned phrases.
-- [ ] **C7 (P1/medium/L3)** Enforcement gates are PreToolUse(Bash)-only
+- [x] **C7 (P1/medium/L3)** Enforcement gates are PreToolUse(Bash)-only
   (install-drive-hooks.sh:140): GitHub MCP write tools (create_pull_request, push_files,
   merge_pull_request, …) ship with the merge gate never firing, and Agent
   isolation:"worktree" / EnterWorktree create worktrees off the gated slice/<runId>/<id>
@@ -56,6 +56,9 @@ seams; the model/harness owns how work gets dispatched.
   hook (distinct basename — the installer strips/re-appends drive-merge-gate.sh entries)
   that deny-routes MCP writes + native-worktree tools back to the canonical Bash paths
   while a drive run is active; extend install-drive-hooks.sh to manage it.
+  *(closed: GitHub-MCP write class gated by bin/drive-tool-gate.sh; worktree claim resolved
+  KEPT — recorded trace shows the harness-branch chain voids the plan/design + slice
+  review/impl-presence gates.)*
 
 ### Tier 3 — shed the dead-premise machinery (do C1 + C11 together)
 - [ ] **C1 (P1/large/L1)** Class-A context-pressure rebirth assumes sessions hard-die at

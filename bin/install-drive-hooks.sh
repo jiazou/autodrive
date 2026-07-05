@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Idempotently wire the two /drive enforcement hooks into a settings.json:
+# Idempotently wire the three /drive enforcement hooks into a settings.json (four entries):
 #   - PreToolUse(matcher "Bash") -> bin/drive-merge-gate.sh   (merge/ship/plan gate)
 #   - Stop                        -> bin/drive-stop-guard.sh   (review backstop)
+#   - PreToolUse(GitHub-MCP writes) + PreToolUse(Agent|EnterWorktree)
+#                                 -> bin/drive-tool-gate.sh   (non-Bash tool gate; two entries)
 # Mirrors bin/install-operating-rules.sh: set -euo pipefail, REPO_DIR from BASH_SOURCE,
 # a timestamped backup before mutating. Keyed on the script BASENAME (not the full
 # path): re-running is a no-op when the path is unchanged, and when the repo has moved
@@ -19,6 +21,13 @@ SETTINGS="${1:-${DRIVE_HOOKS_SETTINGS:-$HOME/.claude/settings.json}}"
 
 MERGE_GATE="$REPO_DIR/bin/drive-merge-gate.sh"
 STOP_GUARD="$REPO_DIR/bin/drive-stop-guard.sh"
+TOOL_GATE="$REPO_DIR/bin/drive-tool-gate.sh"
+
+# The MCP write-tool matcher (D-p2-3): enumerated, longest-first alternation, server-segment
+# wildcarded (`mcp__.+__` — the server name is user-chosen at install). Longest-first so
+# update_pull_request cannot shadow update_pull_request_branch under any regex engine.
+TOOL_GATE_MCP_MATCHER='^mcp__.+__(update_pull_request_branch|create_or_update_file|create_pull_request|merge_pull_request|update_pull_request|create_branch|delete_file|push_files)$'
+TOOL_GATE_NATIVE_MATCHER='^(Agent|EnterWorktree)$'
 
 # --- Disclosure banner (ALWAYS printed) ---------------------------------------
 # Tell the user exactly what this touches before anything is modified.
@@ -29,8 +38,8 @@ cat >&2 <<BANNER
 This modifies your Claude Code settings file:
   $SETTINGS
 
-It adds two hooks (existing hooks are preserved; a timestamped
-backup of the settings file is written first):
+It adds three hooks (four settings entries; existing hooks are
+preserved; a timestamped backup of the settings file is written first):
 
   • PreToolUse(Bash) -> $MERGE_GATE
       Fires on every Bash tool call. The gate itself decides whether
@@ -38,11 +47,77 @@ backup of the settings file is written first):
       everything else passes straight through.
   • Stop             -> $STOP_GUARD
       A review backstop that runs when a session stops.
+  • PreToolUse(GitHub-MCP writes; Agent/EnterWorktree) -> $TOOL_GATE
+      Two entries. Deny-routes GitHub MCP write tools and native worktree
+      tools back to the gated Bash paths while a /drive run is active on
+      the same repo; passes everything else silently.
 
 The repo never commits ~/.claude/settings.json.
 What these hooks do and their threat model: see SECURITY.md.
 ============================================================
 BANNER
+
+# --- Deployment-drift preflight (READ-ONLY; D-p2-7 / D8) -----------------------
+# Run AFTER the banner and BEFORE the confirm prompt (the human sees drift before
+# consenting) and before any backup/mutation. WARN-ONLY: it never changes the exit
+# status, never writes, never copies. Two-artifact read surface: the target $SETTINGS
+# (to derive LIVE_DIR = where the live gates actually run from) and the files under
+# LIVE_DIR — it NEVER assumes LIVE_DIR == $REPO_DIR/bin. cmp/test/jq only (no copy-class
+# op — layout-suite assertion 5 stays green). set -e-safe: every check is an if/|| so a
+# nonzero cmp/[ -f ]/jq WARNs and CONTINUES rather than aborting the whole install.
+drift_preflight() {
+  # Nothing to compare against before the settings file exists (this runs BEFORE the
+  # create-settings step, so a fresh install has no file to read yet).
+  [ -f "$SETTINGS" ] || return 0
+
+  # (a) LIVE_DIR = dirname of the FIRST PreToolUse command that is a LONE path ending in
+  # /drive-merge-gate.sh (no whitespace/shell metachars — a wrapped custom hook is skipped).
+  local live_cmd live_dir have_tool
+  live_cmd="$(jq -r '
+    [ .hooks.PreToolUse[]?.hooks[]?.command // ""
+      | select((endswith("/drive-merge-gate.sh") or . == "drive-merge-gate.sh")
+               and (test("[[:space:]|&;<>()`$]") | not)) ]
+    | first // ""' -- "$SETTINGS" 2>/dev/null || true)"
+  # No prior managed merge-gate entry → nothing has drifted → silent.
+  [ -n "$live_cmd" ] || return 0
+  live_dir="$(dirname -- "$live_cmd")"
+
+  # is a tool-gate entry already registered? (a LONE drive-tool-gate.sh path)
+  have_tool="$(jq -r '
+    [ .hooks.PreToolUse[]?.hooks[]?.command // ""
+      | select((endswith("/drive-tool-gate.sh") or . == "drive-tool-gate.sh")
+               and (test("[[:space:]|&;<>()`$]") | not)) ]
+    | first // ""' -- "$SETTINGS" 2>/dev/null || true)"
+
+  if [ "$live_dir" != "$REPO_DIR/bin" ]; then
+    # Variant 2 — migrate hazard / installer-hijack: re-running THIS installer migrates the
+    # live gates to this checkout's bin (basename-keyed canonicalization).
+    printf 'WARN(drive-hooks drift): live gates run from %s, not this checkout — re-running THIS installer will MIGRATE them to %s/bin. If %s is the pinned enforcement worktree, ABORT (Ctrl-C / answer n) and re-run install-drive-hooks.sh from INSIDE that worktree.\n' "$live_dir" "$REPO_DIR" "$live_dir" >&2
+    # Variant 3 — the live enforcement worktree lacks the sibling hook.
+    if [ ! -f "$live_dir/drive-tool-gate.sh" ]; then
+      printf 'WARN(drive-hooks drift): live enforcement worktree lacks drive-tool-gate.sh — advance that worktree, then re-run bin/install-drive-hooks.sh from INSIDE it.\n' >&2
+    fi
+    # Variant 5 — the live merge gate differs byte-wise from this checkout's (worktree lags).
+    if [ -f "$live_dir/drive-merge-gate.sh" ]; then
+      if ! cmp -s "$live_dir/drive-merge-gate.sh" "$REPO_DIR/bin/drive-merge-gate.sh"; then
+        printf "WARN(drive-hooks drift): live drive-merge-gate.sh differs from this checkout's (worktree lags or diverged).\n" >&2
+      fi
+    fi
+    return 0
+  fi
+
+  # LIVE_DIR == this checkout's bin.
+  if [ ! -f "$live_dir/drive-tool-gate.sh" ]; then
+    printf 'WARN(drive-hooks drift): live enforcement worktree lacks drive-tool-gate.sh — advance that worktree, then re-run bin/install-drive-hooks.sh from INSIDE it.\n' >&2
+    return 0
+  fi
+  # Sibling present; Variant 4 — settings lag: the tool gate is not yet registered.
+  if [ -z "$have_tool" ]; then
+    printf 'WARN(drive-hooks drift): settings lag — the tool gate is not registered.\n' >&2
+  fi
+  return 0
+}
+drift_preflight
 
 # --- Confirm gate -------------------------------------------------------------
 # Prompt ONLY when run interactively by a human with no explicit target. Skip when:
@@ -90,6 +165,9 @@ TMP="$SETTINGS.tmp.$$"
 jq \
   --arg merge "$MERGE_GATE" \
   --arg stop "$STOP_GUARD" \
+  --arg tool "$TOOL_GATE" \
+  --arg mcpm "$TOOL_GATE_MCP_MATCHER" \
+  --arg natm "$TOOL_GATE_NATIVE_MATCHER" \
   '
   # basename of a command path (everything after the last "/"; bare names unchanged).
   def bn($p): ($p | sub(".*/"; ""));
@@ -134,10 +212,17 @@ jq \
   .hooks = (.hooks // {})
   | .hooks.PreToolUse = (.hooks.PreToolUse // [])
   | .hooks.Stop = (.hooks.Stop // [])
-  # canonicalize the PreToolUse merge gate: strip any prior (incl. stale-path)
-  # entries, then append exactly one at the current path. Idempotent; migrates on rename.
-  | .hooks.PreToolUse = strip_managed(.hooks.PreToolUse; bn($merge); $merge)
+  # canonicalize the PreToolUse gates: strip any prior (incl. stale-path) merge-gate AND
+  # tool-gate entries, then append the merge gate + BOTH tool-gate entries in a FIXED order
+  # (deterministic for the tests). strip_managed is matcher-agnostic (keyed on the command
+  # basename), so it strips BOTH tool-gate entries regardless of their matchers. Idempotent;
+  # migrates a moved/renamed path on re-run. The tool gate is a BARE PATH, NO argv (is_managed
+  # refuses arg-bearing commands — an arg-carrying registration would never canonicalize).
+  | .hooks.PreToolUse =
+      strip_managed(strip_managed(.hooks.PreToolUse; bn($merge); $merge); bn($tool); $tool)
       + [ { "matcher": "Bash", "hooks": [ { "type": "command", "command": $merge } ] } ]
+      + [ { "matcher": $mcpm, "hooks": [ { "type": "command", "command": $tool } ] } ]
+      + [ { "matcher": $natm, "hooks": [ { "type": "command", "command": $tool } ] } ]
   # canonicalize the Stop guard the same way.
   | .hooks.Stop = strip_managed(.hooks.Stop; bn($stop); $stop)
       + [ { "hooks": [ { "type": "command", "command": $stop } ] } ]
@@ -154,3 +239,4 @@ mv -- "$TMP" "$SETTINGS"
 echo "Wired drive hooks into $SETTINGS:"
 echo "  PreToolUse(Bash) -> $MERGE_GATE"
 echo "  Stop             -> $STOP_GUARD"
+echo "  PreToolUse(GitHub-MCP writes; Agent/EnterWorktree) -> $TOOL_GATE (two entries)"

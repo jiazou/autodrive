@@ -15,8 +15,9 @@ skips the prompt when given an explicit `$1` target path (scripted installs / te
 
 Writes to **`~/.claude/settings.json`** (a timestamped backup is made first; existing
 hooks are preserved — except a pre-existing *lone* hook command named
-`drive-merge-gate.sh` or `drive-stop-guard.sh`, which is treated as a stale copy of the
-managed gate and canonicalized to this repo's path on re-run). It adds two entries:
+`drive-merge-gate.sh`, `drive-stop-guard.sh`, or `drive-tool-gate.sh`, which is treated as
+a stale copy of the managed gate and canonicalized to this repo's path on re-run). It adds
+**four entries (three hooks)**:
 
 - **`PreToolUse(Bash)` → `bin/drive-merge-gate.sh`** — fires on *every* Bash tool call.
   The gate inspects the command string and acts **only** on `/drive` plan/merge/ship git
@@ -24,9 +25,19 @@ managed gate and canonicalized to this repo's path on re-run). It adds two entri
   emit a `deny` that blocks a merge/ship until the matching review artifact exists.
 - **`Stop` → `bin/drive-stop-guard.sh`** — a best-effort review backstop that runs when a
   session stops. No-op outside an active `/drive` run; fails open on any error.
+- **`PreToolUse(GitHub-MCP writes)` and `PreToolUse(Agent|EnterWorktree)` →
+  `bin/drive-tool-gate.sh`** (two entries) — fires only on the enumerated GitHub-MCP write
+  tools and on the native worktree tools (`Agent isolation:"worktree"` / `EnterWorktree`).
+  While a `/drive` run is active **on the same repo**, it deny-**routes** those tools back
+  to the gated Bash paths (or "human-owned at Gate B" for the PR-lifecycle tools); it
+  passes everything else silently. In-script errors (jq absent, unparseable stdin,
+  unextractable owner/repo) fail **closed** (these tools have no ship-gate backstop);
+  hook-invocation failure fails **open** by platform protocol.
 
-The repo never commits `~/.claude/settings.json`. Re-running is idempotent. A custom
-target can be passed as `$1` or via `$DRIVE_HOOKS_SETTINGS`.
+Before the confirm prompt the installer runs a **read-only drift preflight** that WARNs
+(never blocks) when the live enforcement worktree lacks `drive-tool-gate.sh` or lags the
+settings entries. The repo never commits `~/.claude/settings.json`. Re-running is
+idempotent. A custom target can be passed as `$1` or via `$DRIVE_HOOKS_SETTINGS`.
 
 ### `bin/install-operating-rules.sh` — machine-wide operating config
 
@@ -126,6 +137,27 @@ actually produces. They are documented in full in `docs/drive-enforcement.md`.
   (`--mirror` from a non-drive HEAD, server-side refspec expansion) can slip the
   PreToolUse matcher. The authoritative ship guarantee is the in-prose `--mode ship`
   conformance check in `drive-ship.md`.
+
+### Non-Bash tool gate (`drive-tool-gate.sh`) residuals
+
+The sibling hook closes **omission** bypasses only, matching the chain's threat model. Its
+named residuals (full detail in `docs/drive-enforcement.md`):
+
+- **Schema-drift silent fail-OPEN.** The MCP-write matcher fingerprints a vendor-owned,
+  fast-moving tool schema; a vendor rename/addition is a clean matcher non-match → the hook
+  never fires. **Retirement condition:** delete this hook when the harness ships
+  conditional/managed tool policy. (Inverse drift — matcher fires, hook table lacks the
+  suffix — fails CLOSED.)
+- **Hook-invocation-failure fail-OPEN.** A nonzero hook exit (crash, rc 126/127, dead path)
+  proceeds by platform protocol.
+- **`platform-may-not-fire-PreToolUse-on-native-worktree-tools`** (Agent-with-isolation AND
+  EnterWorktree) — an **interception** residual (distinct from invocation-failure): the
+  fixtures prove hook logic, not that the platform routes real isolated `Agent`/`EnterWorktree`
+  traffic to the hook. Bound by an implement-time live check.
+- **Forgery-class self-evasions** (→ component D): a coordinator that writes `stage:"done"`,
+  **corrupts/truncates its OWN `state.json`** (silencing its own activation predicate), or
+  lands work in a **second clone whose `origin` was rewritten/removed** (no origin key, no
+  shared common dir → unrecognized) is not stopped — the same class as forging a review.
 
 ## Reporting a vulnerability
 

@@ -10,6 +10,10 @@ INSTALLER="$REPO_DIR/bin/install-drive-hooks.sh"
 
 MERGE_GATE="$REPO_DIR/bin/drive-merge-gate.sh"
 STOP_GUARD="$REPO_DIR/bin/drive-stop-guard.sh"
+TOOL_GATE="$REPO_DIR/bin/drive-tool-gate.sh"
+# Exact matcher strings the installer writes for the two tool-gate entries (AC-9).
+MCP_MATCHER='^mcp__.+__(update_pull_request_branch|create_or_update_file|create_pull_request|merge_pull_request|update_pull_request|create_branch|delete_file|push_files)$'
+NATIVE_MATCHER='^(Agent|EnterWorktree)$'
 
 PASS=0
 FAIL=0
@@ -71,14 +75,22 @@ check "stop guard injected (Stop)" "$stop_count" "1"
 matcher=$(jq -r --arg p "$MERGE_GATE" '.hooks.PreToolUse[] | select(.hooks[]?.command==$p) | .matcher' "$SETTINGS")
 check "merge gate matcher is Bash" "$matcher" "Bash"
 
-# existing PreToolUse hooks preserved (3 originals + 1 new = 4)
+# existing PreToolUse hooks preserved (3 originals + merge gate + 2 tool-gate entries = 6)
 pre_total=$(jq '.hooks.PreToolUse | length' "$SETTINGS")
-check "existing PreToolUse hooks preserved (3 + 1)" "$pre_total" "4"
+check "existing PreToolUse hooks preserved (3 + merge + 2 tool = 6)" "$pre_total" "6"
 
 for h in /existing/hook-one.sh /existing/hook-two.sh /existing/hook-three.sh; do
   found=$(jq --arg p "$h" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$SETTINGS")
   check "existing PreToolUse hook preserved: $h" "$found" "1"
 done
+
+# --- AC-9: both tool-gate entries present with the exact matcher strings ---
+tool_total=$(jq --arg p "$TOOL_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$SETTINGS")
+check "tool gate injected TWICE (mcp + native entries)" "$tool_total" "2"
+mcp_present=$(jq --arg p "$TOOL_GATE" --arg m "$MCP_MATCHER" '[.hooks.PreToolUse[] | select(.matcher==$m and (.hooks[]?.command==$p))] | length' "$SETTINGS")
+check "MCP-write matcher entry present with exact string" "$mcp_present" "1"
+native_present=$(jq --arg p "$TOOL_GATE" --arg m "$NATIVE_MATCHER" '[.hooks.PreToolUse[] | select(.matcher==$m and (.hooks[]?.command==$p))] | length' "$SETTINGS")
+check "native (Agent|EnterWorktree) matcher entry present with exact string" "$native_present" "1"
 
 # existing Stop hook preserved (1 original + 1 new = 2)
 stop_total=$(jq '.hooks.Stop | length' "$SETTINGS")
@@ -106,8 +118,11 @@ check "second run adds NO duplicate merge gate" "$merge_count2" "1"
 stop_count2=$(jq --arg p "$STOP_GUARD" '[.hooks.Stop[].hooks[]? | select((.command//"")==$p)] | length' "$SETTINGS")
 check "second run adds NO duplicate stop guard" "$stop_count2" "1"
 
+tool_count2=$(jq --arg p "$TOOL_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$SETTINGS")
+check "second run keeps EXACTLY two tool-gate entries (no duplicate)" "$tool_count2" "2"
+
 pre_total2=$(jq '.hooks.PreToolUse | length' "$SETTINGS")
-check "PreToolUse count stable after re-run (4)" "$pre_total2" "4"
+check "PreToolUse count stable after re-run (6)" "$pre_total2" "6"
 
 stop_total2=$(jq '.hooks.Stop | length' "$SETTINGS")
 check "Stop count stable after re-run (2)" "$stop_total2" "2"
@@ -180,13 +195,16 @@ check "nested settings has merge gate" "$nested_gate" "1"
 MIG="$WORK/migrate-settings.json"
 OLD_MERGE="/Users/someone/workspace/claude-harness/bin/drive-merge-gate.sh"
 OLD_STOP="/Users/someone/workspace/claude-harness/bin/drive-stop-guard.sh"
+OLD_TOOL="/Users/someone/workspace/claude-harness/bin/drive-tool-gate.sh"
 cat > "$MIG" <<JSON
 {
   "model": "opus",
   "hooks": {
     "PreToolUse": [
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "/existing/keep.sh" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$OLD_MERGE" } ] }
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$OLD_MERGE" } ] },
+      { "matcher": "$MCP_MATCHER", "hooks": [ { "type": "command", "command": "$OLD_TOOL" } ] },
+      { "matcher": "$NATIVE_MATCHER", "hooks": [ { "type": "command", "command": "$OLD_TOOL" } ] }
     ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "$OLD_STOP" } ] }
@@ -201,6 +219,11 @@ mig_merge_new=$(jq --arg p "$MERGE_GATE" '[.hooks.PreToolUse[].hooks[]? | select
 check "merge gate migrated to current path (count 1)" "$mig_merge_new" "1"
 mig_stop_new=$(jq --arg p "$STOP_GUARD" '[.hooks.Stop[].hooks[]? | select((.command//"")==$p)] | length' "$MIG")
 check "stop guard migrated to current path (count 1)" "$mig_stop_new" "1"
+# tool gate migrated to current path (both stale entries → the two current entries)
+mig_tool_new=$(jq --arg p "$TOOL_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$MIG")
+check "tool gate migrated to current path (count 2)" "$mig_tool_new" "2"
+mig_tool_old=$(jq --arg p "$OLD_TOOL" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$MIG")
+check "stale tool-gate path removed" "$mig_tool_old" "0"
 # stale paths GONE (the core of the contract)
 mig_merge_old=$(jq --arg p "$OLD_MERGE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$MIG")
 check "stale merge-gate path removed" "$mig_merge_old" "0"
@@ -223,12 +246,14 @@ WRAP="$WORK/wrapped-settings.json"
 PIPED_MERGE="/usr/local/bin/strict-wrapper.sh | /opt/custom/bin/drive-merge-gate.sh"
 ENV_MERGE="env STRICT=1 /opt/custom/bin/drive-merge-gate.sh"
 SUBST_STOP="\$(echo /x)/drive-stop-guard.sh"
+ENV_TOOL="env STRICT=1 /opt/custom/bin/drive-tool-gate.sh"
 cat > "$WRAP" <<JSON
 {
   "hooks": {
     "PreToolUse": [
       { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$PIPED_MERGE" } ] },
-      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$ENV_MERGE" } ] }
+      { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$ENV_MERGE" } ] },
+      { "matcher": "$MCP_MATCHER", "hooks": [ { "type": "command", "command": "$ENV_TOOL" } ] }
     ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "$SUBST_STOP" } ] }
@@ -242,8 +267,13 @@ piped_kept=$(jq --arg p "$PIPED_MERGE" '[.hooks.PreToolUse[].hooks[]? | select((
 check "piped merge-gate command preserved (not collapsed)" "$piped_kept" "1"
 env_kept=$(jq --arg p "$ENV_MERGE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
 check "env-prefixed merge-gate command preserved (not collapsed)" "$env_kept" "1"
+env_tool_kept=$(jq --arg p "$ENV_TOOL" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
+check "env-prefixed tool-gate command preserved (not collapsed)" "$env_tool_kept" "1"
 subst_kept=$(jq --arg p "$SUBST_STOP" '[.hooks.Stop[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
 check "command-substitution stop-guard preserved (not collapsed)" "$subst_kept" "1"
+# AND the two stock tool-gate entries are added alongside the wrapped one (enforcement present)
+wrap_canon_tool=$(jq --arg p "$TOOL_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
+check "stock tool gate (2 entries) added alongside wrapped one" "$wrap_canon_tool" "2"
 # AND the canonical stock gate/guard is still added alongside (enforcement present)
 wrap_canon_merge=$(jq --arg p "$MERGE_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$WRAP")
 check "stock merge gate still added alongside wrapped ones" "$wrap_canon_merge" "1"
@@ -259,18 +289,84 @@ check "stock stop guard still added alongside substitution one" "$wrap_canon_sto
 SPACED_ROOT="$WORK/sp ace root/bin"
 mkdir -p "$SPACED_ROOT"
 cp "$REPO_DIR/bin/install-drive-hooks.sh" "$REPO_DIR/bin/drive-merge-gate.sh" \
-   "$REPO_DIR/bin/drive-stop-guard.sh" "$SPACED_ROOT/" 2>/dev/null
+   "$REPO_DIR/bin/drive-stop-guard.sh" "$REPO_DIR/bin/drive-tool-gate.sh" "$SPACED_ROOT/" 2>/dev/null
 SPACED_SETTINGS="$WORK/spaced-settings.json"
 bash "$SPACED_ROOT/install-drive-hooks.sh" "$SPACED_SETTINGS" >/dev/null 2>&1
 sp_merge1=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-merge-gate.sh$"))] | length' "$SPACED_SETTINGS")
 sp_stop1=$(jq '[.hooks.Stop[].hooks[]? | select((.command//"")|test("drive-stop-guard.sh$"))] | length' "$SPACED_SETTINGS")
+sp_tool1=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-tool-gate.sh$"))] | length' "$SPACED_SETTINGS")
 check "spaced-path install: one merge gate after run 1" "$sp_merge1" "1"
 check "spaced-path install: one stop guard after run 1" "$sp_stop1" "1"
+check "spaced-path install: two tool-gate entries after run 1" "$sp_tool1" "2"
 bash "$SPACED_ROOT/install-drive-hooks.sh" "$SPACED_SETTINGS" >/dev/null 2>&1
 sp_merge2=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-merge-gate.sh$"))] | length' "$SPACED_SETTINGS")
 sp_stop2=$(jq '[.hooks.Stop[].hooks[]? | select((.command//"")|test("drive-stop-guard.sh$"))] | length' "$SPACED_SETTINGS")
+sp_tool2=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-tool-gate.sh$"))] | length' "$SPACED_SETTINGS")
 check "spaced-path install is IDEMPOTENT: still one merge gate after run 2 (no duplicate)" "$sp_merge2" "1"
 check "spaced-path install is IDEMPOTENT: still one stop guard after run 2 (no duplicate)" "$sp_stop2" "1"
+check "spaced-path install is IDEMPOTENT: still two tool-gate entries after run 2 (no duplicate)" "$sp_tool2" "2"
+
+# --- AC-11: READ-ONLY deployment-drift preflight (WARN-only; never blocks) -------
+has_warn() { grep -qF "$2" "$1" && echo yes || echo no; }
+WARN_TAG="WARN(drive-hooks drift):"
+
+# Variant 2 + 3: settings point the live gates at a FAKE dir that lacks the sibling hook
+# and has no tool-gate entry → migrate-hazard WARN + missing-sibling WARN; the whole run
+# still makes EXACTLY ONE backup (the preflight is read-only, churns no backup); exit 0.
+FAKE_LIVE="/no/such/live/enforcement/bin"
+DRIFT23="$WORK/drift23.json"
+cat > "$DRIFT23" <<JSON
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$FAKE_LIVE/drive-merge-gate.sh" } ] }
+] } }
+JSON
+D23_ERR="$WORK/drift23.err"
+bash "$INSTALLER" "$DRIFT23" 2>"$D23_ERR" >/dev/null; d23_rc=$?
+check "drift variant 2+3: installer still exits 0 (warn-only)" "$d23_rc" "0"
+check "drift variant 2 (migrate hazard) WARN fires" "$(has_warn "$D23_ERR" "live gates run from $FAKE_LIVE")" "yes"
+check "drift variant 3 (missing sibling) WARN fires" "$(has_warn "$D23_ERR" "live enforcement worktree lacks drive-tool-gate.sh")" "yes"
+d23_bak=$(ls "$DRIFT23".bak.* 2>/dev/null | wc -l | tr -d ' ')
+check "drift preflight churns NO extra backup (exactly one for the whole run)" "$d23_bak" "1"
+
+# Fresh (entry-less) settings → NO drift output at all.
+FRESH_DRIFT="$WORK/fresh-drift.json"
+printf '{}\n' > "$FRESH_DRIFT"
+FD_ERR="$WORK/fresh-drift.err"
+bash "$INSTALLER" "$FRESH_DRIFT" 2>"$FD_ERR" >/dev/null
+check "fresh (entry-less) settings → no drift WARN" "$(has_warn "$FD_ERR" "$WARN_TAG")" "no"
+
+# Variant 4 (settings-lag): live dir IS this checkout's bin (sibling present) but no
+# tool-gate entry is registered yet → settings-lag WARN, and NO migrate/missing-sibling WARN.
+DRIFT4="$WORK/drift4.json"
+cat > "$DRIFT4" <<JSON
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$MERGE_GATE" } ] }
+] } }
+JSON
+D4_ERR="$WORK/drift4.err"
+bash "$INSTALLER" "$DRIFT4" 2>"$D4_ERR" >/dev/null; d4_rc=$?
+check "drift variant 4: installer exits 0 (warn-only)" "$d4_rc" "0"
+check "drift variant 4 (settings-lag) WARN fires" "$(has_warn "$D4_ERR" "settings lag — the tool gate is not registered")" "yes"
+check "drift variant 4: NO migrate-hazard WARN" "$(has_warn "$D4_ERR" "live gates run from")" "no"
+check "drift variant 4: NO missing-sibling WARN" "$(has_warn "$D4_ERR" "lacks drive-tool-gate.sh")" "no"
+
+# Variant 5 (cmp-differs): a live dir whose drive-merge-gate.sh differs byte-wise from this
+# checkout's (worktree lags/diverged). Give it a sibling drive-tool-gate.sh so variant 3
+# stays quiet and variant 5 is isolated → cmp-differs WARN; warn-only (exit 0).
+FAKE5="$WORK/lagging-live-bin"; mkdir -p "$FAKE5"
+printf '#!/usr/bin/env bash\n# a DIFFERENT (lagging) merge gate\nexit 0\n' > "$FAKE5/drive-merge-gate.sh"
+cp "$REPO_DIR/bin/drive-tool-gate.sh" "$FAKE5/drive-tool-gate.sh"
+DRIFT5="$WORK/drift5.json"
+cat > "$DRIFT5" <<JSON
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$FAKE5/drive-merge-gate.sh" } ] }
+] } }
+JSON
+D5_ERR="$WORK/drift5.err"
+bash "$INSTALLER" "$DRIFT5" 2>"$D5_ERR" >/dev/null; d5_rc=$?
+check "drift variant 5: installer exits 0 (warn-only)" "$d5_rc" "0"
+check "drift variant 5 (cmp-differs) WARN fires" "$(has_warn "$D5_ERR" "live drive-merge-gate.sh differs from this checkout")" "yes"
+check "drift variant 5: NO missing-sibling WARN (sibling present)" "$(has_warn "$D5_ERR" "lacks drive-tool-gate.sh")" "no"
 
 # --- Summary --------------------------------------------------------------
 echo "----------------------------------------"

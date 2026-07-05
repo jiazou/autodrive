@@ -1,0 +1,8 @@
+{
+  "_provenance":{"source":"Claude Code native tool schemas (the Agent tool documented isolation:\"worktree\" parameter; EnterWorktree loaded via ToolSearch)","url":"https://docs.claude.com/en/docs/claude-code","retrieved":"2026-07-05","note":"D9 schema-derived; native worktree-tool shapes from the harness tool schemas"},
+  "session_id": "fixture-session-0001",
+  "cwd": "/work/octo-org/drive-fixture-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "EnterWorktree",
+  "tool_input": {"name":"feature-x"}
+}

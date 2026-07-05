@@ -1,0 +1,8 @@
+{
+  "_provenance":{"source":"github/github-mcp-server official tool reference (Go tool definitions: pkg/github/repositories.go, pkg/github/pullrequests.go — README Tools section / remote-server docs)","url":"https://github.com/github/github-mcp-server","retrieved":"2026-07-05","note":"D9 schema-derived, NOT live-captured; tool names + param names re-verified against the vendor source at implement time"},
+  "session_id": "fixture-session-0001",
+  "cwd": "/work/octo-org/drive-fixture-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__github__create_branch",
+  "tool_input": {"owner":"octo-org","repo":"drive-fixture-repo","branch":"feature-x","from_branch":"main"}
+}
