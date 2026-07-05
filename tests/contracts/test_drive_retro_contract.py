@@ -61,25 +61,20 @@ def test_drive_md_does_not_reference_drive_retro():
 
 
 # --------------------------------------------------------------------------- #
-# AC13 — SLOC cap: ≤150 lines OR a logged `drive-retro SLOC overage` entry
+# AC13 — SLOC cap: ≤150 lines, or exactly the reviewed overage size (exact pin)
 # --------------------------------------------------------------------------- #
-def test_sloc_cap_or_logged_overage():
-    """AC13's OR-leg entry lives in $RUN_DIR/decisions.md — CI-unreachable, so it is
-    checked where ship PROMOTES run ledgers: the repo's .harness/decisions.md. Until
-    that promotion lands, the pre-promotion window is bounded at the 183 lines the run's
-    `drive-retro SLOC overage` entry names — growth past it is UNLOGGED overage and reds
-    until a new/updated entry lands (and this bound moves with it)."""
+REVIEWED_OVERAGE_LINES = 183  # the dual-voice-reviewed size logged in decisions.md
+
+
+def test_sloc_cap_or_exact_reviewed_overage():
+    """Contract: drive-retro.md is ≤150 lines, OR exactly REVIEWED_OVERAGE_LINES — any
+    drift from the reviewed size (up or down) reds, forcing a re-review that moves this
+    pin and its `drive-retro SLOC overage` decisions.md entry together."""
     n = len(_text().splitlines())
-    if n <= 150:
-        return
-    ledger = REPO_ROOT / ".harness" / "decisions.md"
-    acknowledged = (
-        ledger.is_file()
-        and "drive-retro SLOC overage" in ledger.read_text(encoding="utf-8")
-    )
-    assert acknowledged or n <= 183, (
-        f"drive-retro.md is {n} lines (> the 150 cap), past the logged 183-line overage, "
-        "with no `drive-retro SLOC overage` entry visible in .harness/decisions.md"
+    assert n <= 150 or n == REVIEWED_OVERAGE_LINES, (
+        f"drive-retro.md is {n} lines — neither ≤150 (AC13 cap) nor the reviewed overage "
+        f"size ({REVIEWED_OVERAGE_LINES}). Re-review the file, update the `drive-retro "
+        "SLOC overage` entry in decisions.md, and move REVIEWED_OVERAGE_LINES with it."
     )
 
 
