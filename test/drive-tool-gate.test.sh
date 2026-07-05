@@ -113,9 +113,16 @@ LINKED="$WORK/linked-wt"; git -C "$RUNREPO" worktree add -q "$LINKED" -b wtbranc
 
 ac3_mcp() { # ac3_mcp <fixture> <retry-literal>
   local out; out="$(run_gate "$FX/$1")"
+  local suffix="${1%.json}"
   check "AC-3 $1 → deny" "$(is_deny "$out")" "yes"
   contains "AC-3 $1 names the run" "$out" "run run-primary is active"
   contains "AC-3 $1 retry path verbatim" "$out" "$2"
+  # Pin the DISTINCT per-tool reason so a within-pair branch swap in mcp_deny_reason is
+  # caught even where two tools share a retry-path substring (create_or_update_file/delete_file
+  # both 'git merge slice/…'; push_files/update_pull_request_branch both 'git push';
+  # merge_pull_request/update_pull_request both 'human-owned at Gate B'). Each reason names its
+  # own tool verbatim as 'MCP tool <suffix>' — unique within every pair.
+  contains "AC-3 $1 reason names its own tool (distinct within same-retry pair)" "$out" "MCP tool $suffix"
 }
 ac3_mcp create_or_update_file.json      "git merge slice/<runId>/<id>"
 ac3_mcp delete_file.json                "git merge slice/<runId>/<id>"
@@ -128,9 +135,13 @@ ac3_mcp update_pull_request_branch.json "git push"
 
 for wf in agent-worktree.json enter-worktree.json; do
   out="$(run_gate "$FX/$wf" "$LINKED")"
+  case "$wf" in agent-worktree.json) wtn=Agent ;; enter-worktree.json) wtn=EnterWorktree ;; esac
   check "AC-3 $wf → deny" "$(is_deny "$out")" "yes"
   contains "AC-3 $wf names the run" "$out" "run run-primary is active"
   contains "AC-3 $wf retry = gated worktree add" "$out" 'git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id>'
+  # both worktree fixtures share the SAME retry path; pin the distinct tool name so a swap
+  # of the tool token in worktree_deny_reason is caught.
+  contains "AC-3 $wf reason names its own tool ($wtn)" "$out" "native worktree tool $wtn"
 done
 
 # =====================================================================================
@@ -177,6 +188,49 @@ check "AC-5 refreshed mtime → deny" "$(is_deny "$out")" "yes"
 printf '{"stage":"done","repoRoot":"%s"}\n' "$LREPO" > "$RUNS/run-live/state.json"
 out="$(run_gate "$LIVE_JSON")"
 check "AC-5 stage=done → silent" "$out" ""
+
+# AC-5 (liveness OR-branch): the find is `\( -name state.json -o -name event-log.jsonl \)`.
+# The state.json side is exercised above; this isolates the event-log.jsonl side. A run whose
+# state.json is STALE but whose event-log.jsonl is FRESH must STILL be ACTIVE → deny. This is
+# the LOAD-BEARING branch mid-run: a live /drive run appends to event-log.jsonl constantly but
+# rewrites state.json far less often, so event-log freshness is what keeps the gate armed.
+# MUTATION-VERIFY: dropping `-o -name event-log.jsonl` from the find REDs this (the dir would
+# not be a candidate → no active run → silent pass).
+rm -rf "$RUNS"/*
+mk_run run-evlog "$LREPO"
+touch -t 200001010000 "$RUNS/run-evlog/state.json"   # state.json STALE (year 2000)
+touch "$RUNS/run-evlog/event-log.jsonl"              # event-log.jsonl FRESH (now)
+out="$(run_gate "$LIVE_JSON")"
+check "AC-5 stale state.json + FRESH event-log.jsonl → active → deny (OR-branch)" "$(is_deny "$out")" "yes"
+# control: BOTH stale → dormant → silent (proves the deny above came from the event-log side)
+touch -t 200001010000 "$RUNS/run-evlog/event-log.jsonl"
+out="$(run_gate "$LIVE_JSON")"
+check "AC-5 both files stale → silent (OR-branch control)" "$out" ""
+
+# AC-5 (DRIVE_TOOL_GATE_LIVE_HOURS knob): the liveness window is env-tunable, with an
+# invalid-value / zero fallback to 24 (bin/drive-tool-gate.sh:154-156). Every other test uses
+# the DEFAULT 24h, so a hardcoded-24 regression OR a broken fallback would pass unnoticed. Prove
+# the knob MOVES the window boundary + the fallback guards hold. (run_gate can't set env, so
+# these pipe the payload with the env var inline.)
+rm -rf "$RUNS"/*
+mk_run run-knob "$LREPO"
+touch -t 200001010000 "$RUNS/run-knob/state.json" "$RUNS/run-knob/event-log.jsonl"  # ~26y old
+# default 24h → the old run is stale → silent (baseline)
+out="$(run_gate "$LIVE_JSON")"
+check "knob default 24h: 2000-dated run is stale → silent" "$out" ""
+# a HUGE window keeps the SAME old run ACTIVE → deny (proves the knob WIDENS the window)
+out="$(printf '%s' "$LIVE_JSON" | DRIVE_TOOL_GATE_LIVE_HOURS=9999999 bash "$GATE" 2>/dev/null)"
+check "knob=9999999 widens window: 2000-dated run active → deny" "$(is_deny "$out")" "yes"
+# invalid value → falls back to 24 (NOT infinite): the old run stays stale → silent
+out="$(printf '%s' "$LIVE_JSON" | DRIVE_TOOL_GATE_LIVE_HOURS=abc bash "$GATE" 2>/dev/null)"
+check "knob=abc invalid → fallback 24h: old run still stale → silent" "$out" ""
+# fallback still ARMS on a FRESH run (proves fallback = 24, gate NOT disabled)
+touch "$RUNS/run-knob/state.json"
+out="$(printf '%s' "$LIVE_JSON" | DRIVE_TOOL_GATE_LIVE_HOURS=abc bash "$GATE" 2>/dev/null)"
+check "knob=abc invalid → fallback 24h: fresh run denies" "$(is_deny "$out")" "yes"
+# zero → the `-gt 0` guard falls back to 24 (does NOT disable the gate): fresh run denies
+out="$(printf '%s' "$LIVE_JSON" | DRIVE_TOOL_GATE_LIVE_HOURS=0 bash "$GATE" 2>/dev/null)"
+check "knob=0 → -gt 0 guard falls back to 24: fresh run denies" "$(is_deny "$out")" "yes"
 
 # =====================================================================================
 # AC-6 — one corrupt state.json → stderr warning + skip; a second live run still denies.
@@ -448,6 +502,23 @@ check "Fix2 valid owner + array repo → deny" "$(is_deny "$out")" "yes"
 # control: a genuinely different (well-formed) owner/repo still silent-passes (no over-deny)
 out="$(run_gate '{"tool_name":"mcp__github__push_files","tool_input":{"owner":"someone","repo":"else"},"cwd":"/x"}')"
 check "Fix2 well-formed non-matching owner/repo → silent (no over-deny)" "$out" ""
+
+# --- Fix (harden): a NON-STRING tool_name is MALFORMED input → fail-CLOSED (same class as the
+#     owner/repo/cwd/isolation malformed-input fixes). Pre-fix `{"tool_name":{}}` tostring'd to
+#     "{}", matched NO class, and SILENT fail-OPENed while a run was live; now tool_name is a
+#     STRING SCALAR (`s`) → a non-string yields "" → the empty/non-string tool_name deny.
+#     Defense-in-depth (the settings matcher regex-matches the tool_name STRING, so a non-string
+#     tool_name is also unreachable via the real platform), uniform with D-p2-5. run-malf (m/m)
+#     is still live here. MUTATION-VERIFY: reverting tool_name to the tostring extraction REDs
+#     these (they silent-pass).
+for bad in '{}' '[]' 'true' '123'; do
+  out="$(run_gate "{\"tool_name\":$bad,\"tool_input\":{\"owner\":\"m\",\"repo\":\"m\"},\"cwd\":\"/x\"}")"
+  check "FixTN non-string tool_name ($bad, run live) → deny (fail-closed)" "$(is_deny "$out")" "yes"
+  contains "FixTN non-string tool_name ($bad) is the unparseable branch" "$out" "empty or non-string tool_name"
+done
+# control: a well-formed STRING but non-write / mis-registered tool → silent pass (no over-deny)
+out="$(run_gate '{"tool_name":"Task","tool_input":{},"cwd":"/x"}')"
+check "FixTN well-formed non-write string tool (Task) → silent (no over-deny)" "$out" ""
 
 # --- Fix #5: active run with stage!=done but EMPTY/absent repoRoot → skip-with-warning;
 #            never `git -C ""` mis-attribution to the hook's own cwd.

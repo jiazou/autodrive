@@ -72,20 +72,22 @@ fi
 # --- control flow step 2: ONE jq extracts all fields (newline-separated) ---------------
 # Six fields, ONE per line (read back with `IFS= read` so EMPTY MIDDLE fields are
 # preserved verbatim — a tab/`@tsv` split would collapse them, since tab is IFS-
-# whitespace, and mis-shift every later field). tool_name is tostring'd (any scalar names a
-# tool); isolation/owner/repo/cwd are extracted as STRING SCALARS ONLY (`s`) — a non-string
-# value yields "" so it is treated as UNEXTRACTABLE downstream (fail-closed), never coerced
-# to a bogus non-empty token via tostring (which would let owner:{} / cwd:[] skip the
-# fail-closed checks). The isolation TYPE is emitted separately so the Agent dispatch can
-# tell absent (hot path) from present-but-non-string (malformed → conservative worktree
-# class). Each field's own newlines/CRs are squashed to spaces so a value can never leak an
-# extra line. Robust against a non-object .tool_input; a genuine parse failure yields an
-# empty tool_name (fail-closed).
+# whitespace, and mis-shift every later field). ALL fields (tool_name incl.) are extracted
+# as STRING SCALARS ONLY (`s`) — a non-string value yields "" so it is treated as
+# UNEXTRACTABLE downstream (fail-closed), never coerced to a bogus non-empty token via
+# tostring (which would let tool_name:{} / owner:{} / cwd:[] skip the fail-closed checks).
+# A non-string tool_name → "" → the empty-tool_name fail-closed deny below (defense-in-depth,
+# uniform with the owner/repo/cwd/isolation malformed-input posture — the settings matcher
+# regex-matches the tool_name STRING, so a non-string tool_name is also unreachable via the
+# real platform). The isolation TYPE is emitted separately so the Agent dispatch can tell
+# absent (hot path) from present-but-non-string (malformed → conservative worktree class).
+# Each field's own newlines/CRs are squashed to spaces so a value can never leak an extra
+# line. Robust against a non-object .tool_input; a genuine parse failure yields an empty
+# tool_name (fail-closed).
 FIELDS="$(printf '%s' "$INPUT" | jq -r '
-  def f: (. // "") | tostring | gsub("[\r\n]"; " ");
   def s: if type == "string" then gsub("[\r\n]"; " ") else "" end;
   (if (.tool_input | type) == "object" then .tool_input else {} end) as $ti
-  | (.tool_name | f), ($ti.isolation | type), ($ti.isolation | s), ($ti.owner | s), ($ti.repo | s), (.cwd | s)
+  | (.tool_name | s), ($ti.isolation | type), ($ti.isolation | s), ($ti.owner | s), ($ti.repo | s), (.cwd | s)
 ' 2>/dev/null || true)"
 
 TOOL_NAME=""; ISO_TYPE=""; ISOLATION=""; IN_OWNER=""; IN_REPO=""; PAYLOAD_CWD=""
@@ -100,8 +102,8 @@ TOOL_NAME=""; ISO_TYPE=""; ISOLATION=""; IN_OWNER=""; IN_REPO=""; PAYLOAD_CWD=""
 $FIELDS
 EOF
 
-# Empty tool_name = unparseable stdin → fail-CLOSED (in-script error).
-[ -n "$TOOL_NAME" ] || emit_deny "drive-tool-gate: could not parse the tool call from stdin (empty tool_name). Failing CLOSED for write-class safety. If this recurs the hook input contract has drifted — re-run bin/install-drive-hooks.sh."
+# Empty OR non-string tool_name (unparseable/malformed stdin) → fail-CLOSED (in-script error).
+[ -n "$TOOL_NAME" ] || emit_deny "drive-tool-gate: could not parse the tool call from stdin (empty or non-string tool_name). Failing CLOSED for write-class safety. If this recurs the hook input contract has drifted — re-run bin/install-drive-hooks.sh."
 
 # --- control flow step 3: class dispatch on tool_name ---------------------------------
 # CLASS ∈ { worktree, mcp }. Plain Agent (isolation absent, or a clean non-"worktree"

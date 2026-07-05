@@ -368,6 +368,42 @@ check "drift variant 5: installer exits 0 (warn-only)" "$d5_rc" "0"
 check "drift variant 5 (cmp-differs) WARN fires" "$(has_warn "$D5_ERR" "live drive-merge-gate.sh differs from this checkout")" "yes"
 check "drift variant 5: NO missing-sibling WARN (sibling present)" "$(has_warn "$D5_ERR" "lacks drive-tool-gate.sh")" "no"
 
+# --- AC-10: installer disclosure banner enumerates the three hooks / four entries + BOTH
+#     new matcher classes (the GitHub-MCP write matcher + Agent/EnterWorktree). Slice-owned:
+#     tests/installers/test_install_banner_confirm.py pins only generic tokens by design
+#     (DIV-p2-1), so this is where a disclosure-text regression is caught. The banner prints
+#     to STDERR before the (skipped, explicit-target) confirm gate. FAILs if the text regresses.
+BANNER_SET="$WORK/banner-settings.json"
+BANNER_ERR="$WORK/banner.err"
+bash "$INSTALLER" "$BANNER_SET" 2>"$BANNER_ERR" >/dev/null
+check "AC-10 banner enumerates 'three hooks'" "$(grep -qF 'three hooks' "$BANNER_ERR" && echo yes || echo no)" "yes"
+check "AC-10 banner enumerates 'four settings entries'" "$(grep -qF 'four settings entries' "$BANNER_ERR" && echo yes || echo no)" "yes"
+check "AC-10 banner names the GitHub-MCP write matcher class" "$(grep -qF 'GitHub-MCP writes' "$BANNER_ERR" && echo yes || echo no)" "yes"
+check "AC-10 banner names the Agent/EnterWorktree matcher class" "$(grep -qF 'Agent/EnterWorktree' "$BANNER_ERR" && echo yes || echo no)" "yes"
+
+# --- AC-11: drift_preflight makes ZERO byte changes to the target BEFORE the write path.
+#     The timestamped backup is cp'd AFTER the preflight ran but BEFORE the jq mutation
+#     (installer order: preflight -> confirm -> jq-valid -> BACKUP cp -> mutate -> mv), so the
+#     .bak captures the exact post-preflight / pre-mutation state. If the (read-only) preflight
+#     ever wrote, .bak would DIFFER from the pre-install snapshot. Seed a merge-gate entry at a
+#     fake live dir so the preflight actually RUNS (drift variants 2+3), not the silent path.
+PREF_SET="$WORK/preflight-identical.json"
+cat > "$PREF_SET" <<JSON
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "/no/such/live/bin/drive-merge-gate.sh" } ] }
+] } }
+JSON
+PREF_SNAP="$WORK/preflight-snapshot"
+cp "$PREF_SET" "$PREF_SNAP"
+bash "$INSTALLER" "$PREF_SET" >/dev/null 2>&1
+PREF_BAK="$(ls "$PREF_SET".bak.* 2>/dev/null | head -1)"
+check "AC-11 preflight pre-mutation backup exists" "$( [ -n "$PREF_BAK" ] && echo yes || echo no )" "yes"
+check "AC-11 preflight made ZERO byte changes before the write path (bak == pre-install snapshot)" \
+  "$( [ -n "$PREF_BAK" ] && cmp -s "$PREF_SNAP" "$PREF_BAK" && echo identical || echo differ )" "identical"
+# non-vacuous guard: the mutation step DID change the file (else 'identical' above proves nothing)
+check "AC-11 mutation step DID change the file (identical-check is non-vacuous)" \
+  "$(cmp -s "$PREF_SNAP" "$PREF_SET" && echo unchanged || echo changed)" "changed"
+
 # --- Summary --------------------------------------------------------------
 echo "----------------------------------------"
 echo "PASS: $PASS  FAIL: $FAIL"
