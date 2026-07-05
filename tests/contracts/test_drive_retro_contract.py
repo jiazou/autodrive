@@ -162,6 +162,7 @@ def test_mining_inputs_durable_only():
     sec = _norm(_section(_text(), r"^## 3 — Inputs"))
     assert "durable `$RUN_DIR` artifacts ONLY" in sec
     assert "never `wt/` or the `codex-raw-*.log`/`codex-harden-*.log` raw logs" in sec
+    assert "`event-log.jsonl`" in sec
 
 
 # --------------------------------------------------------------------------- #
@@ -195,7 +196,7 @@ def test_stats_sourced_and_best_effort():
     assert "NO stat requires a specific event kind" in sec
     assert "underivable ⇒ `n/a`, never a STOP" in sec
     assert "gates + timestamps · dispatches by kind · wall-clock" in sec
-    assert "earliest → latest parseable `at`" in sec
+    assert "earliest → latest parseable `at`/`ts`" in sec
     assert "NO STOP-cause stat is emitted" in sec
     assert "whose FIRST LINE begins with `CODEX_UNAVAILABLE` (prefix match)" in sec
 

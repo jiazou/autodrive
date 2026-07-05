@@ -90,7 +90,7 @@ count is surfaced in the output header. Missing/empty log → degrade, don't abo
   unreadable). Any counter-vs-file-count mismatch is itself reported as signal.
 - Event-log stats (gates + timestamps · dispatches by kind · wall-clock) are BEST-EFFORT by
   contract: computed over whatever objects/fields the decoder yields; NO stat requires a specific
-  event kind; underivable ⇒ `n/a`, never a STOP. Wall-clock = earliest → latest parseable `at`
+  event kind; underivable ⇒ `n/a`, never a STOP. Wall-clock = earliest → latest parseable `at`/`ts`
   across all decoded objects.
 - NO STOP-cause stat is emitted (not durable on a completed run); the durable residuals stand in:
   final non-null `waiting`, stranded `inflight-*.marker`, `redesign-*.marker` epochs.
