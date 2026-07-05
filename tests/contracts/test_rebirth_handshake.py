@@ -724,6 +724,22 @@ def test_context_summary_invoked_at_both_fresh_session_sites():
     assert "freshSessionResume" in orient_body, (
         "the orientation bullet must be scoped to a fresh-session resume (freshSessionResume)"
     )
+    # capture↔consume contract (D11): the orientation bullet CONSUMES `freshSessionResume`,
+    # so the sessionId-rebind bullet (bodies[0]) MUST DEFINE it — and define it BEFORE it
+    # overwrites `state.sessionId` (the comparison reads the OLD persisted id). A dropped
+    # capture would leave the consumer referencing an undefined variable; this pins the pair
+    # together so one can't silently move without the other.
+    rebind_body = _norm(bodies[0])
+    assert "freshSessionResume =" in rebind_body, (
+        "the sessionId-rebind bullet must CAPTURE `freshSessionResume =` so the orientation "
+        "bullet's consumer is defined on BOTH branches (fresh vs same-session)"
+    )
+    assert rebind_body.index("freshSessionResume =") < rebind_body.index(
+        "rewrite `state.sessionId`"
+    ), (
+        "the `freshSessionResume` capture must precede the `state.sessionId` overwrite "
+        "(the comparison must read the OLD persisted sessionId, not the freshly-written one)"
+    )
     # (c) the fenced paste block carries neither a summary nor a `/goal` (AC-5, structural pin)
     block = _handoff_block()
     assert "/drive <runId>" in block, "the paste block must keep the minimal resume line"
@@ -768,4 +784,76 @@ def test_autonomous_continuation_contract_states_hook_sole():
     )
     # the preserved dual-nature paragraph (AC11 tokens) still passes unchanged
     _assert_ac11_dual_nature(_norm(_drive_md()))
+
+
+# =========================================================================== #
+# AC-6 — anti-reintroduction: ZERO live `/goal`-mechanism references survive across the
+# live spec/doc surfaces (`.claude/commands/` + `docs/` + `README.md` + `CLAUDE.md` +
+# `OPERATING.md`). The `/goal` command, the `<leg-condition>` leg selector, the "session
+# goal (native /goal" concept, and the "execute-leg goal" per-leg goal were all removed;
+# a future reintroduction into ANY live surface must RED this pin. Previously the removal
+# was enforced ONLY by review-time grep — this makes it a durable contract.
+#
+# Carve-outs (deterministic, no judgment call at review time):
+#   * `docs/trellis-analysis.md` — a SHA-pinned historical comparative-analysis snapshot
+#     whose `/goal` mentions are point-in-time descriptions, NOT the live spec (excluded by
+#     name; also absent in this tree, so exclusion is future-proofing).
+#   * the incidental `boundary/goal` substring (drive-design.md `.../scope/boundary/goal`)
+#     is excluded STRUCTURALLY by the `(?<!\w)` lookbehind: a live `/goal` command is always
+#     preceded by whitespace / backtick / line-start, never a word char, whereas
+#     `boundary/goal` has the word char `y` before the slash.
+# Surfaces are resolved from `REPO_ROOT` (not cwd) so the pin is deterministic under any
+# invocation dir, and read via pathlib directly (rg would skip the dot-prefixed
+# `.claude/` directory as hidden — a real footgun this pin avoids).
+# =========================================================================== #
+
+# A live `/goal` command/mechanism reference: `/goal` at a word boundary whose slash is NOT
+# preceded by a word char. Excludes the incidental `boundary/goal`; matches ` /goal`,
+# "`/goal`", a line-leading `/goal`, and "(native /goal".
+_LIVE_GOAL_RE = re.compile(r"(?<!\w)/goal\b")
+
+# Other removed-mechanism tokens with no `/goal` substring (so `_LIVE_GOAL_RE` misses them).
+_REMOVED_GOAL_TOKENS = ("<leg-condition>", "execute-leg goal")
+
+# Excluded by name — the SHA-pinned historical snapshot (AC-6 carve-out).
+_GOAL_GREP_EXCLUDE = ("docs/trellis-analysis.md",)
+
+
+def _live_goal_surfaces():
+    """The live spec/doc surfaces AC-6 scans, resolved from REPO_ROOT: every file under
+    `.claude/commands/` and `docs/`, plus `README.md`, `CLAUDE.md`, `OPERATING.md`. Absent
+    files are skipped (portable across worktrees); the SHA-pinned snapshot is carved out."""
+    excluded = {REPO_ROOT / rel for rel in _GOAL_GREP_EXCLUDE}
+    surfaces = []
+    for sub in (".claude/commands", "docs"):
+        d = REPO_ROOT / sub
+        if d.is_dir():
+            surfaces += sorted(p for p in d.rglob("*") if p.is_file())
+    for top in ("README.md", "CLAUDE.md", "OPERATING.md"):
+        p = REPO_ROOT / top
+        if p.is_file():
+            surfaces.append(p)
+    return [p for p in surfaces if p not in excluded]
+
+
+def test_no_live_goal_mechanism_reference_survives():
+    """AC-6 (anti-reintroduction): ZERO live `/goal`-mechanism references across the live
+    spec/doc surfaces — the `/goal` command (word-boundary, excluding the incidental
+    `boundary/goal`), the `<leg-condition>` leg selector, and the "execute-leg goal" per-leg
+    goal. Excludes the SHA-pinned `docs/trellis-analysis.md` snapshot. Reintroducing `/goal`
+    into any live surface reds this pin (previously enforced only by review-time grep)."""
+    offenders = []
+    for path in _live_goal_surfaces():
+        rel = path.relative_to(REPO_ROOT).as_posix()
+        for i, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            if _LIVE_GOAL_RE.search(line):
+                offenders.append(f"{rel}:{i}: {line.strip()}")
+            for tok in _REMOVED_GOAL_TOKENS:
+                if tok in line:
+                    offenders.append(f"{rel}:{i}: [{tok}] {line.strip()}")
+    assert not offenders, (
+        "the `/goal` mechanism was removed (drive-ctx-summary run) and must STAY removed "
+        "across the live spec/doc surfaces; found surviving live reference(s):\n"
+        + "\n".join(offenders)
+    )
 
