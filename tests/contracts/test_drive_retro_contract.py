@@ -53,6 +53,22 @@ def test_frontmatter_argument_hint_is_runid():
     assert hint is not None and hint.split(":", 1)[1].strip() == "<runId>"
 
 
+def test_drive_retro_frontmatter_invocation_status():
+    """AC6: the frontmatter description must drop the now-false v1-manual claims and carry the
+    accurate auto-invoked status (regression guard for the D4 status refresh)."""
+    text = (REPO_ROOT / ".claude" / "commands" / "drive-retro.md").read_text(encoding="utf-8")
+    # the frontmatter description line
+    m = re.search(r"^description:\s*(.+)$", text, re.MULTILINE)
+    assert m, "drive-retro.md must have a frontmatter description"
+    desc = m.group(1)
+    # removed now-false claims
+    assert "manual, operator-invoked" not in desc, "stale 'manual, operator-invoked' claim must be gone"
+    assert "Not invoked by /drive" not in desc, "stale 'Not invoked by /drive (v1)' claim must be gone"
+    # accurate new status
+    assert "Auto-invoked by /drive" in desc, "description must state retro is auto-invoked by /drive at the true run-wrap"
+    assert "still operator-invocable" in desc, "description must state retro is still operator-invocable"
+
+
 def _drive_md():
     return (REPO_ROOT / ".claude" / "commands" / "drive.md").read_text(encoding="utf-8")
 
@@ -85,25 +101,41 @@ def test_drive_md_wires_retro_into_completion_before_decant():
     assert r_idx >= 0, "`## Completion` must invoke `/drive-retro <runId>`"
     assert d_idx >= 0, "`## Completion` must name the wrap-/decant"
     assert r_idx < d_idx, "the /drive-retro <runId> invocation must precede the wrap-/decant"
+    assert comp.count("/drive-retro <runId>") == 1, (
+        "the /drive-retro <runId> invocation must appear exactly once in `## Completion` "
+        "(only wrap step 1) — a second earlier mention would let the numbered steps reverse"
+    )
+    assert comp.count("/decant") == 1, (
+        "the wrap-/decant slash token must appear exactly once in `## Completion` (only wrap step 2)"
+    )
     assert "completedAt" in comp and 'stage == "done"' in comp, (
         "Completion's wrap sequence must be gated on the terminal-done signal"
     )
     # the gate must name the REAL is_done() contract — a PARSEABLE completedAt, not mere existence.
-    # Non-vacuous: match a "parseable" that is NOT the "unparseable" clarifier (negative lookbehind)
-    # AND sits within the gate clause next to the completedAt token, so reverting the gate to
-    # "exists" REDs even if the "unparseable does NOT authorize" clarifier sentence remains.
-    assert re.search(r"(?<!un)parseable[^\n]{0,40}completedAt", comp), (
-        "Completion's gate must specify a *parseable* completedAt (is_done()'s real contract), "
-        "not mere file existence — and not merely mention 'unparseable' in a clarifier"
+    # Positive anchor ("a parseable ... completedAt") — restructured (not a negation blocklist) so it
+    # REDs on the "exists" revert AND on negated phrasings ("un-/non-/not parseable"), while the
+    # "unparseable does NOT authorize" clarifier (no "a parseable") never satisfies it.
+    assert re.search(r"\ba\s+\*{0,2}parseable\*{0,2}[^\n]{0,40}completedAt", comp), (
+        "Completion's gate must state 'a parseable completedAt' (is_done()'s real contract) — "
+        "not mere existence, and not a negated 'un-/non-/not parseable' phrasing"
+    )
+    # AC5 — the wrap steps are best-effort / non-fatal
+    assert "best-effort" in comp, "Completion must state the wrap sequence is best-effort/non-fatal"
+    assert comp.count("note it and CONTINUE") >= 2, (
+        "both wrap steps must be non-fatal: retro-failure→note it and CONTINUE, decant-failure→note it and CONTINUE"
     )
     # (2) resume teardown runs the wrap BEFORE writing stage="done" LAST (pre-done window)
     teardown = _drive_section(text, r"Done-via-resume teardown", r"^(  - \*\*|#{1,2}\s)")
     route_idx = teardown.find("Run the `## Completion` wrap sequence NOW")
     write_idx = teardown.find('Write `stage="done"` LAST')
     assert route_idx >= 0, "the teardown must run the `## Completion` wrap sequence pre-stage=done"
-    assert "/drive-retro <runId>" in teardown, "the teardown wrap route must invoke /drive-retro"
     assert write_idx >= 0 and route_idx < write_idx, (
         'the wrap must run BEFORE `stage="done"` is written LAST (pre-done, stop-hook-forced)'
+    )
+    retro_in_teardown = teardown.find("/drive-retro <runId>")
+    assert route_idx < retro_in_teardown < write_idx, (
+        "the teardown's /drive-retro <runId> invocation must sit in the wrap route step, "
+        "after 'Run the `## Completion` wrap sequence NOW' and before the stage=done write"
     )
     # (3) Stage 5 (ship) routes into Completion
     stage5 = _drive_section(text, r"^### Stage 5 — Ship", r"^#{1,2}\s")
