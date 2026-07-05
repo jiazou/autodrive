@@ -50,7 +50,9 @@ See `mission-control/README.md`.
     8. /drive-ship ONCE             -> [Gate B] -> push
 
 Two human gates (A: direction, B: diff before push); every review is dual-voice
-(Claude + codex), converging when neither flags a P1. Design is refined in three
+(Claude + codex), converging when neither flags a P1. Every pause — and every
+fresh-session handoff/resume — prints a run-graph chart plus a short
+context-of-execution summary (problem · where we are · done · next). Design is refined in three
 tiers — high-level whole-run plan (Gate A), a detailed per-phase design against the
 real prior-phase code, then a per-slice assumption check. Full annotated diagram +
 decision policy: **[`docs/flow.md`](docs/flow.md)** and `CLAUDE.md`.
