@@ -444,9 +444,10 @@ these are its known limits, stated rather than overclaimed:
   the hook via `bin/install-operating-rules.sh`.
 - **Gate/STOP-collision human-restart edge.** When a Gate (A/B) or non-decision STOP and a
   rebirth are both due, the **gate/STOP wins** and `rebirth_pending` is re-derived in the
-  successor (not carried). The rebirth handoff's paste-ready `/drive <runId>` line (carrying
-  its own re-armed `/goal`) is the resume path — NOT a gate-emitted goal: Gate B emits none
-  (its push is immediate), and only the rebirth handoff and Gate A's leg-2 hand a `/goal`.
+  successor (not carried). The rebirth handoff's paste-ready `/drive <runId>` line is the
+  resume path; Gate A's Seam A handoff emits the resume line and Gate B emits none (immediate
+  push) — no goal is handed at any gate (the installed Stop hook drives turn-to-turn
+  continuation).
 - **"Lossless" is precise.** A resume reconstructs from **git + durable artifacts** (refs,
   markers, review/harden files) — those are authoritative. `state.json` is a best-effort
   **routing HINT**: written atomically (temp + `mv`, never a torn in-place write) and
