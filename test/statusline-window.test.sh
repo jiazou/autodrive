@@ -142,22 +142,23 @@ assert_eq "MODEL_ID matches a 200k family when display_name does not (opus-4-1 -
   "454" "$id_match_pct"
 # MODEL_ID path, BOTH sides of the sonnet-4 boundary pair + the reclassified model —
 # the jq id resolution (statusline L24-27) is a distinct code path from the display
-# case, so the order-sensitive models run through it in id form too:
+# case, so the order-sensitive models run through it in id form too. One helper,
+# 3 ids (mirrors the rendered_pct pattern; display_name "Brand X" never matches, so
+# the model.id does the resolving):
+id_rendered_pct() {  # <model.id> — PCT the statusline prints for a Brand-X payload with this id
+  jq -n --arg t "$TRANS" --arg id "$1" \
+    '{model:{display_name:"Brand X", id:$id}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+    | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%'
+}
 #   claude-sonnet-4-6 -> 1M (order-protected: the id contains the 200k entry sonnet-4)
-id_s46_pct="$(jq -n --arg t "$TRANS" \
-  '{model:{display_name:"Brand X", id:"claude-sonnet-4-6"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
-  | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
-assert_eq "MODEL_ID boundary pair 1M side (claude-sonnet-4-6 -> 1M, PCT 90)" "90" "$id_s46_pct"
+assert_eq "MODEL_ID boundary pair 1M side (claude-sonnet-4-6 -> 1M, PCT 90)" \
+  "90" "$(id_rendered_pct "claude-sonnet-4-6")"
 #   claude-sonnet-4-20250514 -> 200k (the pair's 200k partner via the sonnet-4 id entry)
-id_s4_pct="$(jq -n --arg t "$TRANS" \
-  '{model:{display_name:"Brand X", id:"claude-sonnet-4-20250514"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
-  | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
-assert_eq "MODEL_ID boundary pair 200k side (claude-sonnet-4-20250514 -> 200k, PCT 454)" "454" "$id_s4_pct"
+assert_eq "MODEL_ID boundary pair 200k side (claude-sonnet-4-20250514 -> 200k, PCT 454)" \
+  "454" "$(id_rendered_pct "claude-sonnet-4-20250514")"
 #   claude-opus-4-6 -> 1M (reclassified 200k -> 1M; pre-fix RED: the old table listed it 200k)
-id_o46_pct="$(jq -n --arg t "$TRANS" \
-  '{model:{display_name:"Brand X", id:"claude-opus-4-6"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
-  | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
-assert_eq "MODEL_ID reclassified model (claude-opus-4-6 -> 1M, PCT 90)" "90" "$id_o46_pct"
+assert_eq "MODEL_ID reclassified model (claude-opus-4-6 -> 1M, PCT 90)" \
+  "90" "$(id_rendered_pct "claude-opus-4-6")"
 
 # --- Fallback (I3): a malformed data file falls back to the inline default window ---
 # so the statusline never breaks on a bad file (still renders a correct PCT).
@@ -184,6 +185,16 @@ bad_o46="$(printf '%s' "$(payload "Opus 4.6" "$TRANS")" | bash "$BAD_DIR/bin/sta
   | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
 assert_eq "fallback: malformed json -> inline 1M arm for reclassified Opus 4.6 (PCT 90)" \
   "90" "$bad_o46"
+# Fallback id-parity: on the fallback path (data file unreadable) a payload whose
+# display_name is generic/unidentifiable ("Claude") but whose model.id names a 200k
+# family must still resolve 200k via the id — the inline `case` mirrors the json's
+# id-form match strings and keys on "$MODEL $MODEL_ID". Pre-fix RED: the old
+# `case "$MODEL"` keyed only on display_name, so "Claude" fell to the default 1M arm -> 90.
+bad_fallback_id="$(jq -n --arg t "$TRANS" \
+  '{model:{display_name:"Claude", id:"claude-haiku-4-5-20251001"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+  | bash "$BAD_DIR/bin/statusline.sh" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "fallback: generic display_name but 200k model.id -> inline 200k via id (PCT 454)" \
+  "454" "$bad_fallback_id"
 rm -rf "$BAD_DIR"
 
 rm -f "$TRANS"

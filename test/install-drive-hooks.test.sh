@@ -350,6 +350,22 @@ check "drift variant 4 (settings-lag) WARN fires" "$(has_warn "$D4_ERR" "setting
 check "drift variant 4: NO migrate-hazard WARN" "$(has_warn "$D4_ERR" "live gates run from")" "no"
 check "drift variant 4: NO missing-sibling WARN" "$(has_warn "$D4_ERR" "lacks drive-tool-gate.sh")" "no"
 
+# Variant 4b (partial registration): live dir IS this checkout's bin (sibling present) and
+# the tool gate is wired on ONLY ONE of the two required matchers (MCP present, native
+# absent) → partial-registration WARN, and NOT the zero-entry settings-lag WARN.
+DRIFT4B="$WORK/drift4b.json"
+cat > "$DRIFT4B" <<JSON
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$MERGE_GATE" } ] },
+  { "matcher": "$MCP_MATCHER", "hooks": [ { "type": "command", "command": "$TOOL_GATE" } ] }
+] } }
+JSON
+D4B_ERR="$WORK/drift4b.err"
+bash "$INSTALLER" "$DRIFT4B" 2>"$D4B_ERR" >/dev/null; d4b_rc=$?
+check "drift variant 4b: installer exits 0 (warn-only)" "$d4b_rc" "0"
+check "drift variant 4b (partial registration) WARN fires" "$(has_warn "$D4B_ERR" "partial tool-gate registration")" "yes"
+check "drift variant 4b: NO zero-entry settings-lag WARN (one matcher present)" "$(has_warn "$D4B_ERR" "settings lag — the tool gate is not registered")" "no"
+
 # Variant 5 (cmp-differs): a live dir whose drive-merge-gate.sh differs byte-wise from this
 # checkout's (worktree lags/diverged). Give it a sibling drive-tool-gate.sh so variant 3
 # stays quiet and variant 5 is isolated → cmp-differs WARN; warn-only (exit 0).

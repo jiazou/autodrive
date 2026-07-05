@@ -240,7 +240,6 @@ parse_origin() {
       path="${rest#*/}"                  # owner/repo[.git][/]
       hostport="${authority##*@}"        # strip [user@] userinfo (may carry :password)
       host="${hostport%:*}"              # strip a trailing :port (no colon → unchanged)
-      case "$host" in *:*) host="${host%:*}" ;; esac
       ;;
     *:*)
       hostport="${url##*@}"              # strip [user@]; host:owner/repo[.git]

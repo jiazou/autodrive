@@ -72,7 +72,7 @@ drift_preflight() {
 
   # (a) LIVE_DIR = dirname of the FIRST PreToolUse command that is a LONE path ending in
   # /drive-merge-gate.sh (no whitespace/shell metachars — a wrapped custom hook is skipped).
-  local live_cmd live_dir have_tool
+  local live_cmd live_dir have_tool have_mcp have_native
   live_cmd="$(jq -r '
     [ .hooks.PreToolUse[]?.hooks[]?.command // ""
       | select((endswith("/drive-merge-gate.sh") or . == "drive-merge-gate.sh")
@@ -111,9 +111,26 @@ drift_preflight() {
     printf 'WARN(drive-hooks drift): live enforcement worktree lacks drive-tool-gate.sh — advance that worktree, then re-run bin/install-drive-hooks.sh from INSIDE it.\n' >&2
     return 0
   fi
-  # Sibling present; Variant 4 — settings lag: the tool gate is not yet registered.
+  # Sibling present; check tool-gate registration completeness across BOTH required matchers.
+  # The installer wires drive-tool-gate.sh on TWO matchers (MCP-write + Agent|EnterWorktree);
+  # detect a lone (unwrapped) tool-gate command under EACH matcher separately.
+  have_mcp="$(jq -r --arg m "$TOOL_GATE_MCP_MATCHER" '
+    [ .hooks.PreToolUse[]? | select(.matcher == $m) | .hooks[]?.command // ""
+      | select((endswith("/drive-tool-gate.sh") or . == "drive-tool-gate.sh")
+               and (test("[[:space:]|&;<>()`$]") | not)) ]
+    | (length > 0)' -- "$SETTINGS" 2>/dev/null || true)"
+  have_native="$(jq -r --arg m "$TOOL_GATE_NATIVE_MATCHER" '
+    [ .hooks.PreToolUse[]? | select(.matcher == $m) | .hooks[]?.command // ""
+      | select((endswith("/drive-tool-gate.sh") or . == "drive-tool-gate.sh")
+               and (test("[[:space:]|&;<>()`$]") | not)) ]
+    | (length > 0)' -- "$SETTINGS" 2>/dev/null || true)"
   if [ -z "$have_tool" ]; then
+    # Variant 4 — settings lag: no tool gate registered at all.
     printf 'WARN(drive-hooks drift): settings lag — the tool gate is not registered.\n' >&2
+  elif [ "$have_mcp" != "$have_native" ]; then
+    # Variant 4b — partial registration: the tool gate is wired on only ONE of the two
+    # required matchers, so the settings-lag WARN (which only fires on zero entries) misses it.
+    printf 'WARN(drive-hooks drift): partial tool-gate registration — drive-tool-gate.sh is wired on only one of the two required matchers (MCP-write / Agent|EnterWorktree); re-run bin/install-drive-hooks.sh to restore both.\n' >&2
   fi
   return 0
 }
