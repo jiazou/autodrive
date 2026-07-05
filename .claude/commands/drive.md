@@ -51,7 +51,13 @@ verdict / merge / gate.
 - **Resume:** if invoked with an existing runId (its `$RUN_DIR/state.json` exists), load it
   and reconcile from git — `git worktree list`, branch tips, and ancestry are authoritative;
   state fields are hints. Never re-dispatch, advance, or clean up on a state value alone:
-  - **sessionId rebind (FIRST, on ANY resume into a new session):** rewrite
+  - **sessionId rebind (FIRST, on ANY resume into a new session):** **FIRST, before the
+    overwrite below, capture the ephemeral fresh-session flag** `freshSessionResume =
+    (state.sessionId != $CLAUDE_CODE_SESSION_ID)` reading the OLD persisted
+    `state.sessionId` — computed UNCONDITIONALLY so it is defined on BOTH branches (`true` →
+    a fresh-session resume; `false` → a same-session re-paste), consumed by the
+    Fresh-session-orientation bullet below. It is an ephemeral coordinator variable — NO new
+    `state.json` field. Then rewrite
     `state.sessionId` to the live `$CLAUDE_CODE_SESSION_ID` (null if unset) BEFORE
     reconciling anything — the Stop hook attributes a run by exact sessionId match, so a
     stale id kills auto-continue and rebirth detection. In the SAME JSON-safe write (the jq
@@ -209,7 +215,16 @@ verdict / merge / gate.
        gate is load-bearing because the helper's `is_done()` keys off a parseable
        `completedAt` ALONE: a marker written before removals finished would itself make the
        run sweepable.
-    5. Write `stage="done"` LAST (after the marker).
+    5. **Run the `## Completion` wrap sequence NOW — BEFORE writing `stage="done"`**
+       (`/drive-retro <runId>` → wrap-`/decant`). Step 4 wrote a **parseable** `completedAt`
+       (the ISO marker), which already satisfies retro's completeness gate / `is_done()`, so the
+       wrap is valid here; running it while `stage != "done"` and `waiting` is empty is the hook-protected
+       window — the stop-hook keeps the coordinator working across turns, closing the
+       turn-end/rebirth drop window (the hook fails open, so a hard crash is not prevented, but
+       `stage` stays not-`done` and a resume retries this teardown). Best-effort/non-fatal still
+       holds — a retro/decant failure is noted and does not block step 6.
+    6. Write `stage="done"` LAST (after the marker AND after the wrap sequence). The wrap already
+       ran, so `## Completion` emits only the Report — it is not re-invoked.
   - **Each slice, by `step`:** `queued` → leave it for the phase-loop to dispatch.
     `implementing` → if `git rev-list <phaseBaseSha>..slice/<runId>/<id>` is non-empty and
     slice-local tests pass, promote to `awaiting_review`, else re-dispatch IMPLEMENT.
@@ -258,6 +273,15 @@ verdict / merge / gate.
        (Mirrors rule 3's harden rule, but over the `review-finalize-*.md` family — NOT the
        harden loop. The checkpoint proof asserts ONLY the artifact-derived value;
        `state.finalizeRound` is a one-directional resume hint.)
+  - **Fresh-session orientation (LAST — after reconciliation, before autonomous work):**
+    once all the reconciliation above has completed AND the run is proceeding to autonomous
+    work (a reconcile that ends in a STOP takes the Present-human-pause path instead, which
+    emits its own run graph), **if this is a fresh-session resume** (`freshSessionResume ==
+    true`, captured at the sessionId-rebind bullet above), emit the context-of-execution
+    summary (per § *Emit context-of-execution summary (shared step)*) so the zero-context
+    successor session (and the watching user) is oriented from the reconciled git-truth
+    state. Skip on a same-session re-paste (`freshSessionResume == false` — it already has
+    conversational context, so a summary would be noise).
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
   default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
   initialize and write `$RUN_DIR/state.json` in this shape (set `sessionId` from the
@@ -319,15 +343,16 @@ with a spend summary (budget circuit-breaker).
 
 **Autonomous-continuation contract (`waiting`).** The `drive-stop-hook` (installed by
 `bin/install-operating-rules.sh`, no-op if absent) keeps a run driving across turns
-*without* a `/goal` by reading `state.json`: it blocks the turn from ending while this
+by reading `state.json`: it blocks the turn from ending while this
 session's run has `stage != "done"` and `waiting` is empty, and allows it the moment
 `waiting` is set or `stage = done`. So you MUST set `state.waiting` to a short reason
 **before pausing for the human at any point** — Gate A, Gate B, every non-decision
 STOP, or any AskUserQuestion — and clear it (`waiting = null`) the instant you resume
 autonomous work. Forgetting to set it just means the hook nudges you to continue (it
-biases toward letting you stop and fails open); it never forces you past a STOP. This
-is independent of `/goal` — use either or both. Set `autoContinue:false` to disable
-the hook for this run.
+biases toward letting you stop and fails open); it never forces you past a STOP. The
+installed Stop hook is the SOLE turn-to-turn continuation mechanism; with the hook
+**absent** an autonomous leg pauses at each turn-end and the user types "continue" to
+advance — a manual-continue degradation consistent with the accepted no-hook posture. Set `autoContinue:false` to disable the hook for this run.
 
 `waiting = "rebirth"` is the lone CONTINUE exception: it is set-to-pause in the
 OUTGOING session (so its turn can end at a safe boundary after a context-clear checkpoint —
@@ -551,9 +576,9 @@ with no open `inflight-*.marker`). Steps, in this exact order (this handler NEVE
    additionally run a wrap-decant at the same clear. (The standing run-wrap decant fires only
    at the TRUE run-wrap — after Gate B / `stage=done` — which is not a handoff seam.)
 6. **Present the handoff via Present human pause.** `waiting` is already set (step 5), so
-   the routine emits the run graph (rendering the `↻ REBIRTH` node from
-   `waiting=="rebirth"`) and presents the **rebirth handoff block** (the literal `/drive
-   <runId>` resume line + re-armed `/goal`), then ENDS THE TURN. Do NOT clear `waiting`
+   the routine emits the context-of-execution summary + the run graph (rendering the
+   `↻ REBIRTH` node from `waiting=="rebirth"`) and presents the **rebirth handoff block**
+   (the literal `/drive <runId>` resume line), then ENDS THE TURN. Do NOT clear `waiting`
    here — the OUTGOING session leaves it set; the INCOMING session's resume clears it
    (§ Run setup & resume).
 
@@ -579,7 +604,7 @@ the very turn that ends in the gate/STOP is therefore armed at the next autonomo
 Stop instead — deferred by at most one turn, never lost.) The
 human is present at that pause and can resume in a fresh session: **Gate A** — on approval
 the deterministic Seam A fires (§ Stage 1), so Gate A DOES emit the `/drive <runId>` resume
-line + the execute-leg `/goal` and hands off (Execute starts fresh) regardless of whether
+line (NO goal) and hands off (Execute starts fresh) regardless of whether
 pressure was also pending; **Gate B** hands NO goal and NO resume token (after Gate-B approval
 the push is immediate — there is no next leg). A STOP is not a deterministic-clear seam: after
 the human resolves it the run continues, and any pending pressure-rebirth (class A) is
@@ -618,7 +643,10 @@ forgotten:
    and continues (§ Run setup & resume), so it is set-to-pause (by I1) in the outgoing
    session and re-proven-then-cleared on resume, never a STOP.
 2. **Emit the run graph** (per § *Emit run graph (shared step)* below) — it reads the
-   just-set `state.waiting`.
+   just-set `state.waiting`. When `waiting == "rebirth"`, FIRST emit the
+   context-of-execution summary (per § *Emit context-of-execution summary (shared step)*
+   below) IMMEDIATELY ABOVE the run graph, then emit the run graph; all other pauses
+   (`gateA`/`gateB`/`stop`/`ask`) emit the run graph alone.
 3. **Present** the gate text / STOP reason, or call `AskUserQuestion`; then end the
    turn. Clear `waiting = null` the instant autonomous work resumes. When
    `waiting == "rebirth"`, present the **rebirth handoff block** below (no `AskUserQuestion`
@@ -635,23 +663,8 @@ forgotten:
 
      /drive <runId>
 
-   Then re-arm the goal for the next autonomous leg (LEG-AWARE — emit the `<leg-condition>`
-   line that matches the SUCCESSOR's resume leg, selected by `state.stage` per the table
-   below):
-
-     /goal The /drive run <runId> is driving autonomously toward its next human gate
-     (Gate A/B) or a non-decision STOP, OR is paused at a rebirth handoff (waiting="rebirth")
-     awaiting my paste of the resume line. <leg-condition>
-
    (This session can stop now; the fresh session owns the run once it resumes.)
    ```
-
-   **Select `<leg-condition>` by `state.stage`** — the successor resumes INTO the
-   current leg, so the goal's "NOT met while …" clause must match that leg:
-   - `stage` ∈ {`"premises"`, `"plan"`} (planning leg → Gate A; premises is pre-Gate-A):
-     `NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.`
-   - `stage` ∈ {`"execute"`, `"finalize"`, `"verify"`, `"ship"`} (execute leg → Gate B):
-     `NOT met while autonomous implement / review / harden / finalize / verify / ship work remains.`
 
 **Pre-run exception:** the **preconditions** STOPs (gstack missing, dirty tree) fire *before*
 a run exists — there is no `$RUN_DIR`/`state.json` to render, so they STOP plainly (no graph).
@@ -887,37 +900,69 @@ key throughlines:
 ```
 (`← YOU ARE HERE` sits on the live AUQ leaf, not the completed FINDINGS round above it.)
 
+## Emit context-of-execution summary (shared step)
+
+A short **prose** "context of execution" summary that complements — never duplicates — the
+run graph: it orients a zero-context successor session (and the watching user) in words,
+where the run graph orients them with a chart. It is emitted ONLY at the two fresh-session
+boundaries (the outgoing rebirth handoff — Present human pause step 2 when
+`waiting=="rebirth"` — and the incoming fresh-session resume — § Run setup & resume), NOT at
+ordinary gate/STOP/ask pauses.
+
+### Data sources (the ONLY sources — mirrors the run graph's discipline)
+
+The summary reads the **SAME FULL durable surface** the run graph reads (§ *Emit run graph
+(shared step)* § *Data sources*), never a narrower subset:
+
+1. **`state.json` in full** — the identical field set the run graph reads: `task`, `stage`,
+   `lastGate`, `waiting`, `phase`, `phaseList`, `designReview`, `phaseDesign[<P>].status`,
+   `slices[<id>].{step,owns,deps}`, `phaseReview[<P>].status`, `finalizeRound`, `verify`,
+   `ship`. Status fields describe position; every count is artifact-derived, never proof.
+2. **`design.md`** — its `## Goal` (→ the *problem* part; the SAME first-sentence derivation
+   the run graph's `root cause:` line uses).
+3. **The fixed-format review/harden/finalize artifacts** — `review-<scope>-N.md`
+   (`## Verdict:`), `design-phase<P>.md` + `review-phasedesign<P>[-r<R>]-N.md`,
+   `harden-<P>-N.md` (`## Verdict:`), `review-finalize-<N>.md` (`## Verdict:` +
+   `## AppliedEdits:`) and their codex siblings — the "what has converged / hardened" source.
+4. **`decisions.md`** — the run-local decision ledger (→ the *decided* part: the `## D…`
+   titles).
+
+**NEVER parse `event-log.jsonl`** — event/field names drift across runs (the identical rule
+`## Emit run graph` states). No new `state.json` field, no invented data. This section
+**inherits the run graph's `### Missing-artifact rule (general — never fabricate)`
+verbatim**: any absent/unknown value renders `pending` / `?`, never fabricated — the two
+stay single-sourced on that one rule.
+
+### Prose shape — 4 short labeled parts
+
+Each part maps to concrete fields and degrades to `pending` when its source is absent:
+
+- **Problem** — what this run is solving: first sentence of `design.md` `## Goal`; else
+  `state.task`; else `pending`.
+- **Where we are** — the run's current position, in words: `state.stage` + `state.waiting` +
+  `state.phase`/`phaseList`; per-stage detail from the current phase's
+  `phaseDesign[<P>].status` / `slices[<id>].step` / `phaseReview[<P>].status`, or
+  `finalizeRound` / `verify.attempts` / `ship` past Execute — the SAME node the run graph
+  anchors `← YOU ARE HERE` on, rendered as a sentence.
+- **Done / decided** — what has completed + what was decided: the converged/hardened
+  artifacts (phases with `phaseReview[<P>].status=="hardened"`; CONVERGED `review-*-N.md`;
+  the converged design) + the `## D…` titles from `decisions.md`.
+- **Next** — the immediate next pipeline action: derived from `state.stage` + the reconciled
+  position + `state.waiting` (e.g. "resume Phase 2 detailed design", "dispatch slice 1.3
+  fix", "present Gate B").
+
+### Render note (kept OUT of any fenced block)
+
+The summary is **prose** (~4–8 lines, one per part), NOT an ASCII chart — it does not need
+the run graph's collapse ladder. It is emitted **outside** the fenced run-graph code block
+AND outside the fenced `/drive <runId>` handoff paste block (so it never bloats the minimal
+paste). At the **outgoing handoff** it is placed **ABOVE** the run-graph chart
+(narrative-first orientation).
+
 ## Pipeline
 
-### Stage 0 — Premises & session goal
+### Stage 0 — Premises
 1. **Premises:** if the task is ambiguous about WHAT problem to solve, pause and ask.
-2. **Set the session goal** (do this once now, at the start — the session is fresh
-   and the user is present). `/drive` is autonomous across many turns, and Claude
-   Code's native **`/goal`** keeps a session driving turn-to-turn instead of stopping
-   mid-pipeline (after each turn a fast model checks the condition; if unmet, it
-   continues). Two facts about native `/goal` shape how we use it: it **cannot be set
-   programmatically** (only the user can type it), and it **auto-clears the instant its
-   condition is met**. A single whole-run goal therefore can't span a human gate — to
-   let the run *pause* at Gate A the gate has to count as a satisfying state, but that
-   same satisfaction auto-clears the goal, leaving the execute half with none. So we
-   scope **one goal per autonomous leg**, re-armed at each leg boundary: Gate A's approval
-   triggers the Seam A handoff, which hands the user the execute-leg line (the handoff block
-   is the single source — § Stage 1); Gate B hands no further line — after Gate-B approval the
-   push is immediate.
-
-   Present the **leg-1** goal (drives planning → Gate A). Bind `<task>` = the resolved
-   premise (`$ARGUMENTS`), then **continue regardless** (never block waiting for them):
-
-   > Paste this to drive planning autonomously up to Gate A:
-   >
-   > ```
-   > /goal The /drive run for "<task>" has reached Gate A and is presenting the plan for my approval, OR is paused awaiting my input at a non-decision STOP or an AskUserQuestion, OR is paused at a rebirth handoff (waiting="rebirth") awaiting my paste of the resume line. NOT met while autonomous planning (design, autoplan, dual-voice review) work remains.
-   > ```
-
-   This complements the gates rather than overriding them: `/goal` continues the
-   autonomous stages, while Gate A / Gate B / STOPs still pause for you (an
-   AskUserQuestion blocks the turn regardless of any goal). The user may skip the goal;
-   `/drive` still advances — it just won't auto-continue across turns.
 
    → `stage = plan`
 
@@ -938,12 +983,11 @@ step 1) produces and records its own slices, in detail, against the real prior-p
 is open — a genuine safe boundary. Invoke the **checkpoint-and-handoff routine** (§ I1 steps
 2–6) UNCONDITIONALLY (class-B deterministic seam, NOT gated on `rebirth_pending`): it proves
 resumability, runs `/decant`, sets `waiting="rebirth"`, presents the handoff (`/drive
-<runId>` + the execute-leg `/goal`), and ends the turn — so **Execute begins in the fresh
+<runId>` resume line, NO goal), and ends the turn — so **Execute begins in the fresh
 session** the user resumes into. (A failing proof fails closed → STOP per § I1 step 3, do NOT
-hand off.) `/drive-plan` presents Gate A — direction + any Taste/Challenge items — and does
-NOT hand the goal; **this Seam A handoff is the single source of BOTH the `/drive <runId>`
-resume line AND the execute-leg `/goal`** (delivered together in the handoff block, § Present
-human pause), so the goal is delivered exactly once.
+hand off.) `/drive-plan` presents Gate A — direction + any Taste/Challenge items — and this
+Seam A handoff is the single source of the `/drive <runId>` resume line (Execute begins
+fresh); no goal is emitted.
 
 At each Plan safe boundary — between plan-stage steps and after each design-review round
 (the coordinator is between dispatch units with no open `inflight-*.marker`) — run the
@@ -1104,7 +1148,7 @@ it consumes any `rebirth_pending` the hook's steer set), before proceeding:
      a genuine safe boundary — invoke the **checkpoint-and-handoff routine** (§ I1 steps 2–6)
      UNCONDITIONALLY (class-B deterministic seam, NOT gated on `rebirth_pending`): it proves
      resumability, runs `/decant`, sets `waiting="rebirth"`, presents the handoff (`/drive
-     <runId>` + the execute-leg `/goal`), and ends the turn — so the successor (the next
+     <runId>` resume line, NO goal), and ends the turn — so the successor (the next
      phase's `/drive-design` step 1, or Finalize / Stage 4c after the last phase) **begins in
      the fresh session** the user resumes into. (A failing proof fails closed → STOP per § I1
      step 3, do NOT hand off; the advance is already durable, so resume picks up at the next
@@ -1191,10 +1235,42 @@ Run the SHIP stage (`/drive-ship` — `~/.claude/commands/drive-ship.md`) on `fe
 `SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`},
 run the full suite
 (red → retry once → STOP), build the **single** commit + PR, **Gate B** (approve
-diff), then push/open PR. → `lastGate = "B"`, `stage = done`
+diff), then push/open PR. → `lastGate = "B"`, `stage = done` → then run the `## Completion`
+wrap sequence (the ship path's terminal-done site).
 
 ## Completion
 
-Report: design path, per-phase verdicts, PR link; a one-line summary of every
-decision promoted this run; `followups.md` entries; the event-log path; anything
-uncertain. Note any worktrees/branches left for inspection.
+This is the run's terminal wrap — the wrap sequence (retro then the wrap-decant) plus the
+Report. It is gated on the terminal-done signal (a **parseable** `$RUN_DIR/completedAt` OR
+`state.stage == "done"`) — the same authority `is_done()` and retro's own completeness gate use
+(a completedAt that merely EXISTS but is unparseable does NOT authorize done) — so it only
+ever fires once the run is effectively done; re-invoking it is idempotent-safe (retro
+overwrites its single `retro-<runId>.md`, and the wrap-decant self-skips when nothing new was
+learned). Both terminal-done sites reach this same wrap sequence:
+- the resume `Done-via-resume teardown` (§ Run setup & resume) invokes it BETWEEN writing
+  `completedAt` and writing `stage="done"` — the hook-protected window where, with
+  `stage != "done"` and `waiting` empty, the stop-hook keeps the coordinator working across
+  turns, closing the turn-end/rebirth drop window (a hard crash is not hook-prevented, but
+  `stage` stays not-`done`, so a resume retries);
+- Stage 5's ship (§ Stage 5 — Ship) reaches it after `drive-ship.md` returns — post-`stage=done`
+  but in the same coordinator turn immediately after Gate B (no context-clear seam there). This
+  is a tolerated best-effort characteristic: a rare interruption in that narrow post-done window
+  drops the wrap for that run, recovered only by a manual re-run, not automatically.
+
+**Wrap sequence (ordered; best-effort / non-fatal, mirroring the wrap-decant's existing
+non-fatal contract — neither step may block the wrap, the Report, or each other):**
+1. `/drive-retro <runId>` — mine this run's durable `$RUN_DIR` traces into classified lesson
+   proposals at `retro-<runId>.md`, putting that file on disk as input evidence for decant's
+   survey. If retro fails or writes nothing, note it and CONTINUE.
+2. the standing wrap-`/decant` — distill this run's session learnings (it reads
+   `retro-<runId>.md` as ordinary session evidence when present — no new interface). If decant
+   fails, note it and CONTINUE.
+
+The retro-before-decant ORDER is load-bearing (retro's file feeds decant) but not gating: a
+retro failure never blocks decant. This is the TRUE run-wrap decant only — distinct from the
+per-seam I1 step-5.5 rebirth decant (UNCHANGED, retro-free: a mid-run seam fails retro's
+completeness gate).
+
+Report: design path, per-phase verdicts, PR link; a one-line summary of every decision promoted
+this run; `followups.md` entries; the event-log path; anything uncertain. Note any
+worktrees/branches left for inspection.

@@ -3355,3 +3355,736 @@ Voices: Claude round-2 = CONVERGED (0 P1, 1 P3 cosmetic); codex round-2 = 2 NEW 
   `case "$MODEL" in` comment synced to `case "$MODEL $MODEL_ID" in` to match round-1's statusline change.
 - codex P2 test-diary prose → followups (deferred). codex ARCH statusline-symlink dup → already in
   finalize-todo.md (round 1); re-confirmed, not re-added.
+## Run main-20260704-180725 (leverage Trellis in autodrive → /drive-retro trace-mining command) — 2026-07-05
+
+## D-0 (Stage 0, Taste) — deliverable shape for an "analyze X" premise
+Task asks to ANALYZE how trellis (github.com/mindfold-ai/trellis, AGPL-3.0) can help autodrive.
+Decision: deliverable = a committed comparative-analysis + recommendations doc (docs/), with
+actionable follow-ups routed to TODO.md/followups — NOT implementation of the recommendations
+(separate future run). Rationale: literal ask is "analyze"; AGPL-3.0 rules out vendoring code,
+so recommendations will be pattern-adoption / run-alongside options. Surface at Gate A.
+Trellis clone for reference: /private/tmp/claude-502/-Users-jiazou-workspace-autodrive/9dc15e21-289e-4dcc-b4ab-210f4d3caa09/scratchpad/trellis
+
+## D-1 (Plan, Mechanical) — analysis dimensions
+Seven comparison dimensions fixed from mechanisms verified in trellis SOURCE (hook wiring in
+packages/cli/src/templates/claude/settings.json, workflow state machine in
+packages/cli/src/templates/trellis/workflow.md, task/spec/journal systems), not the README
+marketing table. Every trellis claim in the doc must cite a clone file path.
+Classification: Mechanical
+
+## D-2 (Plan, Taste) — recommendation schema
+Each recommendation: tier (adopt-pattern / run-alongside / ignore) × effort (S/M/L) × value +
+its autodrive landing surface + cross-reference to overlapping TODO.md C-items (Fable-5 audit)
+so no rec duplicates already-scoped work. Surface at Gate A.
+Classification: Taste
+
+## D-3 (Plan, Mechanical) — deliverable location
+docs/trellis-analysis.md (new) + TODO.md append. No README edit (kept lean per #58).
+Classification: Mechanical
+
+## D-4 (Plan, Mechanical) — one phase
+Docs-only, ~3 touch-points, ~300–450 doc lines (150–500 band → seam-hunt mandated). Seam-hunt
+found no fan-out/staged-risk seam (single doc; evidence→writing is one produced-then-consumed
+review unit). ONE phase + heightened-review note (citation validity, rec schema completeness,
+no-AGPL-vendoring check).
+Classification: Mechanical
+
+## D-5 (Plan, Taste) — license boundary as first-class section
+AGPL-3.0 ⇒ adopt-pattern = reimplement-from-idea only (no code/template/prompt-text copying);
+run-alongside = unmodified released npm tool in a driven project. Surface at Gate A with D-0.
+Classification: Taste
+
+## D-1a (Plan, Mechanical) — amends D-1: 7 → 8 dimensions
+Deep-dive of trellis source surfaced `trellis channel` (packages/core/src/channel/ — event-sourced
+spawn/send/watch/interrupt worker runtime) as a real mechanism the 7-dimension list missed. Added
+dimension 7 "Parallel execution & multi-agent runtime" (vs autodrive's file-ownership slices in
+worktrees); portability/consent shifts to dimension 8. Doc estimate now ~300–500 lines (same
+band, same one-phase verdict).
+Classification: Mechanical
+
+## Autoplan CEO round (2026-07-04) — D-6..D-11
+D-6 (Mechanical): citations pinned to trellis SHA dddeb6e0 + GitHub permalink base; never temp-clone paths.
+D-7 (Mechanical): rec schema += layer tag (L1/L2/L3) + harness-absorption risk + triggering-problem; L1 recs default ignore/wait; new tier "wait".
+D-8 (Mechanical): dims 4+8 reframed as hypotheses-to-falsify; depth tiering (deep: 1/2/5/6); economics/operator-burden lens in dim 4.
+D-9 (Taste): anti-rot — ≤3 TODO-routed items w/ named next-run triggers; review-by +6mo; doc closes with ONE next decision.
+D-10 (Mechanical): triggering-problems T-1..T-4 anchor; rec that can't name its pain = ignore.
+D-11 (Taste): codex "portability is the moat" partially overruled (solo harness, not a product); dim 8 keeps the counter-question.
+Pipeline: Design/DX autoplan phases skipped (no UI; docs-only); eng P1-hunt delegated to /drive-review design on the amended doc.
+User-Challenge held for Gate A: deliverable shape — docs-only (D-0) vs +Phase-2 S-effort spike vs +run-alongside pilot; recommendation: spike (b).
+Housekeeping deferred to Gate A notes: gstack upgrade 1.55.1→1.58.5 available; gstack offers CLAUDE.md routing-rules append (declined mid-run — repo tree must stay clean).
+
+## Design-review round 1 fixes (2026-07-04)
+r1-F1 (Mechanical): hook evidence re-pathed to shared-hooks/*.py implementing scripts (codex MAJOR 1).
+r1-F2 (Mechanical): layer-classification rule = by layer SERVED, rebuttable L1 default; depth ≠ adopt (codex MAJOR 2).
+r1-F3 (Taste): D-11 revised — solo-audience is a stated ASSUMPTION, not repo fact; codex #4 scoped, not overruled (codex MAJOR 3).
+r1-F4 (Mechanical): platform count 16→17 per types/ai-tools.ts (both voices).
+r1-F5 (Mechanical): single size estimate ~250–400; OQ-1(b) conditional-amendment note added (Claude P2s 2–3).
+r2-F1 (Mechanical): GSTACK appendix "overruled with evidence/solo harness" line + audit row 6 updated to the r1-F3 scoped-assumption framing (codex r2 MAJOR; Claude r2 flagged same spot as P3).
+
+## D-12 (Gate A, User-directed premise addition, 2026-07-04)
+User asked whether trellis's trace-analysis ability can optimize autodrive. Verified in source: trellis mem
+(packages/core/src/mem/ + commands/mem.ts, local read-only transcript indexing over Claude Code/Codex/Pi JSONL)
++ bundled-skills/trellis-session-insight (pattern-spotting) + required trellis-update-spec write-back. No
+automated harness-optimizer exists — the composition is the leverage. Added T-5 (no trace-to-harness feedback
+loop) + extended dim 5 to cover trace-mining, with the user's interest as an explicit rec-ranking weight.
+Design amended POST-convergence → targeted dual-voice re-verify (round 4) required before Gate A approval acts.
+r4 (targeted, post-D-12): both voices no-P1. Applied prescribed P2 fixes: OpenCode not-yet-indexable correction; T-5 loop-shape precision (mining discretionary, write-back required).
+
+## D-13 (Gate A approval, 2026-07-04) — user chose OQ-1 (b)
+Gate A APPROVED with Phase 2 spike: single top-ranked S-effort adopt-pattern item (Phase 1 output selects;
+D-12 weight makes run-retro trace-mining the likely winner). Pre-reviewed (b) amendments applied to Phases /
+Size estimate / Out-of-scope. Phase 2 relies on Phase 1 (staged-risk). Vacuous if no S-effort adopt-pattern rec.
+
+## Phase-1 detailed design (2026-07-04) — DP1-1..DP1-7
+DP1-1 (Mechanical): TODO.md append = FIRST ## section after intro (newest-first convention),
+header "## Trellis pattern adoption — from docs/trellis-analysis.md (2026-07-04)", C-item-style
+checkbox items with TR-n IDs shared with the doc; intro line untouched. Verified repo TODO.md
+content is not string-pin-tested (tests/contracts pins target drive-finalize.md prose).
+DP1-2 (Mechanical): Phase-2 selection is a REQUIRED "### Phase-2 spike selection" subsection
+with an either/or contract — exactly one S-effort adopt-pattern item + item-spec, OR an explicit
+"Phase 2 VACUOUS per D-13" declaration — making the Phase-1→Phase-2 produced-then-consumed
+contract mechanically checkable.
+DP1-3 (Mechanical): the ~250–400 line band is a soft check — trim compact dims first;
+materially outside ⇒ ship + log a decision, never pad or cut evidence.
+DP1-4 (Mechanical): D-12 T-5 weight vs D-7 L1-default precedence — layer/absorption test
+filters FIRST; the user weight ranks among survivors only, never rebuts an L1 default
+(operationalizes D-12's "subject to the same layer/absorption test").
+DP1-5 (Mechanical): dimension→T mapping fixed (1→T-1/T-4, 2→T-1, 3→T-2, 4→T-2, 5→T-3/T-5,
+6→T-4, 7→none, 8→none); dims 7/8 rec candidates must name a pain or tier ignore (D-10).
+DP1-6 (Mechanical): review-by = 2027-01-04 (+6mo per D-9).
+DP1-7 (Mechanical): flow.md's 44-invocation figure is cited WITH its shape qualifier (exact
+for the idealized 2-phase×2-slice×3-round example; a floor for that shape) — not as a
+universal constant, guarding dim 4's economics lens.
+
+## Phase-1 design review round 1 fixes (2026-07-04) — DP1-8..DP1-9 + AC tightening
+DP1-8 (Mechanical): TODO routing is L2/L3-only — a rebutted-L1 adopt-pattern rec stays doc-only
+(still Phase-2-selectable, never TODO-routed); resolves the Interface-B `L2|L3` skeleton vs
+AC6/AC9 contradiction in favor of TODO.md's shed-L1 direction (codex MINOR ≡ Claude M2).
+DP1-9 (Mechanical): BLOCKING fix — docs-only Slice 1.1 satisfies the fail-closed impl-presence
+merge gate (docs/drive-enforcement.md) via a real git trailer on the slice commit:
+"Drive-Test-Waiver: docs-only deliverable — analysis doc + TODO routing, no runnable code surface"
+(trailer block, not body prose); bound in Slice 1.1 implementer notes + AC12.
+AC tightening (codex MAJOR): AC1 += Analyzed field + citation-base note (all 6 header fields);
+AC2 += fixed whole-doc section order incl. `## How to read this` + `addresses: —` empty stanza
+form for dims 7/8; AC5 restored to full column semantics (absorption = yes/no + clause; Kills =
+one sentence naming the pain; x-ref states extend-vs-duplicate); AC9 += interface-B item body
+shape incl. **Trigger:** line. Claude M1: clone-missing recovery path (re-clone + checkout
+pinned SHA + submodule-status check) added to implementer notes; AC3 rebound from unbound
+$SCRATCHPAD to "the clone path bound in Slice 1.1 notes" with the grep gate = no /private/tmp/
+or scratchpad path in the shipped doc. Both NITs applied.
+
+## Phase-1 design review round 2 fix (2026-07-04) — DP1-10
+DP1-10 (Mechanical): Kills column empty form on ignore-tier rows = the literal
+"— (no pain ⇒ ignore)" (all other tiers require the one-sentence pain), defined in Interface A
+col 9 + AC5 — same pattern as round 1's "addresses: —" stanza fix (Claude r2 MINOR). Codex r2
+MAJOR (interface literals untestable) closed by pinning: AC1 the exact H1 title
+"# Trellis × autodrive — comparative analysis & recommendations" (+ NIT fix: "five header
+bullets", count now matches the enumeration); AC5 the fixed column order 1–10; AC9 the exact
+dated header "## Trellis pattern adoption — from docs/trellis-analysis.md (2026-07-04)".
+
+## Slice 1.1 implementation decisions (2026-07-04)
+- S1.1-a: TR-4 (`trellis mem` run-alongside) is L1-tagged yet tiered run-alongside rather than
+  ignore/wait. AC6's rebuttal clause is satisfied in the E6-sanctioned form: the row carries an
+  explicit written "L1-default rebuttal" (run-alongside = E6's L1-safe route; zero build
+  investment, absorption strands nothing) instead of a non-absorption claim — per E6's
+  "trellis mem run-alongside is the L1-safe route there". Classification: Mechanical.
+- S1.1-b: Phase-2 selection = TR-3 (/drive-retro) scoped S as a single-run v1 (one new command
+  file, no shipped code, cross-run aggregation out of scope). D-12 weight applied among the
+  layer/absorption survivors {TR-3, TR-2} per DP1-4; TR-2 is runner-up and the sole TODO-routed
+  item. Classification: Taste (matches D-13's anticipated likely winner).
+- S1.1-c (E1 refinement, not a failed claim): design.md's "OpenCode not yet indexable — adapter
+  pending" is refined by source — packages/core/src/mem/adapters/opencode.ts EXISTS but is a
+  documented degraded no-op (SQLite reader reverted over a native-dep install break); the doc
+  states the no-op form. All other design.md mechanism claims re-verified unchanged at the
+  pinned SHA (17 platforms confirmed per types/ai-tools.ts; submodules confirmed empty).
+  Classification: Mechanical.
+- S1.1-d (DP1-3): first draft landed at 167 physical lines only because prose was one paragraph
+  per line; rewrapped to the repo's ~98-col house style (content unchanged) → 358 lines, inside
+  the ~250–400 band. No band deviation to log. Classification: Mechanical.
+
+## Slice 1.1 review round 1 fixes (2026-07-04)
+- S1.1-e (E1 divergence from design.md, per review r1 MAJOR-2 ≡ codex MAJOR): design.md's claim
+  that trellis's required-step ↔ breadcrumb mapping "is itself test-enforced by a regression
+  invariant" does NOT re-verify at the pinned SHA — packages/cli/test/regression.test.ts contains
+  zero `[required · once]` references; it pins two historical instances (in_progress→Phase-3.4
+  mention, planning-block content) plus block presence/degradation. The universal invariant is
+  workflow.md's own contract comment (self-description). Doc narrowed in dims 2 and 4 with the
+  correction recorded in-text; dim-4 hypothesis-(i) verdict kept but margin restated as thinner.
+  Classification: Mechanical.
+- S1.1-f (review r1 MAJOR-1): six verbatim trellis template/skill quotations replaced with
+  own-words mechanism descriptions + citations (clean-room self-consistency, AC8); dim-6
+  invented-wording quotation de-quoted (MINOR-1). Doc-wide sweep run: every remaining ≥8-char
+  quoted string checked against the clone — none trellis-origin (remaining quotes are
+  autodrive-source or hypothetical predicates). Classification: Mechanical.
+- S1.1-g (review r1 MINOR-2/3): lifecycle-hook pointer corrected to workflow.md §Customizing
+  Trellis; C9 characterization softened to "documents the hazard". All 3 MINORs fixed (cheap).
+  Classification: Mechanical.
+
+## Phase-2 detailed design (2026-07-04) — DP2-1..DP2-7
+DP2-1 (Mechanical): retro output = single overwritten $RUN_DIR/retro-<runId>.md, no -N
+versioning — retro is a pure function of an immutable completed run dir; name matches the
+TR-3 acceptance sketch. Why Mechanical: no consumer for versions; ceremony otherwise.
+DP2-2 (Mechanical): event-log parsing contract = tolerant json raw_decode STREAM decode;
+line-split parsing forbidden — the REAL event-log.jsonl mixes single-line and
+pretty-printed multi-line objects (this run: 46 objects; a line parser mislabels 192
+lines). Writer-vs-CLAUDE.md "append-only jsonl" divergence routed to followups.md.
+Why Mechanical: empirical artifact shape decides, no taste involved.
+DP2-3 (Mechanical): completed-run authority = parseable completedAt OR stage=="done"
+(drive-ship.md is_done semantics); unreadable state.json fails CLOSED (STOP); literal
+`partial` arg is the sole override and brands the output PARTIAL. Why Mechanical: copies
+the existing authority rather than inventing a second definition of done.
+DP2-4 (Taste): proposal classification = OPERATING.md §Self-Improvement destination
+matrix (+ process-signal → TODO.md), not decant's universal/workflow/domain split —
+retro classifies WHERE a lesson lands; decant's scope test runs at promotion. Why Taste:
+either vocabulary could work; this one keeps retro/decant complementary, not duplicative.
+DP2-5 (Mechanical): no bin/ script in v1 (TR-3 scopes "no shipped code"); the ~15-line
+parse snippet rides inline in the command prose. Follow-on named (bin/drive-retro-stats.py)
+if a second consumer appears. Why Mechanical: TR-3's item-spec fixes this.
+DP2-6 (Mechanical): the ≥1-lesson-proposal bar is conditional on mined signal (P1s,
+STOPs, or multi-round scopes); a clean run may emit zero proposals with No-action notes.
+Why Mechanical: anti-slop — never force a lesson to fill a quota.
+DP2-7 (Mechanical): retro reads retention-durable artifacts only (.md/.json/.jsonl/
+markers) — never wt/ or codex-raw-*.log (removed at run-done / Tier-L GC'd). Why
+Mechanical: forced by drive-retention.sh + ship teardown reality.
+
+## Phase-2 design review round 1 fixes (2026-07-04) — DP2-3 revised + DP2-8..DP2-10
+DP2-3 (Mechanical, REVISED): completeness authority rebound to the REAL is_done() in
+bin/drive-retention.sh — the standalone $RUN_DIR/completedAt marker FILE (parseable per
+completedat_epoch) OR state.json.stage=="done". completedAt is NEVER a state.json key
+(both voices' P1: the r1 design's state.json.completedAt clause was dead code — the key
+never exists; the marker file is what drive-ship.md writes). Unknowable fails CLOSED.
+Classification: Mechanical (the existing authority decides; the r1 text misread it).
+DP2-8 (Mechanical): `partial` mode DROPPED (codex MAJOR-2 — unapproved scope growth on
+the phase's only surface; TR-3 scopes v1 to ONE COMPLETED run). Stuck-run mining routed
+to $RUN_DIR/followups.md as a named follow-on. Restores DP2-1's immutable-input
+overwrite rationale. Classification: Mechanical (spec-conformance, not taste).
+DP2-9 (Mechanical): codex-degradation stat redefined as derivable-only — count of scopes
+whose SURVIVING codex-review-<scope>.md / codex-harden-<P>.md is a CODEX_UNAVAILABLE
+stub (codex MAJOR-3: the files are overwritten per round and no event-log record exists,
+so per-round degraded-round history is not derivable and is not promised).
+Classification: Mechanical (durable-artifact reality decides).
+DP2-10 (Mechanical): finding-heading rule recalibrated against the real corpus (Claude
+MAJOR: ≥52/936 headings use compound forms — [P2 MINOR], [MAJOR/P1], [P1/BLOCKING]… —
+the r1 single-token regex missed, including P1-bearing forms): ^### \[[^\]]*\]
+candidates classified by word-bounded severity tokens, resolution/veto-tagged headings
+(RESOLVED|VETOED|OVERRULED|REFUTED) excluded, one count per heading at highest severity.
+Classification: Mechanical (empirical input space decides; mirrors DP2-2's discipline).
+Also applied (Claude MINOR): codex-harden-<P>.md added to Inputs + E7 + the degraded stat.
+
+## Phase-2 design review round 2 fixes (2026-07-04) — DP2-11..DP2-15 + DP2-10 case rule
+
+DP2-11 — STOP-cause stats CUT (Claude MAJOR): STOP history is not durable on a completed
+run — state.waiting is cleared on resume and the event-log append rule covers only
+dispatch/verdict/merge/gate (verified: zero stop kinds in the real log). Durable residuals
+stand in (final waiting if non-null, stranded inflight markers, redesign markers); AC8's
+"≥1 STOP" trigger arm dropped; STOP-cause mining rides the DP2-8 in-flight follow-on;
+make-STOPs-durable harness gap already in followups.md.
+Classification: Mechanical (durable-artifact reality decides; same defect class DP2-9 fixed)
+
+DP2-12 — input contract WIDENED to two classes (codex BLOCKING, recommended option taken):
+mining inputs ($RUN_DIR durable artifacts, unchanged) + dedup references (fixed READ-ONLY
+set: OPERATING.md, auto-memory MEMORY.md index, TODO.md, .harness/decisions.md,
+.harness/followups.md) consulted only for proposals' Overlap field; absence tolerated as
+"not checked (<file> unavailable)". Chosen over dropping the Overlap fields — TR-3's x-ref
+discipline is extend-vs-duplicate and an unchecked Overlap field is theater; read-only
+preserves the proposals-only invariant. Propagated to Inputs/Interface B/AC10/AC14.
+Classification: Taste (widen-vs-drop; surfaced at next gate)
+
+DP2-13 — ALL event-log-derived stats BEST-EFFORT (codex BLOCKING): per drive.md:705 the
+event/field vocabulary varies per run, so each event-derived stat (gates+timestamps,
+dispatches by kind, wall-clock) computes over whatever the tolerant decoder yields, no
+stat requires a named event kind, explicit n/a fallback, never a hard failure. Wall-clock
+= earliest→latest parseable `at` (replaces the run_created anchor; Claude MINOR).
+Classification: Mechanical (drive.md's own disclaimer decides)
+
+DP2-14 — recurrence themes DEMOTED to instructed synthesis (codex MAJOR): the computed
+severity×subject table had no buildable subject-extraction rule. Now: the command
+instructs the Claude operator agent to group the script-mined finding list by durable
+keys (filename scope token, heading severity, normalized title), every citation required
+to appear in the mined candidate list, ≥2 findings from ≥2 artifacts per theme. Counts
+stay script-derived ("don't make the model the meter" governs metrics, not synthesis);
+new AC15 pins the clauses.
+Classification: Taste (compute-vs-instruct; surfaced at next gate)
+
+DP2-15 — degraded done-path renderings specified (codex MAJOR + MINOR): completedAt
+parseable + state.json unreadable ⇒ PROCEED with `?` header fields and
+"n/a (state.json unreadable)" stat rows (state.json is a routing hint; artifacts are the
+truth) — new E10; marker unparseable + stage=="done" ⇒ PROCEED, header renders
+"completed: stage=done (marker unparseable)" — new E11. AC3 extended.
+Classification: Mechanical
+
+DP2-10 addendum (Claude MINOR) — severity tokens match CASE-SENSITIVELY (uppercase forms
+only); only the resolution/veto exclusion is case-insensitive. Corpus-verified: "[MINOR ->
+noted, not blocking]" and "[P3 — omitted from blocking scope]" grade MINOR/P3, not
+BLOCKING. AC7 + implementer calibration note updated.
+Classification: Mechanical (corpus decides)
+
+DP2-16 — token→P-level mapping made the counted unit (Claude MAJOR, r3): per
+drive-review.md's own taxonomy, P1 = {BLOCKING, MAJOR, P1}; P2 = {MINOR, P2};
+P3 = {NIT, P3} — [MAJOR] IS a P1. Compound-heading dedupe operates on P-levels
+(P1 > P2 > P3; BLOCKING > MAJOR is display-only), and the headline "P1 count" +
+AC8's proposal trigger count under the mapping, so a MAJOR-only run fires them.
+Negation-prefixed tokens ([non-P1 …]) do not classify (Claude MINOR folded in).
+Stats rule, themes grouping key, AC7/AC8/AC15, DP2-10, and the calibration note
+all updated.
+Classification: Mechanical (the project's own emitting convention decides)
+
+DP2-17 — rebind-on-resolve for unique-prefix runIds (codex MAJOR, r3): a prefix
+argument is rebound to the resolved run dir's FULL basename before ANY downstream
+use (retro-<runId>.md filename, # Retro title, header source line), so prefix and
+full-id invocations write the identical single file. Interface, Writes clause,
+AC2/AC4 updated.
+Classification: Mechanical (the exactly-one-file invariant forces it)
+
+DP2-18 — divergences consolidated to ONE contract (codex BLOCKING, r3): the TR-3
+sketch stays authoritative for intent + boundary; the design supersedes its
+mechanism details, with all three deliberate divergences (STOP-cause cut;
+themes → instructed synthesis; conditional ≥1-proposal bar) listed once in a new
+§Divergences subsection at the top; the scattered lone STOP-divergence parenthetical
+was removed.
+Classification: Mechanical (single-contract requirement; divergences themselves
+were already decided as DP2-11/DP2-14/DP2-6)
+
+r3 hygiene (codex MINOR + Claude MINOR/NIT) — AC10's mutation-verify clause marked
+an explicit process note (implementer obligation, not an artifact property); AC13
+made testable (wc -l ≤ 150 OR a decisions.md overage entry exists — "materially
+over" dropped); E10/AC3/DP2-15's "?" header-field clause dropped (Interface B's
+header has no state-derived field); the event-log "46 objects" literal rephrased
+as ~46+ at design time, with a never-pin-literal-counts implementer note.
+Classification: Mechanical
+
+DP2-19 — codex siblings get their own extraction rule, Rule L (codex BLOCKING, r4):
+empirical corpus enumeration (470 codex-review-*/codex-harden-* files across
+~/.claude/harness-runs) shows 426 contain ZERO `### [` headings — findings are
+bullet/prose lines (`- **BLOCKING** file:line — …`, `- MAJOR …`, `1. P1 …`,
+`P1 `file`: …`, bare `P1:` label lines) — so the heading rule alone silently drops
+codex-only findings from the P1 count, themes, and AC8's trigger. Rule L =
+line-anchored UPPERCASE severity token after optional list marker/bold; grading from
+the leading tag group only, once at highest P-level; UPPERCASE-only whole-line
+resolution/veto guard (case-sensitive, inverse of Rule H's bracket guard: the
+whole-line window collides with lowercase prose — corpus `resolved-skipped` is a true
+P2 — while every corpus resolution marker is uppercase); bare label lines count once
+(stated undercount for their untagged bullets, corpus = one run). Per-file precedence:
+a codex file with ≥1 heading candidate (44/470; corpus-verified those contain zero
+line-shaped findings) mines via Rule H ONLY, else Rule L — never both. Family→rule
+mapping stated in the command; dedicated AC16 + AC10 pin.
+Classification: Mechanical (the corpus's real shape decides; empirically enumerated)
+
+DP2-20 — raw_decode inter-record whitespace advance (codex MAJOR, r4): the tolerant
+decode advances the index past `[ \t\r\n]*` before EACH raw_decode — raw_decode raises
+on leading whitespace (verified live with python3), so without the advance every
+normal newline separator counts as a bogus "unparsed segment". Only decode errors at
+non-whitespace content count; a well-formed mixed log reports 0 skipped. Parser spec,
+E4, and AC6 updated.
+Classification: Mechanical (Python stdlib semantics decide)
+
+DP2-21 — non-null final `waiting` added to the proposal-trigger set (codex MAJOR =
+Claude MINOR, r4): it is one of DP2-11's three same-class durable STOP residuals and
+was already "reported as signal" in stats; trigger membership now matches the other
+two residuals (no stats-only carve-out). E5's clean-run definition, AC8, and DP2-6
+updated.
+Classification: Mechanical (consistency between the design's own residual set and its
+trigger set)
+
+DP2-22 — dedup-reference paths bound exactly (Claude MINOR, r4): repo-side references
+resolve under REPO_ROOT = state.json.repoRoot (OPERATING.md, TODO.md,
+.harness/decisions.md, .harness/followups.md); auto-memory index =
+~/.claude/projects/<proj>/memory/MEMORY.md with <proj> = absolute repoRoot, `/` and
+`.` each replaced by `-` (munging verified against the real ~/.claude/projects
+layout); unknown repoRoot (E10) ⇒ `not checked (repoRoot unknown)`, no cwd fallback.
+E10/AC3's "nothing else degrades" phrasing reconciled (header never degrades; Overlap
+renderings do). AC14 updated.
+Classification: Mechanical (the design's own SKILL.md explicit-binding rule forces it)
+
+r4 hygiene (Claude NIT) — the corpus's single `[MEDIUM]` heading noted as an accepted
+token-free loss in the Rule-H calibration note (1 of ~940, cannot flip AC8).
+Classification: Mechanical
+
+## Phase-2 design review round 5 fixes (2026-07-05) — extraction contract RESTRUCTURED
+
+DP2-23 — ONE unified line-level shape-agnostic extraction rule, Rule U (codex BLOCKING
++ coordinator structural directive): supersedes DP2-10's Rule H, DP2-19's Rule L, and
+the per-file precedence. Three consecutive rounds each broke a per-family assumption
+(r3 compound headings; r4 codex line shapes; r5 bracketed bullet tags in BOTH families
+— census: 100+ `- [MINOR]`/`- [MAJOR]`/`- [BLOCKING]` bullets in Claude review/harden
+files the old Rule H also missed — bracketless `### TOKEN` headings, and a mixed-file
+counterexample to "Rule H if any heading exists") — the family/precedence STRUCTURE was
+the recurring failure, not any one regex. Rule U = four empirically-enumerated carriers
+(heading-bracket, heading-bare `###`+ [`##`-level token headings are corpus section
+groupers, excluded], line-bracket, line-bare) + the ONE shared token→P-level mapping +
+one uniform guard set + heading-vs-body per-line dedup (a candidate under a
+finding-classified heading is not separately counted; bullets count when the nearest
+heading is not a finding). No per-file or per-family rule selection exists to get wrong.
+Classification: Mechanical (the corpus keeps electing line-level; structure follows)
+
+DP2-24 — verdict-prose guard grounded in the round-5 false-positive census (Claude
+MAJOR: ~23% of Rule-L P1-graded hits were verdict/resolution prose, incl. THIS run's
+own codex-harden-1.md:3 `**P1 remains: NO**` — a phantom P1 that would have force-fired
+AC8's proposal bar, the exact invented-lesson failure E5/DP2-6 guard against): (a) a
+NAMED extendable verdict-continuation guard list, seeded `remains`, `remaining`,
+`none`, `is addressed`, `closed`, `split correct` (post-tag-window, after skipping one
+optional parenthesized token list + optional `:`); (b) a token-hyphen back-reference
+guard on NON-heading carriers (`MAJOR-1(a)`, `BLOCKING-1.1:`, `P1-2`, `P1-sound.`,
+`P1-NEW]`) with headings exempt — census shows `### P2-1 (MINOR) — …` is a REAL
+numbered finding heading; (c) `CLOSED` added to the resolution/veto set (census:
+`— CLOSED` headings, `P1 closed:` lines). The r4 claims "line-start anchoring
+structurally excludes verdict prose" and "every corpus resolution marker is uppercase"
+were empirically false and are withdrawn from the design.
+Classification: Mechanical (the census decides)
+
+DP2-25 — bounded imprecision budget + EXECUTABLE calibration AC (coordinator directive,
+stops the whack-a-mole): ≤2% residual misgrades over graded findings accepted — mining
+is signal, not accounting; a stray corpus line is a calibration-note entry +
+guard-list addition, never a P1 against the design or a rule re-architecture. New AC17:
+the implement slice runs the FINAL Rule-U spec as a throwaway script over the FULL real
+corpus and appends a `Rule-U calibration` entry here (per-P-level figures indicative,
+never pinned; ≥20-hit precision spot-check; carrier/false-positive exemplar
+recall check incl. codex-harden-1.md:3 excluded; guard additions with their corpus
+lines). Budget exceeded ⇒ extend guards and re-run, never ship over it. The design pins
+rule INTENT + the seeded guard list, not literal counts.
+Classification: Taste (budget size + where calibration evidence lands; surfaced at
+next gate)
+
+DP2-26 — AC8 trigger set += harden/finalize churn (codex MAJOR): ≥1 harden or finalize
+FIX round — `phaseReview[*].hardenRound ≥ 1` or `finalizeRound ≥ 1`, artifact-derived
+when state.json is unreadable as `## AppliedEdits: yes` counts in `harden-<P>-N.md` /
+`review-finalize-N.md` (drive-harden.md:85 / drive-finalize.md:392's own derivation
+rule). Stats table now dual-sources harden/finalize fix rounds (counter +
+AppliedEdits file-count cross-check, mismatch = signal, file counts = E10 fallback);
+E5's clean-run definition includes zero fix rounds.
+Classification: Mechanical (the design's own dual-sourcing pattern extends)
+
+r5 hygiene (Claude MINORs, both cheap) — the 3 legacy binary raw-CLI-dump
+`codex-review-*.md` files named as a corpus shape (Rule U scans them, zero candidates,
+harmless; the wrong 44/470 figure left with the precedence); completeness-gate
+parenthetical += completedat_epoch's real strictness — any remaining interior
+whitespace after trimming ⇒ unparseable (bin/drive-retention.sh:159-180).
+Classification: Mechanical
+
+DP2-27 — round-6 convergent P1 fixes (Claude MAJOR x2 + codex BLOCKING), both
+full-corpus-measured above the ≤2% budget as single classes, both applied via Rule U's
+own extension mechanisms (no re-architecture, still four carriers): (a) guard 3's
+named verdict-continuation list += a digit, `count`/`counts`, `fix`/`fixes`/`fixed` —
+kills the verdict-count/scoreboard lines drive-review.md's return contract emits every
+round (`P1: 0 · P2: 2`, `P1 count: 0.`, `P1: 2 (both MAJOR) · P2: 1 (MINOR)`,
+`P1 fixes in commit …`; ~43 phantom P1s ≈ 3.0% of graded, AC8 force-fires on clean
+runs — the E5/DP2-6 invented-lesson failure; this run's own review-design-2.md:96);
+(b) line-bracket carrier += optional `**` before the bracket, mirroring line-bare —
+bold-before-bracket bullets `- **[BLOCKING] …` / `1. **[BLOCKING] …**` (36
+guard-surviving real findings in BOTH families ≈ 2.5% dropped silently). Exemplars
+added to Slice 2.1's must-catch/must-exclude lists and AC17(c).
+Classification: Mechanical (both voices converge; the census decides)
+
+DP2-28 — round-6 MINOR tightenings (all cheap, applied): E7 stub match stated as
+first-line BEGINS WITH `CODEX_UNAVAILABLE` (prefix, not equality — corpus stubs carry
+suffixes like `CODEX_UNAVAILABLE (rounds 2-3)`; suffixed form added to calibration
+exemplars); severity-count unit stated once = FINDING-MENTIONS per artifact
+(cross-round re-mentions are churn signal; `FIXED` deliberately NOT a resolution
+token — harden's genuine found-and-fixed findings must count); AC13's SLOC-overage
+path narrowed to overage DISCOVERED AT IMPLEMENT requiring a decisions.md entry titled
+`drive-retro SLOC overage` naming the forcing design clause(s) — the ≤150-line cap is
+contractual, not advisory (codex MINOR), testable form kept.
+Classification: Mechanical
+
+DP2-29 — round-7 guard-3 refinement (codex MAJOR + MINOR, Claude 2 MINORs; all
+applied, corpus-verified before writing): (a) verdict-continuation forms
+CARRIER-SCOPED — `fix`/`fixes`/`fixed` restricted to plain line-bare carriers (no
+bracket, no `**`, non-heading): bracket-carrier fix re-listings are real
+finding-mentions per the counted-unit contract and now count (`- [BLOCKING] fixed: …`
+dependency-map-persist review-design-2.md:7; `- [MAJOR brittle A3 test] FIXED -> …`
+checkmark-toggle-binding codex-review-finalize.md:26), while the corpus's one bare
+fix-verdict line (`P1 fixes in commit 117ce5f.` lever2-rebirth review-phase1-2.md:7)
+stays killed — scoping chosen over dropping fix* because dropping would re-admit that
+line as a phantom P1; digit + `count`/`counts` restricted to non-heading carriers
+(digit-titled heading findings `### [P1 BLOCKING] 4.2's …` — 4 corpus instances —
+count; zero heading-carrier verdict-count lines exist). (b) The optional `:` skip
+pinned token-adjacent (no intervening space) — `- P2 :462:` `:line:` metadata
+(addressables-unit2 codex-harden-2.md:4-5, TRUE P2s) no longer digit-killed.
+(c) Continuation-form match semantics stated: word-bounded, lowercase-as-written
+(`fix` ≠ `fixture`; `none` ≠ title-case `None of the retries …`; corpus census found
+zero uppercase verdict continuations). All rescued exemplars added to Slice 2.1
+must-CATCH + AC17(c); scoreboard exemplars re-walked and still excluded.
+Classification: Mechanical (corpus census decides; boundary unchanged)
+
+## Slice 2.1 implementation decisions (2026-07-05)
+
+### Rule-U calibration (AC17 — executable calibration over the FULL real corpus)
+Throwaway script (scratchpad `rule_u_calibrate.py` + `rule_u_exemplars.py`, not shipped —
+TR-3's no-shipped-code boundary holds) implementing the FINAL Rule-U spec, run over
+`~/.claude/harness-runs/*/{review-*,harden-*,codex-review-*,codex-harden-*}.md`.
+(a) Corpus figures (indicative only — never pinned in the command or test): 1478 files
+    scanned across 64 run dirs; 1450 graded finding-mentions — P1=663, P2=598, P3=189;
+    by carrier: heading-bracket 957, line-bracket 261, line-bare 200, heading-bare 32.
+(b) Precision spot-check: 25 randomly sampled P1-graded hits (seed 17), each manually
+    verified a true finding (real BLOCKING/MAJOR/P1 defect lines across 20+ distinct runs,
+    all four carriers represented). Phantom rate in sample: 0/25 — within the ≤2% budget.
+(c) Recall/exclusion exemplar check: ALL PASS — every must-CATCH carrier exemplar from the
+    Slice 2.1 calibration bullet extracts at the right P-level (26 synthetic forms incl.
+    compounds-once-at-highest, `2. **P1:**`, bare `P1:` label-once, `- P1/P2/P3` once-P1,
+    harden `— FIXED.` findings), including the carrier-scoping must-CATCH set verified at
+    their REAL corpus file:lines — dependency-map-persist `review-design-2.md:7`
+    `- [BLOCKING] fixed:` (P1), checkmark-toggle-binding `codex-review-finalize.md:26`
+    `- [MAJOR brittle A3 test] FIXED ->` (P1), digit-titled heading `### [P1 BLOCKING]
+    4.2's …` (P1), addressables-unit2 `codex-harden-2.md:4` `- P2 :462:` (P2). Every
+    census false-positive exemplar excludes (26 forms), including this run's own
+    `codex-harden-1.md:3` `**P1 remains: NO**` and `review-design-2.md:96`
+    `P1: 0 · P2: 0 · P3: 2` verified NOT findings at their real file:lines; the two
+    must-KEEP true P2s (`resolved-skipped` prose, `[MINOR -> noted, not blocking]`) grade P2.
+(d) Guard-list forms appended: NONE — the design's seeded list survived full-corpus
+    calibration unchanged. Accepted losses (stated per the design): the corpus's single
+    token-free `[MEDIUM]` heading; untagged child bullets under bare label lines;
+    token-tagged sub-bullets deduped under a finding heading. One implementation note the
+    spec text already implies: guard 4's hyphen check reads the ORIGINAL text following a
+    bare carrier's tag group (the `-` sits past the group boundary), not the window content.
+Classification: Mechanical (the corpus decides; budget met, no rule change).
+
+### drive-retro SLOC overage (AC13 — discovered at implement)
+`drive-retro.md` lands at 179 lines (`wc -l`), 29 over the ≤150 cap, after two dedicated
+compression passes (house-style ~98-col wrap, merged bullets, compressed snippet). Forcing
+clauses — the AC-mandated content exceeds the cap at readable wrap width:
+- AC16's full Rule-U classification contract (four carriers + tag-window rule + four uniform
+  guards with the named carrier-scoped continuation list + per-line dedup + budget): §6 = 55
+  lines on its own;
+- AC6's mandatory inline tolerant-decode snippet (10 fenced lines + FORBIDDEN/degrade prose);
+- AC7+AC8's per-metric source naming, dual-sourced cross-checks, 5-field proposal contract
+  and full 6-member signal-trigger set;
+- AC3/AC14's exact degraded-path renderings and exact dedup-reference path bindings.
+Cutting further would drop clauses AC10's section-bound pins (and the design review) require
+present. Classification: Mechanical (cap vs mandated-content conflict resolved via the
+design's own narrow overage path).
+Update (slice 2.1 fix r2): now 183 lines — the round-2 marker-absent done-path clause (§2) added 4; forcing clauses unchanged.
+Update (run main-20260705-130712, retro→Completion wiring): now 184 lines — the role-paragraph reword to the auto-invoked-at-run-wrap status (§ role paragraph, +1 physical line) shifted the reviewed size 183→184; `REVIEWED_OVERAGE_LINES` moved with it. Forcing clauses unchanged.
+
+### S2.1-a — minor drift: _helpers.py location
+Design/AC10 say "uses `tests/contracts/_helpers.py` REPO_ROOT like its siblings"; the real
+helper lives at `tests/_helpers.py` (importable as `from _helpers import REPO_ROOT` via
+conftest's sys.path insert — exactly how every sibling imports it). Adapted: same import
+form, no new helper file. Classification: Mechanical.
+
+### S2.1-b — AC13 pytest pin deliberately not shipped
+AC13's "(Testable form: wc -l ≤ 150 OR a decisions.md entry …)" is verified at review time
+against $RUN_DIR/decisions.md (this file). A shipped repo pytest cannot reference $RUN_DIR
+(absent in CI) and pinning `.harness/decisions.md` would red pre-ship (run ledgers promote
+at ship) — so the AC13 check stays a review-time obligation, like AC10's mutation-verify
+and AC17's calibration. All other testable ACs carry pins in
+tests/contracts/test_drive_retro_contract.py (21 pins, each mutation-verified red).
+Classification: Mechanical.
+
+- **S2.1-b superseded (harden-2 r1, Mechanical)** — AC13 now HAS a shipped CI-runnable pytest guard (`test_sloc_cap_or_logged_overage`): ≤150 lines OR the `drive-retro SLOC overage` entry present in the ship-promoted `.harness/decisions.md`, with the pre-promotion window bounded at 183 lines. Ship promotion must keep the entry title verbatim.
+- **AC13 guard final form (harden-2 r2, Mechanical)** — `test_sloc_cap_or_exact_reviewed_overage`: pass iff ≤150 lines OR exactly the reviewed size (exact pin, `REVIEWED_OVERAGE_LINES = 183`); any drift up or down reds and forces a re-review that moves the pin and the `drive-retro SLOC overage` entry together. Supersedes the r1 ledger OR-leg form (whole-file grep of `.harness/decisions.md` — vacuous post-promotion) and the r1 ≤183 window; the ledger leg is REMOVED, so ship promotion no longer carries a title-verbatim obligation for this guard.
+
+- **AC13 testable-form amendment (harden-2 regress r2, Mechanical)** — design-phase2.md AC13's parenthetical testable form amended to the exact-pin realization (`wc -l ≤ 150 OR == REVIEWED_OVERAGE_LINES`), because the originally-stated OR-leg (`$RUN_DIR/decisions.md` entry) is CI-unreachable and a `.harness/decisions.md` substring leg is vacuous post-promotion (codex regress r2 MAJOR). The prose overage-discipline clause is unchanged; the pin is strictly stronger (any drift reds). Doc updated per OPERATING.md's update-the-doc rule; codex finding resolved by contract unification, not overruled.
+
+### Finalize r2 — codex P1 overrule (AC13 ledger message)
+Codex round-2 flagged test_sloc_cap_or_exact_reviewed_overage (test:66) as an "unauditable pin"
+because the `drive-retro SLOC overage` decisions.md entry it names is absent from committed branch
+d04355cf. OVERRULED with evidence: (a) the assertion is a pure line-count check (n<=150 OR n==183)
+that passes and does not read the ledger; (b) the `### drive-retro SLOC overage` entry exists at
+$RUN_DIR/decisions.md (the run ledger) and drive-ship promotes it into .harness/decisions.md at
+ship — codex inspected the PRE-promotion branch (ledger promotion is a ship-time step by design);
+(c) the message's guidance to update that entry on a re-review is correct post-ship. Not fixed.
+Classification: Mechanical (adversarial finding refuted at the integrated/ship path).
+
+
+## /drive run main-20260705-130712 — wire /drive-retro into Completion (promoted at ship 2026-07-05T14:24:36Z)
+
+
+## D1 — Make the wrap-decant explicit in Completion (not just implied by OPERATING.md)
+Classification: Mechanical.
+The Completion section today never names the standing wrap-`/decant`; it is only
+implied by OPERATING.md's standing rule (and referenced from I1 step 5.5). To make the
+retro→decant ORDERING load-bearing and pin-able, the Completion edit wires BOTH steps
+explicitly and in order: `/drive-retro <runId>` first, then the standing wrap-`/decant`.
+Principle: explicit-over-clever + completeness (an ordering you can't pin isn't enforced).
+
+## D2 — Invert the existing negative pin rather than delete it
+Classification: Mechanical.
+`test_drive_md_does_not_reference_drive_retro` currently asserts drive.md does NOT
+reference `/drive-retro` (v1 manual). Wiring retro in REDS it. Replace it with a POSITIVE
+wiring pin (retro referenced inside Completion, ordered before the wrap-decant, gated on
+done) so the contract keeps guarding the wiring instead of forbidding it. The data-driven
+`test_drive_command_refs.py` needs no fixture change (drive-retro.md already exists).
+
+## D3 — Gate the wrap sequence on the terminal-done signal, not on section position
+Classification: Mechanical.
+Completion runs retro→decant ONLY when the run is truly done (`completedAt` present OR
+`state.stage=="done"`) — the same authority retro's own completeness gate uses. A run that
+STOPs before done never reaches this terminal state, so both retro and the wrap-decant are
+correctly skipped; the per-seam I1 step-5.5 rebirth decant stays retro-free.
+# Decisions — main-20260705-130712 (wire /drive-retro before wrap-decant)
+
+## D-0 (Stage 0) — premise clear, no clarification
+Premise = TODO.md:134 (wire /drive-retro into /drive Completion, before wrap-decant, at true
+run-wrap). Unambiguous; proceeded to plan without a premises AUQ.
+
+## Plan decisions (design.md D1-D4)
+- D1 (Mechanical) — name BOTH wrap steps explicitly in Completion (retro then /decant) so
+  retro-first ordering is load-bearing + pin-able.
+- D2 (Mechanical) — invert test_drive_md_does_not_reference_drive_retro into a positive
+  section-bound wiring pin (keep a guard, don't delete).
+- D3 (Mechanical) — gate the wrap sequence on terminal-done (completedAt OR stage=="done"),
+  the same authority retro's completeness gate uses; STOPped runs skip both retro + wrap-decant.
+- D4 (Mechanical; BOTH design-review voices round 1, consensus P1) — EXPAND scope to refresh
+  drive-retro.md's now-false invocation-status claims (frontmatter "Not invoked by /drive (v1)"
+  + role paragraph "named follow-on, not built") AND update the role-paragraph pin (test:353),
+  in this run. Leaving them stale ships a self-contradicting command contract + a string pin
+  enforcing the false claim (callee must match caller's asserted contract). Behavior/contract of
+  retro unchanged; only invocation-STATUS prose moves. In blast radius, trivial effort.
+
+## Phase-1 design decisions (design-phase1.md)
+- D5 (Mechanical) — MOVE the SLOC pin (`REVIEWED_OVERAGE_LINES` 183→184) + the
+  `.harness/decisions.md` `### drive-retro SLOC overage` ledger note TOGETHER, rather than
+  squeezing the status reword back into 183 lines. The accurate reword is ~60 chars longer
+  (adds "completed-run-only", "auto-invoked at the true run-wrap", "still operator-invocable",
+  "wired into drive.md Completion"); the role paragraph goes 7→8 physical lines → file 184.
+  Packing to 183 forces contrived >100-col lines / a brittle future-reflow hazard; the pin's
+  own comment invites moving pin+ledger together (explicit-over-clever + pragmatic). Only test
+  line 66 is load-bearing (the ledger OR-leg was already removed, decisions.md:3197); the
+  ledger note is documentation hygiene. Expands slice 1.1's owned files to include
+  `.harness/decisions.md`.
+- D6 (Mechanical; review r2, both voices + verified P1) — EXPAND the drive.md edit boundary
+  from "Completion only" to add explicit routes from BOTH terminal-done sites into the
+  `## Completion` wrap sequence: Stage 5's ship line (Edit 1b) AND the Done-via-resume teardown
+  step 5 (Edit 1c). The r1 Completion-only resolution was WRONG — the resume teardown lands
+  `stage="done"` and RETURNS with no rule routing it into Completion (referenced nowhere else;
+  Stop hook ends the turn at stage=done), so retro→decant would silently never fire for
+  resume-completed runs. Both routes are in-file drive.md edits (same shared-contract unit →
+  still ONE slice); the wiring pin is strengthened to bind both routes. Supersedes the r1 OQ2
+  "Completion-only / no edit outside Completion" note.
+- OQ2 resolved (design-phase1.md r2): the wrap sequence is DEFINED once in `## Completion`
+  (retro → wrap-/decant → Report), gated on terminal-done as a defensive confirmation, and BOTH
+  terminal-done sites (Stage 5 ship line + resume teardown step 5) EXPLICITLY route into it — a
+  control-flow guarantee, not adjacency inference.
+- D7 (Mechanical; review r3, both voices + Claude P1-B) — REORDER Path B (resume Done-via-resume
+  teardown) so the retro→decant wrap runs BETWEEN step 4 (`completedAt` written — already
+  satisfies retro's completeness gate) and the new final step (`stage="done"` written LAST). In
+  that pre-`stage=done` window, with `waiting` empty, the stop-hook FORCES the coordinator
+  forward, so the wrap is GUARANTEED to complete before turn-end — closes r2's post-done drop
+  window with zero new machinery (pure sequencing). Path A (normal ship) keeps its post-done
+  wrap via `## Completion` after drive-ship returns (same turn, immediately post-Gate-B, no
+  seam); documented HONESTLY as a tolerated best-effort characteristic (interrupted-mid-wrap
+  drop recovered ONLY by a manual re-run, NOT automatic §I1 recovery). Path A's symmetric
+  ship-side reorder deferred to followups.md (drive-ship.md scope, out of this slice — task
+  excludes drive-ship.md internals). Also (P1-A) the wiring pin is tightened: ordering anchored
+  on the `/drive-retro <runId>` INVOCATION (not the possessive), and each route leg anchored to
+  its ACTUAL line with `route_idx < write_idx` — mutation-verified (delete/reorder either route
+  edge reds). Supersedes r2's post-done both-route framing. Still ONE slice.
+- D8 (Mechanical; phase-review codex BLOCKING, confirmed) — The Completion done-gate wording
+  tightened from "completedAt exists" to "parseable completedAt" to match the REAL contract:
+  `is_done()` in `bin/drive-retention.sh` and retro's §2 completeness gate require a PARSEABLE
+  `completedAt` (or `stage == "done"`), NOT mere file existence — an existing-but-unparseable
+  marker does NOT authorize done. Applied to `## Completion` gate prose (Edit 1a) and the
+  Done-via-resume teardown step 5 (Edit 1c), and the wiring pin strengthened with an
+  `assert "parseable" in comp` so a future exists-vs-parseable regression reds (mutation-verified).
+## Run drive-ctx-summary-20260705-035515 (2026-07-05) — context-of-execution summary + /goal removal
+
+
+## D1 — ONE phase / one slice
+- **Classification:** Mechanical
+- Shared-contract spec (`drive.md`, `drive-plan.md`) + its string-pin tests
+  (`test_rebirth_handshake.py`) + descriptive docs must move together; heavy same-file
+  overlap between the two changes; no disjoint file ownership (no fan-out), no
+  foundation-before-dependents (no staged-risk). Splitting risks a contract failing to transfer.
+
+## D2 — Summary structural home = new shared step
+- **Classification:** Taste (recommend; surface at Gate A)
+- Add `## Emit context-of-execution summary (shared step)` to `drive.md`, sibling to
+  `Emit run graph`, data-driven from the SAME durable sources (state.json / design.md /
+  review artifacts / decisions.md), never event-log. Rejected inline-duplication at each site
+  (DRY) and rejected folding into the run-graph section (distinct medium: prose vs ASCII chart).
+
+## D3 — Emit at both fresh-session points
+- **Classification:** Taste (recommend)
+- Emit at the outgoing rebirth handoff (Present human pause step 3 / I1 step 6) AND the incoming
+  resume (§ Run setup & resume). One handoff block serves Seam A + Seam B + context-pressure.
+  Scope the resume emission to fresh-session resumes (`sessionId` changed) — a same-session
+  re-paste already has context.
+
+## D4 — Propagate `/goal` removal into descriptive docs
+- **Classification:** Mechanical (completeness / DRY)
+- Reconcile `CLAUDE.md`, `README.md`, `docs/flow.md`, `docs/drive-enforcement.md` in the SAME
+  unit so no doc describes a removed mechanism (no dangling reference remains).
+
+## D5 — Test blast radius of `/goal` removal
+- **Classification:** Mechanical
+- DELETE the goal-mechanism pins: AC7 (`test_goal_rebirth_pause_clause_single_sourced_in_drive_md`
+  + `_assert_goal_rebirth_pause_consistent` + `_GOAL_REBIRTH_PAUSE_CLAUSE`) and the three AC12
+  tests (`test_handoff_block_goal_line_carries_leg_condition_placeholder`,
+  `test_leg_condition_selector_is_total_over_stage_enum`,
+  `test_leg_condition_selector_maps_each_leg_to_its_own_condition`) with their helpers/consts
+  (`_handoff_goal_line`, `_leg_selector_section`, `_LEG_BULLET_RE`, `_STAGE_TOK_RE`,
+  `_STAGE_ENUM`, `_leg_bullet_map`, `_assert_leg_condition_mapping`, `_PLANNING_*`, `_EXECUTE_*`).
+- UPDATE AC8 (`test_gate_precedence_gateA_emits_resume_via_seam_a`) + matching drive.md prose:
+  Gate A emits the `/drive <runId>` resume line via Seam A but NO goal; Gate B hands neither.
+- PRESERVE every rebirth/checkpoint pin (AC1, P1-2 wiring, AC4, AC9, AC11, cross-file steer) —
+  none depends on `/goal`.
+
+## D6 — Preserve AC4 bullet indices + AC1 step numbers
+- **Classification:** Mechanical (test-safety constraint carried into detailed design)
+- A new resume-path summary sub-bullet must sit at index ≥ 3 (AC4 reads bodies[0]=rebind,
+  [1]=marker-consume, [2]=rebirth-continue). Do not renumber I1 steps 1–5.5 (AC1 pins marker=4,
+  waiting=5, adjacent).
+
+## D7 (Taste) — skip full autoplan; dual-voice design review is the review bar
+This is a spec-doc change to /drive with no product/UX/DX surface autoplan (CEO→Design→Eng→DX)
+is built to review. Two independent adversarial voices (Claude reviewer + codex) converged in
+2 rounds after codex surfaced and we resolved 2 real P1s. Treating that convergence as Gate A's
+review bar; skipping the full autoplan run. Surfaced at Gate A for override.
+Classification: Taste.
+
+## D8 (Taste) — continue Execute in-session; skip the Seam A context-clear handoff
+Seam A/B are context-management mechanisms (fresh context per leg for long runs). This run's
+coordinator context is far from pressure and the change is one small phase, so a forced
+context-clear + manual `/drive <runId>` paste is ceremony with no benefit — and would demo the
+pre-edit /goal handoff anyway. Continuing Execute in-session; the Stop hook still governs
+turn-to-turn autonomy. Classification: Taste.
+
+## D9 (Mechanical) — summary section placement
+New `## Emit context-of-execution summary (shared step)` is a `## ` sibling inserted AFTER the
+whole `## Emit run graph` section (after Worked example B) and BEFORE `## Pipeline` — not a
+`### ` child of the run-graph section. Classification: Mechanical.
+
+## D10 (Taste; recommend) — outgoing summary ABOVE the chart, wired at Present-human-pause step 2
+Resolves design.md open-question #2 → summary ABOVE the run-graph chart (narrative-first). Wired
+by a rebirth-scoped clause added to Present human pause **step 2** (keeps step numbering intact —
+AC1 untouched), so the summary emits only when `waiting=="rebirth"` and prints before the chart;
+I1 step 6 gets a descriptive echo only (single executor, no double emission). Classification: Taste.
+
+## D11 (Mechanical) — resume emission = trailing sub-bullet + ephemeral fresh-session flag
+The incoming-resume emission is a NEW indented resume sub-bullet placed LAST (after "Counter
+reconstruction", before "- **Fresh run:**") — index ≥ 3, so AC4's bodies[0/1/2] indices are
+preserved (D6 hard constraint honored). Chose a trailing bullet over a loose paragraph for
+testability (section-bounded, pinnable). Fresh-session scoping reuses the sessionId-rebind step's
+existing `state.sessionId != $CLAUDE_CODE_SESSION_ID` predicate, captured as an EPHEMERAL
+coordinator variable (`freshSessionResume`) — NO new persisted state.json field. Classification:
+Mechanical (with a minor surfaced taste point: bullet vs paragraph).
+
+## D12 (Mechanical) — reworded Autonomous-continuation contract gets its own positive pin
+Beyond the AC-6 removal grep, add `test_autonomous_continuation_contract_states_hook_sole` so the
+rewrite is positively pinned (installed-hook-sole + hook-absent manual-continue degradation, no
+`/goal`), while the preserved L332–336 dual-nature paragraph keeps AC11 green. Repurpose the
+orphaned `_handoff_block` accessor for the AC5 paste-block pin rather than deleting it.
+Classification: Mechanical.
+
+## D13 (Mechanical) — followups.md L266–267 marked SUPERSEDED, not deleted
+The Phase-4 `/goal` cross-command clause follow-up is mooted by the full `/goal` removal; annotate
+it SUPERSEDED in place (history preserved) so no later work re-introduces the mechanism.
+Classification: Mechanical (completeness/DRY).
+
+## D14 (Mechanical) — site-15 reworded to keep AC-6 grep clean
+design-phase1.md §1.4 site 15 prescribed replacing the drive-enforcement.md L447-449 text with
+prose ending "no `/goal` anywhere (the installed Stop hook drives turn-to-turn continuation)".
+That literal `/goal` token would RED the AC-6 heightened-review grep (`rg '/goal\b'` over
+docs/), which permits only the incidental `drive-design.md:24 boundary/goal` hit. Reworded to
+"no goal is handed at any gate (the installed Stop hook drives turn-to-turn continuation)" —
+same meaning, zero `/goal` token. The grep (the load-bearing acceptance net) outranks the
+prescribed prose. Classification: Mechanical.
+
+## D15 (Mechanical) — rebase-at-ship onto main #62 + reviewed-sha re-bind
+Main advanced to 0b13c65 (#62 Trellis analysis + /drive-retro) after this run's baseRef 9beeac4.
+Rebased featureBranch onto 0b13c65 (clean — my core spec files have zero overlap with #62; only
+.harness/followups.md overlapped and auto-merged into disjoint regions, verified). AC-6
+anti-reintroduction pin re-verified GREEN with #62's docs/trellis-analysis.md (4 historical /goal
+refs, carved out) and drive-retro.md (no /goal) present. Re-bound finalize reviewed-sha to the
+post-rebase code tip 8d7696dd860d50880a2b3f0710a693be2220a2f4 (content byte-identical; per drive-ship-conformance-sha-binding).
+Classification: Mechanical.

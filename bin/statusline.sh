@@ -27,15 +27,11 @@ WINDOW=$(jq -r --arg model "$MODEL" --arg modelid "$MODEL_ID" '
 ' "$THRESHOLDS_FILE" 2>/dev/null | head -1)
 if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
 # Inline fallback (kept at column 0 so it is the same `case` shape the data file
-# mirrors): a faithful mirror of rebirth-thresholds.json's two window groups —
-# matching BOTH display-name AND id-forms against "$MODEL $MODEL_ID" (like the jq
-# path checks both fields) — used only when the file is unreadable. AC6 pins this
-# `case` and the json to identical numbers. Arm order mirrors the json rule order;
-# the 1M arm MUST precede the 200k arm — `Sonnet 4.6` contains `Sonnet 4`.
-case "$MODEL $MODEL_ID" in
-    *"Fable 5"*|*"fable-5"*|*"Sonnet 5"*|*"sonnet-5"*|*"Sonnet 4.6"*|*"sonnet-4-6"*|*"sonnet-4.6"*|*"Opus 4.8"*|*"opus-4-8"*|*"opus-4.8"*|*"Opus 4.7"*|*"opus-4-7"*|*"opus-4.7"*|*"Opus 4.6"*|*"opus-4-6"*|*"opus-4.6"*) WINDOW=1000000 ;;
-    *"Sonnet 4.5"*|*"sonnet-4-5"*|*"sonnet-4.5"*|*"Sonnet 4"*|*"sonnet-4"*|*"Haiku 4"*|*"haiku-4"*|*"Opus 4.5"*|*"opus-4-5"*|*"opus-4.5"*|*"Opus 4.1"*|*"opus-4-1"*|*"opus-4.1"*) WINDOW=200000 ;;
-    *) WINDOW=1000000 ;;
+# mirrors): same windows as rebirth-thresholds.json, used only when the file is
+# unreadable. AC6 pins this `case` and the json to identical numbers.
+case "$MODEL" in
+    *"Haiku"*|*"Sonnet 4.5"*|*"Sonnet 4.0"*|*"Opus 4.5"*|*"Opus 4.1"*)   WINDOW=200000 ;;
+    *)                                                                   WINDOW=1000000 ;;
 esac
 fi
 # The 1M-context beta is authoritative when active: Claude Code marks it as `[1m]` in
