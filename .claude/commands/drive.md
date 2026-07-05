@@ -210,9 +210,9 @@ verdict / merge / gate.
        `completedAt` ALONE: a marker written before removals finished would itself make the
        run sweepable.
     5. **Run the `## Completion` wrap sequence NOW — BEFORE writing `stage="done"`**
-       (`/drive-retro <runId>` → wrap-`/decant`). `completedAt` was written in step 4, which
-       already satisfies retro's completeness gate (`completedAt` present), so the wrap is valid
-       here; running it while `stage != "done"` and `waiting` is empty is the hook-protected
+       (`/drive-retro <runId>` → wrap-`/decant`). Step 4 wrote a **parseable** `completedAt`
+       (the ISO marker), which already satisfies retro's completeness gate / `is_done()`, so the
+       wrap is valid here; running it while `stage != "done"` and `waiting` is empty is the hook-protected
        window — the stop-hook keeps the coordinator working across turns, closing the
        turn-end/rebirth drop window (the hook fails open, so a hard crash is not prevented, but
        `stage` stays not-`done` and a resume retries this teardown). Best-effort/non-fatal still
@@ -1206,8 +1206,9 @@ wrap sequence (the ship path's terminal-done site).
 ## Completion
 
 This is the run's terminal wrap — the wrap sequence (retro then the wrap-decant) plus the
-Report. It is gated on the terminal-done signal (`$RUN_DIR/completedAt` exists OR
-`state.stage == "done"`) — the same authority retro's own completeness gate uses — so it only
+Report. It is gated on the terminal-done signal (a **parseable** `$RUN_DIR/completedAt` OR
+`state.stage == "done"`) — the same authority `is_done()` and retro's own completeness gate use
+(a completedAt that merely EXISTS but is unparseable does NOT authorize done) — so it only
 ever fires once the run is effectively done; re-invoking it is idempotent-safe (retro
 overwrites its single `retro-<runId>.md`, and the wrap-decant self-skips when nothing new was
 learned). Both terminal-done sites reach this same wrap sequence:

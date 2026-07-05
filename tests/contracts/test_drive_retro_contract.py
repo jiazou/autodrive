@@ -88,6 +88,11 @@ def test_drive_md_wires_retro_into_completion_before_decant():
     assert "completedAt" in comp and 'stage == "done"' in comp, (
         "Completion's wrap sequence must be gated on the terminal-done signal"
     )
+    # the gate must name the REAL is_done() contract — a PARSEABLE completedAt, not mere existence
+    assert "parseable" in comp, (
+        "Completion's gate must specify a *parseable* completedAt (is_done()'s real contract), "
+        "not mere file existence"
+    )
     # (2) resume teardown runs the wrap BEFORE writing stage="done" LAST (pre-done window)
     teardown = _drive_section(text, r"Done-via-resume teardown", r"^(  - \*\*|#{1,2}\s)")
     route_idx = teardown.find("Run the `## Completion` wrap sequence NOW")
