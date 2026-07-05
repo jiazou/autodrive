@@ -3208,3 +3208,95 @@ $RUN_DIR/decisions.md (the run ledger) and drive-ship promotes it into .harness/
 ship — codex inspected the PRE-promotion branch (ledger promotion is a ship-time step by design);
 (c) the message's guidance to update that entry on a re-review is correct post-ship. Not fixed.
 Classification: Mechanical (adversarial finding refuted at the integrated/ship path).
+
+
+## /drive run main-20260705-130712 — wire /drive-retro into Completion (promoted at ship 2026-07-05T14:24:36Z)
+
+
+## D1 — Make the wrap-decant explicit in Completion (not just implied by OPERATING.md)
+Classification: Mechanical.
+The Completion section today never names the standing wrap-`/decant`; it is only
+implied by OPERATING.md's standing rule (and referenced from I1 step 5.5). To make the
+retro→decant ORDERING load-bearing and pin-able, the Completion edit wires BOTH steps
+explicitly and in order: `/drive-retro <runId>` first, then the standing wrap-`/decant`.
+Principle: explicit-over-clever + completeness (an ordering you can't pin isn't enforced).
+
+## D2 — Invert the existing negative pin rather than delete it
+Classification: Mechanical.
+`test_drive_md_does_not_reference_drive_retro` currently asserts drive.md does NOT
+reference `/drive-retro` (v1 manual). Wiring retro in REDS it. Replace it with a POSITIVE
+wiring pin (retro referenced inside Completion, ordered before the wrap-decant, gated on
+done) so the contract keeps guarding the wiring instead of forbidding it. The data-driven
+`test_drive_command_refs.py` needs no fixture change (drive-retro.md already exists).
+
+## D3 — Gate the wrap sequence on the terminal-done signal, not on section position
+Classification: Mechanical.
+Completion runs retro→decant ONLY when the run is truly done (`completedAt` present OR
+`state.stage=="done"`) — the same authority retro's own completeness gate uses. A run that
+STOPs before done never reaches this terminal state, so both retro and the wrap-decant are
+correctly skipped; the per-seam I1 step-5.5 rebirth decant stays retro-free.
+# Decisions — main-20260705-130712 (wire /drive-retro before wrap-decant)
+
+## D-0 (Stage 0) — premise clear, no clarification
+Premise = TODO.md:134 (wire /drive-retro into /drive Completion, before wrap-decant, at true
+run-wrap). Unambiguous; proceeded to plan without a premises AUQ.
+
+## Plan decisions (design.md D1-D4)
+- D1 (Mechanical) — name BOTH wrap steps explicitly in Completion (retro then /decant) so
+  retro-first ordering is load-bearing + pin-able.
+- D2 (Mechanical) — invert test_drive_md_does_not_reference_drive_retro into a positive
+  section-bound wiring pin (keep a guard, don't delete).
+- D3 (Mechanical) — gate the wrap sequence on terminal-done (completedAt OR stage=="done"),
+  the same authority retro's completeness gate uses; STOPped runs skip both retro + wrap-decant.
+- D4 (Mechanical; BOTH design-review voices round 1, consensus P1) — EXPAND scope to refresh
+  drive-retro.md's now-false invocation-status claims (frontmatter "Not invoked by /drive (v1)"
+  + role paragraph "named follow-on, not built") AND update the role-paragraph pin (test:353),
+  in this run. Leaving them stale ships a self-contradicting command contract + a string pin
+  enforcing the false claim (callee must match caller's asserted contract). Behavior/contract of
+  retro unchanged; only invocation-STATUS prose moves. In blast radius, trivial effort.
+
+## Phase-1 design decisions (design-phase1.md)
+- D5 (Mechanical) — MOVE the SLOC pin (`REVIEWED_OVERAGE_LINES` 183→184) + the
+  `.harness/decisions.md` `### drive-retro SLOC overage` ledger note TOGETHER, rather than
+  squeezing the status reword back into 183 lines. The accurate reword is ~60 chars longer
+  (adds "completed-run-only", "auto-invoked at the true run-wrap", "still operator-invocable",
+  "wired into drive.md Completion"); the role paragraph goes 7→8 physical lines → file 184.
+  Packing to 183 forces contrived >100-col lines / a brittle future-reflow hazard; the pin's
+  own comment invites moving pin+ledger together (explicit-over-clever + pragmatic). Only test
+  line 66 is load-bearing (the ledger OR-leg was already removed, decisions.md:3197); the
+  ledger note is documentation hygiene. Expands slice 1.1's owned files to include
+  `.harness/decisions.md`.
+- D6 (Mechanical; review r2, both voices + verified P1) — EXPAND the drive.md edit boundary
+  from "Completion only" to add explicit routes from BOTH terminal-done sites into the
+  `## Completion` wrap sequence: Stage 5's ship line (Edit 1b) AND the Done-via-resume teardown
+  step 5 (Edit 1c). The r1 Completion-only resolution was WRONG — the resume teardown lands
+  `stage="done"` and RETURNS with no rule routing it into Completion (referenced nowhere else;
+  Stop hook ends the turn at stage=done), so retro→decant would silently never fire for
+  resume-completed runs. Both routes are in-file drive.md edits (same shared-contract unit →
+  still ONE slice); the wiring pin is strengthened to bind both routes. Supersedes the r1 OQ2
+  "Completion-only / no edit outside Completion" note.
+- OQ2 resolved (design-phase1.md r2): the wrap sequence is DEFINED once in `## Completion`
+  (retro → wrap-/decant → Report), gated on terminal-done as a defensive confirmation, and BOTH
+  terminal-done sites (Stage 5 ship line + resume teardown step 5) EXPLICITLY route into it — a
+  control-flow guarantee, not adjacency inference.
+- D7 (Mechanical; review r3, both voices + Claude P1-B) — REORDER Path B (resume Done-via-resume
+  teardown) so the retro→decant wrap runs BETWEEN step 4 (`completedAt` written — already
+  satisfies retro's completeness gate) and the new final step (`stage="done"` written LAST). In
+  that pre-`stage=done` window, with `waiting` empty, the stop-hook FORCES the coordinator
+  forward, so the wrap is GUARANTEED to complete before turn-end — closes r2's post-done drop
+  window with zero new machinery (pure sequencing). Path A (normal ship) keeps its post-done
+  wrap via `## Completion` after drive-ship returns (same turn, immediately post-Gate-B, no
+  seam); documented HONESTLY as a tolerated best-effort characteristic (interrupted-mid-wrap
+  drop recovered ONLY by a manual re-run, NOT automatic §I1 recovery). Path A's symmetric
+  ship-side reorder deferred to followups.md (drive-ship.md scope, out of this slice — task
+  excludes drive-ship.md internals). Also (P1-A) the wiring pin is tightened: ordering anchored
+  on the `/drive-retro <runId>` INVOCATION (not the possessive), and each route leg anchored to
+  its ACTUAL line with `route_idx < write_idx` — mutation-verified (delete/reorder either route
+  edge reds). Supersedes r2's post-done both-route framing. Still ONE slice.
+- D8 (Mechanical; phase-review codex BLOCKING, confirmed) — The Completion done-gate wording
+  tightened from "completedAt exists" to "parseable completedAt" to match the REAL contract:
+  `is_done()` in `bin/drive-retention.sh` and retro's §2 completeness gate require a PARSEABLE
+  `completedAt` (or `stage == "done"`), NOT mere file existence — an existing-but-unparseable
+  marker does NOT authorize done. Applied to `## Completion` gate prose (Edit 1a) and the
+  Done-via-resume teardown step 5 (Edit 1c), and the wiring pin strengthened with an
+  `assert "parseable" in comp` so a future exists-vs-parseable regression reds (mutation-verified).
