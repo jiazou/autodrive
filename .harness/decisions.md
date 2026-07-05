@@ -3300,3 +3300,115 @@ run-wrap). Unambiguous; proceeded to plan without a premises AUQ.
   marker does NOT authorize done. Applied to `## Completion` gate prose (Edit 1a) and the
   Done-via-resume teardown step 5 (Edit 1c), and the wiring pin strengthened with an
   `assert "parseable" in comp` so a future exists-vs-parseable regression reds (mutation-verified).
+## Run drive-ctx-summary-20260705-035515 (2026-07-05) — context-of-execution summary + /goal removal
+
+
+## D1 — ONE phase / one slice
+- **Classification:** Mechanical
+- Shared-contract spec (`drive.md`, `drive-plan.md`) + its string-pin tests
+  (`test_rebirth_handshake.py`) + descriptive docs must move together; heavy same-file
+  overlap between the two changes; no disjoint file ownership (no fan-out), no
+  foundation-before-dependents (no staged-risk). Splitting risks a contract failing to transfer.
+
+## D2 — Summary structural home = new shared step
+- **Classification:** Taste (recommend; surface at Gate A)
+- Add `## Emit context-of-execution summary (shared step)` to `drive.md`, sibling to
+  `Emit run graph`, data-driven from the SAME durable sources (state.json / design.md /
+  review artifacts / decisions.md), never event-log. Rejected inline-duplication at each site
+  (DRY) and rejected folding into the run-graph section (distinct medium: prose vs ASCII chart).
+
+## D3 — Emit at both fresh-session points
+- **Classification:** Taste (recommend)
+- Emit at the outgoing rebirth handoff (Present human pause step 3 / I1 step 6) AND the incoming
+  resume (§ Run setup & resume). One handoff block serves Seam A + Seam B + context-pressure.
+  Scope the resume emission to fresh-session resumes (`sessionId` changed) — a same-session
+  re-paste already has context.
+
+## D4 — Propagate `/goal` removal into descriptive docs
+- **Classification:** Mechanical (completeness / DRY)
+- Reconcile `CLAUDE.md`, `README.md`, `docs/flow.md`, `docs/drive-enforcement.md` in the SAME
+  unit so no doc describes a removed mechanism (no dangling reference remains).
+
+## D5 — Test blast radius of `/goal` removal
+- **Classification:** Mechanical
+- DELETE the goal-mechanism pins: AC7 (`test_goal_rebirth_pause_clause_single_sourced_in_drive_md`
+  + `_assert_goal_rebirth_pause_consistent` + `_GOAL_REBIRTH_PAUSE_CLAUSE`) and the three AC12
+  tests (`test_handoff_block_goal_line_carries_leg_condition_placeholder`,
+  `test_leg_condition_selector_is_total_over_stage_enum`,
+  `test_leg_condition_selector_maps_each_leg_to_its_own_condition`) with their helpers/consts
+  (`_handoff_goal_line`, `_leg_selector_section`, `_LEG_BULLET_RE`, `_STAGE_TOK_RE`,
+  `_STAGE_ENUM`, `_leg_bullet_map`, `_assert_leg_condition_mapping`, `_PLANNING_*`, `_EXECUTE_*`).
+- UPDATE AC8 (`test_gate_precedence_gateA_emits_resume_via_seam_a`) + matching drive.md prose:
+  Gate A emits the `/drive <runId>` resume line via Seam A but NO goal; Gate B hands neither.
+- PRESERVE every rebirth/checkpoint pin (AC1, P1-2 wiring, AC4, AC9, AC11, cross-file steer) —
+  none depends on `/goal`.
+
+## D6 — Preserve AC4 bullet indices + AC1 step numbers
+- **Classification:** Mechanical (test-safety constraint carried into detailed design)
+- A new resume-path summary sub-bullet must sit at index ≥ 3 (AC4 reads bodies[0]=rebind,
+  [1]=marker-consume, [2]=rebirth-continue). Do not renumber I1 steps 1–5.5 (AC1 pins marker=4,
+  waiting=5, adjacent).
+
+## D7 (Taste) — skip full autoplan; dual-voice design review is the review bar
+This is a spec-doc change to /drive with no product/UX/DX surface autoplan (CEO→Design→Eng→DX)
+is built to review. Two independent adversarial voices (Claude reviewer + codex) converged in
+2 rounds after codex surfaced and we resolved 2 real P1s. Treating that convergence as Gate A's
+review bar; skipping the full autoplan run. Surfaced at Gate A for override.
+Classification: Taste.
+
+## D8 (Taste) — continue Execute in-session; skip the Seam A context-clear handoff
+Seam A/B are context-management mechanisms (fresh context per leg for long runs). This run's
+coordinator context is far from pressure and the change is one small phase, so a forced
+context-clear + manual `/drive <runId>` paste is ceremony with no benefit — and would demo the
+pre-edit /goal handoff anyway. Continuing Execute in-session; the Stop hook still governs
+turn-to-turn autonomy. Classification: Taste.
+
+## D9 (Mechanical) — summary section placement
+New `## Emit context-of-execution summary (shared step)` is a `## ` sibling inserted AFTER the
+whole `## Emit run graph` section (after Worked example B) and BEFORE `## Pipeline` — not a
+`### ` child of the run-graph section. Classification: Mechanical.
+
+## D10 (Taste; recommend) — outgoing summary ABOVE the chart, wired at Present-human-pause step 2
+Resolves design.md open-question #2 → summary ABOVE the run-graph chart (narrative-first). Wired
+by a rebirth-scoped clause added to Present human pause **step 2** (keeps step numbering intact —
+AC1 untouched), so the summary emits only when `waiting=="rebirth"` and prints before the chart;
+I1 step 6 gets a descriptive echo only (single executor, no double emission). Classification: Taste.
+
+## D11 (Mechanical) — resume emission = trailing sub-bullet + ephemeral fresh-session flag
+The incoming-resume emission is a NEW indented resume sub-bullet placed LAST (after "Counter
+reconstruction", before "- **Fresh run:**") — index ≥ 3, so AC4's bodies[0/1/2] indices are
+preserved (D6 hard constraint honored). Chose a trailing bullet over a loose paragraph for
+testability (section-bounded, pinnable). Fresh-session scoping reuses the sessionId-rebind step's
+existing `state.sessionId != $CLAUDE_CODE_SESSION_ID` predicate, captured as an EPHEMERAL
+coordinator variable (`freshSessionResume`) — NO new persisted state.json field. Classification:
+Mechanical (with a minor surfaced taste point: bullet vs paragraph).
+
+## D12 (Mechanical) — reworded Autonomous-continuation contract gets its own positive pin
+Beyond the AC-6 removal grep, add `test_autonomous_continuation_contract_states_hook_sole` so the
+rewrite is positively pinned (installed-hook-sole + hook-absent manual-continue degradation, no
+`/goal`), while the preserved L332–336 dual-nature paragraph keeps AC11 green. Repurpose the
+orphaned `_handoff_block` accessor for the AC5 paste-block pin rather than deleting it.
+Classification: Mechanical.
+
+## D13 (Mechanical) — followups.md L266–267 marked SUPERSEDED, not deleted
+The Phase-4 `/goal` cross-command clause follow-up is mooted by the full `/goal` removal; annotate
+it SUPERSEDED in place (history preserved) so no later work re-introduces the mechanism.
+Classification: Mechanical (completeness/DRY).
+
+## D14 (Mechanical) — site-15 reworded to keep AC-6 grep clean
+design-phase1.md §1.4 site 15 prescribed replacing the drive-enforcement.md L447-449 text with
+prose ending "no `/goal` anywhere (the installed Stop hook drives turn-to-turn continuation)".
+That literal `/goal` token would RED the AC-6 heightened-review grep (`rg '/goal\b'` over
+docs/), which permits only the incidental `drive-design.md:24 boundary/goal` hit. Reworded to
+"no goal is handed at any gate (the installed Stop hook drives turn-to-turn continuation)" —
+same meaning, zero `/goal` token. The grep (the load-bearing acceptance net) outranks the
+prescribed prose. Classification: Mechanical.
+
+## D15 (Mechanical) — rebase-at-ship onto main #62 + reviewed-sha re-bind
+Main advanced to 0b13c65 (#62 Trellis analysis + /drive-retro) after this run's baseRef 9beeac4.
+Rebased featureBranch onto 0b13c65 (clean — my core spec files have zero overlap with #62; only
+.harness/followups.md overlapped and auto-merged into disjoint regions, verified). AC-6
+anti-reintroduction pin re-verified GREEN with #62's docs/trellis-analysis.md (4 historical /goal
+refs, carved out) and drive-retro.md (no /goal) present. Re-bound finalize reviewed-sha to the
+post-rebase code tip 8d7696dd860d50880a2b3f0710a693be2220a2f4 (content byte-identical; per drive-ship-conformance-sha-binding).
+Classification: Mechanical.

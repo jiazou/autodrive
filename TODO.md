@@ -152,3 +152,19 @@ Full audit with per-candidate evidence and both lens verdicts: session artifact
   /drive-retro grows an executable extractor (the DP2-5 `bin/drive-retro-stats.py` path): add a
   golden-fixture oracle over a captured $RUN_DIR so the extraction contract is behaviorally, not
   just lexically, pinned. Out of this run's scope (would breach the no-shipped-code boundary).
+
+## 2026-07-05 — drive-ctx-summary run (finalize follow-ups)
+
+
+Architectural / out-of-scope findings routed at the finalize stage (NOT fixed in-run;
+promoted to repo-root TODO.md at ship).
+
+- [P3][docs/test-accuracy] `tests/contracts/test_rebirth_handshake.py` module docstring
+  (line ~18) claims "Each load-bearing pin is proven to RED against a mutated COPY … in the
+  accompanying `test_*_flips_on_*` cases." No function in THIS file follows that naming
+  convention — the pins are inline section-bounded string-pins, and the `*_flips_on_*`
+  mutation-proof convention actually lives in sibling `test_checkpoint_contract.py`. This
+  inaccuracy is PRE-EXISTING (byte-identical in base 9beeac4), not introduced by this run —
+  hence routed, not fixed here. Fix: either add per-pin mutation-proof `test_*_flips_on_*`
+  cases for the load-bearing pins, or reword the docstring to describe the actual
+  inline-string-pin methodology. Out of the whole-run diff's introduced surface.

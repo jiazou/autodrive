@@ -264,11 +264,11 @@ them, and the ship gate backstops. Log here as matcher-hardening, NOT closed:
 - [P3] Phase 4: confirm no installer change is needed — `bin/rebirth-thresholds.json` is reached by sibling path from statusline.sh/drive-stop-hook.py (bin/ is canonical-by-reference). If a future deploy ever copies the hook to a non-sibling location, the data-file path resolution breaks; assert the sibling layout once.
 
 ## Phase 4 — cross-command /goal rebirth-pause clause (slice 3.1 codex P1 residual)
-- [P1→Phase4] The /goal templates in drive-plan.md (Gate A leg-2, ~:96) and drive-ship.md (Gate B re-arm) must ALSO admit a rebirth pause as a satisfying state ("OR is paused at a rebirth handoff (waiting=\"rebirth\") awaiting my paste of the resume line"), matching the drive.md templates slice 3.1 fixed. Otherwise a user-pasted leg-2/Gate-B goal would force the session past a rebirth handoff. Out of slice-3.1 scope (owns drive.md only); Phase 4 (docs/install/cross-command wiring) owns these files. (codex-review-3.1)
+- [P1→Phase4] The /goal templates in drive-plan.md (Gate A leg-2, ~:96) and drive-ship.md (Gate B re-arm) must ALSO admit a rebirth pause as a satisfying state ("OR is paused at a rebirth handoff (waiting=\"rebirth\") awaiting my paste of the resume line"), matching the drive.md templates slice 3.1 fixed. Otherwise a user-pasted leg-2/Gate-B goal would force the session past a rebirth handoff. Out of slice-3.1 scope (owns drive.md only); Phase 4 (docs/install/cross-command wiring) owns these files. (codex-review-3.1) — SUPERSEDED by drive-ctx-summary run: `/goal` removed entirely (`design-phase1.md`); there are no `/goal` templates left to propagate a rebirth clause into.
 
 ## Phase 4 detailed design — out-of-scope discoveries
 - [P3] Deep state.json validation (cross-checking every slice's `owns`/`deps` graph against git refs, verify-attempt/ship-field VALUE consistency) is out of `--mode state-lint` scope — state-lint validates parses + routing fields PRESENT + WELL-FORMED (type/shape) only, the subset resume actually keys on. Full graph cross-validation is a follow-up, not a blocker (D40).
-- [P3] Optional belt-and-suspenders: a one-sentence Gate-B cross-reference in drive-ship.md that a rebirth handoff during ship is governed by the leg-2 goal's rebirth-pause clause. Non-load-bearing (the leg-2 clause already covers it, D41); add only if a reviewer insists.
+- [P3] Optional belt-and-suspenders: a one-sentence Gate-B cross-reference in drive-ship.md that a rebirth handoff during ship is governed by the leg-2 goal's rebirth-pause clause. Non-load-bearing (the leg-2 clause already covers it, D41); add only if a reviewer insists. — SUPERSEDED by drive-ctx-summary run: `/goal` removed entirely (`design-phase1.md`); the leg-2 goal no longer exists, so this belt-and-suspenders is moot.
 - [P3] Threshold-value empirical tuning (hard 0.85 / soft 0.75 → measured one-clean-checkpoint headroom) remains a follow-up (carried from Phase 2 followups; documented in Phase 4 docs as a residual, not tuned here).
 
 ## state-lint deps/owns GRAPH cross-validation (design-scoped out, D40)
@@ -596,3 +596,20 @@ tests/contracts/test_drive_retro_contract.py:114 — verbose mutation-explainer 
   (count("/drive-retro <runId>")==1 in Completion; ==2 whole-file) + frontmatter substrings red on
   benign rewording. By-design for load-bearing status/exclusivity claims — a reword SHOULD trigger
   re-review. Already noted under "Contract-pin brittleness to rewording". (Codex finalize r1.)
+## Run drive-ctx-summary-20260705-035515 (2026-07-05) — context-of-execution summary + /goal removal
+
+
+## Out-of-scope discoveries
+
+- **Mission Control's own "session goal" concept is a separate, unrelated `goal`**
+  (`mission-control/bin/harvest.py`, `tests/mc/test_today.py`, `tests/mc` fixtures). It is the
+  harvest/standup session-label feature, NOT the `/drive` `/goal` printout. Confirmed unrelated
+  during blast-radius scan — intentionally NOT touched by this run. Logged so a future grep for
+  `goal` does not mistake it for a dangling `/drive` reference.
+
+- **`drive-design.md` line 24 "goal"** ("the high-level design — find phase `<P>`'s
+  scope/boundary/goal") is the design-goal noun, unrelated to the `/goal` command. Not touched.
+
+- **`.harness/decisions.md` / `.harness/followups.md`** contain historical `/goal` references
+  (records of prior lever-2 rebirth work). These are append-only run-history ledgers, not live
+  spec; leaving them is correct (they record what was decided at the time). Not edited.
