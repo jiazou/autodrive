@@ -101,6 +101,14 @@ def test_completeness_gate_marker_absent_done_path():
     assert "stats and Overlap compute normally" in sec
 
 
+def test_completeness_gate_normal_path_renders_marker_content():
+    """Interface B's `completed:` contract has THREE renderings; the normal accepted path
+    renders the parseable marker content itself (design-phase2.md Interface B header)."""
+    sec = _norm(_section(_text(), r"^## 2 — Completeness gate"))
+    assert "the header's `completed:` field renders the accepted path" in sec
+    assert "the marker content when parseable" in sec
+
+
 def test_completeness_gate_degraded_done_paths():
     sec = _norm(_section(_text(), r"^## 2 — Completeness gate"))
     assert "`n/a (state.json unreadable)`" in sec
@@ -266,11 +274,15 @@ def test_proposal_five_fields():
 
 
 def test_class_to_destination_routing():
-    """Deleting the routing matrix must red: the Destination vocabulary and its
-    class→destination source (§Self-Improvement matrix + process-signal → TODO.md)."""
+    """Class-side drift must red too: pins BOTH vocabularies (the Class taxonomy and the
+    Destination set) plus the class→destination semantics — the memory classes route via
+    OPERATING.md §Self-Improvement's matrix, and the retro-specific class routes
+    `process-signal → TODO.md` (design-phase2.md Class→Destination mapping)."""
     sec = _norm(_section(_text(), r"^## 7 — Write the ONE output"))
-    assert ("OPERATING.md | project CLAUDE.md/docs | skill/command file <name> | "
-            "auto-memory | TODO.md") in sec
+    assert ("**Class** behavioral-rule | tool/env-gotcha | skill-gap | process-signal "
+            "| one-off") in sec
+    assert ("**Destination (proposal only)** OPERATING.md | project CLAUDE.md/docs | "
+            "skill/command file <name> | auto-memory | TODO.md") in sec
     assert "OPERATING.md §Self-Improvement's matrix + process-signal → TODO.md" in sec
 
 
