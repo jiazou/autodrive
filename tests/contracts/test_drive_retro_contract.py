@@ -88,10 +88,13 @@ def test_drive_md_wires_retro_into_completion_before_decant():
     assert "completedAt" in comp and 'stage == "done"' in comp, (
         "Completion's wrap sequence must be gated on the terminal-done signal"
     )
-    # the gate must name the REAL is_done() contract — a PARSEABLE completedAt, not mere existence
-    assert "parseable" in comp, (
+    # the gate must name the REAL is_done() contract — a PARSEABLE completedAt, not mere existence.
+    # Non-vacuous: match a "parseable" that is NOT the "unparseable" clarifier (negative lookbehind)
+    # AND sits within the gate clause next to the completedAt token, so reverting the gate to
+    # "exists" REDs even if the "unparseable does NOT authorize" clarifier sentence remains.
+    assert re.search(r"(?<!un)parseable[^\n]{0,40}completedAt", comp), (
         "Completion's gate must specify a *parseable* completedAt (is_done()'s real contract), "
-        "not mere file existence"
+        "not mere file existence — and not merely mention 'unparseable' in a clarifier"
     )
     # (2) resume teardown runs the wrap BEFORE writing stage="done" LAST (pre-done window)
     teardown = _drive_section(text, r"Done-via-resume teardown", r"^(  - \*\*|#{1,2}\s)")
