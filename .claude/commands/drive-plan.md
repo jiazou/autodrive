@@ -128,16 +128,13 @@ unreachable, emit a one-line `(run graph unavailable: drive.md not found)` note 
 continue; do NOT paraphrase the spec); (3) present Gate A and wait for approval; clear
 `waiting = null` on approval.
 
-Reaching this gate satisfied (and so auto-cleared) the leg-1 `/goal`. Do NOT hand the
-execute-leg goal here: on approval the coordinator runs **Seam A** — a deterministic
-context-clear handoff (drive.md § Stage 1 / § I1) — which clears context so Execute begins
-in a FRESH session and presents the `/drive <runId>` resume line **plus** the execute-leg
-`/goal` together in its handoff block (single source). So at Gate A just present the
-direction + Taste/Challenge items and wait for approval; the handoff that follows delivers
-the resume line and goal.
+At Gate A just present the direction + Taste/Challenge items and wait for approval. On
+approval the coordinator runs **Seam A** — a deterministic context-clear handoff (drive.md
+§ Stage 1 / § I1) — which clears context so Execute begins in a FRESH session and presents
+the `/drive <runId>` resume line (its single source). No goal is emitted.
 
-(Running `/drive-plan` standalone, without the coordinator: after approval re-arm the
-execute-leg goal and continue manually — the deterministic handoff is the coordinator's step.)
+(Running `/drive-plan` standalone, without the coordinator: after approval continue manually
+— the deterministic handoff is the coordinator's step.)
 
 ## After this stage
 

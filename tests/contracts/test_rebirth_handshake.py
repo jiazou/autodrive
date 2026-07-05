@@ -3,7 +3,8 @@
 The lever-2 rebirth pause/resume handshake is split across two files that MUST agree:
   * `.claude/commands/drive.md` — the coordinator prose: the I1 safe-boundary handler, the
     `↻ REBIRTH` run-graph node, the handoff block, the resume rebirth-continue +
-    `rebirth_pending` re-arm, the canonical `waiting` amendment, and gate precedence.
+    `rebirth_pending` re-arm, the canonical `waiting` amendment, gate precedence, the
+    context-of-execution summary shared step, and the hook-sole continuation contract.
   * `bin/drive-stop-hook.py` — the Stop-hook escalation steer: once `rebirth_pending` is set
     and the run is still over hard water, the hook steers the coordinator to perform the I1
     handshake at its next safe boundary.
@@ -11,10 +12,10 @@ The lever-2 rebirth pause/resume handshake is split across two files that MUST a
 A drift on EITHER side — a reordered I1 step, a dropped legend glyph, a desynced canonical
 `waiting` definition, a hook steer that no longer names the handshake the prose implements —
 reds a pin here. The pins are STRUCTURAL/bounded, NOT loose substrings: section-bounded
-enumeration + by-index ordering (`_I1_STEP_RE`, `_RESUME_BULLET_RE`), contiguous-clause
-literals (whitespace-normalized), and a total-over-the-enum selector check. Each load-bearing
-pin is proven to RED against a mutated COPY of the relevant prose/code (never the real files)
-in the accompanying `test_*_flips_on_*` cases.
+enumeration + by-index ordering (`_I1_STEP_RE`, `_RESUME_BULLET_RE`) and contiguous-clause
+literals (whitespace-normalized). Each load-bearing pin is proven to RED against a mutated
+COPY of the relevant prose/code (never the real files) in the accompanying
+`test_*_flips_on_*` cases.
 """
 import re
 
@@ -276,27 +277,6 @@ def _handoff_block():
     return md[fence_open: fence_close]
 
 
-def _handoff_goal_line():
-    """The `/goal …` line inside the bounded handoff block, whitespace-normalized — the
-    leg-aware re-arm line whose trailing `<leg-condition>` placeholder the selector binds.
-    Bounded to the handoff block so an unrelated `/goal` line elsewhere can't satisfy it."""
-    block = _norm(_handoff_block())
-    start = block.index("/goal The /drive run <runId> is driving autonomously toward")
-    # the line is the goal sentence through its trailing `<leg-condition>` placeholder token
-    return block[start:]
-
-
-def test_handoff_block_goal_line_carries_leg_condition_placeholder():
-    """AC12: the handoff block's `/goal` re-arm line actually CONTAINS the `<leg-condition>`
-    placeholder token (not a dropped/empty tail) — so the leg-aware condition is bound at
-    resume, not silently omitted. Dropping the placeholder from the `/goal` line reds this."""
-    goal_line = _handoff_goal_line()
-    assert "<leg-condition>" in goal_line, (
-        "the handoff block's `/goal` re-arm line must carry the `<leg-condition>` placeholder "
-        "token (a dropped placeholder would re-arm a leg-blind goal)"
-    )
-
-
 # =========================================================================== #
 # AC4 — resume treats rebirth-waiting as CONTINUE; rebirth_pending re-arm at the
 # sessionId-rebind step (single reset point). Bounded/enumerated by BULLET INDEX.
@@ -452,25 +432,25 @@ def test_reset_on_resume_is_structural_not_prose_only():
 
 
 # =========================================================================== #
-# AC8 — gate precedence (updated for deterministic Seam A): on approval Gate A fires the
-# Seam A handoff, so Gate A DOES emit the `/drive <runId>` resume line + the execute-leg
-# `/goal` (Execute starts fresh); Gate B hands NO goal and NO resume token (push is
+# AC8 — gate precedence (deterministic Seam A, NO goal): on approval Gate A fires the
+# Seam A handoff, so Gate A DOES emit the `/drive <runId>` resume line (NO goal — the
+# `/goal` mechanism was removed); Gate B hands NO goal and NO resume token (push is
 # immediate). The OLD "NEITHER gate emits a resume token" invariant is intentionally
 # superseded by the deterministic context-clear after Gate A. (Ground truth: drive-ship.md
 # Gate B pushes after approval, no goal.)
 # =========================================================================== #
 def test_gate_precedence_gateA_emits_resume_via_seam_a():
-    """AC8 (deterministic Seam A): drive.md's gate-precedence prose states that on approval
-    Gate A fires the Seam A handoff and so DOES emit the `/drive <runId>` resume line + the
-    execute-leg `/goal` (Execute begins in a fresh session), while Gate B hands NO goal and
+    """AC8 (deterministic Seam A, NO goal): drive.md's gate-precedence prose states that on
+    approval Gate A fires the Seam A handoff and so DOES emit the `/drive <runId>` resume
+    line with NO goal (Execute begins in a fresh session), while Gate B hands NO goal and
     NO resume token (immediate push, no next leg). The OLD 'NEITHER gate emits a resume
     token' invariant is intentionally superseded — Gate A now clears context after approval."""
     blob = _norm(_drive_md())
-    # Gate A now emits the resume line + the execute-leg goal (via the deterministic Seam A handoff)
+    # Gate A now emits the resume line (NO goal — the /goal mechanism is gone), via Seam A
     assert (
-        "Gate A DOES emit the `/drive <runId>` resume line + the execute-leg `/goal`"
+        "Gate A DOES emit the `/drive <runId>` resume\nline (NO goal)".replace("\n", " ")
     ) in blob, (
-        "gate precedence must state Gate A DOES emit the resume line + execute-leg /goal "
+        "gate precedence must state Gate A DOES emit the resume line (NO goal) "
         "(the deterministic Seam A handoff fires on approval)"
     )
     # Gate B still hands nothing — no goal, no resume token (immediate push)
@@ -551,132 +531,6 @@ def test_hook_docstring_enumerates_rebirth_dual():
     assert "The hook does not distinguish it — it acts on truthiness only" in doc, (
         "the docstring must state the hook acts on truthiness only"
     )
-
-
-# =========================================================================== #
-# AC12 — the rebirth-handoff `/goal <leg-condition>` selector is TOTAL over the stage enum
-# (premises, plan, execute, finalize, verify, ship) → exactly one leg-condition each.
-# =========================================================================== #
-# A leg-condition selector bullet: a list item (`- `) keyed on `stage` that lists the stages
-# it covers in a `{…}` brace group and maps them to a leg-CONDITION body. Loosened from the
-# original (which hard-coded a 3-space indent, a `:`-terminated single line, and a 5-space
-# one-line body) to pin the MEANING — the stage-set → condition partition — not incidental
-# indentation/wrapping. Still bites on a real partition change: the braces capture is the
-# load-bearing selector, and `cond` must be non-empty (a stage moved/dropped reds the
-# total-coverage check below; a body-less bullet reds the non-empty check).
-#   - `stages`: everything inside the first `{…}` after `stage` (the covered stage tokens).
-#   - `cond`  : the bullet's remaining text after the brace group up to the next sibling
-#               `- ` bullet (or block end) — wrap-tolerant, so a reflowed multi-line
-#               condition still reads as one non-empty body.
-_STAGE_ENUM = ("premises", "plan", "execute", "finalize", "verify", "ship")
-_LEG_BULLET_RE = re.compile(
-    r"^\s*- .*?`stage`.*?\{(?P<stages>[^}]*)\}(?P<cond>.*?)(?=^\s*- |\Z)",
-    re.MULTILINE | re.DOTALL,
-)
-_STAGE_TOK_RE = re.compile(r"`\"(\w+)\"`")
-
-
-def _leg_selector_section():
-    """The `Select <leg-condition> by state.stage` block — bounded from its bolded heading
-    to the next blank-line-separated paragraph, so only its selector bullets are scanned."""
-    md = _drive_md()
-    start = md.index("**Select `<leg-condition>` by `state.stage`**")
-    end = md.index("\n\n", start)
-    return md[start:end]
-
-
-def test_leg_condition_selector_is_total_over_stage_enum():
-    """AC12: the rebirth-handoff `/goal <leg-condition>` selector covers the FULL stage enum
-    (premises, plan, execute, finalize, verify, ship) with each stage mapped to exactly ONE
-    leg-condition. A stage dropped (a successor resumes with no goal) or double-mapped (an
-    ambiguous selection) flips the test."""
-    section = _leg_selector_section()
-    bullets = _LEG_BULLET_RE.findall(section)
-    assert bullets, f"no leg-condition selector bullets found in:\n{section}"
-    covered = []
-    for stages_blob, cond in bullets:
-        toks = _STAGE_TOK_RE.findall(stages_blob)
-        assert toks, f"a selector bullet listed no stage tokens: {stages_blob!r}"
-        assert cond.strip(), "every selector bullet must carry a non-empty leg-condition"
-        covered.extend(toks)
-    # TOTAL: every enum stage is covered …
-    assert set(covered) == set(_STAGE_ENUM), (
-        f"the leg-condition selector must be TOTAL over the stage enum {_STAGE_ENUM}; "
-        f"covered {sorted(set(covered))}"
-    )
-    # … exactly ONCE each (no stage double-mapped to two leg-conditions)
-    assert len(covered) == len(set(covered)) == len(_STAGE_ENUM), (
-        f"each stage must map to EXACTLY ONE leg-condition; got {sorted(covered)}"
-    )
-
-
-# The two canonical leg-condition semantics (whitespace-normalized, meaning-bearing
-# fragments — NOT the whole line, so benign reflow/added qualifiers don't false-red). Each
-# is the distinctive "NOT met while autonomous <leg-work> remains" clause that the resume
-# `/goal` must carry for its leg; they mirror the Stage-0/Gate-A leg-goal definitions.
-#   - PLANNING leg (premises, plan): autonomous planning/design/autoplan/review work remains.
-#   - EXECUTE   leg (execute, finalize, verify, ship): autonomous implement/review/harden/verify/ship.
-_PLANNING_COND = "NOT met while autonomous planning"
-_PLANNING_COND_TAIL = "design, autoplan, dual-voice review) work remains."
-_EXECUTE_COND = "NOT met while autonomous implement / review / harden / finalize / verify / ship work remains."
-
-# The stage-set that keys each leg, as the frozensets the selector partition must produce.
-_PLANNING_STAGES = frozenset({"premises", "plan"})
-_EXECUTE_STAGES = frozenset({"execute", "finalize", "verify", "ship"})
-
-
-def _leg_bullet_map(section):
-    """Map each selector bullet's covered stage-set (a frozenset of stage tokens) to its
-    whitespace-normalized leg-condition body. Reuses the AC12 `_LEG_BULLET_RE`/`_STAGE_TOK_RE`
-    enumeration so the mapping pin walks the SAME selector partition the totality pin does."""
-    out = {}
-    for stages_blob, cond in _LEG_BULLET_RE.findall(section):
-        toks = frozenset(_STAGE_TOK_RE.findall(stages_blob))
-        out[toks] = _norm(cond)
-    return out
-
-
-def _assert_leg_condition_mapping(section):
-    """AC12 mapping pin: the PLANNING stage-set binds the PLANNING-leg condition semantics
-    and the EXECUTE stage-set binds the EXECUTE-leg condition semantics — and each leg's
-    condition is NOT the other's (so swapping the two condition texts, or pointing a
-    stage-set at the wrong leg's condition, reds). Raises AssertionError on any wrong-leg
-    binding."""
-    bymap = _leg_bullet_map(section)
-    assert _PLANNING_STAGES in bymap, (
-        f"the planning leg must be keyed on {sorted(_PLANNING_STAGES)}; got {sorted(map(sorted, bymap))}"
-    )
-    assert _EXECUTE_STAGES in bymap, (
-        f"the execute leg must be keyed on {sorted(_EXECUTE_STAGES)}; got {sorted(map(sorted, bymap))}"
-    )
-    planning_cond = bymap[_PLANNING_STAGES]
-    execute_cond = bymap[_EXECUTE_STAGES]
-    # the planning-leg row binds the PLANNING condition semantics …
-    assert _PLANNING_COND in planning_cond and _PLANNING_COND_TAIL in planning_cond, (
-        "the planning-leg row (premises, plan) must bind the PLANNING-leg condition "
-        f"('NOT met while autonomous planning … work remains.'); got {planning_cond!r}"
-    )
-    # … and NOT the execute condition (so a swap reds) …
-    assert _EXECUTE_COND not in planning_cond, (
-        "the planning-leg row must NOT carry the EXECUTE-leg condition (swap/mis-map)"
-    )
-    # … the execute-leg row binds the EXECUTE condition semantics …
-    assert _EXECUTE_COND in execute_cond, (
-        "the execute-leg row (execute, finalize, verify, ship) must bind the EXECUTE-leg condition "
-        f"('NOT met while autonomous implement / review / harden / verify / ship …'); got {execute_cond!r}"
-    )
-    # … and NOT the planning condition (so a swap reds).
-    assert _PLANNING_COND_TAIL not in execute_cond, (
-        "the execute-leg row must NOT carry the PLANNING-leg condition (swap/mis-map)"
-    )
-
-
-def test_leg_condition_selector_maps_each_leg_to_its_own_condition():
-    """AC12: beyond totality, the selector binds the CORRECT condition per leg — the planning
-    stage-set (premises, plan) → the planning-leg condition, the execute stage-set (execute,
-    finalize, verify, ship) → the execute-leg condition — over the REAL merged drive.md. A swapped or
-    mis-mapped condition (a handoff that re-arms the WRONG leg's goal) reds this pin."""
-    _assert_leg_condition_mapping(_leg_selector_section())
 
 
 # =========================================================================== #
@@ -768,39 +622,150 @@ def test_hook_escalation_and_i1_share_the_handshake_tokens():
     assert 'set `waiting = "rebirth"`' in i1
 
 
-# --- AC7: /goal rebirth-pause clause — single-source + consistency ---------- #
-# The `/goal` rebirth-pause clause appears in drive.md ×2 (the rebirth-handoff re-arm goal
-# + the Stage-0 leg-1 goal) and must be byte-identical there. It is ABSENT from drive-plan.md
-# (×0): the execute-leg goal is single-sourced in drive.md's Seam A handoff block — drive-plan
-# defers it (no dual ownership). A one-sided edit to drive.md's clause, or a goal reintroduced
-# into drive-plan.md, reds this pin.
-_GOAL_REBIRTH_PAUSE_CLAUSE = (
-    'paused at a rebirth handoff (waiting="rebirth") awaiting my paste of the resume line'
-)
+# =========================================================================== #
+# AC-1/AC-2 — the context-of-execution summary shared step exists, is placed between the
+# run-graph section and Pipeline, names its four data-source families, EXCLUDES the
+# event-log, cross-references the Missing-artifact rule, and defines its four prose parts.
+# =========================================================================== #
+_CTX_SUMMARY_HEADING = "Emit context-of-execution summary (shared step)"
 
 
-def _assert_goal_rebirth_pause_consistent(drive_md, drive_plan_md):
-    """The AC7 pin, factored so the flip-proof runs the SAME assertion against a mutated COPY.
-    drive.md (whitespace-normalized) must carry the SAME rebirth-pause `/goal` clause ×2 — once
-    in the rebirth-handoff successor re-arm goal (the I-section leg-aware re-arm) and once in
-    the Stage-0 leg-1 goal. drive-plan.md must carry it ×0: the execute-leg goal is
-    single-sourced in drive.md's Seam A handoff (drive-plan defers), so a reintroduced
-    drive-plan goal — dual ownership — reds this, as does dropping one of drive.md's two.
-    Raises AssertionError if the clause is mis-counted in either file."""
-    assert _norm(drive_md).count(_GOAL_REBIRTH_PAUSE_CLAUSE) == 2, (
-        "drive.md must carry the SAME /goal rebirth-pause clause in both the rebirth-handoff "
-        "re-arm goal and the Stage-0 leg-1 goal (×2)"
+def _ctx_summary_section():
+    """The body of the `## Emit context-of-execution summary (shared step)` section, bounded
+    to the next `## `/`# ` heading (so its own `### ` children stay in), section-bounding every
+    AC-1/AC-2 assertion so no token elsewhere in drive.md can satisfy them vacuously."""
+    return _section(_drive_md(), _CTX_SUMMARY_HEADING, level="## ")
+
+
+def test_context_summary_section_exists_and_names_sources():
+    """AC-1/AC-2: drive.md carries a `## Emit context-of-execution summary (shared step)`
+    section, placed AFTER `## Emit run graph` and BEFORE `## Pipeline`; its body names the
+    four data-source families (state.json full surface, design.md, review/harden/finalize
+    artifacts, decisions.md), EXCLUDES `event-log.jsonl`, cross-references the Missing-artifact
+    rule, and defines the four prose parts (problem · where we are · done/decided · next).
+    Section-bounded so a token elsewhere cannot satisfy it vacuously."""
+    md = _drive_md()
+    # positioned between the run-graph section and Pipeline
+    run_graph_idx = md.index("## Emit run graph (shared step)")
+    summary_idx = md.index("## " + _CTX_SUMMARY_HEADING)
+    pipeline_idx = md.index("## Pipeline")
+    assert run_graph_idx < summary_idx < pipeline_idx, (
+        "the context-summary section must sit AFTER `## Emit run graph` and BEFORE `## Pipeline`"
     )
-    assert _norm(drive_plan_md).count(_GOAL_REBIRTH_PAUSE_CLAUSE) == 0, (
-        "drive-plan.md must NOT carry the /goal rebirth-pause clause (×0) — the execute-leg "
-        "goal is single-sourced in drive.md's Seam A handoff; a drive-plan goal is dual ownership"
+    section = _norm(_ctx_summary_section())
+    # the four data-source families (mirrors the run graph's discipline)
+    assert "`state.json` in full" in section, "must name the full state.json surface"
+    assert "`design.md`" in section, "must name design.md as a source"
+    assert "review-<scope>-N.md" in section and "harden-<P>-N.md" in section, (
+        "must name the fixed-format review/harden/finalize artifacts as a source"
+    )
+    assert "`decisions.md`" in section, "must name decisions.md as a source"
+    # the event-log EXCLUSION (no event-log parsing — event names drift)
+    assert "NEVER parse `event-log.jsonl`" in section, (
+        "the section must EXCLUDE event-log.jsonl parsing (event names drift)"
+    )
+    # cross-references the Missing-artifact rule (single-sourced with the run graph)
+    assert "Missing-artifact rule (general — never fabricate)" in section, (
+        "the section must cross-reference the run graph's Missing-artifact rule"
+    )
+    # the four prose parts, each mapped to concrete fields
+    for part in ("**Problem**", "**Where we are**", "**Done / decided**", "**Next**"):
+        assert part in section, f"the section must define the `{part}` prose part"
+
+
+# =========================================================================== #
+# AC-3/AC-4/AC-5 — the summary is invoked at BOTH fresh-session sites: Present human pause
+# step 2 (rebirth-scoped, above the run graph) AND the resume path (a fresh-session-scoped
+# LAST reconcile sub-bullet, index ≥ 3, bodies[0/1/2] preserved). The fenced paste block
+# carries neither a summary nor a `/goal`.
+# =========================================================================== #
+def _present_human_pause_section():
+    return _section(_drive_md(), "Present human pause (shared routine)", level="## ")
+
+
+def test_context_summary_invoked_at_both_fresh_session_sites():
+    """AC-3/AC-4/AC-5: Present human pause step 2 carries the rebirth-scoped
+    summary-ABOVE-run-graph clause; the resume reconcile list carries a fresh-session-scoped
+    orientation sub-bullet that is LAST and at index ≥ 3 (bodies[0/1/2] labels preserved); and
+    the fenced `/drive <runId>` paste block carries neither the summary nor a `/goal`. All
+    assertions are section-/bullet-bounded, not whole-file greps."""
+    # (a) outgoing — Present human pause step 2, rebirth-scoped, ABOVE the run graph
+    php = _norm(_present_human_pause_section())
+    assert (
+        'When `waiting == "rebirth"`, FIRST emit the context-of-execution summary' in php
+    ), "Present human pause step 2 must carry the rebirth-scoped summary clause"
+    assert "IMMEDIATELY ABOVE the run graph" in php, (
+        "the rebirth-scoped clause must place the summary ABOVE the run graph"
+    )
+    # (b) incoming — the resume orientation sub-bullet is LAST, index ≥ 3, fresh-session-scoped
+    labels = _resume_bullet_labels(_resume_section())
+    bodies = _resume_bullet_bodies(_resume_section())
+    # bodies[0/1/2] indices are preserved (AC4 structural pin depends on them)
+    assert labels[0].startswith("sessionId rebind"), f"bodies[0] must stay the rebind; got {labels}"
+    assert labels[1].startswith("Consume `checkpoint-complete"), (
+        f"bodies[1] must stay marker-consume; got {labels}"
+    )
+    assert labels[2].startswith('`waiting == "rebirth"`'), (
+        f"bodies[2] must stay rebirth-continue; got {labels}"
+    )
+    orient_idx = next(
+        (i for i, l in enumerate(labels) if l.startswith("Fresh-session orientation")), None
+    )
+    assert orient_idx is not None, f"no Fresh-session-orientation resume bullet found; got {labels}"
+    assert orient_idx >= 3, f"the orientation bullet must be at index ≥ 3; got {orient_idx}"
+    assert orient_idx == len(labels) - 1, (
+        f"the orientation bullet must be the LAST resume sub-bullet; got index {orient_idx} "
+        f"of {len(labels)}"
+    )
+    orient_body = _norm(bodies[orient_idx])
+    assert "Emit context-of-execution summary" in orient_body, (
+        "the orientation bullet must invoke the shared summary section by heading"
+    )
+    assert "freshSessionResume" in orient_body, (
+        "the orientation bullet must be scoped to a fresh-session resume (freshSessionResume)"
+    )
+    # (c) the fenced paste block carries neither a summary nor a `/goal` (AC-5, structural pin)
+    block = _handoff_block()
+    assert "/drive <runId>" in block, "the paste block must keep the minimal resume line"
+    assert "/goal" not in block, "the fenced paste block must carry no `/goal` line"
+    assert "context-of-execution summary" not in block, (
+        "the fenced paste block must not embed the summary (it is emitted ABOVE, outside the fence)"
     )
 
 
-def test_goal_rebirth_pause_clause_single_sourced_in_drive_md():
-    """AC7: the `/goal` rebirth-pause clause is present + identical in drive.md ×2 and ABSENT
-    from drive-plan.md (×0) — the execute-leg goal is single-sourced in drive.md's Seam A
-    handoff (drive-plan defers), so the two surfaces can't drift apart and no dual ownership
-    is reintroduced."""
-    _assert_goal_rebirth_pause_consistent(_drive_md(), _drive_plan_md())
+# =========================================================================== #
+# AC-7 — the Autonomous-continuation contract is reworded: NO `/goal`, states the installed
+# Stop hook is the SOLE continuation mechanism + the hook-absent manual-continue degradation,
+# while the preserved dual-nature `waiting="rebirth"` paragraph keeps AC11 green.
+# =========================================================================== #
+def _autonomous_continuation_contract():
+    """The Autonomous-continuation contract paragraph, bounded from its bold lead to the start
+    of the preserved `waiting = "rebirth"` dual-nature paragraph — so the AC-7 assertions scan
+    ONLY the contract, not the dual-nature paragraph AC11 pins."""
+    md = _drive_md()
+    start = md.index("**Autonomous-continuation contract (`waiting`).**")
+    end = md.index('`waiting = "rebirth"` is the lone CONTINUE exception', start)
+    return md[start:end]
+
+
+def test_autonomous_continuation_contract_states_hook_sole():
+    """AC-7: the Autonomous-continuation contract carries NO `/goal` and states the installed
+    Stop hook is the SOLE turn-to-turn continuation mechanism plus the hook-absent
+    manual-continue degradation; the preserved dual-nature paragraph still satisfies AC11.
+    Section-bounded to the contract paragraph so a `/goal` elsewhere cannot mask a regression."""
+    contract = _norm(_autonomous_continuation_contract())
+    assert "/goal" not in contract, (
+        "the reworded Autonomous-continuation contract must carry NO `/goal` reference"
+    )
+    assert "independent of `/goal`" not in contract, (
+        "the old 'independent of /goal — use either or both' framing must be gone"
+    )
+    assert (
+        "The installed Stop hook is the SOLE turn-to-turn continuation mechanism" in contract
+    ), "the contract must state the installed Stop hook is the SOLE continuation mechanism"
+    assert "manual-continue degradation" in contract, (
+        "the contract must state the hook-absent manual-continue degradation"
+    )
+    # the preserved dual-nature paragraph (AC11 tokens) still passes unchanged
+    _assert_ac11_dual_nature(_norm(_drive_md()))
 

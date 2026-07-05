@@ -207,7 +207,7 @@ order:
    `--mode state-lint` must be clean (fail-closed: a failing proof never sets the pause).
 2. **Write** `checkpoint-complete.marker` (durable, sha-bound, single-use).
 3. **Set** `waiting="rebirth"`, then present a human pause with a paste-ready `/drive
-   <runId>` resume line + a re-armed `/goal`, and end the turn.
+   <runId>` resume line, and end the turn.
 
 This is a **prompted human handshake, not a self-restart** — the harness has no
 programmatic session-spawn; a fresh session is started by the human pasting the resume line.

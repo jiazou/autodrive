@@ -24,7 +24,7 @@ See `mission-control/README.md`.
     /drive <task>   -> runs the whole pipeline below, autonomously
 
     PLAN (gstack brain)
-    0. Premises (human) + set the session goal (native /goal, you paste it)
+    0. Premises (human)
     1. /drive-plan: author a HIGH-LEVEL design — goal, approach, ordered ## Phases
        (no slices/interfaces) -> autoplan -> dual-voice review converges -> [Gate A]
 
