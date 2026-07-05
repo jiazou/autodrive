@@ -656,9 +656,11 @@ def test_context_summary_section_exists_and_names_sources():
     # the four data-source families (mirrors the run graph's discipline)
     assert "`state.json` in full" in section, "must name the full state.json surface"
     assert "`design.md`" in section, "must name design.md as a source"
-    assert "review-<scope>-N.md" in section and "harden-<P>-N.md" in section, (
-        "must name the fixed-format review/harden/finalize artifacts as a source"
-    )
+    assert (
+        "review-<scope>-N.md" in section
+        and "harden-<P>-N.md" in section
+        and "review-finalize-<N>.md" in section
+    ), "must name the fixed-format review/harden/finalize artifacts as a source"
     assert "`decisions.md`" in section, "must name decisions.md as a source"
     # the event-log EXCLUSION (no event-log parsing — event names drift)
     assert "NEVER parse `event-log.jsonl`" in section, (
