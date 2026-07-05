@@ -131,11 +131,27 @@ def test_drive_md_wires_retro_into_completion_before_decant():
         "Completion must document Path A's post-done wrap as tolerated best-effort — "
         "recovered only by a manual re-run, not automatically"
     )
-    # (2) resume teardown runs the wrap BEFORE writing stage="done" LAST (pre-done window)
+    # (1b) TRUE-run-wrap-ONLY exclusivity (design-phase1.md: retro is at the true run-wrap only;
+    # the per-seam I1 step-5.5 rebirth decant is retro-free). The `/drive-retro <runId>` INVOCATION
+    # must exist at EXACTLY the two terminal-done wrap sites — `## Completion` step 1 and the
+    # Done-via-resume teardown route step — and NOWHERE else in drive.md. A third occurrence
+    # (e.g. a mid-run seam picking up retro) reds this pin, forcing re-review of the invariant.
+    assert text.count("/drive-retro <runId>") == 2, (
+        f"drive.md has {text.count('/drive-retro <runId>')} `/drive-retro <runId>` invocations; "
+        "the true-run-wrap-only criterion requires EXACTLY 2 (## Completion step 1 + the "
+        "Done-via-resume teardown route step) — a mid-run invocation would breach it"
+    )
+    # (2) resume teardown runs the wrap in the pre-done window: completedAt (step 4) is written
+    # BEFORE the wrap route (step 5), which runs BEFORE stage="done" LAST (step 6).
     teardown = _drive_section(text, r"Done-via-resume teardown", r"^(  - \*\*|#{1,2}\s)")
+    completedat_idx = teardown.find('"$RUN_DIR/completedAt"')  # step-4 marker WRITE target
     route_idx = teardown.find("Run the `## Completion` wrap sequence NOW")
     write_idx = teardown.find('Write `stage="done"` LAST')
     assert route_idx >= 0, "the teardown must run the `## Completion` wrap sequence pre-stage=done"
+    assert completedat_idx >= 0 and completedat_idx < route_idx, (
+        "the teardown must WRITE a parseable `$RUN_DIR/completedAt` (step 4) BEFORE running the "
+        "wrap (step 5) — the wrap's completeness gate / is_done() needs it in the pre-done window"
+    )
     assert write_idx >= 0 and route_idx < write_idx, (
         'the wrap must run BEFORE `stage="done"` is written LAST (pre-done, stop-hook-forced)'
     )
@@ -144,9 +160,15 @@ def test_drive_md_wires_retro_into_completion_before_decant():
         "the teardown's /drive-retro <runId> invocation must sit in the wrap route step, "
         "after 'Run the `## Completion` wrap sequence NOW' and before the stage=done write"
     )
-    # (3) Stage 5 (ship) routes into Completion
+    # (3) Stage 5 (ship, Path A) routes into Completion AFTER `stage = done` (the post-done wrap site)
     stage5 = _drive_section(text, r"^### Stage 5 — Ship", r"^#{1,2}\s")
-    assert "then run the `## Completion`" in stage5, "Stage 5 (ship) must route into `## Completion`"
+    ship_done_idx = stage5.find("`stage = done`")
+    ship_route_idx = stage5.find("then run the `## Completion`")
+    assert ship_route_idx >= 0, "Stage 5 (ship) must route into `## Completion`"
+    assert ship_done_idx >= 0 and ship_done_idx < ship_route_idx, (
+        "Stage 5's `## Completion` route must come AFTER `stage = done` — Path A is the "
+        "post-stage=done ship wrap site (drive.md Stage 5 → Completion ordering)"
+    )
 
 
 # --------------------------------------------------------------------------- #
