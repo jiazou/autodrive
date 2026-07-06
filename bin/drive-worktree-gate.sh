@@ -50,10 +50,26 @@ if [ -n "$_missing" ]; then
   exit 2
 fi
 
+# BLIND-ROOT FAIL-CLOSED (D-w2). The scan's `find "$RUNS_ROOT"` suppresses errors, so if the
+# runs root EXISTS but is unreadable/unsearchable (`chmod 000 ~/.claude/harness-runs` — codex
+# repro), find enumerates NOTHING → an EMPTY scan → the gate would conclude "no active run" and
+# provision even while a run IS active. An empty scan is only trustworthy when the root could
+# actually be searched. So: if RUNS_ROOT EXISTS but is not both readable AND searchable → the
+# scan is BLIND → FAIL-CLOSED DENY (exit 2), like the tool-presence pre-check. An ABSENT root is
+# NOT a blind scan — it genuinely means no runs on this machine → allow/provision. Kept surgical:
+# a single unreadable SUBDIR is NOT guarded here (find still enumerates the rest of the root); a
+# self-hidden run subdir is deliberate-evasion / forgery-class, out of scope (§ Limitations).
+RUNS_ROOT="$HOME/.claude/harness-runs"
+if [ -e "$RUNS_ROOT" ] && { [ ! -r "$RUNS_ROOT" ] || [ ! -x "$RUNS_ROOT" ]; }; then
+  printf '/drive worktree gate: the /drive runs root %s exists but is not readable+searchable, so the active-run scan is BLIND (it cannot tell whether a run is active). Failing CLOSED (denying native worktree creation) — matches the tool-absent posture (D-w2). Fix the directory permissions, or create the worktree via Bash: git worktree add <path> -b slice/<runId>/<id>.\n' "$RUNS_ROOT" >&2
+  exit 2
+fi
+
 # Scan for active runs. Suppress the predicate's advisory per-dir corrupt/no-repoRoot warnings
 # so they never pollute the provisioning stdout/stderr contract. Its scan binaries are now
-# guaranteed present (the required-tool check above), so an empty result genuinely means "no
-# active run", not "the scan silently failed".
+# guaranteed present (the required-tool check above) and the runs root is scannable (the
+# blind-root check above), so an empty result genuinely means "no active run", not "the scan
+# silently failed / was blind".
 ACTIVE="$(drive_scan_active_runs 2>/dev/null)"
 
 if [ -n "$ACTIVE" ]; then   # >=1 active run (with a repoRoot) on this machine → DENY

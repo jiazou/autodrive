@@ -641,6 +641,25 @@ for f in test/*.test.sh; do bash "$f" || exit 1; done
   worktree location is hook-chosen (a sibling of the repo dir, named for the worktree) rather
   than Claude Code's built-in default. Reconcile with the platform's documented default path
   convention if the divergence annoys — a follow-up, not a correctness issue.
+- **Forgery / hostile-environment scan-blinding residual (non-Bash gates; out of scope).** Both
+  non-Bash gates decide on a run-presence scan of `~/.claude/harness-runs`. A hostile actor who
+  can manipulate the scan's **execution environment** can blind it: e.g. put a stub `find`/`sort`
+  on `PATH` that exits 0 with no output, or `chmod 000` an individual run's own **subdir** to
+  self-hide it from `find` (find still enumerates the rest of the root). This is
+  **deliberate-evasion / forgery-class**, explicitly OUT OF SCOPE — consistent with the system's
+  stated boundary ("omission-proof, not forgery-proof"; run-presence is far harder to
+  *accidentally/omissively* suppress than to *deliberately* forge → Component D). The
+  WorktreeCreate gate DOES fail-closed on the two **non-hostile / accidental** blind-scan cases
+  it can cheaply detect — a **missing** scan binary (jq/find/sort/dirname/git absent, D-w2) and a
+  present-but-**unreadable ROOT** (`chmod 000 ~/.claude/harness-runs` → exit 2) — but it does not
+  defend a *broken-but-present* tool or a self-hidden subdir (that needs a trusted execution
+  environment the design does not assume).
+- **Inherited: the shipped PreToolUse `drive-tool-gate.sh` has the SAME scan fail-open.** The
+  shipped gate never prechecks its scan tools (`find`/`sort`) and shares
+  `drive_scan_active_runs`, so a missing/broken scan tool fails it OPEN identically. This is a
+  **pre-existing** shared-scan residual — inherited, NOT introduced by the WorktreeCreate gate,
+  which was hardened here — and hardening the shipped PreToolUse gate is a separate follow-up
+  (it changes shipped gate behavior and is forgery-class).
 
 ### Rebirth residuals (acknowledged limits)
 

@@ -23,7 +23,8 @@ WTFX="$HERE/fixtures/worktree/worktree-create.json"
 HOME="$(mktemp -d "${TMPDIR:-/tmp}/wt-gate-home.XXXXXX")"; export HOME
 RUNS="$HOME/.claude/harness-runs"; mkdir -p "$RUNS"
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/wt-gate-work.XXXXXX")"
-trap 'rm -rf "$HOME" "$WORK"' EXIT
+# chmod -R before rm so a deliberately 000'd dir (blind-root test) is still removable.
+trap 'chmod -R u+rwx "$HOME" "$WORK" 2>/dev/null; rm -rf "$HOME" "$WORK"' EXIT
 
 PASS=0; FAIL=0
 check() { if [ "$2" = "$3" ]; then echo "PASS: $1"; PASS=$((PASS+1)); else echo "FAIL: $1 (expected '$3', got '$2')"; FAIL=$((FAIL+1)); fi; }
@@ -123,6 +124,35 @@ done
 # aren't passing merely because the payload was malformed.
 out="$(payload_for "$FIXREPO" "slip-full" | PATH="$FULLBIN" HOME="$HOME" /bin/bash "$GATE" 2>/dev/null)"; rc=$?
 check "Fix1 control: full toolset + active run → still exit 2 DENY" "$rc" "2"
+
+# Fix 1b (r2 BLOCKING blind-root fail-open): if RUNS_ROOT EXISTS but is unreadable/unsearchable
+# (`chmod 000`), `find "$RUNS_ROOT"` enumerates NOTHING → an EMPTY scan → the gate would conclude
+# "no active run" and provision even with a run active (codex repro). The blind-root pre-check
+# now FAILS CLOSED (exit 2). Active run present + RUNS_ROOT chmod 000 → DENY, no worktree.
+chmod 000 "$RUNS"
+brerr="$WORK/blindroot.err"
+out="$(payload_for "$FIXREPO" "blindslip" | HOME="$HOME" /bin/bash "$GATE" 2>"$brerr")"; rc=$?
+chmod 755 "$RUNS"   # restore immediately so the rest of the suite + trap can read it
+check "Fix1b active run + RUNS_ROOT chmod 000 (blind scan) → exit 2 (fail-closed, no fail-open)" "$rc" "2"
+check "Fix1b blind-root → NO stdout path" "$out" ""
+check "Fix1b blind-root → NO worktree created" "$(git -C "$FIXREPO" worktree list | grep -c blindslip)" "0"
+contains "Fix1b blind-root stderr names the blind scan" "$(cat "$brerr")" "not readable+searchable"
+# surgical: a single unreadable SUBDIR must NOT deny (find still enumerates the rest of the root).
+# Idle (no active run) + an unreadable subdir alongside → still provisions.
+rm -rf "$RUNS"/*
+mkdir -p "$RUNS/hidden"; chmod 000 "$RUNS/hidden"
+SUBREPO="$WORK/sub-repo"; mk_repo "$SUBREPO"
+out="$(payload_for "$SUBREPO" "subdir-ok" | HOME="$HOME" /bin/bash "$GATE" 2>/dev/null)"; rc=$?
+chmod 755 "$RUNS/hidden"
+check "Fix1b surgical: unreadable SUBDIR (idle) does NOT deny (root still scannable)" "$rc" "0"
+check "Fix1b surgical: idle path still provisions a real worktree past the unreadable subdir" "$( [ -n "$out" ] && git -C "$out" rev-parse --is-inside-work-tree 2>/dev/null || echo no )" "true"
+[ -n "$out" ] && { git -C "$SUBREPO" worktree remove --force "$out" 2>/dev/null; git -C "$SUBREPO" worktree prune 2>/dev/null; }
+# ABSENT root is NOT a blind scan → allow/provision (genuinely no runs on this machine).
+ABSHOME="$WORK/abs-home"; mkdir -p "$ABSHOME/.claude"   # deliberately NO harness-runs
+ABSREPO="$WORK/abs-repo"; mk_repo "$ABSREPO"
+out="$(payload_for "$ABSREPO" "absent-ok" | HOME="$ABSHOME" /bin/bash "$GATE" 2>/dev/null)"; rc=$?
+check "Fix1b absent RUNS_ROOT (no runs dir) → allow/provision (exit 0), NOT a blind deny" "$rc" "0"
+check "Fix1b absent-root path IS a real worktree" "$( [ -n "$out" ] && git -C "$out" rev-parse --is-inside-work-tree 2>/dev/null || echo no )" "true"
 
 # Fix 2 (MAJOR wedge): the idle allow path used `|| true`, echoing a BOGUS success path even when
 # `git worktree add` FAILED (collision / bad cwd) → Claude Code believed a worktree existed where
