@@ -283,7 +283,9 @@ verdict / merge / gate.
     state. Skip on a same-session re-paste (`freshSessionResume == false` — it already has
     conversational context, so a summary would be noise).
 - **Fresh run:** assert the clean-tree precondition; record `baseRef` (the repo's
-  default/integration branch, e.g. `main`); create `featureBranch` from `baseRef`;
+  default/integration branch, e.g. `main`); **pre-flight the base** (fast-forward
+  `baseRef` to its remote — see below); create `featureBranch` from the (possibly
+  fast-forwarded) `baseRef`;
   initialize and write `$RUN_DIR/state.json` in this shape (set `sessionId` from the
   `$CLAUDE_CODE_SESSION_ID` env var so the Stop hook can attribute this run to this
   session; leave it `null` if unset):
@@ -319,6 +321,57 @@ in-place redirect/truncate (`> state.json`) that can leave a torn file if the tu
 mid-write. Resume reads `state.json` as a routing hint and a torn hint must never
 half-parse — `--mode state-lint` would flag it `unparseable-state`. Mirrors the marker
 tmp + `mv` discipline.
+
+**Pre-flight the base (fast-forward `baseRef` to its remote — FRESH RUN ONLY, before
+cutting `featureBranch`; NEVER on resume).** A run branches from the *local* `baseRef`;
+without this it silently builds on a stale local `main`. Bring `baseRef` up to date with
+its remote, but **fail-closed — never discard a local commit, never STOP or HANG the run
+over it** (offline / no-remote / no-upstream / creds-required dev is all legitimate; this is
+a convenience, not a gate). **Best-effort / fail-open-to-local:** any git error at any step
+below — fetch failure, an unresolvable or ambiguous ref, `baseRef` absent as a local branch,
+or a `branch -f` refused because `baseRef` is checked out in another worktree — folds to
+*warn + proceed on the local `baseRef`*; the step never STOPs and never leaves `baseRef`
+half-moved.
+
+1. **Resolve the upstream.** `UP=$(git rev-parse --abbrev-ref "$baseRef@{upstream}" 2>/dev/null)`;
+   if empty, fall back to `origin/$baseRef` when a remote named `origin` exists. **No remote
+   or no upstream ref → skip** (log `preflight: local-only, skipped`) and proceed on the
+   local `baseRef`. Split it: `REMOTE=${UP%%/*}`, `RBRANCH=${UP#*/}` — the upstream's OWN
+   branch name, which need not equal `baseRef` (a local `main` may track `origin/trunk`, a
+   fork may track `upstream/main`).
+2. **Fetch — non-interactively.** `GIT_TERMINAL_PROMPT=0 GIT_SSH_COMMAND='ssh -oBatchMode=yes'
+   git fetch --quiet "$REMOTE" "$RBRANCH"` — fetch the upstream's own branch (so the ref you
+   reconcile against, `$UP`, is exactly the one just fetched) with prompts disabled: a
+   creds/passphrase prompt must fail fast, never block the run. **Fetch fails**, or `$UP` still
+   does not resolve afterward (remote with no fetch refspec) → warn, skip, proceed on local
+   `baseRef`.
+3. **Reconcile** — fully-qualify the local branch as `LB=refs/heads/$baseRef` (an unqualified
+   `$baseRef` can bind to a same-named *tag*, and force-moving the branch after an ancestor
+   test that resolved the tag would orphan a local commit). If `LB` does not resolve (no local
+   `baseRef` branch / unborn repo) → skip. Rev-parse `LB` and `$UP` AFTER the fetch and compare:
+   - **Equal** → already current; nothing to do.
+   - **Local strictly behind** — `git merge-base --is-ancestor "$LB" "$UP"` true and the two
+     SHAs differ → fast-forward the local branch to `$UP`: if `baseRef` is THIS worktree's
+     checked-out branch (`git symbolic-ref --short -q HEAD` == `$baseRef`), `git merge --ff-only
+     "$UP"`; else, provided `baseRef` is checked out in NO worktree (`git worktree list` — git
+     refuses `branch -f` on a branch checked out anywhere; if it is, fold to warn+proceed),
+     `git branch -f "$baseRef" "$UP"` (proven fast-forward by the ancestor test). Log
+     `preflight: fast-forwarded <baseRef> <old>..<new>`.
+   - **Diverged** — local `baseRef` has commit(s) not on `$UP` (the ancestor test is false;
+     this also covers a purely-ahead unpushed `baseRef`) → **do NOT touch `baseRef`**;
+     fast-forwarding would drop those commits. Proceed on the local base and **warn** (log +
+     surface at Gate A): `preflight: local <baseRef> has N commit(s) not on <UP>; run proceeds
+     on the local base`.
+
+This fast-forward is the ONE sanctioned mutation of the user's base branch — reconciled with
+the "never mutate the user's main working tree" invariant by the clean-tree precondition
+asserted just above: a checked-out `baseRef` has no uncommitted work, so a `--ff-only` advance
+is pull-equivalent and clobbers nothing, and being a fast-forward (never rebase/merge-commit/
+`reset`) it can only ADD the remote's commits, never rewrite the user's. Because the
+fast-forward moves the local `baseRef` branch itself, the recorded `baseRef` name still points
+at the branch the run cut `featureBranch` from, so the `baseRef..featureBranch` diff (finalize,
+ship) is honest at branch-cut time; the pre-existing caveat that `baseRef` is a *name* — a
+concurrent session moving it mid-run, the shared-clone hazard — is unchanged by this step.
 
 **GC-at-setup (best-effort, REPORT-ONLY, backgrounded).** AFTER the first `state.json`
 write completes (NEVER on the `mkdir` claim critical path — a GC failure must never abort a

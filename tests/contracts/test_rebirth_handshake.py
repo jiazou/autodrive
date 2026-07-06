@@ -105,11 +105,13 @@ def _i1_section():
 
 def _resume_section():
     """The body of drive.md's `## Run setup & resume` resume bullet list, from the
-    `- **Resume:**` bullet to the next `## ` heading — its nested `- **<Label>:**`
-    sub-bullets are the resume reconciliation steps (mirrors slice 1.3's accessor)."""
+    `- **Resume:**` bullet to the sibling `- **Fresh run:**` bullet that follows it — its
+    nested `- **<Label>:**` sub-bullets are the resume reconciliation steps (mirrors slice
+    1.3's accessor). Bounded on Fresh-run (not the far-off `## ` heading) so indented bullets
+    inside the Fresh-run setup block are not miscounted as resume sub-bullets."""
     md = _drive_md()
     start = md.index("- **Resume:**")
-    end = md.index("\n## ", start)
+    end = md.index("\n- **Fresh run:**", start)
     return md[start:end]
 
 
@@ -417,9 +419,10 @@ def _assert_reset_on_resume_structural(drive_md):
 
 def _resume_section_of(drive_md):
     """The resume reconciliation bullet list of an arbitrary drive.md TEXT (the real file or a
-    mutated COPY) — same bounds as `_resume_section`, parameterized for the flip-proof."""
+    mutated COPY) — same bounds as `_resume_section` (Resume bullet → sibling Fresh-run bullet),
+    parameterized for the flip-proof."""
     start = drive_md.index("- **Resume:**")
-    end = drive_md.index("\n## ", start)
+    end = drive_md.index("\n- **Fresh run:**", start)
     return drive_md[start:end]
 
 
