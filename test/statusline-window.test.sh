@@ -144,6 +144,14 @@ assert_eq "fallback: malformed json -> inline Opus window (PCT 90)" "90" "$bad_o
 bad_default="$(printf '%s' "$(payload "Sonnet 4.5" "$TRANS")" | bash "$BAD_DIR/bin/statusline.sh" \
   | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
 assert_eq "fallback: malformed json -> inline default window (PCT 454)" "454" "$bad_default"
+# Fallback keys on the model.id too (mirrors the primary jq path): a GENERIC display_name
+# with a specific 200k model.id still resolves 200k from the inline fallback. Brand X alone
+# -> 1M -> 90; with the opus-4-1 id -> 200k -> 454, so the id does the work in the fallback.
+bad_id="$(jq -n --arg t "$TRANS" \
+  '{model:{display_name:"Brand X", id:"claude-opus-4-1"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+  | bash "$BAD_DIR/bin/statusline.sh" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "fallback: malformed json + generic display_name but 200k model.id -> 200k via id (PCT 454)" \
+  "454" "$bad_id"
 rm -rf "$BAD_DIR"
 
 rm -f "$TRANS"
