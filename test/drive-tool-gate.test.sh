@@ -16,6 +16,7 @@ REPO_DIR="$(cd "$HERE/.." && pwd)"
 GATE="$REPO_DIR/bin/drive-tool-gate.sh"
 INSTALLER="$REPO_DIR/bin/install-drive-hooks.sh"
 FX="$HERE/fixtures/github-mcp"
+GLFX="$HERE/fixtures/gitlab-mcp"
 
 # Dedicated HOME (scan root = $HOME/.claude/harness-runs).
 HOME="$(mktemp -d "${TMPDIR:-/tmp}/tool-gate-home.XXXXXX")"; export HOME
@@ -585,6 +586,94 @@ done
 check "AC-15 every fixture carries _provenance{source,url,retrieved}" "$prov_bad" "0"
 check "AC-15 fixtures README exists" "$( [ -f "$FX/README.md" ] && echo yes || echo no )" "yes"
 contains "AC-15 README records the D9 schema-derived rule" "$(cat "$FX/README.md")" "Schema-derived, NOT live-captured"
+
+# =====================================================================================
+# G2 (GitLab merge_request coverage) — AC-4 deny + AC-5 matcher-rejects-reads + drift.
+# The shipped gate is EXACT-SUFFIX enumeration, so G2 adds five GitLab MR-write suffixes to
+# BOTH the settings matcher AND the hook's `case` (+ mcp_deny_reason). GitLab file/branch
+# writes (create_or_update_file/push_files/create_branch/delete_file) already share GitHub
+# suffixes and are server-wildcarded, so they need no G2 addition (asserted below).
+# =====================================================================================
+rm -rf "$RUNS"/*
+GLREPO="$WORK/gl-run"; mk_repo "$GLREPO" "https://gitlab.com/octo-org/drive-fixture-repo.git"
+mk_run run-gitlab "$GLREPO"
+
+# AC-4: each of the five GitLab MR writes → repo-scoped deny (owner/repo octo-org/... match the
+# run origin) with the correct non-empty reason. Each names its own tool (distinct within a
+# shared-reason pair). Fixtures carry owner/repo (the server-schema axis that does).
+gl_deny() { # gl_deny <fixture-basename> <retry-literal>
+  local out; out="$(run_gate "$GLFX/$1.json")"
+  check "AC-4 gitlab $1 → deny" "$(is_deny "$out")" "yes"
+  contains "AC-4 gitlab $1 names the run" "$out" "run run-gitlab is active"
+  contains "AC-4 gitlab $1 reason names its own tool" "$out" "GitLab MCP tool $1"
+  contains "AC-4 gitlab $1 retry/route literal" "$out" "$2"
+}
+gl_deny create_merge_request  "glab mr create"
+gl_deny merge_merge_request   "human-owned at Gate B"
+gl_deny accept_merge_request  "human-owned at Gate B"
+gl_deny update_merge_request  "human-owned at Gate B"
+gl_deny rebase_merge_request  "git push"
+# merge/accept/update deliberately do NOT advertise a gated Bash merge verb; they name the
+# ungated `glab mr merge`/`glab mr update` twin as a deferred asymmetry (parity with GitHub).
+out="$(run_gate "$GLFX/merge_merge_request.json")"
+contains "AC-4 gitlab merge names the ungated glab twin (deferred asymmetry)" "$out" "glab mr merge"
+out="$(run_gate "$GLFX/create_merge_request.json")"
+contains "AC-4 gitlab create routes to the GATED ship path" "$out" "ship worktree"
+
+# AC-4 (project_id-only, real zereight schema): a GitLab write carrying project_id but NO
+# owner/repo is UNEXTRACTABLE → fail-CLOSED over-deny (names the run), not a silent pass.
+out="$(run_gate "$GLFX/create_merge_request_projectid.json")"
+check "AC-4 gitlab project_id-only write (no owner/repo) → deny (fail-closed)" "$(is_deny "$out")" "yes"
+contains "AC-4 gitlab project_id-only deny is the unextractable branch" "$out" "no extractable owner/repo"
+
+# AC-5: the installed settings matcher SELECTS the five GitLab writes and REJECTS the GitLab
+# reads/approve (parity with GitHub — reads pass because the matcher never selects them, NOT
+# because the hook exit-0's them).
+GLMSET="$WORK/gl-matcher-settings.json"
+bash "$INSTALLER" "$GLMSET" >/dev/null 2>&1
+GLMATCHER="$(jq -r '.hooks.PreToolUse[] | select((.hooks[]?.command // "")|endswith("/drive-tool-gate.sh")) | .matcher' "$GLMSET" | grep 'mcp__' | head -1)"
+glsel() { printf '%s' "$1" | grep -Eq "$GLMATCHER" && echo yes || echo no; }
+for t in create_merge_request merge_merge_request accept_merge_request update_merge_request rebase_merge_request; do
+  check "AC-5 matcher SELECTS mcp__gitlab__$t" "$(glsel "mcp__gitlab__$t")" "yes"
+  check "AC-5 matcher SELECTS server-wildcard mcp__glab__$t" "$(glsel "mcp__glab__$t")" "yes"
+done
+for t in get_merge_request list_merge_requests get_merge_request_diffs approve_merge_request unapprove_merge_request create_merge_request_note; do
+  check "AC-5 matcher REJECTS mcp__gitlab__$t (read/review/comment)" "$(glsel "mcp__gitlab__$t")" "no"
+done
+# GitLab file/branch writes already covered via shared GitHub suffixes (server-wildcarded):
+for t in create_or_update_file push_files create_branch delete_file; do
+  check "AC-5 matcher SELECTS existing shared suffix mcp__gitlab__$t (already covered)" "$(glsel "mcp__gitlab__$t")" "yes"
+done
+# AC-5 drift defense preserved: a force-piped mcp__ whose suffix is NOT enumerated still
+# fail-closed drift-denies (never exit-0'd), exactly as the shipped gate does.
+out="$(run_gate '{"tool_name":"mcp__gitlab__frobnicate","tool_input":{"owner":"octo-org","repo":"drive-fixture-repo"},"cwd":"/x"}')"
+check "AC-5 force-piped unenumerated mcp__gitlab__frobnicate → drift deny" "$(is_deny "$out")" "yes"
+contains "AC-5 drift deny names table drift" "$out" "absent from the hook's own tool table"
+
+# =====================================================================================
+# AC-2b — single-active-run deny names a NON-EMPTY runId. Covered edit (c):
+# first_active_run's `printf '%s\n'` (not '%s') so the single-run ACTIVE_RUNS (one dir,
+# trailing newline stripped by $(...)) is still read by `while read`. Trigger a fail-closed
+# deny path (git absent) with EXACTLY ONE active run → the deny names that run's basename,
+# NOT an empty runId. MUTATION-VERIFY: reverting to `printf '%s'` reds this (empty runId).
+# =====================================================================================
+rm -rf "$RUNS"/*
+SREPO="$WORK/single-run-repo"; mk_repo "$SREPO" "https://github.com/single/only.git"
+mk_run run-onlyone "$SREPO"
+GSTUB2="$WORK/git-absent-bin2"; mkdir -p "$GSTUB2"
+for b in cat jq find dirname sort basename tr sed; do ln -sf "$(command -v "$b")" "$GSTUB2/$b"; done
+out="$(printf '%s' "$(cat "$FX/push_files.json")" | PATH="$GSTUB2" HOME="$HOME" /bin/bash "$GATE" 2>/dev/null)"
+check "AC-2b single active run + git-absent → deny" "$(is_deny "$out")" "yes"
+contains "AC-2b single-run deny names the run basename (NON-empty runId)" "$out" "run run-onlyone is active"
+# guard: the runId is not empty (would render as 'run  is active' with a double space)
+case "$out" in *"run  is active"*) echo "FAIL: AC-2b runId is EMPTY (double space)"; FAIL=$((FAIL+1)) ;; *) echo "PASS: AC-2b runId is non-empty"; PASS=$((PASS+1)) ;; esac
+
+# AC-15b — GitLab + worktree fixtures carry _provenance too.
+gl_prov_bad=0
+for f in "$GLFX"/*.json "$HERE/fixtures/worktree"/*.json; do
+  jq -e '._provenance.source and ._provenance.url and ._provenance.retrieved' "$f" >/dev/null 2>&1 || gl_prov_bad=1
+done
+check "AC-15b GitLab+worktree fixtures carry _provenance{source,url,retrieved}" "$gl_prov_bad" "0"
 
 # --- Summary -------------------------------------------------------------------------
 echo "----------------------------------------"
