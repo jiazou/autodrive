@@ -30,7 +30,10 @@ check() { # check <desc> <actual> <expected>
   fi
 }
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/install-drive-hooks.XXXXXX")"
+# Canonicalize via cd&&pwd so a trailing-slash $TMPDIR (macOS default, e.g. /var/.../T/)
+# cannot leave a double slash in $WORK — the installer normalizes its own paths with
+# `cd && pwd`, so the exact-path AC-9 assertion must compare against the same canonical form.
+WORK="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/install-drive-hooks.XXXXXX")" && pwd)"
 trap 'rm -rf "$WORK"' EXIT
 
 SETTINGS="$WORK/settings.json"
