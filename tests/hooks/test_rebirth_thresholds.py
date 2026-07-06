@@ -183,9 +183,9 @@ def _statusline_case_window(model):
     from the live script — so this asserts the json table against statusline's real
     resolution, not a copy of it. Reds if either side drifts."""
     src = STATUSLINE.read_text(encoding="utf-8")
-    m = re.search(r'case "\$MODEL" in\n(.*?)\nesac', src, re.DOTALL)
+    m = re.search(r'case "\$MODEL \$MODEL_ID" in\n(.*?)\nesac', src, re.DOTALL)
     assert m, "statusline.sh window `case` block not found — refactor changed its shape"
-    script = f'MODEL={json.dumps(model)}\ncase "$MODEL" in\n{m.group(1)}\nesac\necho "$WINDOW"'
+    script = f'MODEL={json.dumps(model)}\nMODEL_ID=""\ncase "$MODEL $MODEL_ID" in\n{m.group(1)}\nesac\necho "$WINDOW"'
     out = subprocess.run(["bash", "-c", script], capture_output=True, text=True, check=True)
     return int(out.stdout.strip())
 

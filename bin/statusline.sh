@@ -26,11 +26,13 @@ WINDOW=$(jq -r --arg model "$MODEL" --arg modelid "$MODEL_ID" '
     | first(., empty)
 ' "$THRESHOLDS_FILE" 2>/dev/null | head -1)
 if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
-# Inline fallback (kept at column 0 so it is the same `case` shape the data file
-# mirrors): same windows as rebirth-thresholds.json, used only when the file is
-# unreadable. AC6 pins this `case` and the json to identical numbers.
-case "$MODEL" in
-    *"Haiku"*|*"Sonnet 4.5"*|*"Sonnet 4.0"*|*"Opus 4.5"*|*"Opus 4.1"*)   WINDOW=200000 ;;
+# Inline fallback (kept at column 0 so it mirrors rebirth-thresholds.json's window
+# groups): the SAME 200k match set as the json — display-name AND id-forms — matched
+# against "$MODEL $MODEL_ID" like the primary jq path, so a generic display_name with a
+# specific model.id still resolves. Used only when the data file is unreadable. AC6 pins
+# this `case` and the json to identical numbers.
+case "$MODEL $MODEL_ID" in
+    *"Haiku"*|*"haiku"*|*"Sonnet 4.5"*|*"sonnet-4-5"*|*"sonnet-4.5"*|*"Sonnet 4.0"*|*"sonnet-4-0"*|*"sonnet-4.0"*|*"Opus 4.5"*|*"opus-4-5"*|*"opus-4.5"*|*"Opus 4.1"*|*"opus-4-1"*|*"opus-4.1"*)   WINDOW=200000 ;;
     *)                                                                   WINDOW=1000000 ;;
 esac
 fi
