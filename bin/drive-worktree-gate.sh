@@ -29,17 +29,31 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 INPUT="$(cat)"   # WorktreeCreate payload: {name, cwd, session_id, hook_event_name, ...}
 
-# jq absent → the active-run scan cannot run. FAIL-CLOSED = DENY (exit 2), MATCHING the shipped
-# PreToolUse gate's jq-absent posture (drive-tool-gate.sh: static deny). A fail-OPEN here would
-# reopen the exact frontmatter-isolation bypass this AUTHORITATIVE gate exists to close. jq is a
-# documented /drive precondition (D-w2).
-if ! command -v jq >/dev/null 2>&1; then
-  printf '/drive worktree gate: jq is required to evaluate active /drive runs but was not found in PATH. Failing CLOSED (denying native worktree creation) — jq is a documented /drive precondition, and this matches drive-tool-gate.sh. Install jq, or create the worktree via Bash: git worktree add <path> -b slice/<runId>/<id>.\n' >&2
+# REQUIRED-TOOL FAIL-CLOSED (D-w2). drive_scan_active_runs suppresses its find/dirname/sort/jq
+# pipeline errors to /dev/null, so a MISSING scan binary yields an EMPTY result —
+# INDISTINGUISHABLE from "no active run" → a FAIL-OPEN provision even while a run IS active
+# (codex adversarial repro: PATH without `find`/`sort` + an active run → the gate provisioned).
+# An empty scan is only trustworthy when the scan could actually RUN. So before trusting any
+# scan result, require every binary the active-run DECISION depends on — jq, find, sort,
+# dirname — PLUS git (needed to provision the idle path). Any missing → FAIL-CLOSED DENY
+# (exit 2), exactly like the shipped PreToolUse gate's jq-absent posture. A fail-OPEN here would
+# reopen the exact frontmatter-isolation bypass this AUTHORITATIVE gate exists to close.
+# RESIDUAL (consistent with D-w2): a machine missing jq/find/sort/dirname/git denies native
+# worktree creation — these are all documented /drive preconditions, the accepted safe direction
+# (recoverable route-to-Bash), not a bug.
+_missing=""
+for _t in jq find sort dirname git; do
+  command -v "$_t" >/dev/null 2>&1 || _missing="$_missing $_t"
+done
+if [ -n "$_missing" ]; then
+  printf '/drive worktree gate: required tool(s) not found in PATH:%s. The active-run scan cannot run reliably, so an empty result cannot be trusted as "no active run". Failing CLOSED (denying native worktree creation) — matches the drive-tool-gate.sh jq-absent posture (D-w2); these are documented /drive preconditions. Install the missing tool(s), or create the worktree via Bash: git worktree add <path> -b slice/<runId>/<id>.\n' "$_missing" >&2
   exit 2
 fi
 
 # Scan for active runs. Suppress the predicate's advisory per-dir corrupt/no-repoRoot warnings
-# so they never pollute the provisioning stdout/stderr contract.
+# so they never pollute the provisioning stdout/stderr contract. Its scan binaries are now
+# guaranteed present (the required-tool check above), so an empty result genuinely means "no
+# active run", not "the scan silently failed".
 ACTIVE="$(drive_scan_active_runs 2>/dev/null)"
 
 if [ -n "$ACTIVE" ]; then   # >=1 active run (with a repoRoot) on this machine → DENY
@@ -62,19 +76,40 @@ fi
 NAME="$(printf '%s' "$INPUT" | jq -r '.name // ""' 2>/dev/null || true)"
 CWD="$(printf '%s' "$INPUT" | jq -r '.cwd // ""' 2>/dev/null || true)"
 [ -n "$NAME" ] || NAME="worktree-$$"
-if [ -n "$CWD" ] && [ -d "$CWD" ]; then
-  PARENT="$(dirname "$CWD")"
-else
-  PARENT="${TMPDIR:-/tmp}"
+
+# Validate NAME is a SINGLE safe path segment before it becomes a path component. An unsafe name
+# (path separator, traversal `..`, leading `-` option-injection, or any char outside
+# [A-Za-z0-9._-]) must NOT be silently rewritten into a bogus success — reject it and let Claude
+# Code surface the real reason. (The observed native names — `wtc-probe`, `agent-<hash>` — are
+# all inside this charset.) Exit 1 (a provisioning ERROR, NOT the exit-2 policy DENY).
+case "$NAME" in
+  .|..|-*|*/*|*..*)
+    printf '/drive worktree gate: refusing to provision — worktree name "%s" is unsafe (path separator, traversal, or leading dash). No worktree created.\n' "$NAME" >&2
+    exit 1 ;;
+  *[!A-Za-z0-9._-]*)
+    printf '/drive worktree gate: refusing to provision — worktree name "%s" contains characters outside [A-Za-z0-9._-]. No worktree created.\n' "$NAME" >&2
+    exit 1 ;;
+esac
+
+# Provisioning REQUIRES a real repo cwd to `git worktree add` against. A missing / non-directory
+# cwd cannot be provisioned — fail loudly (exit 1) rather than echo a bogus path Claude Code
+# would treat as a real worktree.
+if [ -z "$CWD" ] || [ ! -d "$CWD" ]; then
+  printf '/drive worktree gate: cannot provision a worktree — the payload cwd is missing or not a directory ("%s"). No worktree created.\n' "$CWD" >&2
+  exit 1
 fi
-WT_PATH="$PARENT/$NAME"
+WT_PATH="$(dirname "$CWD")/$NAME"
 
 # Create the worktree (I-a). Detached HEAD at cwd's current commit — no new branch (native
-# worktrees are not slice/<runId>/<id> branches, and there is no active run to key one to).
-# Best-effort: on any failure still echo the path (a bare exit 0 would wedge creation) and let
-# Claude Code surface the underlying git error.
-if [ -n "$CWD" ] && [ -d "$CWD" ]; then
-  git -C "$CWD" worktree add --detach "$WT_PATH" >/dev/null 2>&1 || true
+# worktrees are not slice/<runId>/<id> branches, and there is no active run to key one to). Do
+# NOT swallow the result: echo the path ONLY if the worktree was ACTUALLY created. On failure
+# (path collision, cwd not a git repo, any git error) surface the REAL git error to stderr and
+# exit non-zero (1 — a provisioning ERROR, not the exit-2 policy DENY) so Claude Code reports the
+# genuine failure instead of believing a bogus success path (the earlier `|| true` bug wedged
+# creation by echoing a path even when `git worktree add` failed).
+if ! _giterr="$(git -C "$CWD" worktree add --detach "$WT_PATH" 2>&1)"; then
+  printf '/drive worktree gate: failed to provision the worktree at %s: %s. No worktree created.\n' "$WT_PATH" "$_giterr" >&2
+  exit 1
 fi
 printf '%s\n' "$WT_PATH"
 exit 0
