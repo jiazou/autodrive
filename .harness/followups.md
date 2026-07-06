@@ -430,6 +430,147 @@ bin/drive-retention.sh:800,827 — apply-mode top-level summary tallies from pre
   restore the stale comment or drop slice 1.2's acceptance criterion → VETOED, non-blocking, KEEP.
 
 
+# Follow-ups — run todo-triage-20260704T135831
+
+## Slice 1.1 round-2 review — out-of-diff discovery
+- [P2] `.harness/followups.md:262` (committed ledger, pre-existing at baseRef 9beeac4, NOT in the slice diff and NOT owned by slice 1.1) is a surviving instance of the superseded claim class the phase P1 removed from docs/drive-enforcement.md: it states `defaultWindow=200_000 (conservative)` — contradicting the shipped `defaultWindow=1000000` fail-open semantics — and directs "When a new large-window model ships, add one `windows[].match` entry" + "Phase 4 docs should note this one-line maintenance point"; executing that stale entry would reintroduce the exact docs claim commit c5ae91c deleted. Fix: mark the ledger entry superseded (unknown model → 1M fail-open; a future 200k family is the case needing an entry, owned by the C1 arming-by-window-match follow-up). Also note: c5ae91c's commit-message claim "Tree-wide sweep confirms no third occurrence" held only for docs/code — this ledger occurrence survived.
+  **SHIP ACTION (binding, D-coord-2):** drive-ship's ledger promotion MUST append a premise-stale annotation to this `.harness/followups.md` entry (do not rewrite the entry body): note that post-C2 (this run) `defaultWindow=1000000` (fail-open), the add-an-entry direction is inverted (a future 200k family is the case needing an entry), and the C1 arming-by-window-match follow-up owns the residual.
+
+## slop (deferred to finalize)
+- tests/hooks/test_drive_stop_hook.py:454-456 — in-function `sys.path.insert` + import (sibling suite does it once at module level; inconsistent placement)
+- test/statusline-window.test.sh:147-160 — three near-identical copy-pasted MODEL_ID sample pipelines; an id-payload helper (mirroring `rendered_pct`) would fold them
+- bin/rebirth-thresholds.json:3-8 — speculative dot-form id entries extended to families that never had them (design-mandated convention carry-over)
+- tests/hooks/test_rebirth_thresholds.py:114 — stale name `test_resolve_thresholds_default` (resolves the Sonnet 4.5 200k rule, not the default)
+- test/statusline-window.test.sh:37 — (codex) flagged, unspecified slop site
+- test/rebirth-install-layout.test.sh:181 — (codex) flagged, unspecified slop site
+- tests/hooks/test_rebirth_thresholds.py:247 — (codex) flagged, unspecified slop site
+- tests/hooks/test_drive_stop_hook.py:439 — (codex) flagged, unspecified slop site
+
+## Harden phase-1 deferrals
+- [P2, D-coord-3] bin/statusline.sh inline fallback matches display-name only (jq path matches display OR id): in degraded mode (json unreadable) an unrecognized display + 200k id resolves 1M. PRE-EXISTING asymmetry (old case identical), compound corner, load-bearing Stop-hook path unaffected (rebirth_thresholds.py matches both forms). C1-adjacent: extend the case to `"$MODEL:$MODEL_ID"` arms + degraded-mode id samples when C1 reworks arming.
+- [P3] Case-sensitive matching contract documented (bin/rebirth_thresholds.py:12) but unpinned — add a lowercase-display sample asserting the 1M-default fallthrough with a contract-naming comment.
+- [P3, C1-adjacent] Opus 4.0 (200k) resolves defaultWindow=1M — same gap class as the pre-existing table (no regression); either add "Opus 4"/"opus-4" 200k entries + derived boundary samples, or extend D-design-7(a)'s named residual class to Opus 4.0.
+- tests/contracts/test_drive_ship_trailer.py:1-21 — module docstring carries ~20 lines of C6 bug-history + mutation-verify narration; pins suffice
+- tests/hooks/test_rebirth_thresholds.py:74-78 — 5-line date-stamped rationale comment inside a parametrize list (same class at :93-95)
+- (codex) new test files: verbose docstrings/comments — 3 sites noted in codex-harden-1.md invocation-2
+
+## Phase-2 design — out-of-scope discoveries (2026-07-04)
+- Bash `gh pr merge` / `gh pr edit` are UNGATED while their MCP twins
+  (merge_pull_request / update_pull_request) now deny during active runs — an
+  asymmetry to decide deliberately in a follow-up (PR content lands only via the gated
+  push/create, so accepting it may be fine; decide, don't drift).
+- GitLab-MCP write tools (create_merge_request, …) are the same bypass class under
+  different tool names — not covered by C7's GitHub-named matcher alternation.
+- Refuse-on-drift installer variant (fail-closed deployment-drift gate) — reaffirmed as
+  the logged D8 follow-up option; this run ships warn-only.
+
+## Phase-2 design-review r2 — out-of-scope discovery (2026-07-05)
+- SSH host-alias reconciliation in the pinned origin parse: the canonical parse
+  (Foundation C) keys on `host/owner/repo` as literally written in `origin`, so two clones
+  of the same GitHub repo whose origins use DIFFERENT hosts for the same remote —
+  `github.com` vs an `~/.ssh/config` alias like `github.com-work` or `ssh.github.com` —
+  produce different `host` segments and do NOT match as same-repo (worktree/MCP origin
+  scope silently under-matches). Documented as a residual in the design (§ Docs); reconciling
+  aliases would need to resolve `~/.ssh/config Host` → real hostname (or canonicalize known
+  GitHub host aliases). Out of C7 scope; decide deliberately in a follow-up (the common-dir
+  fast-match still catches linked worktrees of the run's own clone form-independently).
+
+- **C7 no-origin-fallback renamed-checkout residual (design r4, codex MINOR):** the MCP
+  no-origin fallback keys off `basename(RUN_COMMONDIR sans /.git)` = the owning CHECKOUT
+  directory name. For a renamed clone directory or a renamed submodule path this mis-derives
+  the repo name, so an origin-less run under-matches same-repo MCP writes (the worktree class
+  still matches by common-dir path). A run with a normal `origin` is unaffected. Documented as
+  a best-effort no-origin-fallback residual; not fixed (an origin-less GitHub run is atypical).
+
+- **C7 literal-`.git`-named repo over-collapse (slice 2.1 review r5, codex MINOR — FINALIZE owns):**
+  parse_origin strips a trailing `.git` unconditionally, so a repo literally NAMED `repo.git`
+  canonicalizes identically to `repo`. Inherent git-URL ambiguity (clone-suffix vs literal name,
+  indistinguishable without host query); SAFE direction (over-deny, never fail-open); OUT OF GITHUB
+  SCOPE (GitHub forbids `.git`-suffixed repo names, so it cannot arise for the GitHub MCP tools the
+  gate targets, per D9). Resolution: FINALIZE adds an explicit documentation scope-bound to
+  docs/drive-enforcement.md's residual section + a `repo` vs literal-`repo.git` negative-control test
+  pinning the accepted boundary. Not a code fix (the ambiguity is unfixable in general).
+bin/drive-tool-gate.sh:241 — dead IPv6 second port-strip; only fires on multi-colon IPv6 host, corrupts it (KNOWN)
+bin/drive-tool-gate.sh:305 — SC2016 literal $RUN_DIR/$phaseBaseSha/<runId> tokens in single-quoted printf (intentional AC-3 verbatim); no shellcheck-disable landed (KNOWN)
+bin/drive-tool-gate.sh:296 — redundant printf '%s' wrapper around basename subshell
+bin/drive-tool-gate.sh:282 — common_dir_of local var named 'cd' shadows the cd builtin (confusing naming)
+bin/install-drive-hooks.sh:98 — missing-sibling variant-3 WARN printf duplicated verbatim across two branches
+bin/drive-tool-gate.sh:251 — overlong essay comment in the normalization block (codex)
+test/drive-tool-gate.test.sh:300 — very long mutation-verification narration above the 36-form sweep (codex)
+test/drive-tool-gate.test.sh:408 — repeated narrative prose around the codex-reproduced over-deny case (codex)
+docs/drive-enforcement.md:242 — verbose repeated AC/residual discharge prose (codex)
+
+## Harden phase-2 — out-of-diff root cause (2026-07-05)
+- **[P1, PRE-EXISTING] Spaced-path cross-checkout install duplicates managed hooks.** Install the
+  drive hooks from a checkout whose path contains a space (e.g. `/…/sp ace/bin`), then re-run the
+  installer from a DIFFERENT checkout → the stale spaced entries are NOT stripped and the new ones
+  are appended → duplicate managed hooks (REPRODUCED: 2 merge-gate, 4 tool-gate, 2 stop-guard),
+  with NO drift WARN. ROOT CAUSE (out of phase-2 diff): `is_managed` (bin/install-drive-hooks.sh)
+  recognizes a spaced-path command as managed ONLY when it EXACTLY equals the current `$full`; a
+  cross-checkout re-run has a different `$full`, and the basename branch's metachar guard
+  `test("[[:space:]|&;<>()`$]")` rejects ANY command containing a space, so a legit spaced LONE path
+  is treated like a wrapped/foreign command and survives. The drift preflight's own `live_cmd`
+  derivation uses the same guard, so it also can't warn about a spaced live dir. PRE-EXISTING on
+  origin/main: the metachar guard was introduced in f1eee81 (#24) and the `$cmd == $full` clause in
+  a6bad23 (2026-06-06), both before this run; REPRODUCED to affect drive-merge-gate.sh +
+  drive-stop-guard.sh IDENTICALLY (two distinct merge-gate paths after the cross-checkout re-run),
+  so it is NOT introduced by phase-2's tool-gate addition (the phase-2 diff vs merge-base leaves
+  is_managed's matching logic untouched — it only extends strip_managed to the tool-gate + adds the
+  read-only preflight). NOT FIXED in harden (scope call): the fix must loosen a SECURITY-sensitive
+  matcher (is_managed decides collapse-vs-preserve; a false-positive collapse silently WEAKENS
+  enforcement — the exact case the existing `env_kept`/`piped_kept` wrapped-command tests protect).
+  A plausible fix ("managed iff ends in `/<base>`, contains no `[|&;<>()`$]`, AND starts with `/`" —
+  accepts a lone spaced path while still rejecting `env STRICT=1 …/gate.sh` and `wrapper | …/gate.sh`)
+  changes matcher semantics and needs its OWN adversarial find-the-bypass review round — beyond a
+  cheap harden fix, net-negative risk in a quality-only pass. Also fix the preflight `live_cmd`
+  derivation (same guard). Decide deliberately in a follow-up.
+
+- **Committed pytest scratch pollution (harden phase 2, coordinator-caught):** a subagent's
+  `git add -A && git commit` swept 1497 in-tree pytest/bash scratch files (`.tmp-py/`, `.tmp-e2e/`,
+  `.tmp-home*`, etc.) into phaseInt/2 (commit 7f0abff). Root cause: test suites use in-worktree
+  TMPDIR/HOME scratch AND subagents run `git add -A`. FIXED this run: reset the commit, purged the
+  scratch, added `.gitignore` `.tmp*/`, re-committed only the real change. PREVENTION follow-up:
+  subagents should `git add <explicit paths>` not `git add -A`, OR point test TMPDIR outside the
+  worktree. The drive-implement/harden SKILL prompts could pin this.
+- **test_skill_frontmatter.py globs on-disk untracked scratch (pre-existing test-isolation bug):**
+  `tests/contracts/test_skill_frontmatter.py` rglobs REPO_ROOT for SKILL.md including untracked
+  `.tmp*/` scratch left by other suites → false "expected 5, discovered 51" failure when scratch is
+  present. Not in this run's diff. Fix: scope the glob to git-tracked files (or skip `.tmp*/`).
+  Out of C7 scope — verify runs must purge scratch or use external TMPDIR first.
+
+## Finalize round 1 — codex P1 refuted + P2 deferred (2026-07-05)
+- **codex P1 REFUTED as P1 → known limitation: drive-tool-gate.sh MCP match is host-blind.**
+  The MCP owner/repo match (drive-tool-gate.sh:358) compares owner+repo only, so a GitHub MCP
+  write to `foo/bar` is denied even when the active run's origin is `gitlab.com/foo/bar` or a GHE
+  host (same owner/repo, different host). This is an OVER-DENY (fail-CLOSED): it blocks a
+  legitimate cross-host write and points the user at the gated Bash path — NOT a bypass/fail-open.
+  The GitHub MCP write tools carry only `owner`/`repo` in their input (no host — the host is fixed
+  by the MCP server config), so the gate has no host to compare and cannot tighten without input
+  it is not given. Consistent with the gate's documented uniform fail-closed over-deny posture
+  (drive-tool-gate.sh:22-28, 348-351). Claude's independent audit found no fail-open. Overruled as
+  P1 with evidence. If a future MCP schema carries a host, tighten the match to include it.
+- **codex P2 deferred (non-blocking): compress drive-tool-gate.sh design-history comment blocks
+  + test/drive-tool-gate.test.sh mutation-diary prose.** The gate deliberately carries its
+  design-rationale comments for auditability of a security matcher (a stated design value);
+  trimming them is a taste edit that reduces auditability. Not applied in finalize — cosmetic,
+  behavior-preserving de-slop should not degrade a security gate's auditability. Leave as-is.
+
+## Finalize round 2 — codex P1 #2 overruled + P2 deferred (2026-07-05)
+- **codex P1 #2 OVERRULED as P1 → advisory-completeness followup: install-drive-hooks.sh drift_preflight
+  misses a stale-path tool-gate registration.** After round-1 fix (d) added per-matcher
+  `have_mcp`/`have_native`, those detect a lone `drive-tool-gate.sh` at ANY path, not specifically
+  `live_dir`; so a split-brain settings file with BOTH tool-gate entries pointing at an OLD checkout
+  (while the merge-gate is current) emits no drift WARN (Variant 2 keys on the merge-gate's live_dir).
+  NOT a P1: `drift_preflight` is WARN-ONLY (never blocks/mutates — install-drive-hooks.sh:60-67), the
+  install itself RE-CANONICALIZES all managed entries to the current path (self-healing), and a
+  stale-path gate is either running-old-code or the already-documented dead-path fail-OPEN residual
+  (drive-tool-gate.sh:27-28) — no NEW runtime enforcement failure. Advisory-completeness gap →
+  followup: extend the preflight to compare each tool-gate entry's dir to live_dir. Not fixed in
+  finalize (WARN-only, self-healing; avoid churning advisory logic).
+- **codex P2 deferred (non-blocking): trim leftover mutation-verification/review-diary prose in
+  test/drive-tool-gate.test.sh + tests/hooks/test_rebirth_thresholds.py.** These notes document the
+  RED-then-green mutation checks (a deliberate audit trail); trimming has no coverage value and loses
+  the provenance. Left as-is (same disposition as round-1's codex comment-slop P2).
 ## Run main-20260704-180725 (leverage Trellis in autodrive → /drive-retro trace-mining command) — 2026-07-05
 
 # Run followups — main-20260704-180725

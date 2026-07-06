@@ -102,8 +102,8 @@ trigger class B) — they are NOT a new mechanism; the durable run-state lives i
 The context-pressure rebirth (class A, Stop-hook-triggered) remains as a
 safety net for any single leg that overflows its window. **Decant runs at every context-clear
 boundary** (I1 step 5.5) — distilling the outgoing leg's learnings before they are lost — plus
-once at the true run-wrap (after Gate B). Clearing context = a fresh session, which Claude
-Code cannot self-initiate: you paste `/drive <runId>` at each `═══` boundary; the installed
+once at the true run-wrap (after Gate B). Clearing context = a fresh session; the handoff
+is human-initiated by design: you paste `/drive <runId>` at each `═══` boundary; the installed
 Stop hook re-arms autonomy WITHIN each leg.
 
 No other pauses. Not for ambiguous design choices, not for severity calls — the

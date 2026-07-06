@@ -745,6 +745,11 @@ Ran codex adversarial review of the r3 diff; it found 4 real issues (2 High bypa
 **Reasoning:** Spike-verified there is NO programmatic session-spawn/restart/headless re-entry anywhere in the harness; a Stop hook can only block/allow, not launch a session. Re-entry must be human/externally initiated. We don't fabricate a capability the platform lacks.
 **Reversibility:** medium
 **Classification:** Taste
+**Premise-stale (2026-07-04, todo-triage-20260704T135831, TODO audit C4):** the spike
+finding "NO programmatic session-spawn exists" no longer holds — the platform has since
+shipped fresh-session triggers (e.g. create_trigger with create_new_session_on_fire).
+Option (a) stands as the CHOSEN design (human-initiated resume), no longer a platform
+impossibility. Body above unchanged.
 
 ### 2026-06-10 -- D4: Reuse the waiting / Present-human-pause / run-graph / /goal machinery; add waiting="rebirth"
 **Stage:** plan
@@ -2679,6 +2684,677 @@ fresh after convergence.
   vetoed, non-blocking. Both voices zero P1; finalize CONVERGED at the free confirming round (0 fix rounds).
 
 
+# Decisions — todo-triage-20260704T135831
+
+## D1 (User, premises, 2026-07-04) — run scope
+Premise: fix the highest-priority open TODOs. Surveyed TODO.md + .harness/followups.md and
+verified open/closed status against live code (already fixed: retention apply-summary,
+-m body-ref matcher evasion, AC4 ship re-pins). Mid-triage, origin/main brought the
+Fable 5 / Claude 5 compatibility audit (#61), which reshuffled priorities.
+USER SELECTED: Tier-1 audit batch C6+C4+C2, PLUS C7 (MCP/worktree gate bypass).
+Deferred (not this run): C9, is_test_path P1 + contract pins P2 (followups.md, verified
+open), gh/glab --head ship-targeting HIGH audit (own run), Tier 3/4 audit items,
+retention 3-layer unification (own run).
+
+## D2 (Plan, 2026-07-04) — phase split on the C7 fan-out seam
+Two phases: Phase 1 = Tier-1 batch (C6+C4+C2, small mechanical disjoint fixes), Phase 2 = C7
+(new enforcement sibling hook + installer). Justification: seam-hunt at the ~150–250 SLOC band
+found one natural fan-out seam — C7 is a distinct subsystem (security gate) whose adversarial
+review depth/convergence should not gate the mechanical fixes; sequencing it second also layers
+its docs/drive-enforcement.md edits on C4's corrected prose. C7 carries heightened-review
+(extra adversarial find-the-bypass pass at integration review).
+Classification: Taste
+
+## D3 (Plan, 2026-07-04) — C6 keeps a dynamic Co-Authored-By trailer
+Keep the trailer, make the model name dynamic (shipping session substitutes its own model
+identity); verified repo-wide the hardcoded line is the sole occurrence and unpinned.
+Classification: Mechanical
+
+## D4 (Plan, 2026-07-04) — C2 table shape: ordered rules, verified-1M-first
+Explicit verified-1M entries (Claude-5 family, 1M 4.x models) precede version-qualified legacy
+200k substrings; bare Sonnet/Haiku matches removed; defaultWindow=1M and statusline [1m]
+override retained; inline fallback mirrors entries/order (AC6). Window facts verified against
+the authoritative model reference at implement time.
+Classification: Taste
+
+## D5 (Plan, 2026-07-04) — C7 hook shape: one reserved-basename sibling, deny-only, fail-closed
+One new script under one new reserved basename (joins install-drive-hooks.sh's RESERVED-NAME
+CONTRACT); PreToolUse entries with non-Bash matchers (GitHub MCP writes, Agent, EnterWorktree);
+deny-only composition like drive-merge-gate.sh; fail-CLOSED on detection/IO errors for matched
+write-class tools (remote MCP writes have no ship-gate backstop, so the mid-build fail-open
+concession does not apply). AMENDED (design revision, 2026-07-04): the active-run predicate is
+NEW work, not reuse — drive-hook-lib.sh is pure ref→runId parsing (D3 no-sentinel), the Stop
+hook scopes by sessionId (different ownership notion), and cwd-HEAD keying does not fire when
+the coordinator sits on main; predicate shape is Gate-A open question (ii), see Pending-human.
+Classification: Taste
+
+## D6 (Plan, 2026-07-04) — C4 rewording is capability-conditional; D3 annotation append-only
+Human-paste class-B seams stay the CHOSEN design (not a platform impossibility); the 2026-06-10
+D3 entry in .harness/decisions.md gets a dated premise-stale annotation appended, body untouched.
+TODO.md checkboxes ride with their item's phase.
+Classification: Mechanical
+
+## D7 (Plan revision, 2026-07-04) — C2-without-C1 stopgap accepted
+Landing C2's table fix without C1 intentionally flips 1M models from "class-A rebirth misfires
+at ~17% real usage" to "class-A effectively never arms" (auto-summarization keeps tokens below
+threshold). ACCEPTED interim behavior — never-fires beats fires-wrongly. C2 is a STOPGAP with a
+defined deletion path: the C1 follow-up owns arming-by-window-match + explicit override + the
+leaner-rebirth-v2 cut.
+Classification: Taste
+
+## D8 (Plan revision, 2026-07-04) — deployment-drift detector in Phase 2 scope
+Merged ≠ live for the pinned ~/.claude/drive-enforcement-worktree; scope addition (boil-lake,
+in blast radius, < 1 day): install-drive-hooks.sh (or a preflight it emits) detects the live
+enforcement worktree lacking the sibling hook / lagging the settings entries and WARNS loudly.
+The stronger "refuse /drive on mismatch" variant (fail-closed, false-block-prone) is a logged
+follow-up option, NOT built this run. The rollout note's verification is the detector, not
+ship messaging alone.
+Classification: Mechanical
+
+## D9 (Plan revision, 2026-07-04) — MCP premise is future-install insurance; fixtures first
+No GitHub MCP server is configured on this machine today (claude mcp list verified). C7's
+MCP-write matchers are insurance against a future install; tool-input shapes are sourced from
+vendor docs/schema with provenance noted, NOT live capture. Phase 2's FIRST deliverable is the
+fixture corpus for the matched tool inputs; the gate is designed against fixtures. Residual:
+schema drift is a clean non-match = silent fail-OPEN — named explicitly in the
+docs/drive-enforcement.md threat model, with the retirement condition (delete the sibling hook
+when the harness ships conditional/managed tool policy).
+Classification: Mechanical
+
+## D10 (Plan revision, 2026-07-04) — worktree-matcher trace-or-drop rule
+Phase-2 detailed design MUST trace one concrete creation→commit→landing chain through
+Agent isolation:"worktree" / EnterWorktree that voids a specific existing gate guarantee (the
+landing chokepoints git merge/push are already ref-key gated) BEFORE building the worktree
+matchers; if no such chain exists, the worktree matchers are DROPPED and C7 keeps only the
+MCP-write class.
+Classification: Mechanical
+
+## D11 (Plan revision, 2026-07-04) — selection rationale + declined out-of-scope items
+Why this cut: C6/C4/C2/C7 are the P1s + wrong-today items; C2's table fix captures most of
+C1's user-facing symptom (~17% misfire) at ~5% of C1's cost, making C1 (large, coupled to
+C11 + leaner-rebirth-v2) safely deferrable to its own run; C9/C3/C5/C8/C10/C12 deferred per
+D1. Declined this run: single-sourcing the statusline inline fallback from the JSON (AC6
+byte-parity tests already machine-check drift; DRY refactor of a string-pinned working surface
+is net-negative risk — taste follow-up); manifest-driven installer generalization (follow-up;
+docs record only the retirement condition); string-pin multi-authority drift tax (already
+ledgered, TODO.md retention-3-layer class, per D1).
+Classification: Taste
+
+## Pending-human (Gate A questions, 2026-07-04)
+- (i) C7 approach shape: sibling deny-route hook (audit's prescription, the baseline) vs
+  invariant-level alternatives — GitHub branch protection / required checks as the remote
+  chokepoint (a User-Challenge alternative, surfaced not auto-decided), default-deny tool
+  posture during active runs, restricted tool profile.
+- (ii) Activation-predicate shape: recommended harness-owned evidence scan of
+  ~/.claude/harness-runs/*/state.json (stage != "done", liveness-bounded), priced against
+  concurrent-session collateral (blanket any-run-active deny would false-block unrelated
+  concurrent work); must reconcile with D3's no-sentinel rationale in Phase-2 detailed design.
+
+## D12 (Eng-review revision, 2026-07-04) — per-tool route-back semantics
+The C7 deny-route contract is per-tool, not uniform: tools with a canonical gated Bash path
+get the route-back reason naming the exact command; PR-merge-class tools (merge_pull_request
+and kin) have NO gated local equivalent — the drive flow's PR lifecycle is human-owned at
+Gate B — and get a "human-owned at Gate B — not permitted during an active drive run" deny.
+The per-tool table is defined in Phase 2's fixture corpus.
+Classification: Taste
+
+## D13 (Eng-review revision, 2026-07-04) — deny-message DX bar + install-prose docs fold-in
+Every C7 deny reason states problem + cause + the exact retry path (canonical command, or
+"human-owned at Gate B"). Phase 2's docs scope includes the installer/installation prose in
+docs/drive-enforcement.md (~L241) + SECURITY.md (two-entry install description, stale after
+C7) and the installer's own disclosure banner ("It adds two hooks", enumerates both).
+Classification: Mechanical
+
+## D14 (Eng-review revision, 2026-07-04) — C7 closure semantics under trace-or-drop
+If the worktree matchers are dropped by the trace-or-drop rule, the TODO.md C7 checkbox is
+STILL marked complete: closure = MCP-write class gated + the worktree claim resolved with the
+trace recorded (a documented, proven non-bypass IS closure of the audit item); the tick
+annotates the resolved scope in one clause.
+Classification: Mechanical
+
+## Eng-review amendments to prior entries (2026-07-04)
+- D4 fail-mode scoped to protocol reality: fail-closed = in-script detected errors via the
+  merge-gate's emit-deny-on-error discipline (deny = JSON + exit 0); hook-INVOCATION failure
+  (nonzero exit: crash, jq absent, dead hook path rc 126/127) is fail-OPEN by platform
+  protocol — named as a threat-model residual next to the schema-drift residual.
+- D7 gains two named stopgap residuals: (a) unknown future 200k model → defaultWindow=1M
+  misclassified fail-open (owned by the C1 arming-by-window-match follow-up); (b) the [1m]
+  override is statusline-only — a table-listed 200k model on the 1M beta still resolves 200k
+  in the Stop hook.
+- D8 hardened against installer hijack: activation re-run happens INSIDE
+  ~/.claude/drive-enforcement-worktree (basename-keyed canonicalization would migrate live
+  entries to the dev clone); the drift detector is READ-ONLY with a two-artifact read surface
+  (settings-derived live path + worktree content), never assumes live path == own $REPO_DIR,
+  never churns settings backups; Gate-B ops instruction states the exact location.
+- D11's DRY-decline re-justified honestly: AC5/AC6 are SAMPLED behavioral checks, NOT
+  byte-parity — the decline is carried by the C2 unit's mandatory boundary-pair sample
+  extension (each 1M entry vs the 200k entry it prefixes, display-name AND model-id form)
+  + mutation-verified fixtures preserving pre-fix-RED.
+- Pending-human (ii) extended with corrupt-state DoS pricing: recommended position — corrupt/
+  unreadable run dirs SKIPPED with a logged warning; fail-closed applies to the hook's OWN
+  logic, not third-party dir contents.
+- C4 scope: + .claude/commands/drive.md capability prose (rebirth-handoff block ~L630,
+  native-/goal facts ~L899 — the verbatim "cannot self-initiate" line is CLAUDE.md L106,
+  already in scope) and docs/drive-enforcement.md's stale defaultWindow=200000 claim (~L466).
+  C7 pin suites corrected: tests/installers/test_install_banner_confirm.py (not
+  tests/hooks/test_install_hooks.py — that is mission-control's) + test/rebirth-install-
+  layout.test.sh regression.
+
+## P2/P3 review-log note (design revision, 2026-07-04)
+- codex MAJOR + Claude P2 (same root — Goal paragraph lagged the trace-or-drop conditional):
+  the Goal's C7 clause now states the conditional closure explicitly (worktree-tool half
+  closes EITHER by gating OR by a recorded trace proving the landing chokepoints already
+  cover it — proven non-bypass IS closure, per D-design-12/D14), and Open question (i) notes
+  that Gate-A approval explicitly ratifies this conditional-closure semantics. FIXED in
+  design.md.
+- codex MINOR (Phase 2 under-split concern): resolved WITHOUT adding a phase — Phase 2 text
+  now carries a foundation-first ordering note: the fixture corpus, trace-or-drop proof, and
+  activation predicate are must-verify-first foundations the detailed design resolves FIRST
+  (already sequenced as leading deliverables). LOGGED.
+- Claude P3: D-design-1's "merge without waiting" clause reworded to "merge earlier — ahead
+  of" (phases are sequential; Phase 1 completes before Phase 2 starts). FIXED.
+
+## Design-review r2 fixes (2026-07-04)
+- **(Mechanical)** C4 drive.md sweep bounded to the fresh-session self-initiation claim
+  class ONLY (rebirth-handoff block ~L630); the native-/goal programmatic-setter contract
+  (~L899) explicitly EXCLUDED — the audit's C4 never verified that claim stale (its scope
+  is the "cannot self-initiate a fresh session" class), so it stays as-is. Pin-suite note
+  unchanged (it never referenced the /goal region). Per codex r2 MAJOR, accepted.
+- **Severity overrule of codex r2 MAJOR-1** (dependency-graph "no staged-risk foundation"
+  vs Phase 2's "must-verify-first foundations"): overruled to non-blocking WITH evidence —
+  the review rubric grades under-split as P2, and a standalone fixture/trace phase would
+  itself violate the no-test-only-phase decomposition rule. The real defect was the textual
+  contradiction, which is FIXED: the dependency-graph sentence now states no staged-risk
+  foundation exists BETWEEN the four items, while Phase 2's foundations are INTERNAL to
+  that phase, ordered first by its own detailed design.
+
+## Phase-1 detailed design decisions (2026-07-04, design-phase1.md)
+- **D-p1-1 — ONE slice for Phase 1.** Fan-out declined: TODO.md single-owner would force a
+  coupling slice, C2's table+fallback+tests are ONE indivisible review unit, and C6/C4 are
+  minutes-scale riders below dispatch overhead. Default-ONE holds.
+  Classification: Taste
+- **D-p1-2 — C6 wording:** placeholder-substitution directive (`<model>` = the shipping
+  session's own model name, explicit `Claude` fallback), trailer shape kept, per D-design-2.
+  Classification: Mechanical
+- **D-p1-3 — drive.md verify-no-instance (DIV-1).** Greps against the real file find NO
+  "cannot self-initiate" claim-class instance in .claude/commands/drive.md (the handoff block
+  carries only the chosen-design paste instructions); C4's drive.md action is grep
+  re-verification, expected zero diff; /goal region byte-untouched.
+  Classification: Mechanical
+- **D-p1-4 — third block-cap instance propagated (DIV-2).** docs/drive-enforcement.md L173
+  carries the same stale 8-consecutive-block-cap claim as the two bin comments; same
+  capability-conditional rewording, file already in phase scope.
+  Classification: Mechanical
+- **D-p1-5 — C2 entry-list candidates + structural contracts.** Two ordered rules (1M first);
+  major-qualified `Sonnet 4`/`Haiku 4` legacy entries with rule order carrying the Sonnet-4.6
+  boundary pair; old-generation 3.x models deliberately unlisted (D-design-7(a) residual);
+  Opus 4.6 expected to MOVE to 1M per the current model reference (DIV-3 — repo table says
+  200k, reference says 1M); all window facts re-verified at implement, facts win.
+  Classification: Mechanical
+- **D-p1-6 — stop-hook discriminator premise-pin, NOT re-anchor (DIV-4).** `claude-haiku-4`
+  keeps 200k coverage under the retained `haiku-4` entry, so the line-binding test keeps its
+  power; it gains an explicit premise assertion instead of a new anchor model.
+  Classification: Mechanical
+- **D-p1-7 — pre-fix-RED protocol:** mutation-verify behavior-changing samples against the
+  REAL pre-fix json+case (git checkout of 9beeac4 artifacts); `Fable 5` samples accepted as
+  pre-fix-GREEN regression pins (power via the rewritten windows[0] mutation test).
+  Classification: Taste
+
+## Phase-1 design-review r1 revision decisions (2026-07-04, design-phase1.md)
+- **D-p1-8 — Step-0 window-fact verification = ordered IN-SLICE foundation, not a slice
+  split (codex MAJOR-3).** Verification runs FIRST inside Slice 1.1 with a deterministic
+  adjustment procedure (entry placement by verified window; mechanical boundary-pair
+  re-derivation per I-6's rule; fixture expectations + RED/GREEN classes follow verified
+  facts; ACs stated over the verified list, closed under re-derivation) — the slice is
+  deterministic given Step-0's recorded output. A standalone verification slice would be
+  foundation/test-support-only (forbidden by decomposition rules) with no fan-out consumer.
+  Classification: Mechanical
+- **D-p1-9 — rebirth-install-layout.test.sh 4c block is an OWNED content edit (both
+  voices' P1).** Its `jq 'select(.match | index("Sonnet"))'` exact-element pin on the bare
+  entry reds under the new table; DIV-5's count corrected (4 content edits + e2e zero-diff).
+  Edit spec: selector re-anchored to a retained 200k family entry; "denylist" comment →
+  ordered-rules language; `inline_default_window` grep anchored to the `*)` default arm
+  (kills value-coincidence with the new 1M arm); third anti-drift check added (inline 1M
+  arm == windows[0].window). Budgeted by new AC-12 + inverse-direction mutation record.
+  Classification: Mechanical
+- **r1 P2/NIT fixes:** AC-3 grep widened to `grep -rnE "8-consecutive|built-in
+  consecutive-block" bin/ docs/` (covers the stop-hook instance that lacks the
+  "8-consecutive" token); boundary-pair sampling rule tightened to BOTH sides × BOTH name
+  forms × BOTH surfaces incl. statusline's MODEL_ID path (adds the `claude-sonnet-4-20250514`
+  → 454 id-form partner sample, codex MAJOR-2); line anchors corrected (.harness/decisions.md
+  D3 Classification = L747; stop-hook test def = L439).
+  Classification: Mechanical
+
+## Phase-1 design-review r2 revision decisions (2026-07-04, design-phase1.md)
+- **D-p1-8 AMENDED (codex r2 MAJOR-1) — AC anchoring narrowed from verbatim-universal to
+  bounded.** The "ACs testable verbatim under ANY Step-0 outcome" claim overclaimed (AC-6
+  hard-requires two rules, AC-12 a retained 200k selector — unsatisfiable under a zero-200k
+  verification outcome). Resolution: ACs are anchored to the EXPECTED 2026-06-24 fact set;
+  named literals are candidate-expected values that track Step-0 facts; the one structural
+  extreme (zero 200k models) is enumerated with degraded-AC forms (one-rule table for AC-6,
+  empty pair set for AC-8, 4c dissolves to default+1M checks for AC-12); divergences recorded
+  and surfaced at the phase review. All "under ANY outcome" phrasings removed (doc grep-clean).
+  Classification: Mechanical
+- **D-p1-10 (codex r2 MAJOR-2) — changed-classification models sampled like boundary pairs.**
+  Opus 4.6 (200k→1M reclassification) gains full statusline coverage — golden (90, pre-fix
+  RED 454), AC6-loop parity, malformed-json fallback, and MODEL_ID-path id sample
+  (`Brand X`+`claude-opus-4-6`→90) — plus the py parity parametrize entry; the I-6 rule
+  yields no order-sensitive partner (no `Opus 4`/`opus-4` entry retained), so the samples
+  are reclassification pins, and the rule is generalized: any class-changing model gets
+  both-surfaces × both-forms samples.
+  Classification: Mechanical
+- **r2 MINOR/NIT fixes (Claude voice):** AC-7's named fallback literals restated as
+  candidate-expected values over the derived set (consistent with the narrowed anchoring);
+  the 1M-arm anti-drift check gains an explicit extraction anchor (a 1M-rule model token
+  line, e.g. `"Fable 5"` — never the `*)` line) plus the discriminating inline-side mutation
+  (mutate the inline 1M arm → 1M check reds, default-arm check stays green); stop-hook test
+  anchor corrected to :438 with the def-name anchor authoritative.
+  Classification: Mechanical
+
+## Phase-1 design-review r3 revision decisions (2026-07-04, design-phase1.md)
+- **D-p1-8 AMENDED again (codex r3 MAJOR) — bounded anchoring propagated to the concrete
+  fixture plans.** Two fixtures still hard-assumed the expected 200k set outside the r2
+  umbrella: `test_mutating_json_changes_resolution` (hard `windows[1]` target) and the
+  stop-hook premise pin (hard `claude-haiku-4`→200k). Both are now candidate-expected with
+  degraded forms enumerated in I-4's zero-200k/reclassification branch: mutation target =
+  "second rule if present, else windows[0]+defaultWindow only, premise comment updated";
+  premise pin = "re-derive to whichever verified 200k family remains, else DROP with a
+  rationale note (binding assertion stays)"; plus one clause bringing EXISTING 200k-pinning
+  suite rows (454 goldens, Brand X id case, [1m] 200k side) under the fixture
+  follow-through rule. The "Everything downstream is then DETERMINISTIC" sentence rescoped
+  to "rewritten deterministically FROM Step 0's output via the procedure; no downstream
+  artifact hard-assumes the expected fact set outside it". DIV-4 gains the matching
+  candidate-expected parenthetical.
+  Classification: Mechanical
+- **r3 MINOR/NIT fixes (Claude voice):** the existing `bad_default` fallback check is
+  scheduled for rename in I-6.2 — under the new case its 454 comes from the `*"Sonnet 4"*`
+  200k ARM, not the default arm (rename to "malformed json -> inline 200k arm (PCT 454)",
+  same stale-prose class as the 4c "denylist" comment); I-6.1's self-contradictory
+  "drop `"Haiku 4"`→ keep" reworded to an unambiguous KEEP; the zero-200k enumeration now
+  covers existing 200k-pinning rows (the NIT's one-clause fix).
+  Classification: Mechanical
+
+## Implement notes — Slice 1.1 (2026-07-04)
+
+### Step-0 window-fact verification (I-4) — provenance
+Models API unreachable on this machine (no `ant` CLI, no ANTHROPIC_API_KEY) → used the
+design-sanctioned fallback: the claude-api skill's authoritative model catalog
+(cached 2026-06-24; SKILL.md Current Models + shared/models.md). Verified facts —
+model → window → source:
+- Fable 5 / claude-fable-5 → 1M (catalog Context column)
+- Sonnet 5 / claude-sonnet-5 → 1M (catalog)
+- Sonnet 4.6 / claude-sonnet-4-6 → 1M (catalog)
+- Opus 4.8 / claude-opus-4-8 → 1M (catalog); Opus 4.7 → 1M (catalog); Opus 4.6 → 1M
+  (catalog — DIV-3 CONFIRMED: repo table had it 200k; entries MOVED to the 1M rule)
+- Haiku 4.5 / claude-haiku-4-5 → 200K (catalog); no 1M haiku exists (only current haiku)
+- Opus 4.5, Opus 4.1, Sonnet 4.5, Sonnet 4 → 200K (legacy-active per shared/models.md,
+  windows per the same 2026-06-24 reference set); deprecated ≠ retired → no entry dropped
+Outcome = the design's candidate list verbatim; boundary-pair derivation (I-6 rule)
+yields exactly ONE pair (Sonnet 4.6/claude-sonnet-4-6 vs Sonnet 4/claude-sonnet-4-20250514);
+Opus 4.6 is the one changed-classification model. No AC degradation branch taken.
+Classification: Mechanical
+
+### Mutation-verify record (I-6 protocol, AC-9/AC-12)
+Pre-fix run (git checkout 9beeac4 -- bin/rebirth-thresholds.json bin/statusline.sh):
+- python REDs (all expected): display[Sonnet 4.6, Sonnet 5, Opus 4.6],
+  id[claude-sonnet-4-6, claude-sonnet-5, claude-opus-4-6], default_is_1m[Sonnet, Haiku],
+  test_mutating_json_changes_resolution. Fable 5 / claude-fable-5, Sonnet 4 /
+  claude-sonnet-4-20250514, Haiku 4.5 rows pre-fix GREEN by design (regression pins;
+  entry-presence power carried by the rewritten windows[0]=13 mutation).
+- statusline REDs (all expected): AC5 goldens Sonnet 5/Sonnet 4.6/Opus 4.6 (454 vs 90),
+  MODEL_ID claude-sonnet-4-6 + claude-opus-4-6 (454 vs 90), malformed-json fallback
+  Sonnet 4.6 + Opus 4.6 (454 vs 90). Fable 5 golden pre-fix GREEN (fallthrough = same value).
+- stop-hook suite pre-fix green incl. the new premise pin (claude-haiku-4 hit the old
+  bare-"haiku" 200k entry) — pin is a power guard, not a RED row.
+Post-fix: python tests/ full suite, statusline-window (22), rebirth-install-layout,
+drive-stop-guard (9) ALL PASS.
+Layout-4c two-direction record: UNEDITED 4c block vs new table REDs (bare-"Sonnet" jq
+selector → empty; "denylist matches" check FAILs). EDITED block: json windows[1].window=
+190000 → 200k-family check REDs (others green); windows[0].window=999999 → 1M-rule check
+REDs (others green); INLINE 1M-arm value 1000000→999998 → 1M-rule check REDs while the
+default-arm check stays GREEN (extraction anchored to the arm, not the `*)` line).
+Classification: Mechanical
+
+### Slice-1.1 minor adaptations (spec-consistent, flagged)
+- statusline-window.test.sh: renamed the pre-existing "MODEL_ID matches the denylist"
+  check name + two "DENYLIST" comments to 200k-family wording — same stale-prose class
+  as I-6.2's bad_default rename; zero behavior change.
+- drive-enforcement.md Window-table bullet: dropped the old trailing sentence "A new
+  large-window model needs one windows[].match entry" — under the new table a new
+  LARGE-window model needs no entry (falls to the 1M default); keeping it would ship a
+  fresh contradiction. The replacement text (edge-8 wording) carries the entry guidance
+  for future 200k models.
+Classification: Mechanical
+
+## D-coord-1 — Codex MAJOR tag outranks its "no P1 remains" prose (phase1 r1)
+**Classification:** Mechanical
+Codex round-1 phase review tagged its doc-contradiction finding MAJOR while stating "no P1 remains". The review invariant counts BLOCKING/MAJOR as P1 regardless of prose; the finding was independently confirmed real (drive-enforcement.md:233 contradicts the shipped C2 fallback semantics + L466). Treated as FINDINGS, routed to slice 1.1.
+
+## D-coord-2 — Overrule codex slice-1.1 r2 BLOCKING on scope; remedy bound to ship promotion
+**Classification:** Taste (surface at Gate B)
+Codex r2 flagged `.harness/followups.md:262` (stale `defaultWindow=200_000` + add-an-entry guidance) as slice BLOCKING. Fact confirmed REAL; scope overruled with evidence: the line pre-dates the run (d213b24, 2026-06-12), is untouched by the slice diff, and sits outside every design boundary — per the review contract it is an out-of-scope real bug, routed to run followups. Remedy is NOT dropped: the ship-stage ledger promotion (allowlisted `.harness/followups.md` write) MUST append the premise-stale annotation per the run-followups entry, in the same PR. Claude voice independently scoped it P2-out-of-diff.
+
+## D-coord-3 — Codex harden P1 #1 (statusline fallback MODEL_ID) triaged P2-not-cheap → followups
+**Classification:** Taste (surface at Gate B)
+Fact verified real (jq path matches display OR id; inline case display-only). Not a phase regression (pre-fix case identical: display-only + 1M default ⇒ same degraded outcome); fires only on json-unreadable AND unrecognized-display compound corner; case shape is the 4-round-converged I-5 design with pinned extraction anchors; Stop-hook path matches both forms. Codex itself conditions severity on display-name reliability. Routed to followups (C1-adjacent).
+
+## Phase-2 detailed design decisions (2026-07-04, design-phase2.md)
+- **D-p2-1 — trace-or-drop verdict: worktree matchers KEPT.** Concrete omission chain
+  verified against the real gate: Agent isolation:"worktree" → harness-named branch (no
+  slice/ ref → plan/phasedesign gates never fire) → `git merge <harness-branch>` is inert
+  (slice-merge/phase-merge detection requires slice/|phaseInt/ tokens) → slice review AND
+  fail-closed impl-presence skipped; impl-presence has NO ship backstop, so the invariant
+  is voided end-to-end. DIV-p2-2: "landing chokepoints already ref-key gated" holds only
+  for git push. Bash-authored non-slice branches stay the documented forgery-class residual.
+  Classification: Mechanical
+- **D-p2-2 — activation predicate (resolves Gate-A OQ ii).** Evidence scan of
+  ~/.claude/harness-runs/*/state.json: ACTIVE iff stage != "done" AND state.json|event-log
+  mtime within DRIVE_TOOL_GATE_LIVE_HOURS (24). Denies are REPO-SCOPED (MCP: tool_input
+  owner/repo vs run repoRoot origin/basename; worktree class: cwd git common-dir vs
+  repoRoot/.git). Corrupt/unreadable run dirs SKIPPED with a stderr warning (fail-closed =
+  own logic only). D3 reconciled: no ref exists in tool input so ref-keying cannot fire;
+  stage is a pre-existing routing field, staleness self-heals via mtime — no new sentinel.
+  stage:"done" evasion = forgery-class residual. sessionId-scoping rejected (subagent
+  attribution unverified; repo scope is the correct guarantee).
+  Classification: Taste
+  **AMENDED (design-review r1, 2026-07-05):** worktree-class scoping is now ORIGIN IDENTITY
+  (normalized `git -C <cwd> remote get-url origin` vs the run's origin) UNIONed with the
+  common-dir fast-match — consistent with the MCP class, catching a SECOND independent clone
+  of the same GitHub repo, not only linked worktrees (codex BLOCKING: common-dir == repoRoot/.git
+  only catches linked worktrees). A second clone with rewritten/removed origin is a
+  forgery-class residual; corrupt/truncated OWN state.json is a forgery-class self-evasion
+  next to stage:"done" (codex MAJOR); a matched MCP write with unextractable owner/repo during
+  a live run DENIES (fail-closed) rather than silent-passing (Claude MINOR).
+  **AMENDED (design-review r3, 2026-07-05):** (i) MCP no-origin fallback now keys off the git
+  COMMON DIR, NOT `basename(repoRoot)` — repoRoot = `git rev-parse --show-toplevel` at run
+  start (drive.md ~L269/285), which is the WORKTREE folder (`design2`) not the repo for a
+  run launched from a linked worktree, so the old basename fallback missed a same-repo MCP
+  write in the no-origin + linked-worktree topology. A single shared `RUN_COMMONDIR`
+  derivation is reused by BOTH the worktree common-dir fast-match AND the MCP no-origin
+  fallback (repo name = basename of RUN_COMMONDIR sans `/.git`); `basename(repoRoot)` remains
+  only as a "not this" guard (codex MAJOR). (ii) the canonical parse strips the entire
+  `[userinfo@]` and a trailing `:port` from the URL-form host — `ssh://git@github.com:22/…`
+  otherwise keyed `github.com:22/…` and under-matched (fail-open); AC-7 gains a port+userinfo
+  URL variant (codex MINOR + Claude P2). (iii) interception residual labeled
+  `platform-may-not-fire-…` at Foundation B too — one name across all four sites (Claude P3).
+- **D-p2-3 — matcher breadth: ENUMERATE.** `^mcp__.+__(update_pull_request_branch|
+  create_or_update_file|create_pull_request|merge_pull_request|update_pull_request|
+  create_branch|delete_file|push_files)$` (longest-first; server segment wildcarded —
+  server name is user-chosen). Wildcard-with-write-classification rejected (fires on
+  reads, no drift gain). Hook re-checks the suffix against its own table → settings/table
+  drift fails CLOSED (generic deny). Schema drift (vendor rename) = silent fail-open
+  residual + retirement condition, documented.
+  Classification: Taste
+- **D-p2-4 — reserved basename bin/drive-tool-gate.sh, bare-path registration, 2 entries.**
+  No argv (installer is_managed refuses arg-bearing commands — args would break
+  canonicalization); class derived from tool_name; entries: MCP regex + ^(Agent|EnterWorktree)$.
+  Managed totals: PreToolUse 3 (1 merge + 2 tool), Stop 1.
+  Classification: Mechanical
+- **D-p2-5 — uniform in-script fail-closed incl. Agent class.** jq-absent → static
+  pre-built deny JSON; unparseable stdin → deny; priced: only fires on an already-degraded
+  machine; hot path (non-worktree Agent) exits before any fallible step except stdin parse.
+  Invocation failure stays fail-open (platform), documented.
+  Classification: Taste
+- **D-p2-6 — per-tool deny table (per D12/D13).** 6 route-back (create_or_update_file,
+  delete_file, push_files, create_branch, create_pull_request, update_pull_request_branch)
+  + 2 PR-lifecycle (merge_pull_request, update_pull_request → "human-owned at Gate B").
+  Excluded with rationale: create_repository, fork_repository, issue/comment tools,
+  PR-review-submission tools, GitLab-named tools.
+  Classification: Mechanical
+  **AMENDED (design-review r1, 2026-07-05):** the two PR-lifecycle deny reasons no longer
+  claim a GLOBAL prohibition ("NO gated local equivalent … not permitted during an active
+  drive run") — the Bash `gh pr merge`/`gh pr edit` twins remain UNGATED (drive-merge-gate.sh
+  gates only `pr create`/`mr create`, :824-825). Truthful wording: the MCP tool is not the
+  SANCTIONED route to merge/edit the PR during a /drive run (PR lifecycle human-owned at
+  Gate B); the deny closes the MCP omission path, and the ungated Bash-twin asymmetry is a
+  deliberately-deferred followup (codex BLOCKING).
+- **D-p2-7 — drift detector = drift_preflight in installer** (after banner, before
+  confirm; read-only two-artifact surface: settings-derived LIVE_DIR + its contents;
+  warn-only; cmp/test/jq only — no copy-class ops, layout assertion 5 safe).
+  Classification: Mechanical
+- **D-p2-8 — ONE slice for Phase 2.** Hook + installer entries are one NEW shared
+  contract (shared-contract rule); fixtures/tests ride with code; docs/TODO are riders.
+  No fan-out, no staged-risk build seam (foundations resolved in the design doc).
+  Classification: Taste
+- **DIV notes (real code wins):** DIV-p2-1 test_install_banner_confirm.py pins only
+  generic tokens — regression-green, NOT red-by-design; DIV-p2-3
+  test_cli_flag_doc_refs.py is MC-scoped, regression only; DIV-p2-4 e2e install stage
+  filters matcher=="Bash" — structurally unaffected.
+
+## Phase-2 design-review r1 revision decisions (2026-07-05, design-phase2.md)
+Dual-voice review returned FINDINGS; all applied in place (one slice, D-p2-8 unchanged —
+no new owned files). D-p2-2 and D-p2-6 amended above.
+- **(codex BLOCKING, P1) Worktree scope → origin identity.** Foundation C worktree class
+  now scopes by normalized origin URL UNIONed with the common-dir fast-match (was
+  common-dir only, which caught only linked worktrees of the active clone and was
+  inconsistent with the MCP class). Overclaim at Foundation C / Edge case 5 ("same-repo
+  actions from ANY session denied") narrowed to "whenever the hook can IDENTIFY the actor's
+  repo." Second clone with rewritten/removed origin = named forgery-class residual.
+- **(codex BLOCKING, P1) PR-lifecycle deny wording.** A.3 rows for merge_pull_request /
+  update_pull_request no longer claim a global prohibition (Bash `gh pr merge`/`gh pr edit`
+  are ungated — drive-merge-gate.sh gates only `pr create`/`mr create`). Deny is kept
+  (closes the MCP omission path); wording is truthful; asymmetry already in followups.
+- **(Claude MAJOR, P1) Interception verification hole.** AC-2/AC-3 fixture-pipes test hook
+  LOGIC not platform INTERCEPTION. Added FOURTH named residual
+  "platform-fires-PreToolUse-on-Agent-with-isolation-in-tool_input" (distinct from Edge
+  case 8 invocation-failure) + new AC-16 implement-time LIVE check (drive a real isolated
+  Agent + EnterWorktree through the installed hook, observe the deny).
+- **(codex MAJOR) Corrupt-own-state forgery-class.** Corrupt/truncated ACTIVE-run
+  state.json silences its own predicate = same forgery-class as stage:"done" — named as a
+  residual; regular-file (`[ -f ]`) guard before the jq read (blocking-symlink → hang →
+  out of threat model).
+- **(Claude MINOR) Unextractable owner/repo → DENY.** A matched MCP write during a live run
+  whose owner/repo can't be extracted now fails CLOSED (over-deny, names the run) — §Fail
+  modes — not a silent no-match pass.
+- **(Claude MINOR) Drift AC-11 → 4 variants.** Extended with settings-lag (variant 4) and
+  cmp-differs (variant 5, the load-bearing pinned-worktree-lag detector); warn-only.
+- **(Claude NIT) drift_preflight set -e-safe.** Interface 4 now states each check is an
+  if/|| conditional and short-circuits `[ -f "$SETTINGS" ] || return 0` before the
+  create-settings step.
+- **(codex MINOR) Hot-path/jq honesty.** jq-absent deny precedes class dispatch → on a
+  jq-less machine even plain Agent denies; wording no longer claims the hot path is
+  isolated from all fallible work (acceptable — jq is a hard /drive prerequisite).
+
+## Phase-2 design-review r2 revision decisions (2026-07-05, design-phase2.md)
+Round-1 fixes CONFIRMED; round-2 non-convergence concentrated in the NEW
+repo-identity/worktree-scope logic the r1 fix introduced. All applied in place (one slice,
+D-p2-8 unchanged — no new owned files). D-p2-2 amended above (r2 note).
+- **(codex P1, empirically demonstrated) Common-dir fast-match comparator wrong when
+  repoRoot is a linked worktree.** The r1 fast-match compared `git -C <cwd> --git-common-dir`
+  against `realpath(<repoRoot>/.git)`; when `<repoRoot>` is itself a linked worktree,
+  `<repoRoot>/.git` is a gitFILE pointer whose realpath is the gitfile path, NOT the common
+  dir — verified in THIS checkout (`realpath(.git)` = the wt's own gitfile path ≠
+  `--git-common-dir` = `/Users/jiazou/workspace/autodrive/.git`), so a linked worktree of the
+  run repo went unrecognized → the worktree deny never fired. FIX: derive BOTH sides
+  symmetrically via `git -C <path> rev-parse --path-format=absolute --git-common-dir` (both
+  realpath'd) — correct for main-clone AND linked-worktree repoRoot. Foundation C, AC-7,
+  D-p2-2 updated.
+- **(codex MAJOR / Claude P2) Origin normalization under-specified + AC-7 vacuous.** r1's
+  "strip `.git`; compare host+owner+repo" had no pinned parse; a naive `/`-split mis-parses
+  the scp form (`git@github.com:owner/repo.git` → owner `git@github.com:owner`), owner was
+  not case-insensitive on the MCP side, and AC-7 tested only one already-normalized form.
+  FIX: PINNED canonical parse in Foundation C (scp-form `[user@]host:owner/repo[.git]` AND
+  URL-form `scheme://[user@]host[:port]/owner/repo[.git][/]`; lowercase host+owner+repo;
+  strip trailing `.git`+`/`; key `host/owner/repo`), applied to the MCP owner/repo derivation
+  too (owner now case-insensitive, `:` never mis-derives owner); AC-7 extended to a
+  transport-form matrix (scp-vs-HTTPS / case / trailing-slash → DENY; different repo → PASS).
+  Host-alias reconciliation deferred → documented residual + followup.
+- **(codex MINOR) Interception residual renamed.** The fourth residual spans BOTH
+  Agent-with-isolation AND EnterWorktree but was named "…-on-Agent-with-isolation-in-tool_input"
+  only; renamed to "platform-fires-PreToolUse-on-native-worktree-tools (Agent-with-isolation
+  AND EnterWorktree)" everywhere (Foundation B def, AC-13, Docs, SECURITY.md description).
+- **(Claude P2) AC-16 evidence sink named.** AC-16 now names the sink (paste each observed
+  deny JSON into `$RUN_DIR` verify.md / slice implement notes) + pass condition (captured
+  `permissionDecision:"deny"` for BOTH Agent-worktree and EnterWorktree), or explicit
+  discharge by AC-13's named residual alone when uncapturable in CI — no longer a standalone
+  vibes-gate.
+- **(Claude P3) `[ -f ]` symlink prose corrected.** `test -f` FOLLOWS the symlink and stats
+  the target; it fails for a symlink-to-FIFO because the target is a FIFO, not because it
+  refuses to follow. Reworded; behavior unchanged.
+- **(Claude P3) Edge case 1 cross-ref.** Added a one-clause cross-ref to Foundation C's
+  forgery-class self-evasion for the run's OWN corrupt state.json (beside `stage:"done"`).
+- **(Claude P3) AC-3 worktree-fixture deny setup.** AC-3 now states the agent-worktree /
+  enter-worktree fixtures' `cwd` points at a linked worktree of (or matching-origin clone of)
+  the temp run repo (cross-ref AC-7), so the static-cwd fixtures actually deny.
+
+## Implement notes — Slice 2.1 (2026-07-05, drive-tool-gate sibling hook + installer + docs)
+
+### AC-15 provenance re-verification (D9 rule)
+Re-verified the 8 GitHub-MCP write-tool names + param names at implement time against the
+vendor source (github/github-mcp-server, pkg/github/repositories.go + pullrequests.go,
+retrieved 2026-07-05). Confirmed the design's candidate-expected shapes exactly:
+create_or_update_file(owner,repo,path,content,message,branch,sha), delete_file(…,path,message,
+branch), push_files(…,branch,files,message), create_branch(…,branch,from_branch),
+create_pull_request(…,title,head,base,body,…), merge_pull_request(…,pullNumber,merge_method,…),
+update_pull_request(…,pullNumber,title,body,state,base,…), update_pull_request_branch(…,
+pullNumber,expectedHeadSha). Mixed casing confirmed: pullNumber/expectedHeadSha camelCase,
+from_branch/merge_method snake_case. Hook keys only on owner/repo + the tool-name suffix, so
+other-param casing is not load-bearing. Recorded in test/fixtures/github-mcp/README.md.
+
+### AC-16 (LIVE interception check) — discharged by the AC-13 named residual
+The live platform-interception observation (drive a real Agent isolation:"worktree" +
+EnterWorktree through the INSTALLED hook and capture the deny JSON) is NOT capturable from this
+slice: the tool gate is not installed into the live ~/.claude/settings.json (activation is the
+Gate-B ops step — "re-run install-drive-hooks.sh INSIDE ~/.claude/drive-enforcement-worktree" —
+explicitly OUT OF SCOPE per design.md "Out of scope"), and modifying the live machine-global
+settings + driving real Agent traffic is an outward action outside this slice's authority.
+Per AC-16's own fallback clause this criterion is therefore discharged by AC-13's named
+interception residual ALONE (documented in docs/drive-enforcement.md + SECURITY.md:
+"platform-may-not-fire-PreToolUse-on-native-worktree-tools (Agent-with-isolation AND
+EnterWorktree)"). The fixture suite (AC-2/AC-3) proves hook LOGIC only, not interception.
+Classification: Mechanical
+
+### DIV-p2-5 — field extraction is newline-separated per field, NOT tab-separated (adaptation)
+The design (Interfaces §1) suggested "ONE jq invocation extracts all fields (tab-separated)".
+Implemented as ONE jq invocation emitting one field PER LINE, read back with `IFS= read` per
+field. Reason (verified empirically): `IFS=$'\t' read` COLLAPSES consecutive tabs (tab is an
+IFS-whitespace char) and trims leading/trailing ones, so an EMPTY MIDDLE field (e.g. a write
+tool with no isolation) shifts every later field left — mis-extracting owner/repo and firing a
+spurious unextractable-deny. Newline-per-field with `IFS= read` preserves empty middle fields
+verbatim; each field is tostring'd + newline-squashed so a value can never leak an extra line.
+Still "ONE jq invocation extracts all fields" (the hot-path cost is unchanged). Contract-neutral.
+Classification: Mechanical
+
+### D-p2-r1 — slice-2.1 first-review fix decisions (2026-07-05)
+Addressing the FIRST review of slice 2.1 (codex 1 BLOCKING + 2 MAJOR; Claude 1 P1 + 2 P2)
+— all fail-closed / vacuous-test findings. Notable implementation decisions:
+
+- **Worktree fail-closed keyed on "both identity signals empty" (codex BLOCKING).** For a
+  worktree-class tool during an active run, DENY when BOTH the cwd origin key AND the cwd git
+  common-dir come back empty (missing / non-string / not a resolvable git repo). A git repo
+  WITHOUT an origin still yields a common dir → identifiable → NOT fail-closed (silent when it
+  matches no run — the legit Edge-case-9 pass, e.g. the forgery-class origin-removed second
+  clone). This single condition subsumes missing/non-string/non-repo cwd without a separate
+  CWD_TYPE field. Classification: Mechanical.
+
+- **isolation routed on jq TYPE, not tostring (codex BLOCKING).** The Agent dispatch now
+  keys on `.tool_input.isolation | type`: null → hot path; string=="worktree" (ws-trimmed) →
+  worktree; string!="worktree" → hot path; present-but-non-string (obj/arr/bool/num) →
+  MALFORMED → conservative worktree class. owner/repo/cwd extracted as STRING SCALARS ONLY
+  (jq `s` helper) so a non-string value → "" → the existing unextractable-→-deny path fires
+  (codex MAJOR). Classification: Mechanical.
+
+- **AC-2 discriminating test uses a STDERR side-effect assertion (Claude P1 + the mandated
+  CLASS guard reconciled).** The task mandated BOTH (a) an AC-2 test that reds under the
+  hot-path early-exit mutation AND (b) a `[ "$CLASS" = worktree ]` defense-in-depth guard
+  before the worktree block. A stdout-only assertion would be MASKED by that guard (a
+  regressed empty CLASS exits silently at the guard). Resolved by asserting the hot path takes
+  NO run scan via a CORRUPT run dir placed beside the fresh active run: the true hot path never
+  scans (no stderr warning); if the early exit regresses, the scan runs and warns on stderr
+  BEFORE the guard silences stdout — so the stderr-empty assertion reds. Mutation-verified: with
+  `null) exit 0` → `null) :`, the AC-2 stderr assertion FAILS (confirmed), restored green.
+  Classification: Taste (test design).
+
+- **git-absent fail-closed placed AFTER the active-run scan, uniform for both classes (Claude
+  P2).** When a matched write-class tool reaches a live run but `command -v git` is absent,
+  emit a static-shaped deny (mirrors jq-absent). Nearly unreachable (no git ⇒ no /drive run),
+  kept for posture uniformity with D-p2-5. Classification: Mechanical.
+
+- **Active-run repoRoot requirement + empty-arg guards (Claude P2).** A run with stage!=done
+  but no/empty repoRoot is skip-with-warning'd in the scan (same as a corrupt dir); parse_origin
+  and common_dir_of gain `[ -n "$1" ] || return 1` so an empty dir can never let `git -C ""`
+  resolve to the hook's own cwd (cross-run over-deny + silent-pass of the run's real repo).
+  Classification: Mechanical.
+
+- **AC-16 reworded to discharge-by-residual (codex MAJOR).** docs/drive-enforcement.md +
+  test/fixtures/github-mcp/README.md + SECURITY.md no longer say a live deny capture "is
+  required"/"bound by an implement-time live check"; they now state AC-16 is DISCHARGED by the
+  named `platform-may-not-fire-PreToolUse-on-native-worktree-tools` residual — a live capture
+  needs the gate wired into the live ~/.claude/settings.json (the Gate-B activation ops step,
+  out of this slice's scope), so no live evidence is claimed. Classification: Mechanical.
+
+DEFERRED to /drive-finalize de-slop (per task): the P3 shellcheck SC2016 disable directive
+(now 11 intentional-literal false positives — the deny-reason printfs keep literal $RUN_DIR /
+$phaseBaseSha for AC-3), the redundant IPv6 port-strip line, and the isolation exact-match P3
+(partially addressed: isolation strings are now whitespace-trimmed as part of the type fix).
+
+## D-coord-4 — Harden phase-2: spaced-path cross-checkout dup routed to followups (PRE-EXISTING)
+**Classification:** Taste (surface at Gate B)
+Codex harden P1 (spaced-path cross-checkout install → duplicate managed hooks). REPRODUCED against
+the real installer: install from `/…/sp ace/bin`, re-run from a different checkout → merge=2 /
+tool=4 / stop=2, no drift WARN. Root cause is PRE-EXISTING in `is_managed`/`strip_managed` (metachar
+guard f1eee81 #24; `$cmd == $full` clause a6bad23, both on origin/main pre-run) and affects
+merge-gate + stop-guard IDENTICALLY (two distinct merge-gate paths) — NOT introduced by phase-2's
+tool-gate addition (the phase-2 diff vs merge-base leaves is_managed's matching logic untouched; it
+only extends strip_managed to the tool-gate + adds the read-only preflight). Per the harden decision
+rule (out-of-diff pre-existing root cause → fix only if cheap AND the true root cause of a flagged
+P1): NOT cheap — the fix loosens a security-sensitive collapse matcher and would need its own
+adversarial review to avoid regressing the wrapped-command preservation (`env_kept`/`piped_kept`).
+Routed to $RUN_DIR/followups.md with the reproduction + evidence.
+
+## D-coord-5 — Harden phase-2: non-string tool_name fail-open closed (defense-in-depth)
+**Classification:** Mechanical
+Codex harden P1 (`{"tool_name":{}}` under a live run silent-passed: `f`=tostring coerced the object
+to "{}", matched no class → fail-OPEN). VERIFIED direct-pipe-only against the real platform path —
+the settings matcher regex-matches the tool_name STRING (`^(Agent|EnterWorktree)$` / `^mcp__.+__…$`),
+so a non-string tool_name never routes to the hook. Per the decision rule, still closed for
+consistency with the other malformed-input fail-closed fixes (owner/repo/cwd/isolation): tool_name
+is now extracted as a STRING SCALAR (`s`), so a non-string → "" → the existing empty/non-string
+tool_name deny (D-p2-5). One-liner (`f`→`s`, `f` removed as now-dead); test added +
+mutation-verified RED against the tostring extraction.
+
+## D-finalize-1 — Finalize round 1 triage (2026-07-05)
+Classification: Mechanical (severity/routing under the 6 principles; no User-Challenge).
+Dual-voice finalize audit over baseRef..featureBranch. NOTE base drift: main advanced by 1 commit
+(#62, drive-retro/trellis) after this branch was cut from #61; the run's REAL diff is merge-base
+9beeac4..2cac720, and #62 overlaps only the ledger files (.harness/decisions.md, TODO.md) — the
+spurious drive-retro/trellis "deletions" in the two-dot diff are base drift and were discounted.
+Voices: Claude 0 P1 + 2 P2 de-slop; codex 3 P1 + 2 P2 + 1 ARCH.
+FIX SET applied this round:
+  (a) remove the dead + IPv6-corrupting second port-strip in parse_origin (drive-tool-gate.sh:243)
+      [Claude P2; behavior-preserving; 166 gate tests stay green — the line never fires for in-scope hosts];
+  (b) fold 3 copy-paste MODEL_ID sample pipelines into an id_pct helper (test/statusline-window.test.sh)
+      [Claude P2; behavior-identical];
+  (c) statusline inline fallback now keys on MODEL_ID as well as display_name (statusline.sh case),
+      mirroring the primary jq resolution + the existing [1m] check — closes a degraded-mode
+      wrong-window bug (generic display_name + specific 200k model.id → was defaulting to 1M)
+      [codex P1 #2] + a failing-first test;
+  (d) installer drift preflight now WARNs on a PARTIAL (1-of-2) tool-gate registration, not only on
+      a zero-entry state (install-drive-hooks.sh) [codex P1 #3] + a failing-first test.
+OVERRULED with evidence (codex P1 #1): MCP host-blind match is a fail-CLOSED over-deny, not a
+bypass; MCP input has no host to compare → known limitation (see followups), not fixed.
+ARCH ×3 → finalize-todo.md. codex P2 comment compression → followups (deliberate auditability).
+
+## D-finalize-2 — Finalize round 2 triage (2026-07-05)
+Classification: Mechanical (severity/routing under the 6 principles + reproduce-before-act for the
+security-gate finding). Round-2 dual-voice re-audit over tip 4fe1b1f (post round-1 fixes).
+Voices: Claude round-2 = CONVERGED (0 P1, 1 P3 cosmetic); codex round-2 = 2 NEW P1 + 1 P2 + 1 ARCH.
+- **codex P1 #1 CONFIRMED → FIXED this round: bin/drive-tool-gate.sh parse_origin IPv6 host truncation
+  fail-OPEN.** Reproduced: a bracketed IPv6 origin WITHOUT a port (`https://[2001:db8::1]/o/r`) parses
+  `${hostport%:*}` → `[2001:db8:` (the shortest `:*` strip eats part of the address), while the SAME
+  origin WITH `:22` parses to `[2001:db8::1]` — two same-remote clones get different host keys → the
+  worktree same-repo check fails-OPEN. Pathological trigger (IPv6-literal git origins never occur for
+  the GitHub-family hosts this gate targets), but fail-OPEN is the dangerous direction and the
+  load-bearing adversarial voice flagged it → net-positive to fix. Fixed PROPERLY (bracket-aware host
+  parse in BOTH the URL and scp branches — closes the whole IPv6 class at once, not a per-input patch,
+  to end the edge-case treadmill) + a bracketed-IPv6 test. Round-1's removal of the dead second
+  port-strip did NOT cause this — the first strip was already IPv6-broken; this completes the fix.
+- **codex P1 #2 OVERRULED → followups:** install drift_preflight stale-path gap is WARN-only,
+  self-healing on install, no new enforcement failure (evidence in followups).
+- **Claude P3 → FIXED this round (cheap consistency):** bin/rebirth_thresholds.py illustrative
+  `case "$MODEL" in` comment synced to `case "$MODEL $MODEL_ID" in` to match round-1's statusline change.
+- codex P2 test-diary prose → followups (deferred). codex ARCH statusline-symlink dup → already in
+  finalize-todo.md (round 1); re-confirmed, not re-added.
 ## Run main-20260704-180725 (leverage Trellis in autodrive → /drive-retro trace-mining command) — 2026-07-05
 
 ## D-0 (Stage 0, Taste) — deliverable shape for an "analyze X" premise

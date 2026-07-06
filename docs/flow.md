@@ -211,8 +211,8 @@ order:
    (problem · where we are · done · next) so the zero-context successor is oriented — and
    end the turn. (The incoming fresh-session resume re-emits that summary.)
 
-This is a **prompted human handshake, not a self-restart** — the harness has no
-programmatic session-spawn; a fresh session is started by the human pasting the resume line.
+This is a **prompted human handshake, not a self-restart** — by design the harness does
+not spawn sessions programmatically; a fresh session is started by the human pasting the resume line.
 Resume is a *continue*: the new session rebinds `state.sessionId` to itself, consumes the
 marker, re-proves (both modes), re-arms, clears `waiting`, and drives on.
 

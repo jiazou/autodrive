@@ -22,7 +22,7 @@ it) but must never trap a session.
 
 Layered guards: (1) stop_hook_active loop guard, (2) session-scoped run match,
 (3) per-run kill-switch (autoContinue:false), (4) fail-open on every error,
-(5) Claude Code's built-in consecutive-block cap as a final backstop.
+(5) any platform-enforced consecutive-block limit as a final backstop.
 
 state.json contract /drive maintains (see drive.md):
   sessionId    — owning Claude session id ($CLAUDE_CODE_SESSION_ID)

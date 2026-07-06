@@ -8,8 +8,9 @@
 #
 # Stdin: the Stop hook JSON. We read `.cwd` (where the /drive session runs) and
 # `.stop_hook_active` (whether a prior Stop block is already in flight). We do NOT
-# suppress on .stop_hook_active — persistence across turns is desired; the platform's
-# 8-consecutive-block cap is the escape that surfaces the run to the human (edge 7).
+# suppress on .stop_hook_active — persistence across turns is desired; the escape that
+# surfaces the run to the human is the human interrupt plus any platform
+# consecutive-block limit (edge 7).
 #
 # Behavior:
 #   - Resolve runId from `git HEAD` in .cwd (drive_runid_from_head). Not a drive

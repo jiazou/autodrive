@@ -41,13 +41,13 @@ layer 3 (C4 C6 C7 C10) — the coordinator states contracts and checks direction
 seams; the model/harness owns how work gets dispatched.
 
 ### Tier 1 — wrong today, small fixes
-- [ ] **C6 (P1/small/L3)** drive-ship.md:133 hardcodes `Co-Authored-By: Claude Opus 4.8` into
+- [x] **C6 (P1/small/L3)** drive-ship.md:133 hardcodes `Co-Authored-By: Claude Opus 4.8` into
   every shipped commit — sole occurrence, nothing pins it; make harness-agnostic.
-- [ ] **C4 (P2/small/L3)** Prose sweep: "Claude Code cannot self-initiate a fresh session"
+- [x] **C4 (P2/small/L3)** Prose sweep: "Claude Code cannot self-initiate a fresh session"
   (CLAUDE.md, docs/flow.md, docs/drive-enforcement.md; decisions.md D3) is stale — reword
   as capability-conditional; annotate D3 premise-stale (don't rewrite); also fix the
   8-consecutive-block-cap comments in bin/drive-stop-guard.sh + bin/drive-stop-hook.py.
-- [ ] **C2 (P2/medium/L1)** bin/rebirth-thresholds.json maps bare "Sonnet" → 200k, but
+- [x] **C2 (P2/medium/L1)** bin/rebirth-thresholds.json maps bare "Sonnet" → 200k, but
   Sonnet 5 / Sonnet 4.6 are 1M models (rebirth steer would fire at ~17% real usage);
   claude-fable-5 gets defaultWindow=1M only by fallthrough (happens to be correct: 1M).
   Version-qualify the legacy 200k substrings, add verified Claude-5-family entries, keep
@@ -61,7 +61,7 @@ seams; the model/harness owns how work gets dispatched.
   In-session stranded must require positive worker-death evidence from the harness surface
   (completion notification / Monitor); at-resume rule unchanged; keep the
   test_checkpoint_contract.py pinned phrases.
-- [ ] **C7 (P1/medium/L3)** Enforcement gates are PreToolUse(Bash)-only
+- [x] **C7 (P1/medium/L3)** Enforcement gates are PreToolUse(Bash)-only
   (install-drive-hooks.sh:140): GitHub MCP write tools (create_pull_request, push_files,
   merge_pull_request, …) ship with the merge gate never firing, and Agent
   isolation:"worktree" / EnterWorktree create worktrees off the gated slice/<runId>/<id>
@@ -69,6 +69,9 @@ seams; the model/harness owns how work gets dispatched.
   hook (distinct basename — the installer strips/re-appends drive-merge-gate.sh entries)
   that deny-routes MCP writes + native-worktree tools back to the canonical Bash paths
   while a drive run is active; extend install-drive-hooks.sh to manage it.
+  *(closed: GitHub-MCP write class gated by bin/drive-tool-gate.sh; worktree claim resolved
+  KEPT — recorded trace shows the harness-branch chain voids the plan/design + slice
+  review/impl-presence gates.)*
 
 ### Tier 3 — shed the dead-premise machinery (do C1 + C11 together)
 - [ ] **C1 (P1/large/L1)** Class-A context-pressure rebirth assumes sessions hard-die at
@@ -129,6 +132,27 @@ Full audit with per-candidate evidence and both lens verdicts: session artifact
   single machine-checked source of truth (e.g. generate the doc-pinned tokens from the script, or
   a single contract fixture both the script and docs are checked against) in a dedicated follow-up.
 
+## /drive run todo-triage-20260704T135831 — architectural follow-ups (2026-07-05T14:14:46Z)
+
+- **bin/install-drive-hooks.sh `is_managed` — spaced-path cross-checkout duplicate.** A
+  cross-checkout re-run from a space-containing checkout path leaves stale managed entries
+  un-stripped → duplicate hooks with no drift WARN. Pre-existing (on origin/main before this
+  run's C7 work), affects the merge-gate + stop-guard identically. Loosening the
+  metachar/`$cmd == $full` collapse matcher is a security-sensitive change needing its own
+  adversarial find-the-bypass review. Already recorded in followups + decisions D-coord-4;
+  listed here to discharge finalize's TODO-routing duty. Out of this run's diff — not fixed.
+- **bin/drive-tool-gate.sh — ungated Bash `gh pr merge`/`gh pr edit` twins + GitLab-MCP writes.**
+  The MCP `merge_pull_request`/`update_pull_request` denies close the MCP omission path, but
+  their Bash `gh pr merge`/`gh pr edit` twins stay ungated (drive-merge-gate.sh gates only
+  `pr create`/`mr create`), and GitLab-MCP write tools are the same bypass class under different
+  names, uncovered by the GitHub-named matcher. Deliberate, decision-logged asymmetry (the deny
+  wording states it truthfully); named residuals in followups. Decide in a follow-up, not a code
+  fix here.
+- **bin/statusline.sh + bin/rebirth-thresholds.json — duplicated window table.** The deployed
+  statusline is symlinked away from its `rebirth-thresholds.json` sibling, so the window
+  "single source of truth" is actually a duplicated inline `case` table (statusline.sh:34-38)
+  requiring dual maintenance with the json. AC6 pins them to identical numbers as an accepted
+  stopgap; the durable fix (a single source resolved at deploy time) is deferred (codex ARCH).
 # Finalize TODO routing (promoted to repo-root TODO.md at ship)
 
 - **Wire `/drive-retro` into the run-wrap sequence, ordered BEFORE the wrap-decant**
