@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# drive-hook-lib.sh — sourceable ref→run resolution library (D3: ref-keyed
-# self-location, no sentinel). Pure ref parsing + existence checks; no mutable
-# state, no side effects on source. Hooks source this to derive the runId of a
-# /drive run from the git ref named in a command (or from the cwd's HEAD), then
-# locate its run dir.
+# drive-hook-lib.sh — sourceable shared library for the /drive enforcement hooks.
+# Two responsibilities: (1) ref→run resolution (D3: ref-keyed self-location, no
+# sentinel) — pure ref parsing + existence checks, no mutable state or side effects
+# on source; hooks source this to derive the runId of a /drive run from the git ref
+# named in a command (or from the cwd's HEAD) and locate its run dir. (2) the shared
+# active-run scan predicate `drive_scan_active_runs` — a filesystem scan (reads each
+# run's state.json, applies mtime liveness) that BOTH the PreToolUse tool gate
+# (drive-tool-gate.sh) and the WorktreeCreate gate (drive-worktree-gate.sh) reuse (DRY).
 #
 # runId is a SINGLE path segment (e.g. drive-review-hooks-20260603-135659).
 # Refs are exactly:

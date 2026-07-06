@@ -50,7 +50,7 @@ preserved; a timestamped backup of the settings file is written first):
       everything else passes straight through.
   • Stop             -> $STOP_GUARD
       A review backstop that runs when a session stops.
-  • PreToolUse(GitHub-MCP writes; Agent/EnterWorktree) -> $TOOL_GATE
+  • PreToolUse(GitHub/GitLab-MCP writes; Agent/EnterWorktree) -> $TOOL_GATE
       Two entries. Deny-routes GitHub- and GitLab-MCP write tools and native
       worktree tools back to the gated Bash paths while a /drive run is active
       on the same repo; passes everything else silently.
@@ -105,6 +105,10 @@ drift_preflight() {
     if [ ! -f "$live_dir/drive-tool-gate.sh" ]; then
       printf 'WARN(drive-hooks drift): live enforcement worktree lacks drive-tool-gate.sh — advance that worktree, then re-run bin/install-drive-hooks.sh from INSIDE it.\n' >&2
     fi
+    # Variant 3w — the live enforcement worktree lacks the authoritative worktree gate.
+    if [ ! -f "$live_dir/drive-worktree-gate.sh" ]; then
+      printf 'WARN(drive-hooks drift): live enforcement worktree lacks drive-worktree-gate.sh — advance that worktree, then re-run bin/install-drive-hooks.sh from INSIDE it.\n' >&2
+    fi
     # Variant 5 — the live merge gate differs byte-wise from this checkout's (worktree lags).
     if [ -f "$live_dir/drive-merge-gate.sh" ]; then
       if ! cmp -s "$live_dir/drive-merge-gate.sh" "$REPO_DIR/bin/drive-merge-gate.sh"; then
@@ -139,6 +143,24 @@ drift_preflight() {
     # Variant 4b — partial registration: the tool gate is wired on only ONE of the two
     # required matchers, so the settings-lag WARN (which only fires on zero entries) misses it.
     printf 'WARN(drive-hooks drift): partial tool-gate registration — drive-tool-gate.sh is wired on only one of the two required matchers (MCP-write / Agent|EnterWorktree); re-run bin/install-drive-hooks.sh to restore both.\n' >&2
+  fi
+
+  # Worktree gate (G1) drift — mirror the tool-gate presence + registration checks for the
+  # AUTHORITATIVE WorktreeCreate gate this installer also manages. WorktreeCreate hooks carry
+  # NO matcher, so the lone-path idiom scans .hooks.WorktreeCreate[]?.hooks[]?.command directly.
+  # Variant 3w — sibling absent.
+  if [ ! -f "$live_dir/drive-worktree-gate.sh" ]; then
+    printf 'WARN(drive-hooks drift): live enforcement worktree lacks drive-worktree-gate.sh — advance that worktree, then re-run bin/install-drive-hooks.sh from INSIDE it.\n' >&2
+  fi
+  # Variant 4w — settings lag: the WorktreeCreate gate is not registered.
+  local have_wt
+  have_wt="$(jq -r '
+    [ .hooks.WorktreeCreate[]?.hooks[]?.command // ""
+      | select((endswith("/drive-worktree-gate.sh") or . == "drive-worktree-gate.sh")
+               and (test("[[:space:]|&;<>()`$]") | not)) ]
+    | first // ""' -- "$SETTINGS" 2>/dev/null || true)"
+  if [ -z "$have_wt" ]; then
+    printf 'WARN(drive-hooks drift): settings lag — the WorktreeCreate gate is not registered.\n' >&2
   fi
   return 0
 }

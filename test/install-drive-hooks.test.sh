@@ -434,7 +434,24 @@ check "drift variant 5: installer exits 0 (warn-only)" "$d5_rc" "0"
 check "drift variant 5 (cmp-differs) WARN fires" "$(has_warn "$D5_ERR" "live drive-merge-gate.sh differs from this checkout")" "yes"
 check "drift variant 5: NO missing-sibling WARN (sibling present)" "$(has_warn "$D5_ERR" "lacks drive-tool-gate.sh")" "no"
 
-# --- AC-10: installer disclosure banner enumerates the three hooks / four entries + BOTH
+# Variant 6 (missing WorktreeCreate): live dir IS this checkout's bin (both siblings present),
+# the tool gate is wired on BOTH matchers, but the authoritative WorktreeCreate gate is NOT
+# registered → WorktreeCreate-not-registered WARN; warn-only (exit 0). Mirrors variant 4 for
+# the G1 gate the installer also manages.
+DRIFT6="$WORK/drift6.json"
+cat > "$DRIFT6" <<JSON
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$MERGE_GATE" } ] },
+  { "matcher": "$MCP_MATCHER", "hooks": [ { "type": "command", "command": "$TOOL_GATE" } ] },
+  { "matcher": "$NATIVE_MATCHER", "hooks": [ { "type": "command", "command": "$TOOL_GATE" } ] }
+] } }
+JSON
+D6_ERR="$WORK/drift6.err"
+bash "$INSTALLER" "$DRIFT6" 2>"$D6_ERR" >/dev/null; d6_rc=$?
+check "drift variant 6: installer exits 0 (warn-only)" "$d6_rc" "0"
+check "drift variant 6 (missing WorktreeCreate) WARN fires" "$(has_warn "$D6_ERR" "the WorktreeCreate gate is not registered")" "yes"
+
+# --- AC-10: installer disclosure banner enumerates the four hooks / five entries + BOTH
 #     new matcher classes (the GitHub-MCP write matcher + Agent/EnterWorktree). Slice-owned:
 #     tests/installers/test_install_banner_confirm.py pins only generic tokens by design
 #     (DIV-p2-1), so this is where a disclosure-text regression is caught. The banner prints
@@ -444,7 +461,7 @@ BANNER_ERR="$WORK/banner.err"
 bash "$INSTALLER" "$BANNER_SET" 2>"$BANNER_ERR" >/dev/null
 check "AC-10 banner enumerates 'four hooks'" "$(grep -qF 'four hooks' "$BANNER_ERR" && echo yes || echo no)" "yes"
 check "AC-10 banner enumerates 'five settings entries'" "$(grep -qF 'five settings entries' "$BANNER_ERR" && echo yes || echo no)" "yes"
-check "AC-10 banner names the GitHub-MCP write matcher class" "$(grep -qF 'GitHub-MCP writes' "$BANNER_ERR" && echo yes || echo no)" "yes"
+check "AC-10 banner names the GitHub/GitLab-MCP write matcher class" "$(grep -qF 'GitHub/GitLab-MCP writes' "$BANNER_ERR" && echo yes || echo no)" "yes"
 check "AC-10 banner names the Agent/EnterWorktree matcher class" "$(grep -qF 'Agent/EnterWorktree' "$BANNER_ERR" && echo yes || echo no)" "yes"
 check "AC-10 banner names the WorktreeCreate gate" "$(grep -qF 'WorktreeCreate' "$BANNER_ERR" && echo yes || echo no)" "yes"
 

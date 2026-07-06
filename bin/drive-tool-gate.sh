@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# drive-tool-gate.sh — PreToolUse hook for the NON-Bash tool surface: GitHub-MCP write
+# drive-tool-gate.sh — PreToolUse hook for the NON-Bash tool surface: GitHub/GitLab-MCP write
 # tools and the native worktree tools (Agent isolation:"worktree" / EnterWorktree).
 #
 # The primary /drive gate (drive-merge-gate.sh) fires on Bash only, so two tool classes
 # can land run work WITHOUT tripping any gate while a /drive run is active on the same
 # repo:
-#   - GitHub MCP writes (create_pull_request / push_files / …) reach GitHub without ever
-#     issuing a Bash git/gh command — the merge/ship gate never sees them.
+#   - GitHub/GitLab MCP writes (create_pull_request / push_files / create_merge_request / …)
+#     reach the remote without ever issuing a Bash git/gh command — the merge/ship gate never
+#     sees them.
 #   - Agent isolation:"worktree" / EnterWorktree create worktrees on a harness-named
 #     branch (not slice/<runId>/<id>), so plan/phasedesign gating and the slice
 #     review + impl-presence checks never fire (a `git merge <harness-branch>` is inert
@@ -346,7 +347,7 @@ if [ "$CLASS" = mcp ]; then
   # Unextractable owner/repo (empty OR non-string → "") while ≥1 run is live → fail-CLOSED
   # over-deny (names a run). A non-string owner/repo (owner:{} / repo:[]) is unextractable.
   if [ -z "$IN_OWNER_LC" ] || [ -z "$IN_REPO_LC" ]; then
-    emit_deny "drive-tool-gate: run $(first_active_run) is active on this repo, and this GitHub MCP write ($TOOL_NAME) carries no extractable owner/repo to scope it. Failing CLOSED for write-class safety (over-deny). Retry via the canonical gated Bash path (git/gh) from the run's worktree."
+    emit_deny "drive-tool-gate: run $(first_active_run) is active on this repo, and this git-hosting MCP write ($TOOL_NAME) carries no extractable owner/repo to scope it. Failing CLOSED for write-class safety (over-deny). Retry via the canonical gated Bash path (git/gh) from the run's worktree."
   fi
   while IFS= read -r D; do
     [ -n "$D" ] || continue

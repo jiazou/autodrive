@@ -155,7 +155,8 @@ is to merge each run's slices separately, one run at a time, so each slice's rev
 test-presence is enforced against its real run.
 
 `bin/drive-hook-lib.sh` provides the pure ref→run resolution the gates source
-(`drive_runid_from_command`, `drive_runid_from_head`, `drive_run_dir`).
+(`drive_runid_from_command`, `drive_runid_from_head`, `drive_run_dir`) plus the shared
+active-run scan predicate (`drive_scan_active_runs`) the tool-gate and worktree-gate both reuse.
 
 ## The non-Bash tool gate (`drive-tool-gate.sh`)
 
@@ -181,7 +182,8 @@ without ever tripping a gate while a `/drive` run is active on the same repo:
 the gate table above) that deny-**routes** those tools back to the gated Bash paths while a
 run is active on the actor's repo. **Deny-only composition** (like the merge gate): a deny is
 JSON + `exit 0`; every clean / non-matching / unrelated-repo path emits nothing. It sources
-nothing (`drive-hook-lib.sh` is pure ref→runId parsing — no active-run predicate to reuse).
+`drive-hook-lib.sh` for the shared `drive_scan_active_runs` active-run predicate (the
+WorktreeCreate gate reuses the SAME predicate — DRY).
 
 **Activation predicate (D-p2-2).** A run is **ACTIVE** iff its `~/.claude/harness-runs/<id>/`
 dir has a `state.json` that parses with `.stage` a non-empty string `!= "done"` AND a
