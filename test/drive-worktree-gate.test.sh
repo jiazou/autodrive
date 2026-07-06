@@ -192,6 +192,34 @@ check "Fix2 control: the echoed path IS an actual worktree" "$( [ -n "$out" ] &&
 git -C "$COLREPO" worktree remove --force "$out" 2>/dev/null; git -C "$COLREPO" worktree prune 2>/dev/null
 
 # =====================================================================================
+# MIXED-VERSION FAIL-CLOSED (regression guard for the source-verification fix) — run the
+# CURRENT gate against a STALE drive-hook-lib.sh that lacks drive_scan_active_runs (a lib
+# predating the G1 extraction, or a partial/failed update). Without the guard the
+# undefined-function scan `$(drive_scan_active_runs)` yields EMPTY → "no active run" → the gate
+# would PROVISION even with a run ACTIVE (fail-OPEN). The source-verification guard makes it
+# FAIL-CLOSED (exit 2, no worktree). MUTATION-VERIFY: removing the guard reds this (the gate
+# provisions → exit 0).
+# =====================================================================================
+rm -rf "$RUNS"/*
+MVDIR="$WORK/mixedver-wt"; mkdir -p "$MVDIR"
+cp "$GATE" "$MVDIR/drive-worktree-gate.sh"
+cat > "$MVDIR/drive-hook-lib.sh" <<'STUBLIB'
+#!/usr/bin/env bash
+# STALE lib: the pre-extraction functions, but NO drive_scan_active_runs.
+drive_runid_from_command() { return 1; }
+drive_runid_from_head() { return 1; }
+drive_run_dir() { return 1; }
+STUBLIB
+MVREPO="$WORK/mv-repo"; mk_repo "$MVREPO"
+mk_run run-mixedver "$MVREPO"
+MVERR="$WORK/mixedver.err"
+out="$(payload_for "$MVREPO" mv-probe | bash "$MVDIR/drive-worktree-gate.sh" 2>"$MVERR")"; rc=$?
+check "MixedVer stale lib (no drive_scan_active_runs) + active run → exit 2 (fail-closed, not fail-open)" "$rc" "2"
+check "MixedVer stale lib → NO stdout path" "$out" ""
+check "MixedVer stale lib → NO worktree created" "$(git -C "$MVREPO" worktree list | grep -c mv-probe)" "0"
+contains "MixedVer stale-lib stderr names the undefined predicate" "$(cat "$MVERR")" "drive_scan_active_runs is not defined"
+
+# =====================================================================================
 # AC-9 — the installer wires WorktreeCreate → drive-worktree-gate.sh (matcher-less).
 #        (Deeper idempotency/migration coverage lives in install-drive-hooks.test.sh.)
 # =====================================================================================

@@ -322,22 +322,36 @@ check "stock stop guard still added alongside substitution one" "$wrap_canon_sto
 SPACED_ROOT="$WORK/sp ace root/bin"
 mkdir -p "$SPACED_ROOT"
 cp "$REPO_DIR/bin/install-drive-hooks.sh" "$REPO_DIR/bin/drive-merge-gate.sh" \
-   "$REPO_DIR/bin/drive-stop-guard.sh" "$REPO_DIR/bin/drive-tool-gate.sh" "$SPACED_ROOT/" 2>/dev/null
+   "$REPO_DIR/bin/drive-stop-guard.sh" "$REPO_DIR/bin/drive-tool-gate.sh" \
+   "$REPO_DIR/bin/drive-worktree-gate.sh" "$SPACED_ROOT/" 2>/dev/null
+SPACED_WT_GATE="$SPACED_ROOT/drive-worktree-gate.sh"
 SPACED_SETTINGS="$WORK/spaced-settings.json"
 bash "$SPACED_ROOT/install-drive-hooks.sh" "$SPACED_SETTINGS" >/dev/null 2>&1
 sp_merge1=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-merge-gate.sh$"))] | length' "$SPACED_SETTINGS")
 sp_stop1=$(jq '[.hooks.Stop[].hooks[]? | select((.command//"")|test("drive-stop-guard.sh$"))] | length' "$SPACED_SETTINGS")
 sp_tool1=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-tool-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_wt1=$(jq '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")|test("drive-worktree-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_wt_len1=$(jq '.hooks.WorktreeCreate | length' "$SPACED_SETTINGS")
+sp_wt_ml1=$(jq '[.hooks.WorktreeCreate[] | select(has("matcher")|not)] | length' "$SPACED_SETTINGS")
+sp_wt_path1=$(jq --arg p "$SPACED_WT_GATE" '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")==$p)] | length' "$SPACED_SETTINGS")
 check "spaced-path install: one merge gate after run 1" "$sp_merge1" "1"
 check "spaced-path install: one stop guard after run 1" "$sp_stop1" "1"
 check "spaced-path install: two tool-gate entries after run 1" "$sp_tool1" "2"
+check "spaced-path install: one WorktreeCreate gate after run 1" "$sp_wt1" "1"
+check "spaced-path install: WorktreeCreate has exactly one entry after run 1" "$sp_wt_len1" "1"
+check "spaced-path install: WorktreeCreate entry is matcher-less" "$sp_wt_ml1" "1"
+check "spaced-path install: WorktreeCreate points at the spaced-path gate (correct path)" "$sp_wt_path1" "1"
 bash "$SPACED_ROOT/install-drive-hooks.sh" "$SPACED_SETTINGS" >/dev/null 2>&1
 sp_merge2=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-merge-gate.sh$"))] | length' "$SPACED_SETTINGS")
 sp_stop2=$(jq '[.hooks.Stop[].hooks[]? | select((.command//"")|test("drive-stop-guard.sh$"))] | length' "$SPACED_SETTINGS")
 sp_tool2=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-tool-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_wt2=$(jq '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")|test("drive-worktree-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_wt_len2=$(jq '.hooks.WorktreeCreate | length' "$SPACED_SETTINGS")
 check "spaced-path install is IDEMPOTENT: still one merge gate after run 2 (no duplicate)" "$sp_merge2" "1"
 check "spaced-path install is IDEMPOTENT: still one stop guard after run 2 (no duplicate)" "$sp_stop2" "1"
 check "spaced-path install is IDEMPOTENT: still two tool-gate entries after run 2 (no duplicate)" "$sp_tool2" "2"
+check "spaced-path install is IDEMPOTENT: still one WorktreeCreate gate after run 2 (whitespace strip_managed regression guard)" "$sp_wt2" "1"
+check "spaced-path install is IDEMPOTENT: WorktreeCreate still exactly one entry after run 2" "$sp_wt_len2" "1"
 
 # --- AC-11: READ-ONLY deployment-drift preflight (WARN-only; never blocks) -------
 has_warn() { grep -qF "$2" "$1" && echo yes || echo no; }

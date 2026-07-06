@@ -668,6 +668,31 @@ contains "AC-2b single-run deny names the run basename (NON-empty runId)" "$out"
 # guard: the runId is not empty (would render as 'run  is active' with a double space)
 case "$out" in *"run  is active"*) echo "FAIL: AC-2b runId is EMPTY (double space)"; FAIL=$((FAIL+1)) ;; *) echo "PASS: AC-2b runId is non-empty"; PASS=$((PASS+1)) ;; esac
 
+# =====================================================================================
+# MIXED-VERSION FAIL-CLOSED (regression guard for the source-verification fix) — run the
+# CURRENT gate against a STALE drive-hook-lib.sh lacking drive_scan_active_runs (a lib
+# predating the G1 extraction / a partial update). Without the guard the undefined-function
+# scan `$(drive_scan_active_runs)` yields EMPTY → "no active run" → a matched write FALLS
+# THROUGH to a silent allow (fail-OPEN). The guard makes a matched write-class tool FAIL-CLOSED
+# (deny JSON). MUTATION-VERIFY: removing the guard reds this (the gate silent-passes → no deny).
+# =====================================================================================
+rm -rf "$RUNS"/*
+MVDIR="$WORK/mixedver-tool"; mkdir -p "$MVDIR"
+cp "$GATE" "$MVDIR/drive-tool-gate.sh"
+cat > "$MVDIR/drive-hook-lib.sh" <<'STUBLIB'
+#!/usr/bin/env bash
+# STALE lib: the pre-extraction functions, but NO drive_scan_active_runs.
+drive_runid_from_command() { return 1; }
+drive_runid_from_head() { return 1; }
+drive_run_dir() { return 1; }
+STUBLIB
+MVREPO="$WORK/mv-repo"; mk_repo "$MVREPO" "https://github.com/mv/mv.git"
+mk_run run-mixedver "$MVREPO"
+out="$(printf '%s' "$(cat "$FX/push_files.json")" | HOME="$HOME" bash "$MVDIR/drive-tool-gate.sh" 2>/dev/null)"; rc=$?
+check "MixedVer stale lib (no drive_scan_active_runs) + matched write → deny (fail-closed, not fail-open)" "$(is_deny "$out")" "yes"
+check "MixedVer stale lib → exit 0 (deny carried in JSON body)" "$rc" "0"
+contains "MixedVer stale-lib deny names the undefined predicate" "$out" "drive_scan_active_runs is not defined"
+
 # AC-15b — GitLab + worktree fixtures carry _provenance too.
 gl_prov_bad=0
 for f in "$GLFX"/*.json "$HERE/fixtures/worktree"/*.json; do

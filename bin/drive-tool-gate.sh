@@ -154,6 +154,18 @@ case "$TOOL_NAME" in
     exit 0 ;;                       # mis-registered non-write tool → silent (deny = pure DoS)
 esac
 
+# SOURCE-VERIFICATION FAIL-CLOSED. A stale/missing drive-hook-lib.sh can `source` WITHOUT
+# defining drive_scan_active_runs; the $(drive_scan_active_runs) scan below would then be an
+# undefined-command substitution yielding EMPTY — INDISTINGUISHABLE from "no active run" → a
+# matched write-class tool would FALL THROUGH to a silent allow (fail-OPEN) even while a run IS
+# active (codex repro: mcp__github__push_files passed with a stale lib). Checked HERE (not at the
+# source line) so it fires ONLY for a matched CLASS ∈ {mcp,worktree} tool — non-matched tools
+# already exited 0 above — fail-CLOSED via emit_deny (mirroring the jq-absent static-deny posture)
+# without denying any non-matched tool.
+if ! command -v drive_scan_active_runs >/dev/null 2>&1; then
+  emit_deny "drive-tool-gate: drive_scan_active_runs is not defined after sourcing drive-hook-lib.sh (stale/missing library), so active /drive runs cannot be evaluated for this write-class tool ($TOOL_NAME). Failing CLOSED for write-class safety. Re-run bin/install-drive-hooks.sh, or use the canonical gated Bash path (git/gh)."
+fi
+
 # --- control flow step 4: active-run scan (Foundation C) ------------------------------
 # The active-run predicate is the SHARED drive_scan_active_runs (drive-hook-lib.sh) — the
 # same predicate the WorktreeCreate gate reuses (DRY). It echoes the newline-separated active

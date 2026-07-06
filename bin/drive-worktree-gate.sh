@@ -27,6 +27,18 @@ set -u
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "$SCRIPT_DIR/drive-hook-lib.sh"
 
+# SOURCE-VERIFICATION FAIL-CLOSED (D-w2). A stale/missing drive-hook-lib.sh can `source`
+# WITHOUT defining drive_scan_active_runs; the later $(drive_scan_active_runs) would then be an
+# undefined-command substitution yielding an EMPTY result — INDISTINGUISHABLE from "no active
+# run" → a FAIL-OPEN provision even while a run IS active (codex repro: active run + stale lib →
+# worktree provisioned). Verify the function is DEFINED before any use; if not → FAIL-CLOSED
+# DENY (exit 2), mirroring the required-tool posture below. bash 3.2-safe (`command -v` resolves
+# shell functions).
+if ! command -v drive_scan_active_runs >/dev/null 2>&1; then
+  printf '/drive worktree gate: drive_scan_active_runs is not defined after sourcing %s (stale/missing library), so active /drive runs cannot be evaluated and an empty scan cannot be trusted as "no active run". Failing CLOSED (denying native worktree creation) — matches the required-tool posture. Re-run bin/install-drive-hooks.sh, or create the worktree via Bash: git worktree add <path> -b slice/<runId>/<id>.\n' "$SCRIPT_DIR/drive-hook-lib.sh" >&2
+  exit 2
+fi
+
 INPUT="$(cat)"   # WorktreeCreate payload: {name, cwd, session_id, hook_event_name, ...}
 
 # REQUIRED-TOOL FAIL-CLOSED (D-w2). drive_scan_active_runs suppresses its find/dirname/sort/jq
