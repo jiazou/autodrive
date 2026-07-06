@@ -11,8 +11,11 @@ INSTALLER="$REPO_DIR/bin/install-drive-hooks.sh"
 MERGE_GATE="$REPO_DIR/bin/drive-merge-gate.sh"
 STOP_GUARD="$REPO_DIR/bin/drive-stop-guard.sh"
 TOOL_GATE="$REPO_DIR/bin/drive-tool-gate.sh"
-# Exact matcher strings the installer writes for the two tool-gate entries (AC-9).
-MCP_MATCHER='^mcp__.+__(update_pull_request_branch|create_or_update_file|create_pull_request|merge_pull_request|update_pull_request|create_branch|delete_file|push_files)$'
+WT_GATE="$REPO_DIR/bin/drive-worktree-gate.sh"
+# Exact matcher strings the installer writes for the two tool-gate entries (AC-9). G2 adds the
+# five GitLab merge_request-write suffixes to the MCP matcher (the pinned matcher redding on
+# change is the PROOF the G2 bit landed — see memory gate-tightening-reds-the-allow-tests).
+MCP_MATCHER='^mcp__.+__(update_pull_request_branch|create_or_update_file|create_merge_request|accept_merge_request|rebase_merge_request|merge_merge_request|update_merge_request|create_pull_request|merge_pull_request|update_pull_request|create_branch|delete_file|push_files)$'
 NATIVE_MATCHER='^(Agent|EnterWorktree)$'
 
 PASS=0
@@ -27,7 +30,10 @@ check() { # check <desc> <actual> <expected>
   fi
 }
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/install-drive-hooks.XXXXXX")"
+# Canonicalize via cd&&pwd so a trailing-slash $TMPDIR (macOS default, e.g. /var/.../T/)
+# cannot leave a double slash in $WORK — the installer normalizes its own paths with
+# `cd && pwd`, so the exact-path AC-9 assertion must compare against the same canonical form.
+WORK="$(cd "$(mktemp -d "${TMPDIR:-/tmp}/install-drive-hooks.XXXXXX")" && pwd)"
 trap 'rm -rf "$WORK"' EXIT
 
 SETTINGS="$WORK/settings.json"
@@ -92,6 +98,20 @@ check "MCP-write matcher entry present with exact string" "$mcp_present" "1"
 native_present=$(jq --arg p "$TOOL_GATE" --arg m "$NATIVE_MATCHER" '[.hooks.PreToolUse[] | select(.matcher==$m and (.hooks[]?.command==$p))] | length' "$SETTINGS")
 check "native (Agent|EnterWorktree) matcher entry present with exact string" "$native_present" "1"
 
+# --- AC-9: WorktreeCreate gate wired (matcher-less), preserves shipped entries ---
+wt_total=$(jq --arg p "$WT_GATE" '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")==$p)] | length' "$SETTINGS")
+check "WorktreeCreate gate injected (1 entry)" "$wt_total" "1"
+wt_len=$(jq '.hooks.WorktreeCreate | length' "$SETTINGS")
+check "WorktreeCreate has exactly one managed entry" "$wt_len" "1"
+# matcher-less: the entry carries NO .matcher key (like Stop)
+wt_matcherless=$(jq '[.hooks.WorktreeCreate[] | select(has("matcher")|not)] | length' "$SETTINGS")
+check "WorktreeCreate entry is matcher-less" "$wt_matcherless" "1"
+# the shipped PreToolUse (merge + 2 tool) and Stop entries all survive alongside WorktreeCreate
+survived_merge=$(jq --arg p "$MERGE_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$SETTINGS")
+check "AC-9 merge gate survives WorktreeCreate wiring" "$survived_merge" "1"
+survived_tool=$(jq --arg p "$TOOL_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$SETTINGS")
+check "AC-9 both tool-gate entries survive WorktreeCreate wiring" "$survived_tool" "2"
+
 # existing Stop hook preserved (1 original + 1 new = 2)
 stop_total=$(jq '.hooks.Stop | length' "$SETTINGS")
 check "existing Stop hooks preserved (1 + 1)" "$stop_total" "2"
@@ -120,6 +140,11 @@ check "second run adds NO duplicate stop guard" "$stop_count2" "1"
 
 tool_count2=$(jq --arg p "$TOOL_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$SETTINGS")
 check "second run keeps EXACTLY two tool-gate entries (no duplicate)" "$tool_count2" "2"
+
+wt_count2=$(jq --arg p "$WT_GATE" '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")==$p)] | length' "$SETTINGS")
+check "second run adds NO duplicate WorktreeCreate gate" "$wt_count2" "1"
+wt_len2=$(jq '.hooks.WorktreeCreate | length' "$SETTINGS")
+check "WorktreeCreate length stable after re-run (1)" "$wt_len2" "1"
 
 pre_total2=$(jq '.hooks.PreToolUse | length' "$SETTINGS")
 check "PreToolUse count stable after re-run (6)" "$pre_total2" "6"
@@ -196,6 +221,7 @@ MIG="$WORK/migrate-settings.json"
 OLD_MERGE="/Users/someone/workspace/claude-harness/bin/drive-merge-gate.sh"
 OLD_STOP="/Users/someone/workspace/claude-harness/bin/drive-stop-guard.sh"
 OLD_TOOL="/Users/someone/workspace/claude-harness/bin/drive-tool-gate.sh"
+OLD_WT="/Users/someone/workspace/claude-harness/bin/drive-worktree-gate.sh"
 cat > "$MIG" <<JSON
 {
   "model": "opus",
@@ -208,12 +234,22 @@ cat > "$MIG" <<JSON
     ],
     "Stop": [
       { "hooks": [ { "type": "command", "command": "$OLD_STOP" } ] }
+    ],
+    "WorktreeCreate": [
+      { "hooks": [ { "type": "command", "command": "$OLD_WT" } ] }
     ]
   }
 }
 JSON
 bash "$INSTALLER" "$MIG" >/dev/null 2>&1
 check "installer exits 0 migrating stale paths" "$?" "0"
+# WorktreeCreate stale path migrated to current path (count 1), stale path gone
+mig_wt_new=$(jq --arg p "$WT_GATE" '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")==$p)] | length' "$MIG")
+check "WorktreeCreate gate migrated to current path (count 1)" "$mig_wt_new" "1"
+mig_wt_old=$(jq --arg p "$OLD_WT" '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")==$p)] | length' "$MIG")
+check "stale WorktreeCreate path removed" "$mig_wt_old" "0"
+mig_wt_len=$(jq '.hooks.WorktreeCreate | length' "$MIG")
+check "WorktreeCreate has exactly one entry after migration (no dup)" "$mig_wt_len" "1"
 # new (current) paths present exactly once
 mig_merge_new=$(jq --arg p "$MERGE_GATE" '[.hooks.PreToolUse[].hooks[]? | select((.command//"")==$p)] | length' "$MIG")
 check "merge gate migrated to current path (count 1)" "$mig_merge_new" "1"
@@ -289,22 +325,36 @@ check "stock stop guard still added alongside substitution one" "$wrap_canon_sto
 SPACED_ROOT="$WORK/sp ace root/bin"
 mkdir -p "$SPACED_ROOT"
 cp "$REPO_DIR/bin/install-drive-hooks.sh" "$REPO_DIR/bin/drive-merge-gate.sh" \
-   "$REPO_DIR/bin/drive-stop-guard.sh" "$REPO_DIR/bin/drive-tool-gate.sh" "$SPACED_ROOT/" 2>/dev/null
+   "$REPO_DIR/bin/drive-stop-guard.sh" "$REPO_DIR/bin/drive-tool-gate.sh" \
+   "$REPO_DIR/bin/drive-worktree-gate.sh" "$SPACED_ROOT/" 2>/dev/null
+SPACED_WT_GATE="$SPACED_ROOT/drive-worktree-gate.sh"
 SPACED_SETTINGS="$WORK/spaced-settings.json"
 bash "$SPACED_ROOT/install-drive-hooks.sh" "$SPACED_SETTINGS" >/dev/null 2>&1
 sp_merge1=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-merge-gate.sh$"))] | length' "$SPACED_SETTINGS")
 sp_stop1=$(jq '[.hooks.Stop[].hooks[]? | select((.command//"")|test("drive-stop-guard.sh$"))] | length' "$SPACED_SETTINGS")
 sp_tool1=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-tool-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_wt1=$(jq '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")|test("drive-worktree-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_wt_len1=$(jq '.hooks.WorktreeCreate | length' "$SPACED_SETTINGS")
+sp_wt_ml1=$(jq '[.hooks.WorktreeCreate[] | select(has("matcher")|not)] | length' "$SPACED_SETTINGS")
+sp_wt_path1=$(jq --arg p "$SPACED_WT_GATE" '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")==$p)] | length' "$SPACED_SETTINGS")
 check "spaced-path install: one merge gate after run 1" "$sp_merge1" "1"
 check "spaced-path install: one stop guard after run 1" "$sp_stop1" "1"
 check "spaced-path install: two tool-gate entries after run 1" "$sp_tool1" "2"
+check "spaced-path install: one WorktreeCreate gate after run 1" "$sp_wt1" "1"
+check "spaced-path install: WorktreeCreate has exactly one entry after run 1" "$sp_wt_len1" "1"
+check "spaced-path install: WorktreeCreate entry is matcher-less" "$sp_wt_ml1" "1"
+check "spaced-path install: WorktreeCreate points at the spaced-path gate (correct path)" "$sp_wt_path1" "1"
 bash "$SPACED_ROOT/install-drive-hooks.sh" "$SPACED_SETTINGS" >/dev/null 2>&1
 sp_merge2=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-merge-gate.sh$"))] | length' "$SPACED_SETTINGS")
 sp_stop2=$(jq '[.hooks.Stop[].hooks[]? | select((.command//"")|test("drive-stop-guard.sh$"))] | length' "$SPACED_SETTINGS")
 sp_tool2=$(jq '[.hooks.PreToolUse[].hooks[]? | select((.command//"")|test("drive-tool-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_wt2=$(jq '[.hooks.WorktreeCreate[]?.hooks[]? | select((.command//"")|test("drive-worktree-gate.sh$"))] | length' "$SPACED_SETTINGS")
+sp_wt_len2=$(jq '.hooks.WorktreeCreate | length' "$SPACED_SETTINGS")
 check "spaced-path install is IDEMPOTENT: still one merge gate after run 2 (no duplicate)" "$sp_merge2" "1"
 check "spaced-path install is IDEMPOTENT: still one stop guard after run 2 (no duplicate)" "$sp_stop2" "1"
 check "spaced-path install is IDEMPOTENT: still two tool-gate entries after run 2 (no duplicate)" "$sp_tool2" "2"
+check "spaced-path install is IDEMPOTENT: still one WorktreeCreate gate after run 2 (whitespace strip_managed regression guard)" "$sp_wt2" "1"
+check "spaced-path install is IDEMPOTENT: WorktreeCreate still exactly one entry after run 2" "$sp_wt_len2" "1"
 
 # --- AC-11: READ-ONLY deployment-drift preflight (WARN-only; never blocks) -------
 has_warn() { grep -qF "$2" "$1" && echo yes || echo no; }
@@ -325,6 +375,7 @@ bash "$INSTALLER" "$DRIFT23" 2>"$D23_ERR" >/dev/null; d23_rc=$?
 check "drift variant 2+3: installer still exits 0 (warn-only)" "$d23_rc" "0"
 check "drift variant 2 (migrate hazard) WARN fires" "$(has_warn "$D23_ERR" "live gates run from $FAKE_LIVE")" "yes"
 check "drift variant 3 (missing sibling) WARN fires" "$(has_warn "$D23_ERR" "live enforcement worktree lacks drive-tool-gate.sh")" "yes"
+check "drift variant 3w (missing worktree-gate sibling) WARN fires" "$(has_warn "$D23_ERR" "lacks drive-worktree-gate.sh")" "yes"
 d23_bak=$(ls "$DRIFT23".bak.* 2>/dev/null | wc -l | tr -d ' ')
 check "drift preflight churns NO extra backup (exactly one for the whole run)" "$d23_bak" "1"
 
@@ -384,18 +435,36 @@ check "drift variant 5: installer exits 0 (warn-only)" "$d5_rc" "0"
 check "drift variant 5 (cmp-differs) WARN fires" "$(has_warn "$D5_ERR" "live drive-merge-gate.sh differs from this checkout")" "yes"
 check "drift variant 5: NO missing-sibling WARN (sibling present)" "$(has_warn "$D5_ERR" "lacks drive-tool-gate.sh")" "no"
 
-# --- AC-10: installer disclosure banner enumerates the three hooks / four entries + BOTH
-#     new matcher classes (the GitHub-MCP write matcher + Agent/EnterWorktree). Slice-owned:
+# Variant 6 (missing WorktreeCreate): live dir IS this checkout's bin (both siblings present),
+# the tool gate is wired on BOTH matchers, but the authoritative WorktreeCreate gate is NOT
+# registered → WorktreeCreate-not-registered WARN; warn-only (exit 0). Mirrors variant 4 for
+# the G1 gate the installer also manages.
+DRIFT6="$WORK/drift6.json"
+cat > "$DRIFT6" <<JSON
+{ "hooks": { "PreToolUse": [
+  { "matcher": "Bash", "hooks": [ { "type": "command", "command": "$MERGE_GATE" } ] },
+  { "matcher": "$MCP_MATCHER", "hooks": [ { "type": "command", "command": "$TOOL_GATE" } ] },
+  { "matcher": "$NATIVE_MATCHER", "hooks": [ { "type": "command", "command": "$TOOL_GATE" } ] }
+] } }
+JSON
+D6_ERR="$WORK/drift6.err"
+bash "$INSTALLER" "$DRIFT6" 2>"$D6_ERR" >/dev/null; d6_rc=$?
+check "drift variant 6: installer exits 0 (warn-only)" "$d6_rc" "0"
+check "drift variant 6 (missing WorktreeCreate) WARN fires" "$(has_warn "$D6_ERR" "the WorktreeCreate gate is not registered")" "yes"
+
+# --- AC-10: installer disclosure banner enumerates the four hooks / five entries + BOTH
+#     new matcher classes (the GitHub/GitLab-MCP write matcher + Agent/EnterWorktree). Slice-owned:
 #     tests/installers/test_install_banner_confirm.py pins only generic tokens by design
 #     (DIV-p2-1), so this is where a disclosure-text regression is caught. The banner prints
 #     to STDERR before the (skipped, explicit-target) confirm gate. FAILs if the text regresses.
 BANNER_SET="$WORK/banner-settings.json"
 BANNER_ERR="$WORK/banner.err"
 bash "$INSTALLER" "$BANNER_SET" 2>"$BANNER_ERR" >/dev/null
-check "AC-10 banner enumerates 'three hooks'" "$(grep -qF 'three hooks' "$BANNER_ERR" && echo yes || echo no)" "yes"
-check "AC-10 banner enumerates 'four settings entries'" "$(grep -qF 'four settings entries' "$BANNER_ERR" && echo yes || echo no)" "yes"
-check "AC-10 banner names the GitHub-MCP write matcher class" "$(grep -qF 'GitHub-MCP writes' "$BANNER_ERR" && echo yes || echo no)" "yes"
+check "AC-10 banner enumerates 'four hooks'" "$(grep -qF 'four hooks' "$BANNER_ERR" && echo yes || echo no)" "yes"
+check "AC-10 banner enumerates 'five settings entries'" "$(grep -qF 'five settings entries' "$BANNER_ERR" && echo yes || echo no)" "yes"
+check "AC-10 banner names the GitHub/GitLab-MCP write matcher class" "$(grep -qF 'GitHub/GitLab-MCP writes' "$BANNER_ERR" && echo yes || echo no)" "yes"
 check "AC-10 banner names the Agent/EnterWorktree matcher class" "$(grep -qF 'Agent/EnterWorktree' "$BANNER_ERR" && echo yes || echo no)" "yes"
+check "AC-10 banner names the WorktreeCreate gate" "$(grep -qF 'WorktreeCreate' "$BANNER_ERR" && echo yes || echo no)" "yes"
 
 # --- AC-11: drift_preflight makes ZERO byte changes to the target BEFORE the write path.
 #     The timestamped backup is cp'd AFTER the preflight ran but BEFORE the jq mutation

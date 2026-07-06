@@ -1,0 +1,8 @@
+{
+  "_provenance":{"source":"Claude Code WorktreeCreate hook payload (live-captured shape) — worktree-proof/wtc.log; carries {session_id, transcript_path, cwd, hook_event_name, name} and NO tool_name / ref field","url":"https://docs.claude.com/en/docs/claude-code","retrieved":"2026-07-06","note":"Real dumped WorktreeCreate payload shape from the AC-10/AC-8b spike (worktree-proof/RESULT.md, RESULT-allow.md)."},
+  "session_id": "fixture-session-wtc-0001",
+  "transcript_path": "/tmp/fixture-transcript.jsonl",
+  "cwd": "/work/octo-org/drive-fixture-repo",
+  "hook_event_name": "WorktreeCreate",
+  "name": "wtc-probe"
+}

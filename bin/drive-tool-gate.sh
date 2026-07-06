@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# drive-tool-gate.sh — PreToolUse hook for the NON-Bash tool surface: GitHub-MCP write
+# drive-tool-gate.sh — PreToolUse hook for the NON-Bash tool surface: GitHub/GitLab-MCP write
 # tools and the native worktree tools (Agent isolation:"worktree" / EnterWorktree).
 #
 # The primary /drive gate (drive-merge-gate.sh) fires on Bash only, so two tool classes
 # can land run work WITHOUT tripping any gate while a /drive run is active on the same
 # repo:
-#   - GitHub MCP writes (create_pull_request / push_files / …) reach GitHub without ever
-#     issuing a Bash git/gh command — the merge/ship gate never sees them.
+#   - GitHub/GitLab MCP writes (create_pull_request / push_files / create_merge_request / …)
+#     reach the remote without ever issuing a Bash git/gh command — the merge/ship gate never
+#     sees them.
 #   - Agent isolation:"worktree" / EnterWorktree create worktrees on a harness-named
 #     branch (not slice/<runId>/<id>), so plan/phasedesign gating and the slice
 #     review + impl-presence checks never fire (a `git merge <harness-branch>` is inert
@@ -27,10 +28,14 @@
 # fail-closed on someone else's dir contents. Hook-INVOCATION failure (nonzero exit,
 # rc 126/127, dead path) is fail-OPEN by platform protocol — a documented residual.
 #
-# Standalone: sources NOTHING (drive-hook-lib.sh is pure ref→runId parsing, no active-run
-# predicate to reuse). Reads only $HOME/.claude/harness-runs. bash 3.2-safe; set -u.
+# Sources drive-hook-lib.sh for the shared `drive_scan_active_runs` predicate (the
+# WorktreeCreate gate drive-worktree-gate.sh reuses the SAME predicate — DRY). Reads only
+# $HOME/.claude/harness-runs. bash 3.2-safe; set -u.
 # Env knob: DRIVE_TOOL_GATE_LIVE_HOURS (default 24) — liveness window for active runs.
 set -u
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/drive-hook-lib.sh"
 
 # --- static deny used when jq is ABSENT (no jq → can't JSON-escape a dynamic reason) ---
 # Pre-built constant JSON: no dynamic content, so printf alone suffices.
@@ -140,7 +145,7 @@ case "$TOOL_NAME" in
   mcp__*)
     SUFFIX="${TOOL_NAME##*__}"     # suffix after the LAST __
     case "$SUFFIX" in
-      create_or_update_file|delete_file|push_files|create_branch|create_pull_request|update_pull_request_branch|merge_pull_request|update_pull_request)
+      create_or_update_file|delete_file|push_files|create_branch|create_pull_request|update_pull_request_branch|merge_pull_request|update_pull_request|create_merge_request|merge_merge_request|accept_merge_request|update_merge_request|rebase_merge_request)
         CLASS=mcp ;;
       *)
         # Matched the write-tool gate but absent from the hook table → drift, fail-CLOSED.
@@ -150,57 +155,36 @@ case "$TOOL_NAME" in
     exit 0 ;;                       # mis-registered non-write tool → silent (deny = pure DoS)
 esac
 
+# SOURCE-VERIFICATION FAIL-CLOSED. A stale/missing drive-hook-lib.sh can `source` WITHOUT
+# defining drive_scan_active_runs; the $(drive_scan_active_runs) scan below would then be an
+# undefined-command substitution yielding EMPTY — INDISTINGUISHABLE from "no active run" → a
+# matched write-class tool would FALL THROUGH to a silent allow (fail-OPEN) even while a run IS
+# active (codex repro: mcp__github__push_files passed with a stale lib). Checked HERE (not at the
+# source line) so it fires ONLY for a matched CLASS ∈ {mcp,worktree} tool — non-matched tools
+# already exited 0 above — fail-CLOSED via emit_deny (mirroring the jq-absent static-deny posture)
+# without denying any non-matched tool.
+if ! command -v drive_scan_active_runs >/dev/null 2>&1; then
+  emit_deny "drive-tool-gate: drive_scan_active_runs is not defined after sourcing drive-hook-lib.sh (stale/missing library), so active /drive runs cannot be evaluated for this write-class tool ($TOOL_NAME). Failing CLOSED for write-class safety. Re-run bin/install-drive-hooks.sh, or use the canonical gated Bash path (git/gh)."
+fi
+
 # --- control flow step 4: active-run scan (Foundation C) ------------------------------
-RUNS_ROOT="$HOME/.claude/harness-runs"
-
-H="${DRIVE_TOOL_GATE_LIVE_HOURS:-24}"
-case "$H" in ''|*[!0-9]*) H=24 ;; esac
-[ "$H" -gt 0 ] 2>/dev/null || H=24
-MINS=$((H * 60))
-
-# Liveness-bounded candidate dirs: run dirs with a state.json OR event-log.jsonl touched
-# within the window. macOS/BSD-safe (no -printf; dirname in a loop; ≤ tens of dirs).
-CAND_DIRS="$(
-  find "$RUNS_ROOT" -maxdepth 2 \( -name state.json -o -name event-log.jsonl \) -mmin "-$MINS" 2>/dev/null \
-    | while IFS= read -r f; do dirname "$f"; done | sort -u
-)"
-
-# Validate each candidate: state.json a regular file that PARSES with stage != "done".
-# Corrupt/unreadable state.json → skip WITH a stderr warning (fail-closed = own logic
-# only, never third-party dir contents). Absent/non-regular state.json → silent skip.
-ACTIVE_RUNS=""
-while IFS= read -r D; do
-  [ -n "$D" ] || continue
-  sj="$D/state.json"
-  [ -e "$sj" ] || continue           # no state.json → not an active run (silent)
-  [ -f "$sj" ] || continue           # non-regular (symlink-to-fifo/device) → skip, out of threat model
-  if ! stage="$(jq -r '.stage // ""' "$sj" 2>/dev/null)"; then
-    printf 'drive-tool-gate: skipping unreadable/corrupt state.json in %s\n' "$D" >&2
-    continue
-  fi
-  [ -n "$stage" ] || continue        # parsed but no stage → not routable-active (silent)
-  [ "$stage" = "done" ] && continue  # explicitly done → not active
-  # Require a non-empty repoRoot: a run with stage!=done but no/empty repoRoot cannot be
-  # repo-scoped, and passing "" downstream would make `git -C ""` resolve to the HOOK's own
-  # cwd — mis-attributing identity (cross-run over-deny AND silent-pass of the run's real
-  # repo). Skip-with-warning (same visibility as a corrupt dir) so it can never mis-scope.
-  rr="$(jq -r '.repoRoot // ""' "$sj" 2>/dev/null || true)"
-  if [ -z "$rr" ]; then
-    printf 'drive-tool-gate: skipping active run with no repoRoot in %s\n' "$D" >&2
-    continue
-  fi
-  ACTIVE_RUNS="$ACTIVE_RUNS$D
-"
-done <<EOF
-$CAND_DIRS
-EOF
+# The active-run predicate is the SHARED drive_scan_active_runs (drive-hook-lib.sh) — the
+# same predicate the WorktreeCreate gate reuses (DRY). It echoes the newline-separated active
+# run dirs (stage!=done + non-empty repoRoot + mtime liveness), emitting the same per-dir
+# skip-with-warning stderr for corrupt / no-repoRoot dirs. $(...) strips the scan's trailing
+# newline; the heredoc consumers below re-add one and the `[ -n "$D" ] || continue` guard
+# drops the empty trailing line, so the SAME dirs are iterated.
+ACTIVE_RUNS="$(drive_scan_active_runs)"
 
 # No active run → the insurance lies dormant → silent pass.
 [ -n "$ACTIVE_RUNS" ] || exit 0
 
 # first_active_run : basename of the FIRST active run dir (for fail-closed deny messages).
+# `printf '%s\n'` (NOT '%s') so a single-active-run ACTIVE_RUNS (one dir, trailing newline
+# stripped by $(...)) is still read by `while read` — else the single-run deny names an
+# EMPTY runId (AC-2b).
 first_active_run() {
-  printf '%s' "$ACTIVE_RUNS" | while IFS= read -r d; do
+  printf '%s\n' "$ACTIVE_RUNS" | while IFS= read -r d; do
     [ -n "$d" ] && { basename "$d"; break; }
   done
 }
@@ -311,13 +295,13 @@ mcp_deny_reason() {
   local suffix="$1" runId="$2"
   case "$suffix" in
     create_or_update_file)
-      printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool create_or_update_file writes a file directly on the remote, bypassing the /drive gates (they fire on Bash git/gh commands only). Retry: edit + commit the file in the slice worktree, then land it via the gated `git merge slice/<runId>/<id>`; it reaches GitHub only through the gated `git push` at ship.' "$runId" ;;
+      printf 'drive-tool-gate: run %s is active on this repo. The git-hosting MCP tool create_or_update_file writes a file directly on the remote, bypassing the /drive gates (they fire on Bash git/gh commands only). Retry: edit + commit the file in the slice worktree, then land it via the gated `git merge slice/<runId>/<id>`; it reaches the remote host only through the gated `git push` at ship.' "$runId" ;;
     delete_file)
-      printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool delete_file removes a file directly on the remote, bypassing the /drive gates (they fire on Bash git/gh commands only). Retry: `git rm` + commit in the slice worktree, then land it via the gated `git merge slice/<runId>/<id>`; it reaches GitHub only through the gated `git push` at ship.' "$runId" ;;
+      printf 'drive-tool-gate: run %s is active on this repo. The git-hosting MCP tool delete_file removes a file directly on the remote, bypassing the /drive gates (they fire on Bash git/gh commands only). Retry: `git rm` + commit in the slice worktree, then land it via the gated `git merge slice/<runId>/<id>`; it reaches the remote host only through the gated `git push` at ship.' "$runId" ;;
     push_files)
-      printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool push_files pushes multiple files directly to the remote, bypassing the /drive ship gate. Retry: commit locally in the slice worktree, then `git push` from the ship worktree (gated: the finalize-review check runs on the pushed tip).' "$runId" ;;
+      printf 'drive-tool-gate: run %s is active on this repo. The git-hosting MCP tool push_files pushes multiple files directly to the remote, bypassing the /drive ship gate. Retry: commit locally in the slice worktree, then `git push` from the ship worktree (gated: the finalize-review check runs on the pushed tip).' "$runId" ;;
     create_branch)
-      printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool create_branch creates a branch directly on the remote, bypassing the /drive plan/design gates. Retry: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>` (gated) for a drive slice, or a plain local `git branch` for a non-drive ref.' "$runId" ;;
+      printf 'drive-tool-gate: run %s is active on this repo. The git-hosting MCP tool create_branch creates a branch directly on the remote, bypassing the /drive plan/design gates. Retry: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>` (gated) for a drive slice, or a plain local `git branch` for a non-drive ref.' "$runId" ;;
     create_pull_request)
       printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool create_pull_request opens the PR outside Bash, bypassing the /drive ship gate. Retry: `gh pr create` from the ship worktree (gated: it verifies the finalize review covers the shipped tip).' "$runId" ;;
     update_pull_request_branch)
@@ -326,6 +310,14 @@ mcp_deny_reason() {
       printf 'drive-tool-gate: run %s is active on this repo. In the /drive flow the PR merge is human-owned at Gate B; the GitHub MCP tool merge_pull_request is not the sanctioned route to merge the PR during an active run — merge after Gate B approval. (This denies the MCP omission path; the Bash `gh pr merge` twin stays ungated — a deliberately-deferred asymmetry, not a global prohibition.)' "$runId" ;;
     update_pull_request)
       printf 'drive-tool-gate: run %s is active on this repo. PR title/body/state/base edits are human-owned at Gate B; the GitHub MCP tool update_pull_request is not the sanctioned route to edit the PR during an active run — edit after Gate B approval. (This denies the MCP omission path; the Bash `gh pr edit` twin stays ungated — a deliberately-deferred asymmetry, not a global prohibition.)' "$runId" ;;
+    create_merge_request)
+      printf 'drive-tool-gate: run %s is active on this repo. The GitLab MCP tool create_merge_request opens the MR outside Bash, bypassing the /drive ship gate. Retry: `glab mr create` from the ship worktree (gated: it verifies the finalize review covers the shipped tip).' "$runId" ;;
+    merge_merge_request|accept_merge_request)
+      printf 'drive-tool-gate: run %s is active on this repo. In the /drive flow the MR merge is human-owned at Gate B; the GitLab MCP tool %s is not the sanctioned route to merge the MR during an active run — merge after Gate B approval. (This denies the MCP omission path; the Bash `glab mr merge` twin stays ungated — a deliberately-deferred asymmetry, not a global prohibition.)' "$runId" "$suffix" ;;
+    update_merge_request)
+      printf 'drive-tool-gate: run %s is active on this repo. MR title/description/state/target edits are human-owned at Gate B; the GitLab MCP tool update_merge_request is not the sanctioned route to edit the MR during an active run — edit after Gate B approval. (This denies the MCP omission path; the Bash `glab mr update` twin stays ungated — a deliberately-deferred asymmetry, not a global prohibition.)' "$runId" ;;
+    rebase_merge_request)
+      printf 'drive-tool-gate: run %s is active on this repo. The GitLab MCP tool rebase_merge_request rewrites the MR source branch on the remote (the analog of GitHub update_pull_request_branch), bypassing the /drive ship gate. Retry: `git merge origin/<target>` / `git rebase` in the ship worktree, then the gated `git push`.' "$runId" ;;
   esac
 }
 
@@ -355,7 +347,7 @@ if [ "$CLASS" = mcp ]; then
   # Unextractable owner/repo (empty OR non-string → "") while ≥1 run is live → fail-CLOSED
   # over-deny (names a run). A non-string owner/repo (owner:{} / repo:[]) is unextractable.
   if [ -z "$IN_OWNER_LC" ] || [ -z "$IN_REPO_LC" ]; then
-    emit_deny "drive-tool-gate: run $(first_active_run) is active on this repo, and this GitHub MCP write ($TOOL_NAME) carries no extractable owner/repo to scope it. Failing CLOSED for write-class safety (over-deny). Retry via the canonical gated Bash path (git/gh) from the run's worktree."
+    emit_deny "drive-tool-gate: run $(first_active_run) is active on this repo, and this git-hosting MCP write ($TOOL_NAME) carries no extractable owner/repo to scope it. Failing CLOSED for write-class safety (over-deny). Retry via the canonical gated Bash path (git/gh) from the run's worktree."
   fi
   while IFS= read -r D; do
     [ -n "$D" ] || continue

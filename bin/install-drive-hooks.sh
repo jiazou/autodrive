@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Idempotently wire the three /drive enforcement hooks into a settings.json (four entries):
+# Idempotently wire the four /drive enforcement hooks into a settings.json (five entries):
 #   - PreToolUse(matcher "Bash") -> bin/drive-merge-gate.sh   (merge/ship/plan gate)
 #   - Stop                        -> bin/drive-stop-guard.sh   (review backstop)
-#   - PreToolUse(GitHub-MCP writes) + PreToolUse(Agent|EnterWorktree)
+#   - PreToolUse(GitHub/GitLab-MCP writes) + PreToolUse(Agent|EnterWorktree)
 #                                 -> bin/drive-tool-gate.sh   (non-Bash tool gate; two entries)
+#   - WorktreeCreate              -> bin/drive-worktree-gate.sh (authoritative native-worktree gate)
 # Mirrors bin/install-operating-rules.sh: set -euo pipefail, REPO_DIR from BASH_SOURCE,
 # a timestamped backup before mutating. Keyed on the script BASENAME (not the full
 # path): re-running is a no-op when the path is unchanged, and when the repo has moved
@@ -22,11 +23,13 @@ SETTINGS="${1:-${DRIVE_HOOKS_SETTINGS:-$HOME/.claude/settings.json}}"
 MERGE_GATE="$REPO_DIR/bin/drive-merge-gate.sh"
 STOP_GUARD="$REPO_DIR/bin/drive-stop-guard.sh"
 TOOL_GATE="$REPO_DIR/bin/drive-tool-gate.sh"
+WT_GATE="$REPO_DIR/bin/drive-worktree-gate.sh"
 
 # The MCP write-tool matcher (D-p2-3): enumerated, longest-first alternation, server-segment
 # wildcarded (`mcp__.+__` — the server name is user-chosen at install). Longest-first so
-# update_pull_request cannot shadow update_pull_request_branch under any regex engine.
-TOOL_GATE_MCP_MATCHER='^mcp__.+__(update_pull_request_branch|create_or_update_file|create_pull_request|merge_pull_request|update_pull_request|create_branch|delete_file|push_files)$'
+# update_pull_request cannot shadow update_pull_request_branch under any regex engine. Covers
+# the GitHub PR-write tools AND (G2) the GitLab merge_request-write tools.
+TOOL_GATE_MCP_MATCHER='^mcp__.+__(update_pull_request_branch|create_or_update_file|create_merge_request|accept_merge_request|rebase_merge_request|merge_merge_request|update_merge_request|create_pull_request|merge_pull_request|update_pull_request|create_branch|delete_file|push_files)$'
 TOOL_GATE_NATIVE_MATCHER='^(Agent|EnterWorktree)$'
 
 # --- Disclosure banner (ALWAYS printed) ---------------------------------------
@@ -38,7 +41,7 @@ cat >&2 <<BANNER
 This modifies your Claude Code settings file:
   $SETTINGS
 
-It adds three hooks (four settings entries; existing hooks are
+It adds four hooks (five settings entries; existing hooks are
 preserved; a timestamped backup of the settings file is written first):
 
   • PreToolUse(Bash) -> $MERGE_GATE
@@ -47,10 +50,15 @@ preserved; a timestamped backup of the settings file is written first):
       everything else passes straight through.
   • Stop             -> $STOP_GUARD
       A review backstop that runs when a session stops.
-  • PreToolUse(GitHub-MCP writes; Agent/EnterWorktree) -> $TOOL_GATE
-      Two entries. Deny-routes GitHub MCP write tools and native worktree
-      tools back to the gated Bash paths while a /drive run is active on
-      the same repo; passes everything else silently.
+  • PreToolUse(GitHub/GitLab-MCP writes; Agent/EnterWorktree) -> $TOOL_GATE
+      Two entries. Deny-routes GitHub- and GitLab-MCP write tools and native
+      worktree tools back to the gated Bash paths while a /drive run is active
+      on the same repo; passes everything else silently.
+  • WorktreeCreate   -> $WT_GATE
+      Blocks native worktree creation (--worktree / subagent isolation:"worktree")
+      while a /drive run is active — the authoritative interception the PreToolUse
+      gate can miss for the frontmatter path; provisions normally when idle
+      (recoverable route-to-Bash: git worktree add … -b slice/<runId>/<id>).
 
 The repo never commits ~/.claude/settings.json.
 What these hooks do and their threat model: see SECURITY.md.
@@ -97,6 +105,10 @@ drift_preflight() {
     if [ ! -f "$live_dir/drive-tool-gate.sh" ]; then
       printf 'WARN(drive-hooks drift): live enforcement worktree lacks drive-tool-gate.sh — advance that worktree, then re-run bin/install-drive-hooks.sh from INSIDE it.\n' >&2
     fi
+    # Variant 3w — the live enforcement worktree lacks the authoritative worktree gate.
+    if [ ! -f "$live_dir/drive-worktree-gate.sh" ]; then
+      printf 'WARN(drive-hooks drift): live enforcement worktree lacks drive-worktree-gate.sh — advance that worktree, then re-run bin/install-drive-hooks.sh from INSIDE it.\n' >&2
+    fi
     # Variant 5 — the live merge gate differs byte-wise from this checkout's (worktree lags).
     if [ -f "$live_dir/drive-merge-gate.sh" ]; then
       if ! cmp -s "$live_dir/drive-merge-gate.sh" "$REPO_DIR/bin/drive-merge-gate.sh"; then
@@ -131,6 +143,24 @@ drift_preflight() {
     # Variant 4b — partial registration: the tool gate is wired on only ONE of the two
     # required matchers, so the settings-lag WARN (which only fires on zero entries) misses it.
     printf 'WARN(drive-hooks drift): partial tool-gate registration — drive-tool-gate.sh is wired on only one of the two required matchers (MCP-write / Agent|EnterWorktree); re-run bin/install-drive-hooks.sh to restore both.\n' >&2
+  fi
+
+  # Worktree gate (G1) drift — mirror the tool-gate presence + registration checks for the
+  # AUTHORITATIVE WorktreeCreate gate this installer also manages. WorktreeCreate hooks carry
+  # NO matcher, so the lone-path idiom scans .hooks.WorktreeCreate[]?.hooks[]?.command directly.
+  # Variant 3w — sibling absent.
+  if [ ! -f "$live_dir/drive-worktree-gate.sh" ]; then
+    printf 'WARN(drive-hooks drift): live enforcement worktree lacks drive-worktree-gate.sh — advance that worktree, then re-run bin/install-drive-hooks.sh from INSIDE it.\n' >&2
+  fi
+  # Variant 4w — settings lag: the WorktreeCreate gate is not registered.
+  local have_wt
+  have_wt="$(jq -r '
+    [ .hooks.WorktreeCreate[]?.hooks[]?.command // ""
+      | select((endswith("/drive-worktree-gate.sh") or . == "drive-worktree-gate.sh")
+               and (test("[[:space:]|&;<>()`$]") | not)) ]
+    | first // ""' -- "$SETTINGS" 2>/dev/null || true)"
+  if [ -z "$have_wt" ]; then
+    printf 'WARN(drive-hooks drift): settings lag — the WorktreeCreate gate is not registered.\n' >&2
   fi
   return 0
 }
@@ -183,6 +213,7 @@ jq \
   --arg merge "$MERGE_GATE" \
   --arg stop "$STOP_GUARD" \
   --arg tool "$TOOL_GATE" \
+  --arg wtgate "$WT_GATE" \
   --arg mcpm "$TOOL_GATE_MCP_MATCHER" \
   --arg natm "$TOOL_GATE_NATIVE_MATCHER" \
   '
@@ -198,12 +229,12 @@ jq \
   # not just basename.
   # NOTE: keep this jq program free of apostrophes/backticks in comments -- it is in
   # shell single quotes, so a stray apostrophe would terminate it.
-  # RESERVED-NAME CONTRACT: a LONE invocation of drive-merge-gate.sh / drive-stop-guard.sh
-  # is always treated as THE managed gate, wherever it lives -- this is what lets a
-  # moved/renamed install migrate (the old entry is a lone same-basename path at a
-  # different location, indistinguishable from any other). Do NOT name a custom hook with
-  # these basenames; a re-install will canonicalize it to the stock gate. The stock gate
-  # is always (re-)added, so enforcement is never removed -- only a same-named custom
+  # RESERVED-NAME CONTRACT: a LONE invocation of drive-merge-gate.sh / drive-stop-guard.sh /
+  # drive-tool-gate.sh / drive-worktree-gate.sh is always treated as THE managed gate, wherever
+  # it lives -- this is what lets a moved/renamed install migrate (the old entry is a lone
+  # same-basename path at a different location, indistinguishable from any other). Do NOT name a
+  # custom hook with these basenames; a re-install will canonicalize it to the stock gate. The
+  # stock gate is always (re-)added, so enforcement is never removed -- only a same-named custom
   # override is not preserved.
   # $full is the EXACT current managed path; $base its basename. A command is managed iff
   # it EXACTLY equals $full (so a path CONTAINING A SPACE — common on macOS, e.g.
@@ -229,6 +260,7 @@ jq \
   .hooks = (.hooks // {})
   | .hooks.PreToolUse = (.hooks.PreToolUse // [])
   | .hooks.Stop = (.hooks.Stop // [])
+  | .hooks.WorktreeCreate = (.hooks.WorktreeCreate // [])
   # canonicalize the PreToolUse gates: strip any prior (incl. stale-path) merge-gate AND
   # tool-gate entries, then append the merge gate + BOTH tool-gate entries in a FIXED order
   # (deterministic for the tests). strip_managed is matcher-agnostic (keyed on the command
@@ -243,6 +275,11 @@ jq \
   # canonicalize the Stop guard the same way.
   | .hooks.Stop = strip_managed(.hooks.Stop; bn($stop); $stop)
       + [ { "hooks": [ { "type": "command", "command": $stop } ] } ]
+  # canonicalize the WorktreeCreate gate (matcher-less, like Stop). Keyed on the
+  # drive-worktree-gate.sh basename, so it is idempotent/migrating INDEPENDENTLY of the other
+  # entries and never strips the merge-gate / tool-gate / Stop entries.
+  | .hooks.WorktreeCreate = strip_managed(.hooks.WorktreeCreate; bn($wtgate); $wtgate)
+      + [ { "hooks": [ { "type": "command", "command": $wtgate } ] } ]
   ' -- "$SETTINGS" > "$TMP"
 
 # Sanity: result must be valid JSON before we move it into place.
@@ -256,4 +293,5 @@ mv -- "$TMP" "$SETTINGS"
 echo "Wired drive hooks into $SETTINGS:"
 echo "  PreToolUse(Bash) -> $MERGE_GATE"
 echo "  Stop             -> $STOP_GUARD"
-echo "  PreToolUse(GitHub-MCP writes; Agent/EnterWorktree) -> $TOOL_GATE (two entries)"
+echo "  PreToolUse(GitHub/GitLab-MCP writes; Agent/EnterWorktree) -> $TOOL_GATE (two entries)"
+echo "  WorktreeCreate   -> $WT_GATE"

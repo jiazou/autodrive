@@ -4088,3 +4088,433 @@ anti-reintroduction pin re-verified GREEN with #62's docs/trellis-analysis.md (4
 refs, carved out) and drive-retro.md (no /goal) present. Re-bound finalize reviewed-sha to the
 post-rebase code tip 8d7696dd860d50880a2b3f0710a693be2220a2f4 (content byte-identical; per drive-ship-conformance-sha-binding).
 Classification: Mechanical.
+
+
+<!-- ===== promoted from /drive run c7-gate-bypass-20260705-225936 (2026-07-06T09:45:21Z) ===== -->
+### 2026-07-05 -- C7-D1: Sibling tool-gate hook routes non-Bash bypasses to the gated Bash surface
+**Stage:** plan
+**Task:** Fix C7 (gate bypass) — sibling PreToolUse hook
+**Question:** How to gate GitHub MCP write tools + native worktree tools that skip the PreToolUse(Bash) merge gate?
+**Options considered:** (a) re-implement conformance in a new hook that checks MCP/worktree calls directly; (b) sibling PreToolUse hook that deny-routes those calls back to the canonical gated Bash paths; (c) widen the merge gate to non-Bash tools
+**Chosen:** (b)
+**Reasoning:** A router keeps a single source of truth for conformance (the merge gate), honors the omission-proof/not-forgery-proof threat model, and needs no per-tool conformance modes; the merge gate does the real check when the coordinator retries on the Bash surface.
+**Reversibility:** easy
+**Classification:** Substantive
+
+### 2026-07-05 -- C7-D2: Active-run detection via cwd HEAD only; surgical Agent discrimination
+**Stage:** plan
+**Task:** Fix C7 (gate bypass) — sibling PreToolUse hook
+**Question:** How does the sibling detect an active /drive run and avoid wedging /drive's own Agent fan-out?
+**Options considered:** (a) detect run from ref tokens in tool input (none exist for MCP/worktree tools); (b) detect from cwd HEAD via drive-hook-lib and deny only Agent calls with isolation:"worktree" + EnterWorktree + an MCP write allowlist
+**Chosen:** (b)
+**Reasoning:** MCP/worktree inputs carry no ref, so cwd HEAD (mirroring the merge gate's HEAD path) is the only signal; ordinary Agent dispatches must pass or every run wedges, so the Agent match is narrowed to worktree-isolation only.
+**Reversibility:** easy
+**Classification:** Substantive
+
+### 2026-07-05 -- C7-D3: One self-discriminating hook, basename-canonicalized by the installer
+**Stage:** plan
+**Task:** Fix C7 (gate bypass) — sibling PreToolUse hook
+**Question:** One script per tool, or one script matched by a tool-name pattern?
+**Options considered:** (a) separate hook scripts/entries per tool; (b) single bin/drive-tool-gate.sh managed as a third basename-keyed entry alongside drive-merge-gate.sh + drive-stop-guard.sh
+**Chosen:** (b)
+**Reasoning:** One canonicalized installer entry and one place for all deny-routing guidance (DRY, explicit-over-clever); reuses the installer's existing strip_managed/is_managed basename machinery unchanged.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-05 -- C7-D4 (design r2): detection keys off SESSION IDENTITY, worktrees gated defense-in-depth, MCP deny-by-default, fail-closed
+**Stage:** plan (design review r1 -> r2 revision)
+**Task:** Fix C7 (gate bypass) — sibling PreToolUse/WorktreeCreate hooks
+**Trigger:** design-review r1 FINDINGS — Claude (2 P1) + codex (5 P1), both refuting the r1 cwd-HEAD detection + Agent/EnterWorktree-only worktree interception + write-allowlist. Verified against official Claude Code hook API (verified-hook-api.md).
+**Revisions (supersede C7-D2's cwd-HEAD + Agent-only + write-allowlist):**
+  - D-b: active-run detection via sessionId == payload.session_id && stage!=done (mirror drive-stop-hook.py), + drive-worktree cwd secondary. r1's cwd-HEAD was inert for main-context dispatches (coordinator HEAD=baseRef, feature branch checked out nowhere).
+  - D-d: worktree gating defense-in-depth — WorktreeCreate event (--worktree CLI, exit-2 deny) + PreToolUse EnterWorktree + PreToolUse Agent/Task explicit isolation:"worktree". Frontmatter-isolation path = named residual (drive ships no such agents).
+  - D-e: MCP writes = deny-by-default over git-hosting mcp__ namespace + READ allowlist (get_/list_/search_), matching any server prefix. Inverts r1's write-allowlist which missed delete_file/update_pull_request_branch (fail-open).
+  - D-f: FAIL CLOSED for matched target tools on inspection error (no Bash retry backstop, unlike merge gate). Inert only when NO active run detected.
+  - D-g: shared session-id + drive-worktree-cwd resolver in drive-hook-lib.sh (DRY, reused by both hooks).
+**Reversibility:** easy (pre-implementation design)
+**Classification:** Substantive (load-bearing security-gate decisions)
+
+### 2026-07-05 -- C7-D5 (design r3): RUN-PRESENCE anchor, WorktreeCreate proof obligation, all-mcp deny, predicate pin
+**Stage:** plan (design review r2 -> r3 revision)
+**Task:** Fix C7 (gate bypass) — sibling PreToolUse/WorktreeCreate hooks
+**Trigger:** design-review r2 FINDINGS — both voices refuted session_id as a SOLE anchor (null sessionId inert; child/background/fresh-session dispatch carries a different id; both -> inert exactly where it must bite) and escalated frontmatter-isolation from residual to a real bypass.
+**Revisions (supersede C7-D4's session_id-primary):**
+  - D-b: anchor on RUN-PRESENCE — any ~/.claude/harness-runs/*/state.json with stage!="done" -> deny target tools in ANY session (session-independent, fail-closed). Cheap because target tools (git-hosting MCP writes + native worktree creation) are EXACTLY what /drive never uses (it does all git via gated Bash). sessionId/cwd only enrich the deny message / narrow-fail-closed.
+  - D-b2: predicate = stage!="done" ONLY; do NOT inherit stop-hook waiting/autoContinue skips (a Gate-B-waiting run must stay gate-active or MCP create_pull_request defeats Gate B).
+  - D-d: WorktreeCreate is the AUTHORITATIVE worktree gate (fires on actual creation, ignores matchers, exit-2 deny); PreToolUse EnterWorktree + Agent/Task explicit isolation = early defense-in-depth. Frontmatter-isolation coverage is a PHASE-1 GATING PROOF (dump a real payload; prove WorktreeCreate fires) + SubagentStart fail-closed contingency — NOT a documented residual.
+  - D-e: MCP deny-by-default over the WHOLE mcp__.* namespace + read allowlist (not enumerated github/gitlab — that reopens server-axis enumeration drift).
+**Taste item for Gate A:** global-while-active deny of target tools affects concurrent unrelated sessions (recoverable route-to-Bash); deliberate (session-scoping proved leaky), near-zero cost to /drive.
+**Reversibility:** easy (pre-implementation design)
+**Classification:** Substantive (load-bearing security-gate decisions)
+
+### 2026-07-05 -- C7-D6 (design r4): git-write-intent MCP pattern, completedAt anchor, both-directions worktree proof
+**Stage:** plan (design review r3 -> r4 revision)
+**Task:** Fix C7 (gate bypass) — sibling PreToolUse/WorktreeCreate hooks
+**Trigger:** design-review r3 FINDINGS — both voices confirmed run-presence + WorktreeCreate sound and VERIFIED the Key Insight (drive does all git via Bash), but caught: (P1a) all-mcp deny wedges /drive's own MCP AskUserQuestion on Conductor-class hosts; (P1b/codex-P1(2)) substring read-allowlist lets writes masquerade as reads; (codex-P1(1)) stage!="done" anchor suppressible; (P1c) WorktreeCreate proof omitted the negative direction.
+**Revisions (supersede C7-D5's all-mcp + stage-anchor):**
+  - D-e: MCP deny by git-hosting WRITE-INTENT PATTERN (write-verb create|update|delete|push|merge|add|remove|set|write|fork|replace + git-noun pull_request|pr|branch|ref|commit|file|content|blob|tree|tag|release|repo). Dodges AUQ (no git noun), catches get_or_create_pull_request/list_and_delete_refs/read_write_file masquerades, server-/name-drift-resistant.
+  - D-b: run-presence anchor = run dir lacks a parseable authorizing completedAt (the is_done() done-proof, DRY); missing/unreadable/unparseable state -> ACTIVE/deny (fail-closed). Replaces suppressible stage!="done".
+  - D-d: WorktreeCreate proof must cover BOTH directions — POSITIVE (isolation/--worktree fires + deny blocks) AND NEGATIVE (Bash git worktree add does NOT fire, else it wedges /drive; scope-discriminate contingency).
+  - Out-of-scope named residuals: Bash-side git pull/rebase/cherry-pick (pre-existing merge-gate gap, SECURITY.md:105, not C7's non-Bash scope); RemoteTrigger/CronCreate/DesignSync (forgery-class); forged completedAt (forgery).
+**Reversibility:** easy (pre-implementation design)
+**Classification:** Substantive (load-bearing security-gate decisions)
+
+### 2026-07-05 -- C7-D7 (design r5): GitLab merge_request noun added; resolver bound to completedat_authorizes
+**Stage:** plan (design review r4 -> r5 revision)
+**Task:** Fix C7 (gate bypass) — sibling PreToolUse/WorktreeCreate hooks
+**Trigger:** design-review r4 FINDINGS — both voices: (P1) noun set omitted GitLab merge_request/mr, so create_merge_request escapes on an in-scope host; (P2) resolver must bind to completedat_authorizes not is_done() (whose stage=="done" branch re-opens suppressibility), and the legacy stage=done-no-completedAt fail-closed false-positive was unnamed.
+**Revisions:**
+  - D-e: add merge_request|mr to git-noun set; add `accept` write verb; phase-design enumerates verb/noun against ACTUAL GitHub+GitLab MCP tool lists; issue/note/gist/comment deliberately excluded (not code-ship).
+  - D-b: bind resolver to completedat_authorizes ONLY (forbid is_done() wholesale reuse — its stage=="done" branch is suppressible).
+  - Out-of-scope: named the legacy stage=done-without-completedAt run as a bounded fail-closed FALSE-POSITIVE (denies target tools for a finished run until GC; safe direction, self-heals).
+**Reversibility:** easy (pre-implementation design)
+**Classification:** Substantive (bounded)
+
+### 2026-07-06 -- C7-D8 (phase1 design): resolver reimplements completedAt parse in hook-lib (NOT source retention)
+**Stage:** design (phase 1)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Question:** How does the shared run-presence resolver reuse completedat_authorizes when drive-retention.sh is a CLI (runs top-level on source)?
+**Options considered:** (a) source drive-retention.sh from drive-hook-lib.sh; (b) move completedat_authorizes/parse_ts INTO the lib + retention sources it (out-of-scope surface + 121KB test blast); (c) reimplement a byte-faithful minimal _drive_completedat_authorizes in drive-hook-lib.sh, bound to the completedAt marker semantics ONLY (not is_done()).
+**Chosen:** (c) + a followup to unify later.
+**Reasoning:** (a) executes retention's whole scan on source (unsafe). (b) expands owned surface to drive-retention.sh + its tests (blast radius, not in phase boundary). (c) keeps blast radius to the owned files, honors "bind to completedat_authorizes ONLY", ~20 lines duplication logged as a followup.
+**Reversibility:** easy
+**Classification:** Taste
+
+### 2026-07-06 -- C7-D9 (phase1 design): resolver keys on completedAt marker ONLY; reads no state.json
+**Stage:** design (phase 1)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Question:** The task edge-case list says "unreadable state.json => fail-closed active" — but D-b/D-b2 forbid keying on stage. How reconcile?
+**Options considered:** (a) read state.json + completedAt; (b) completedAt marker ONLY.
+**Chosen:** (b) — active iff a run dir lacks a parseable authorizing completedAt; no state.json read for the decision. Fail-closed is on the completedAt marker (absent/unreadable/unparseable => active), which subsumes the intent for every not-yet-done run.
+**Reasoning:** stage is suppressible (r3 codex-P1) — the whole reason D-b moved off it; completedAt is the authoritative done-proof. A valid completedAt + corrupt state.json is genuinely shipped (done), not active.
+**Reversibility:** easy
+**Classification:** Mechanical (follows D-b)
+
+### 2026-07-06 -- C7-D10 (phase1 design): tests in test/*.test.sh, not tests/contracts/*.py
+**Stage:** design (phase 1)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Question:** design.md/task said tests go in tests/contracts/*.py; the REAL gate regression guard is test/*.test.sh.
+**Chosen:** New hook tests live in test/*.test.sh (drive-tool-gate.test.sh, drive-worktree-gate.test.sh, extend drive-hook-lib.test.sh + install-drive-hooks.test.sh). tests/contracts stays the doc/command pin suite (run it too — doc/installer edits may trip pins).
+**Reasoning:** THE REAL CODE WINS. tests/contracts are pytest pin/shape tests for docs+command files; the gates are covered by the bash suite + CI bash-suite job. Matching the existing style keeps the regression guard coherent.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-06 -- C7-D11 (phase1 design): substring verb/noun match; word-bound only pr/mr; camelCase-normalize
+**Stage:** design (phase 1)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Question:** How precisely to match the git-hosting write-intent pattern to be drift-resistant without absurd over-deny?
+**Chosen:** Substring match for write verbs + multi-char git nouns (drift-resistant, D-e); the 2-letter nouns pr/mr matched ONLY as whole _-delimited tokens (^|_)(pr|mr)(_|$) (P3). Normalize camelCase->snake before lowercasing for server-agnosticism.
+**Reasoning:** Substring keeps a new write tool caught without edits; pr/mr are the only real bare-substring hazard. Concurrent-session over-deny via multi-char substrings is the accepted Gate-A taste item; /drive uses none of these tools so is never self-wedged.
+**Reversibility:** easy
+**Classification:** Taste (bounded)
+
+### 2026-07-06 -- C7-D12 (phase1 design review r1): AC-10 is a CLOSURE criterion, not proof-ran
+**Stage:** design (phase 1, review r1 codex-P1 #1 BLOCKING)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** codex: AC-10/WorktreeCreate closure was satisfiable merely because the proof RAN, leaving --worktree / Agent isolation:"worktree" creation open when the positive proof "fails".
+**Revision:** AC-10 + §3 reframed as a CLOSURE criterion — satisfied ONLY when native worktree creation off a slice/<runId>/<id>-class ref (BOTH isolation:"worktree" AND --worktree) is EMPIRICALLY DENIED by an IMPLEMENTED, installed gate (exit-2 WorktreeCreate in the normal case, OR a REQUIRED SubagentStart/scope-discriminated contingency gate implemented-and-denying). A human-signed-off open gap is NOT acceptable closure. Contingencies are required implementations, not escape hatches; conditional bin/drive-subagent-gate.sh + SubagentStart wiring stay in the one slice.
+**Reversibility:** easy (pre-implementation)
+**Classification:** Substantive (load-bearing security-gate closure)
+
+### 2026-07-06 -- C7-D13 (phase1 design review r1): resolver run-shape gate — require state.json presence
+**Stage:** design (phase 1, review r1 codex-P1 #2 MAJOR)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** codex: resolver counted ANY ~/.claude/harness-runs/*/ dir lacking completedAt as ACTIVE (only [ -d ]), so a stray/empty/legacy non-run dir wedges every gated MCP+worktree surface forever.
+**Revision:** A dir is a RUN CANDIDATE only if it is a directory AND contains a state.json (a real run always writes state.json at setup). No state.json => not a run => skipped (never hots the gate). state.json PRESENCE is a shape gate only — contents never read for the done decision (still completedAt-marker-only, D-i/D-b2). A dir WITH state.json but missing/unreadable/unparseable completedAt stays fail-closed ACTIVE (real, possibly-corrupt run — unchanged). E-2/E-10 updated. E-10 abandoned-never-done-RUN residual kept (accepted).
+**Reversibility:** easy
+**Classification:** Substantive (bounded — shrinks stray-dir wedge without weakening fail-closed on real runs)
+
+### 2026-07-06 -- C7-D14 (phase1 design review r1): merge-intent MCP deny must NOT route to ungated Bash verbs
+**Stage:** design (phase 1, review r1 codex-P1 #3 MAJOR)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** codex (verified vs real drive-merge-gate.sh line 824-825): ship detection gates ONLY the `create` action; `gh pr merge`/`gh pr edit`/`glab mr merge` are UNGATED. The mcp-write deny routed merge_pull_request -> "gh pr merge", advertising an ungated bypass.
+**Revision:** Sub-classify the mcp-write deny by verb. MERGE-intent (verb merge/accept: merge_pull_request/merge_merge_request/accept_merge_request) -> reason states "merging a PR/MR into base is NOT a drive-gated op — drive ships via gated gh pr create + Gate B, base-merge is post-run/human", routing to NO Bash verb. CREATE/PUSH/WRITE-intent -> still routes to the GATED gh pr create / git push (git merge mention dropped). Added gh pr merge/edit + glab mr merge to §7 as an explicit named residual (pre-existing Bash-gate gap, analogous to SECURITY.md:105); docs/drive-enforcement.md Limitations records it. Create-intent MCP tools unchanged (still route to gated forms).
+**Reversibility:** easy
+**Classification:** Substantive (security-gate correctness — do not advertise an ungated surface)
+
+### 2026-07-06 -- C7-D15 (phase1 design review r2): merge-intent classified by FIRST verb TOKEN, not substring
+**Stage:** design (phase 1, review r2 P1 #1 — internal inconsistency in D14)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** noun `merge_request` splits to tokens merge+request, so a substring OR "verb-token-anywhere" test mis-buckets create_merge_request (a SHIP action) into merge-intent, contradicting the §1.4 table (route to gated glab mr create).
+**Revision:** Classify deny-route intent by the tool's LEADING verb = the FIRST _-delimited token (post camelCase-normalize). merge/accept first token => merge-intent (no Bash verb). Any other first token (create/push/update/... , or a non-verb masquerade first token) => create/write-intent => gated create/push forms. create_merge_request -> create -> correct. Tool still denied either way; wrong-message bug only.
+**Reversibility:** easy
+**Classification:** Substantive (internal-consistency correctness)
+
+### 2026-07-06 -- C7-D16 (phase1 design review r2): resolver = object-state.json OR mtime-freshness (fixes D13 setup-window fail-open + foreign-state.json wedge)
+**Stage:** design (phase 1, review r2 P1 #2 BLOCKING + P1 #3 MAJOR)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** (P1#2) D13's "run always has state.json" is FALSE — drive.md:40-43 mkdir claims the leaf BEFORE the first state.json write, so the state.json-presence shape gate is INERT (fail-OPEN) during the setup window. (P1#3) a non-object/unreadable state.json (`printf '[1,2,3]'`) counted as a real run => permanent wedge on an unrelated machine.
+**Revision:** A dir is ACTIVE iff completedat_authorizes==false AND [ (a) state.json parses as a JSON OBJECT (jq -e type==object), OR (b) no object-state.json but dir mtime within DRIVE_SETUP_FRESHNESS_SECS=120 (fail-closed for a freshly-claimed mid-setup dir) ]. Aged dir w/ no object-state.json => INERT (stray/foreign/abandoned-empty no longer wedges forever). jq-absent => present state.json file treated as shape-satisfied (fail-closed). completedAt remains the SOLE done input; object-ness+mtime are shape gates only. Mirrors retention's isinstance(st,dict) skip. E-2/E-2b/E-10/AC-3 updated.
+**Reversibility:** easy
+**Classification:** Substantive (load-bearing — closes a fail-open window D13 introduced + a foreign-input wedge)
+
+### 2026-07-06 -- C7-D17 (phase1 design review r2): AC-10 contingency is SPIKE-GATED + payload-derived, not an asserted SubagentStart file
+**Stage:** design (phase 1, review r2 P1 #4 MAJOR)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** codex: D12 over-tightened — it asserted a REQUIRED bin/drive-subagent-gate.sh, but verified-hook-api.md establishes NO SubagentStart event/payload. Don't assert an unverified hook API.
+**Revision:** AC-10 closure rests on the PRIMARY WorktreeCreate exit-2 gate, whose Phase-1 spike is EXPECTED to cover both --worktree AND isolation:"worktree" (verified-hook-api documents it as THE native interception point). A fallback gate is built ONLY IF the spike shows a path uncovered, and its mechanism is chosen FROM THE ACTUALLY-DUMPED payloads then (SubagentStart is at most one candidate IF the dump reveals it — not asserted). If no event covers the uncovered path, it's a named platform residual surfaced to phase-integration review (not a silent pass). AC-10 stays a genuine closure criterion (r1 finding-1 preserved). owns note: fallback file is spike-gated conditional, NOT pre-named; expected case adds no extra file.
+**Reversibility:** easy
+**Classification:** Substantive (reconciles closure rigor with the verified hook API)
+
+### 2026-07-06 -- C7-D18 (phase1 design review r2): create/push deny names both hosts (gh pr create / glab mr create / git push)
+**Stage:** design (phase 1, review r2 P2 #5 MINOR)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Revision:** create/push-intent deny message names BOTH gated ship forms (gh pr create AND glab mr create) plus git push, host-appropriate.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-06 -- C7-D19 (phase1 design review r3): DETERMINISTIC claim-time run-active.marker (drive.md), mtime -> sub-second backstop
+**Stage:** design (phase 1, review r3 codex-P1 #1 — confirmed-real fail-open)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** the 120s freshness window does NOT deterministically close the setup gap — a setup turn stalling >120s pre-state.json goes INERT and a concurrent session slips through. Two rounds of freshness-tuning didn't close it; push past the heuristic to a claim-time signal.
+**Verified:** drive.md ~line 40-45 `mkdir "$RUN_DIR"` is setup step 1; first state.json write is several steps later (needs baseRef/featureBranch/repoRoot).
+**Decision:** Mechanism (ii) — write $RUN_DIR/run-active.marker as the IMMEDIATE successor to the mkdir claim (before any other setup step; and on each disambiguator-retry success). Chose (ii) over (i) reorder-state.json-first because state.json's fields depend on later setup steps; the marker is minimal + non-disruptive. Resolver gate (a) = marker existence (deterministic from claim-time); object-state.json = redundant/legacy gate (b); mtime-freshness = gate (c) BACKSTOP for only the sub-second mkdir->marker gap (named residual). completedAt stays the SOLE done input; marker is a shape signal only. Phase now OWNS .claude/commands/drive.md; drive-md string-pin contract tests (tests/contracts) MUST run during implement (memory drive-md-has-contract-pin-tests + local-pytest-needs-python3). One-slice: marker is a produced(drive.md)->consumed(resolver) contract, stays in the same review unit.
+**Reversibility:** easy
+**Classification:** Substantive (load-bearing — deterministic closure of the setup fail-open)
+
+### 2026-07-06 -- C7-D20 (phase1 design review r3): create/push deny message accuracy + arbitrary-branch residual
+**Stage:** design (phase 1, review r3 codex-P1 #2 — message accuracy + residual)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** verified drive-merge-gate.sh gates only the DRIVE-branch push / gh pr create (lines 819-837, push_ship_runid); a denied create_branch routed to "git push" could be satisfied by `git push origin main:new-branch` which the gate leaves inert -> branch created ungated. Not a new bypass class (branch creation merges nothing into base) — deny-MESSAGE accuracy + named residual.
+**Revision:** Three-way create/write message split: ship-create-intent (create/push + ship noun pr/mr) -> gated gh pr create/glab mr create/drive-branch git push; merge-intent -> no Bash verb; other-write-intent (create_branch/create_ref/create_or_update_file/delete_file/fork...) -> message that does NOT claim a gated Bash route and NAMES that arbitrary non-drive branch/ref creation (git push origin <src>:<newref>, git branch <x>) is OUTSIDE both gates. Extended the §7 named residual (+docs Limitations) to include arbitrary-branch push/branch creation alongside gh pr merge/git pull/rebase. Did NOT expand the Bash gate (scope).
+**Reversibility:** easy
+**Classification:** Substantive (message accuracy — do not advertise an ungated surface)
+
+### 2026-07-06 -- C7-D21 (phase1 design review r3): method-param aggregate DENY layer; issue_write refuted; real MCP lists enumerated
+**Stage:** design (phase 1, review r3 codex-P1 #3 — aggregate-tool method-param escape)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** codex: a noun-only-named aggregate tool (e.g. mcp__github__pull_request with method:"merge") would be missed by name-only verb+noun matching -> a code-ship write PASSES. (The specific issue_write example is REFUTED: write verb but no git noun -> correctly passes; deny is verb-ANYWHERE AND noun-ANYWHERE so token order never lets a code-ship write escape.)
+**Revision:** (a) Enumerated the real CURRENT GitHub + GitLab MCP tool lists — as of 2026-07 all code-ship writes are verb-in-name (no shipped noun-only aggregate code-ship tool found); recorded in §1.4 + a build-time re-confirm note. (b) Added a defensive PARAM layer: DENY iff (git-noun in name) AND (write-verb in name OR a write-verb token in a {method,action,mode,operation,command} param). Reads still pass (no write verb in name OR param -> method:"get" passes), preserving the Gate-A writes-denied/reads-pass taste (NOT broadened to deny reads). Kept the verb-first-token deny-MESSAGE classifier (extended: primary verb = name first-token if a verb, else the param verb). §1.4 rows + E-11 + AC-4b added.
+**Reversibility:** easy
+**Classification:** Substantive (closes the method-param omission; cheap forward-proofing)
+
+### 2026-07-06 -- C7-D22 (phase1 design review r4): run-shape (has runId) tightening + aged-dir doc consistency; codex BLOCKING overruled to fail-closed residual
+**Stage:** design (phase 1, review r4 codex-P1 #1 — OVERRULED severity + cheap tightening)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** codex tagged BLOCKING: aged object-state.json stray/abandoned dir stays ACTIVE forever. OVERRULE: this is the FAIL-CLOSED direction (over-deny of target tools, NOT a bypass) and the accepted E-10 residual; the object-state.json branch is REQUIRED for upgrade-safety of legacy pre-marker in-flight runs (removing it fail-OPENs a real legacy run).
+**Revision:** (a) Doc consistency — E-2b/E-10/mitigation wording now states crisply: a run-shaped dir (marker OR object state.json with runId) + no completedAt stays ACTIVE regardless of age (fail-closed residual, self-heals via retention-GC followup); ONLY dirs lacking BOTH a marker AND a run-shaped object state.json age out to inert. (b) Cheap tightening (kills codex's {}-stub attack): gate (b) counts a dir as a run ONLY if the parsed object is RUN-SHAPED — has a `runId` key (jq -e 'type=="object" and has("runId")'). A {} / [1,2,3] / random-object stub is not run-shaped -> falls to marker/freshness -> ages out. Real legacy runs (runId present) stay fail-closed. §1.1 + E-2b + AC-3f updated. jq-absent still fail-closed (present state.json treated as shape-satisfied).
+**Reversibility:** easy
+**Classification:** Substantive (bounded — tightening + doc correctness; did NOT remove the upgrade-safety branch)
+
+### 2026-07-06 -- C7-D23 (phase1 design review r4): push_files/base-push deny message precision (branch-blind honesty)
+**Stage:** design (phase 1, review r4 codex-P1 #2 — MAJOR message precision)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** codex: push_files (and multi-target/base-push writes) deny routing is branch-blind — the message must not falsely promise a gated route for a push whose target the hook cannot see. push_files IS denied (push+file); purely message accuracy.
+**Revision:** other-write-intent message (covers push_files/create_or_update_file/create_commit/create_branch/...) now: routes drive-branch shipping to the gated drive/<runId> git push / gh pr create, AND states plainly that a direct push/write to an ARBITRARY or BASE ref (git push origin <src>:<newref>, push to main, git branch <x>) is the already-named out-of-scope Bash-surface residual — no false "this is gated" claim. Did NOT expand the Bash gate.
+**Reversibility:** easy
+**Classification:** Substantive (message accuracy)
+
+### 2026-07-06 -- C7-D24 (phase1 design review r4): run-active.marker write is atomic + FAIL-CLOSED (setup STOPs on write failure)
+**Stage:** design (phase 1, review r4 codex-P1 #3 — REAL new gap, FIXED)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** codex: marker-write failure was unspecified, but the marker is now the load-bearing deterministic setup signal. A failed marker write + a crash before the first state.json write -> the freshness backstop covers only the freshness window, then ages to INERT = fail-OPEN for a live orphan run.
+**Revision:** §1.6/drive.md setup spec: write run-active.marker atomically (tmp + mv, like every marker) AND fail-CLOSED — if the marker write fails, setup STOPs immediately (no featureBranch, no state.json, no work dispatched). A failed marker write is a HARD setup failure. Added E-12 + AC-3e. The empty claimed dir left behind ages out harmlessly (no branch/work).
+**Reversibility:** easy
+**Classification:** Substantive (closes a real fail-open on the load-bearing claim-time signal)
+
+### 2026-07-06 -- C7-D25 (phase1 design review r5): propagate the round-4 run-shape fallback everywhere (stale-doc P1)
+**Stage:** design (phase 1, review r5 P1 — doc propagation; MECHANISM already correct/converged)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Trigger:** :50/:639 resolver prose still said "reads NO state.json / keys only on completedAt", contradicting the round-4 run-shaped object-state.json fallback (:88/:513) which DOES read state.json shape for legacy pre-marker upgrade-safety. An implementer following the stale text would implement completedAt-only and MISS the fallback -> a legacy pre-marker run (state.json={"runId":...}, no completedAt) reads INERT -> create_pull_request/native worktree escapes = fail-open.
+**Revision:** Grepped the whole doc; rewrote the two stale copies (Divergence 3 :50-55, D-i :639-641) AND aligned two adjacent "object-ness" phrasings (:108 resolver NOTE, :379 E-2) to the ACTUAL two-decision rule: DONE keys ONLY on completedAt (state.json/marker/mtime never read for done; stage/values never read at all); ACTIVE/run-shape reads marker existence OR run-shaped state.json (has runId) OR mtime backstop. Doc now internally consistent on the one rule. No mechanism change.
+**Reversibility:** easy
+**Classification:** Substantive (doc-consistency; prevents an implementer fail-open)
+
+### 2026-07-06 -- C7-D26 (phase1 design review r5): name the legacy-upgrade-window transitional residual
+**Stage:** design (phase 1, review r5 P2 — bounded transitional residual)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Revision:** §7 names the legacy-upgrade fail-open: a pre-marker run killed between featureBranch creation and its first state.json write has neither marker nor run-shaped state.json -> ages to INERT for that orphan. Bounded (no early target-tool dispatch; only a concurrent session, transiently, only during the one-time upgrade), SELF-CLEARS as pre-marker runs drain (new runs write the marker at claim-time). Deliberately NO mechanism (dead code post-drain). Named, not silent.
+**Reversibility:** easy
+**Classification:** Taste (bounded named residual)
+
+### 2026-07-06 -- C7-D27 (phase1 design review r5): push_files listed only under other-write (cosmetic P2)
+**Stage:** design (phase 1, review r5 P2 cosmetic — Claude voice)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Revision:** push_files (noun `file`, NOT a ship noun pr/mr) deterministically routes to other-write-intent; removed it from the ship-create example lists (§1.2 classifier + reason) so an implementer does not assert the wrong message. §1.4 DENY rows unaffected (push_files still DENIED: push+file).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+---
+**Stage:** implement (slice 1.1)
+**Task:** Fix C7 — sibling non-Bash enforcement hooks
+**Decision (D-impl1 — name-verb noun-strip, reconciles §1.4 AC table with the verb-anywhere intent):** `_drive_name_write_verb` in drive-tool-gate.sh STRIPS the recognized git nouns from the tool tail BEFORE the write-verb scan. Load-bearing because the ONLY write verb that is also a substring of a noun is `merge` ⊂ `merge_request`: a raw verb-substring scan (as §1.2 literally states) false-DENIES the READ `github__get_merge_request` / `gitlab__get_merge_request` — which §1.4 lists as PASS. Stripping the noun leaves `get_` (no verb ⇒ PASS) while `merge_merge_request` leaves `merge_` (⇒ DENY) and `pull_request_review_write` leaves `_review_write` (verb present regardless of token order ⇒ DENY). Preserves the design's "verb-anywhere ∧ noun-anywhere, order-independent" deny AND every §1.4 read PASS row; verified by the AC-4 deny/pass matrix in test/drive-tool-gate.test.sh.
+**Reversibility:** easy (localized to one predicate)
+**Classification:** Mechanical (implements the §1.4 AC table faithfully; the spec's "substring" wording was under-specified for the merge/merge_request collision)
+
+**AC-10 spike outcome (recorded in worktree-proof/RESULT.md):** ran live via nested headless `claude` with a WorktreeCreate hook wired ONLY through `--settings` (global settings.json untouched). WorktreeCreate FIRES for BOTH `--worktree` AND subagent `isolation:"worktree"` (refuting verified-hook-api's caveat); exit 2 empirically BLOCKS creation in both cases; a Bash `git worktree add` fires NO event and succeeds. BOTH directions CLOSED by the PRIMARY exit-2 gate; NO spike-gated fallback file added.
+
+## STOP (User-Challenge) — premise already shipped on main (discovered at slice-1.1 review)
+- **Finding:** `main`/`origin/main` (tip 3057839) ALREADY contains a complete, shipped C7 fix
+  (`a478cf0 feat(drive): C7 non-Bash tool gate` + slice-2.1 review fixes + phase-2 integration
+  + harden + finalize; a 439-line `bin/drive-tool-gate.sh`), landed by prior run
+  `drive/main-20260705-130712`.
+- **Root cause:** this run's `phaseBaseSha` (0b13c65) is ~40 commits BEHIND main, cut before C7
+  landed; the run re-implemented C7 from scratch off a stale base. (Commit 3057839 "pre-flight
+  fast-forward baseRef to its remote on fresh run (#69)" — the guard that prevents exactly this —
+  landed after this run started.)
+- **Assessment:** the from-scratch `drive-tool-gate.sh` rewrite (181 lines) is redundant and would
+  REGRESS the mature shipped 439-line version if merged. BUT this run's 6-round design + live AC-10
+  spike surfaced REAL gaps the shipped version left open: (1) NO `bin/drive-worktree-gate.sh`
+  (WorktreeCreate gate) on main — the frontmatter `isolation:"worktree"` bypass our spike proved
+  real is UNCLOSED there; (2) shipped gate has ZERO GitLab `merge_request` coverage; (3) shipped
+  active-run anchor is `stage!="done"` (suppressible) vs our `completedAt`.
+- **Classification: User-Challenge** — surfaced, not auto-decided.
+
+## PIVOT (user-approved) — gap-closing run against current main
+- User chose Option B: rebase onto current main (305783962db50cd4c4bf4141e2f6302cb85c4e05), discard the redundant from-scratch
+  drive-tool-gate.sh rewrite (kept as reference at slice commit d69bf05), and re-scope Phase 1
+  to close ONLY the two gaps main's shipped C7 lacks:
+    G1 — add bin/drive-worktree-gate.sh (WorktreeCreate authoritative gate) closing the
+         frontmatter isolation:"worktree" bypass (our live AC-10 spike proved WorktreeCreate
+         fires + blocks both --worktree AND isolation:worktree; PreToolUse-only misses it).
+    G2 — add GitLab merge_request/mr coverage (+ accept verb) to the shipped drive-tool-gate.sh
+         so mcp__gitlab__create/merge/accept_merge_request are denied.
+- Phase 1 is REDESIGNED against the REAL shipped code (epoch r1). New base frozen from main.
+- Classification: User-Challenge resolved by the user; execution is Mechanical from here.
+
+### 2026-07-06 -- C7-RESCOPE (Phase1 delta): design G1 (WorktreeCreate gate + shared-predicate extraction) + G2 (GitLab MR)
+**Stage:** phasedesign
+**Task:** Fix C7 remaining gaps against the SHIPPED drive-tool-gate.sh (439 lines) on main
+**Reality anchor:** shipped active-run predicate is INLINE (drive-tool-gate.sh:154-215): stage!=done + non-empty repoRoot + mtime liveness (DRIVE_TOOL_GATE_LIVE_HOURS default 24). NO completedAt, NO run-active.marker. MCP matching is EXACT SUFFIX ENUMERATION (8 GitHub suffixes), NOT verb/noun substring. The stale-reference resolver/verb-noun design is VOID for this base.
+
+- **D-w0 — shared predicate = EXTRACTED shipped inline scan.** Lift drive-tool-gate.sh:154-196 byte-faithfully into drive-hook-lib.sh as `drive_scan_active_runs`; tool-gate calls it (covered edit, no behavior change). Both gates DRY-reuse it. **Classification:** Mechanical.
+- **D-w1 — worktree-gate does NOT repo-scope; denies while ANY run active.** Safe direction (never a bypass), avoids extracting parse_origin/common_dir_of, keeps provisioning off the active hot path. Over-deny of unrelated-repo native worktree creation = named residual (route-to-Bash). **Classification:** Taste.
+- **D-w2 — worktree-gate PROVISIONS (not fail-closed) on jq-absent.** A jq-less machine cannot host a /drive run; fail-closing would wedge the native worktree feature with nothing to protect. **Classification:** Mechanical.
+- **D-w3 — inactive path PROVISIONS (returns a worktree path), NOT exit 0.** EMPIRICAL correction: WorktreeCreate is a provisioning hook — exit 0 with no stdout path FAILS creation (worktree-proof/claude-worktree.out: "hook succeeded but returned no worktree path"). A bare exit 0 would wedge native worktree creation machine-wide. Exact create-vs-name contract spike-finalized during implement (design-phase1.md §3). **Classification:** Substantive.
+- **D-w4 — G2 = exact GitLab MR suffixes (create_/merge_/accept_/update_merge_request) across THREE spots:** install-drive-hooks.sh TOOL_GATE_MCP_MATCHER regex + drive-tool-gate.sh SUFFIX case + mcp_deny_reason branches. Shipped gate is exact-enumeration, so no noun/verb set to extend; GitLab file/branch writes already covered (shared suffixes, server-wildcard matcher). **Classification:** Mechanical.
+- **D-w5 — G2 activates only on installer RE-RUN** (settings matcher is the hook-invocation trigger; live settings.json carries the old regex until re-install). Self-nudged by the drift preflight's partial-registration WARN. **Classification:** Mechanical.
+
+### 2026-07-06 -- C7-RESCOPE r1 review revisions (2 P1 + 3 P2 folded into design-phase1.md)
+**Stage:** phasedesign (review epoch r1, round 1 → revised)
+- **item-1 (P1 MAJOR) — worktree-gate FAIL-CLOSES on jq-absent.** REVERSED D-w2: the authoritative WorktreeCreate gate now DENIES (exit 2) when jq is absent, matching drive-tool-gate.sh:67; a fail-open there would reopen the frontmatter-isolation bypass on the stronger gate. Residual (jq-less machine denies worktree creation) is consistent with the shipped gate. **Classification:** Substantive.
+- **item-2 (P1 BLOCKING) — allow-path contract PINNED at design time.** The inactive path MUST return a worktree path (derived from payload name+cwd); a bare `exit 0` is a DESIGN VIOLATION (wedges creation, claude-worktree.out). The spike (AC-8b, now a real-creation closure) resolves ONLY I-a (create+echo) vs I-b (echo+CC-creates), not the whole contract. **Classification:** Substantive.
+- **P2 (GitLab grounding) — verified against the real GitLab-MCP tool list.** zereight/gitlab-mcp (83 tools) confirms create_/merge_/update_merge_request as MR writes; accept_/rebase_merge_request enumerated defensively (real GitLab REST ops; rebase = update_pull_request_branch analog; harmless-if-absent under anchored regex). Excluded approve_/unapprove_ + *_note/*_thread (review/comment, parity with the shipped GitHub gate). G2 now adds FIVE suffixes; implementer re-confirms at build time. **Classification:** Mechanical.
+- **P2b (no-repoRoot residual) — named precisely.** D-w1 sharpened: the predicate skips no/empty-repoRoot runs (inherited from drive-tool-gate.sh:187-191), so the deny is "any active run WITH a repoRoot"; both the machine-wide over-deny and the no-repoRoot skip are inherited residuals, not new gaps. **Classification:** Mechanical.
+- **P2c (banner-count pin) — listed as expected update.** install-drive-hooks.test.sh:395-396 pins 'three hooks'/'four settings entries'; wiring WorktreeCreate reds them → update to "four hooks (five settings entries)", keep other banner tokens intact. **Classification:** Mechanical.
+- Unchanged sound parts (per reviewer): drive_scan_active_runs extraction, G2 3-spot approach, one-slice sizing, AC-10 DENY-direction spike evidence.
+
+### 2026-07-06 -- C7-RESCOPE r1 review ROUND 2 revisions (1 P1 + 1 P2)
+**Stage:** phasedesign (review epoch r1, round 2 → revised)
+- **item-1 (P1) — AC-5 rewritten to the shipped drift-defense model (verified drive-tool-gate.sh:141-149 + pinned test :149-162).** Reads/approve/note tools PASS because the installed MATCHER never selects them to invoke the hook — NOT because the hook exit-0's them. A force-piped unmatched `mcp__*` suffix MUST stay drift-DENY (`case *)` → emit_deny). G2's 3-spot approach already adds the 5 GitLab suffixes to BOTH matcher AND the enumerated `case`, so they classify as writes and never trigger the drift-deny; no AC weakens the drift defense. Fixed AC-5 + E-5. **Classification:** Substantive (contract correction).
+- **item-2 (P2) — first_active_run trailing-newline defect.** `ACTIVE_RUNS="$(drive_scan_active_runs)"` strips the trailing newline; `first_active_run`'s `printf '%s' | while read` DROPS a final line lacking a newline → single-active-run case emits an EMPTY runId in fail-closed deny messages (not a bypass). FIX = covered edit (c): first_active_run:203 `printf '%s'`→`printf '%s\n'`. Corrected the §1.1 behavior-preserving text (first_active_run is NOT a heredoc consumer). Added AC-2b (single-run deny names non-empty runId, mutation-guarded). **Classification:** Mechanical (covered edit).
+- Untouched (verified-sound): jq-absent fail-close, pinned WorktreeCreate allow-path contract, 5 GitLab suffixes, one-slice sizing, the extraction mechanism itself.
+
+---
+**Stage:** implement (slice 1.1, epoch r1)
+**Decision (D-impl-w1 — AC-8b allow-path resolved as I-a: hook CREATES then echoes):** The live
+AC-8b spike (worktree-proof/RESULT-allow.md) resolved the create-vs-echo contract as **I-a**.
+Wired the FINAL `drive-worktree-gate.sh` via `--settings` only (global settings.json untouched),
+with the hook's HOME pointed at an EMPTY `~/.claude/harness-runs` so its scan sees NO active run
+while `claude` keeps real auth. Result: I-b (echo path WITHOUT creating) HUNG (timeout, no
+worktree) — Claude Code expects the worktree to already exist at the echoed path; I-a (hook runs
+`git -C "$cwd" worktree add --detach "$parent/$name"` THEN echoes the path) SUCCEEDED — the
+worktree is ACTUALLY created for BOTH `--worktree` AND subagent `isolation:"worktree"` (both
+present in `git worktree list`), and the sessions completed (rc 0, "DONE"). DENY direction
+re-confirmed against the final gate (run active → exit 2, no worktree). Provisioning uses
+`--detach` (no branch: native worktrees are not slice/<runId>/<id> refs, and there is no active
+run to key one to). *Classification: Mechanical (resolves the one design-pinned spike unknown).*
+**Reversibility:** easy.
+
+**Decision (D-impl-w2 — GitLab merge/accept share one deny-reason branch):**
+`merge_merge_request|accept_merge_request` share a single `mcp_deny_reason` case branch (both are
+MR-into-target merges, human-owned at Gate B), printing the actual suffix via `%s` so each still
+names its own tool verbatim ("GitLab MCP tool <suffix>") — the AC-4 distinct-tool assertion holds.
+Mirrors the shipped GitHub gate's per-tool-name discipline. *Classification: Mechanical.*
+
+---
+**Stage:** implement (slice 1.1, review round 2)
+**Decision (D-impl-w3 — worktree-gate fails CLOSED on a BLIND active-run scan; hostile-env
+blinding NAMED as out-of-scope forgery-class):** Round-2 codex found the authoritative
+WorktreeCreate gate failed OPEN when the scan was BLIND because `~/.claude/harness-runs` exists
+but is unreadable/unsearchable (`chmod 000` → `find` enumerates nothing → empty scan → "no active
+run" → provision even with a run live). FIX (gate-only, surgical): before trusting an EMPTY scan,
+if RUNS_ROOT EXISTS but is not (`-r` AND `-x`) → exit 2 fail-closed DENY (like the tool-presence
+pre-check). An ABSENT root is NOT blind (genuinely no runs → allow). A single unreadable SUBDIR
+is NOT guarded (find enumerates the rest; self-hidden subdir = deliberate evasion). RED-then-GREEN
+regression added.
+**Named residuals (documentation-only, "named not silent"):** (a) a hostile actor who can
+manipulate the scan's EXECUTION ENVIRONMENT — stub a scan binary that exits 0-empty on PATH, or
+`chmod 000` an individual run subdir to self-hide it — can blind the run-presence scan; this is
+DELIBERATE-EVASION / forgery-class, OUT OF SCOPE (consistent with the Gate-A design boundary
+"omission-proof, not forgery-proof"; run-presence is far harder to accidentally/omissively
+suppress than to forge → Component D / C10). (b) the SHIPPED `bin/drive-tool-gate.sh` PreToolUse
+gate has the SAME pre-existing fail-open on a missing/broken scan tool (it never prechecks
+find/sort) and shares `drive_scan_active_runs` — inherited, not introduced here; hardening it is a
+separate forgery-class follow-up. Did NOT touch drive-tool-gate.sh / drive_scan_active_runs
+(extraction stays byte-faithful for the shipped gate). *Classification: Substantive (closes the
+last in-scope fail-open on the authoritative gate; bounds the rest).*
+**Reversibility:** easy.
+
+## Harden-regress P1 OVERRULED (refuted at integration) — AC-9 spaced-path WT test portability
+- Claude harden-regress flagged P1: the AC-9 sp_wt_path1 assertion reds on macOS because $TMPDIR's
+  trailing slash yields a double-slash expected path. REFUTED: WORK="$(mktemp -d "${TMPDIR}/…")"
+  and mktemp -d returns a CANONICAL path (double slash collapsed); both the expected $SPACED_WT_GATE
+  and the installer's cd&&pwd path derive from the same canonical $WORK. Reproduced 3x under the
+  default macOS $TMPDIR (/var/folders/.../T/, trailing slash) → install-drive-hooks.test.sh 101/0
+  PASS every run. codex harden-regress independently returned CONVERGED (no findings).
+- Classification: Mechanical (evidence-based overrule; no code change).
+
+## CORRECTION — the harden-regress "overrule" ABOVE was WRONG; the AC-9 test bug IS real
+- My earlier overrule reproduced with `unset TMPDIR` (→ /tmp, no trailing slash) — an UNFAITHFUL
+  repro that MASKED the bug. Driving the FAITHFUL path (default macOS $TMPDIR = /var/.../T/, trailing
+  slash, NOT unset) reds install-drive-hooks.test.sh 100/1: `WORK="$(mktemp -d "${TMPDIR}/…")"` yields
+  a double slash the installer's cd&&pwd collapses, so the AC-9 exact-path assertion (line 343)
+  mismatches. The confirming harden auditor (harden-1-2) correctly surfaced this with reproduction
+  evidence despite the "do not re-raise" steer. FIX APPLIED: canonicalize $WORK via
+  `WORK="$(cd "$(mktemp -d …)" && pwd)"` (test-only). Lesson: drive the faithful env, never a shortcut.
+- Classification: Mechanical (self-corrected; test-only fix).
+## D-finalize1 — Installer drift preflight: add worktree-gate coverage (Taste) (2026-07-06T08:19:47Z)
+Classification: Taste. Finalize adds a drift-preflight check for `drive-worktree-gate.sh`
+presence + `.hooks.WorktreeCreate` registration, mirroring the existing tool-gate
+variant-3/variant-4 checks, + a missing-WorktreeCreate test. Rationale: the installer now
+manages 4 hooks but its drift preflight only inspected merge-gate + tool-gate; a partial
+deploy leaving the AUTHORITATIVE G1 worktree gate dead was un-warned — an in-scope
+completeness gap in the run's OWN installer, cheap, evidence-backed (partial deploys are an
+already-handled class: variants 1–5). Codex flagged P1; the run team had deferred it as a
+per-phase "nicety". Fixed at finalize as aggregate completeness. Surface at Gate B.
+
+## D-finalize2 — OVERRULE codex P1: GitLab MR cross-forge host-blind match (2026-07-06T08:19:47Z)
+Codex P1 (drive-tool-gate.sh:355): the MCP owner/repo match ignores the forge host, so a
+GitLab MR carrying owner/repo colliding with an active GitHub run on the same owner/repo is
+denied. REPRODUCED (owner/repo GitLab fixture vs a github.com active run → deny). OVERRULED
+as an in-run code fix, WITH evidence: (1) the forge host is NOT present in the MCP tool_input
+(codex's OWN ARCH item) — no in-scope fix can distinguish forges; (2) real zereight GitLab
+payloads are project_id-only → they hit the unextractable-owner/repo FAIL-CLOSED deny anyway
+(reproduced) — the owner/repo axis is synthetic-fixture-only; (3) over-deny is the gate's
+ACCEPTED fail-closed direction (recoverable route-to-Bash). Routed to finalize-todo.md (ARCH)
++ the pre-existing "G2 vendor-schema drift" followup. Actionable residue = the GitHub-branded
+deny text on shared paths → folded into de-slop (D-finalize3).
+
+## D-finalize3 — OVERRULE codex P1: drive_scan_active_runs fail-open on scan-tool absence (2026-07-06T08:19:47Z)
+Codex P1 (drive-hook-lib.sh / drive-tool-gate.sh): the shared scan swallows find/sort/perm
+failures → empty → read as "no active run" (fail-OPEN) for the SHIPPED PreToolUse tool-gate.
+OVERRULED as out-of-scope, WITH evidence: this is the ALREADY-LOGGED, deliberately-deferred
+followup (C7-RESCOPE slice-1.1 review-r2) — it changes SHIPPED tool-gate behavior and is
+FORGERY-class (this run's threat model is OMISSION). The new WorktreeCreate gate already
+fails-closed on these; hardening the shipped tool-gate is a separate change. Stays in
+followups.md; not fixed in-run (scope-creep HARD GATE).
+
+## D-finalize4 — RE-AFFIRM overrule of scan fail-open (codex re-raised, round 2) (2026-07-06T08:49:21Z)
+Codex round-2 re-flagged the drive-tool-gate.sh scan fail-open on find/sort-absent PATH as
+P1 (reproduced again). RE-AFFIRMED overrule per D-finalize3, WITH evidence: it is a
+PRE-EXISTING, inherited fail-open of the SHIPPED tool-gate (this run extracted the shared
+drive_scan_active_runs predicate but did NOT introduce the posture); it is FORGERY-class (it
+requires a hostile/degraded PATH stripped of coreutils `find`/`sort`, not any omission the
+coordinator can make — this run's threat model is OMISSION); and the NEW G1 code
+(drive-worktree-gate.sh) already fails-closed on it. Hardening the shipped tool-gate is a
+SEPARATE forgery-class change, already logged in followups.md. Out of the run's blast radius
+(scope-creep HARD GATE) → routed to followups (already present), does NOT block convergence
+(out-of-scope real bug → followups per the finalize contract). The design-level articulation
+(uncentralized fail-closed preconditions) → finalize-todo.md ARCH.
+
+## D-finalize5 — Phase-1 harden-regress re-review to persist terminal CONVERGED artifact (2026-07-06T09:43:34Z)
+On finalize-resume the ship-gate (b-i) precondition failed `no-phase-review`: highest-N
+review-phase1 was review-phase1-2 (harden-regress FINDINGS, a test-only macOS exact-path bug at
+98e32dc). That P1 was genuinely fixed by beab9c0 (test-only cd&&pwd canonicalization; phase
+harden-1-3 = HARDENED; suites green), but the terminal CONVERGED harden-regress REVIEW artifact
+was never persisted. Ran a genuine dual-voice harden-regress re-review binding beab9c0 →
+review-phase1-3.md CONVERGED (reviewer: P1 resolved + no new P1 in gate code; codex: AC-9
+resolved). Codex re-raised the pre-existing shipped scan fail-open as P1 → OVERRULED, verified
+present in shipped main (line 199), not introduced by this run, forgery-class, out of scope
+(D-finalize3/4). NOT a forge — the phase is genuinely hardened; this persists the missing
+terminal review artifact. This is the [[drive-ship-conformance-sha-binding]] pattern.

@@ -1,0 +1,8 @@
+{
+  "_provenance":{"source":"GitLab MCP server tool reference — zereight/gitlab-mcp (83 tools; merge_request write ops create_/merge_/update_merge_request re-verified against the vendor tool list at implement time 2026-07-06). accept_/rebase_merge_request enumerated defensively as real GitLab REST ops (PUT …/merge, PUT …/rebase) that other/older MCP servers wrap; harmless-if-absent under the anchored matcher.","url":"https://github.com/zereight/gitlab-mcp","retrieved":"2026-07-06","note":"D9 schema-derived, NOT live-captured (no GitLab MCP server configured on this machine). NOTE the real zereight tools key on project_id (namespace/path), NOT owner/repo — a project_id-only write hits the gate’s unextractable-owner/repo fail-CLOSED deny (also DENY). These write fixtures carry owner/repo to exercise the per-tool mcp_deny_reason branches (the server-schema axis that DOES carry owner/repo)."},
+  "session_id": "fixture-session-gl-0001",
+  "cwd": "/work/octo-org/drive-fixture-repo",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "mcp__gitlab__get_merge_request",
+  "tool_input": {"owner":"octo-org","repo":"drive-fixture-repo","project_id":"octo-org/drive-fixture-repo"}
+}

@@ -175,6 +175,69 @@ assert_rc1 "run_dir missing" "$out" "$rc"
 out="$(drive_run_dir "")"; rc=$?
 assert_rc1 "run_dir empty arg" "$out" "$rc"
 
+# --- drive_scan_active_runs (AC-1/AC-3): the SHARED active-run predicate extracted from the
+#     shipped drive-tool-gate.sh inline scan. Byte-faithful: state.json a regular file that
+#     jq-parses with .stage non-empty and != "done" AND .repoRoot non-empty, within the
+#     DRIVE_TOOL_GATE_LIVE_HOURS mtime window; corrupt/no-repoRoot skip WITH a stderr warning.
+#     Dedicated HOME so the scan root is isolated (the function keys on $HOME). ---
+SCAN_HOME="$(mktemp -d)"
+OLD_HOME="$HOME"
+export HOME="$SCAN_HOME"
+SRUNS="$HOME/.claude/harness-runs"; mkdir -p "$SRUNS"
+sc_mkrun() { # sc_mkrun <id> <stage> <repoRoot>  — fresh-mtime run dir
+  local rd="$SRUNS/$1"; mkdir -p "$rd"
+  printf '{"stage":"%s","repoRoot":"%s"}\n' "$2" "$3" > "$rd/state.json"
+  printf '' > "$rd/event-log.jsonl"
+}
+
+# (a) one fresh active run → emitted, rc 0
+rm -rf "$SRUNS"/*; sc_mkrun run-a execute /some/repo
+out="$(drive_scan_active_runs 2>/dev/null)"; rc=$?
+assert_eq "scan: active run emitted" "$SRUNS/run-a" "$out" "$rc"
+
+# (b) stage=done → not emitted, rc 1
+rm -rf "$SRUNS"/*; sc_mkrun run-done done /some/repo
+out="$(drive_scan_active_runs 2>/dev/null)"; rc=$?
+assert_rc1 "scan: stage=done not active" "$out" "$rc"
+
+# (c) no repoRoot → not emitted (rc1) + stderr warning names the dir
+rm -rf "$SRUNS"/*; mkdir -p "$SRUNS/run-noroot"
+printf '{"stage":"execute"}\n' > "$SRUNS/run-noroot/state.json"; printf '' > "$SRUNS/run-noroot/event-log.jsonl"
+err="$(mktemp)"; out="$(drive_scan_active_runs 2>"$err")"; rc=$?
+assert_rc1 "scan: no-repoRoot not active" "$out" "$rc"
+case "$(cat "$err")" in *"no repoRoot"*"run-noroot"*) pass "scan: no-repoRoot warns naming the dir" ;; *) bad "scan: no-repoRoot warning missing (got '$(cat "$err")')" ;; esac
+
+# (d) corrupt state.json → not emitted (rc1) + skip-with-warning; a healthy run alongside still emits
+rm -rf "$SRUNS"/*; mkdir -p "$SRUNS/run-corrupt"
+printf 'GARBAGE {{{ not json' > "$SRUNS/run-corrupt/state.json"; printf '' > "$SRUNS/run-corrupt/event-log.jsonl"
+sc_mkrun run-healthy execute /some/repo
+err="$(mktemp)"; out="$(drive_scan_active_runs 2>"$err")"; rc=$?
+assert_eq "scan: healthy run emitted past corrupt one" "$SRUNS/run-healthy" "$out" "$rc"
+case "$(cat "$err")" in *"unreadable/corrupt state.json"*"run-corrupt"*) pass "scan: corrupt dir skip-with-warning names it" ;; *) bad "scan: corrupt warning missing (got '$(cat "$err")')" ;; esac
+
+# (e) stale mtime (year 2000) → outside the 24h window → not emitted
+rm -rf "$SRUNS"/*; sc_mkrun run-stale execute /some/repo
+touch -t 200001010000 "$SRUNS/run-stale/state.json" "$SRUNS/run-stale/event-log.jsonl"
+out="$(drive_scan_active_runs 2>/dev/null)"; rc=$?
+assert_rc1 "scan: stale-mtime run not active (liveness window)" "$out" "$rc"
+
+# (f) two active runs → both emitted (newline-separated; trailing newline preserved, which
+#     the tool-gate's $(...) strips — the same shape as the shipped inline scan)
+rm -rf "$SRUNS"/*; sc_mkrun run-x execute /r1; sc_mkrun run-y execute /r2
+allout="$(drive_scan_active_runs 2>/dev/null)"
+n="$(printf '%s' "$allout" | grep -c 'harness-runs/run-')"
+assert_eq "scan: two active runs both emitted" "2" "$n" "0"
+case "$allout" in *run-x*) case "$allout" in *run-y*) pass "scan: both run-x and run-y present" ;; *) bad "scan: run-y missing" ;; esac ;; *) bad "scan: run-x missing" ;; esac
+
+# AC-3 (mutation-verify, documented): breaking drive_scan_active_runs (e.g. dropping the
+# `[ "$stage" = "done" ] && continue` line, or the repoRoot check) REDs the shipped
+# drive-tool-gate.test.sh AC-5 (stage=done → silent) / Fix5 (no-repoRoot skip) cases, since
+# the tool gate now calls this extracted function — proving the tool-gate suite exercises the
+# extracted path. Confirmed RED during implement, then restored.
+
+export HOME="$OLD_HOME"
+rm -rf "$SCAN_HOME"
+
 echo "---"
 if [ "$fail" -ne 0 ]; then
   echo "RESULT: FAIL"
