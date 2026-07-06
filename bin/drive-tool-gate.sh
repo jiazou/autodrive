@@ -295,13 +295,13 @@ mcp_deny_reason() {
   local suffix="$1" runId="$2"
   case "$suffix" in
     create_or_update_file)
-      printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool create_or_update_file writes a file directly on the remote, bypassing the /drive gates (they fire on Bash git/gh commands only). Retry: edit + commit the file in the slice worktree, then land it via the gated `git merge slice/<runId>/<id>`; it reaches GitHub only through the gated `git push` at ship.' "$runId" ;;
+      printf 'drive-tool-gate: run %s is active on this repo. The git-hosting MCP tool create_or_update_file writes a file directly on the remote, bypassing the /drive gates (they fire on Bash git/gh commands only). Retry: edit + commit the file in the slice worktree, then land it via the gated `git merge slice/<runId>/<id>`; it reaches the remote host only through the gated `git push` at ship.' "$runId" ;;
     delete_file)
-      printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool delete_file removes a file directly on the remote, bypassing the /drive gates (they fire on Bash git/gh commands only). Retry: `git rm` + commit in the slice worktree, then land it via the gated `git merge slice/<runId>/<id>`; it reaches GitHub only through the gated `git push` at ship.' "$runId" ;;
+      printf 'drive-tool-gate: run %s is active on this repo. The git-hosting MCP tool delete_file removes a file directly on the remote, bypassing the /drive gates (they fire on Bash git/gh commands only). Retry: `git rm` + commit in the slice worktree, then land it via the gated `git merge slice/<runId>/<id>`; it reaches the remote host only through the gated `git push` at ship.' "$runId" ;;
     push_files)
-      printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool push_files pushes multiple files directly to the remote, bypassing the /drive ship gate. Retry: commit locally in the slice worktree, then `git push` from the ship worktree (gated: the finalize-review check runs on the pushed tip).' "$runId" ;;
+      printf 'drive-tool-gate: run %s is active on this repo. The git-hosting MCP tool push_files pushes multiple files directly to the remote, bypassing the /drive ship gate. Retry: commit locally in the slice worktree, then `git push` from the ship worktree (gated: the finalize-review check runs on the pushed tip).' "$runId" ;;
     create_branch)
-      printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool create_branch creates a branch directly on the remote, bypassing the /drive plan/design gates. Retry: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>` (gated) for a drive slice, or a plain local `git branch` for a non-drive ref.' "$runId" ;;
+      printf 'drive-tool-gate: run %s is active on this repo. The git-hosting MCP tool create_branch creates a branch directly on the remote, bypassing the /drive plan/design gates. Retry: `git worktree add $RUN_DIR/wt/<id> -b slice/<runId>/<id> <phaseBaseSha>` (gated) for a drive slice, or a plain local `git branch` for a non-drive ref.' "$runId" ;;
     create_pull_request)
       printf 'drive-tool-gate: run %s is active on this repo. The GitHub MCP tool create_pull_request opens the PR outside Bash, bypassing the /drive ship gate. Retry: `gh pr create` from the ship worktree (gated: it verifies the finalize review covers the shipped tip).' "$runId" ;;
     update_pull_request_branch)
