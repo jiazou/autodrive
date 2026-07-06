@@ -192,3 +192,20 @@ promoted to repo-root TODO.md at ship).
   hence routed, not fixed here. Fix: either add per-pin mutation-proof `test_*_flips_on_*`
   cases for the load-bearing pins, or reword the docstring to describe the actual
   inline-string-pin methodology. Out of the whole-run diff's introduced surface.
+
+## /drive run c7-gate-bypass-20260705-225936 — architectural follow-ups (2026-07-06T08:19:47Z)
+- bin/drive-tool-gate.sh (MCP repo-scoping, ~line 344-356): the GitHub/GitLab MCP write
+  scoping matches owner/repo only and is FORGE-HOST-BLIND, because the MCP tool_input exposes
+  no forge host. Consequence: an owner/repo collision across forges (e.g. github.com/acme/x
+  active-run vs a gitlab.com/acme/x MR) over-denies (safe direction, recoverable route-to-Bash),
+  and real project_id-only GitLab payloads fail-closed-deny. Distinguishing gitlab.com from
+  gitlab.internal from foo/bar is impossible from current hook input alone. Out of scope for
+  this run (needs a richer hook input contract / managed tool policy). Related: the existing
+  "G2 vendor-schema drift" followup.
+- bin/drive-hook-lib.sh / drive-tool-gate.sh / drive-worktree-gate.sh (shared active-run
+  predicate): the fail-closed PRECONDITIONS around drive_scan_active_runs (scan-tool present,
+  runs-root readable) are NOT centralized — drive-worktree-gate.sh hardens them locally,
+  drive-tool-gate.sh (shipped) does not. Centralizing the fail-closed guard into the shared
+  predicate (or a shared wrapper) would close the residual shipped-tool-gate fail-open uniformly.
+  Forgery-class; out of scope for this omission-focused run. Pairs with the deferred
+  "harden shipped drive-tool-gate.sh fail-closed" followup.

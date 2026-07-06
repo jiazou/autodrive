@@ -754,3 +754,56 @@ tests/contracts/test_drive_retro_contract.py:114 — verbose mutation-explainer 
 - **`.harness/decisions.md` / `.harness/followups.md`** contain historical `/goal` references
   (records of prior lever-2 rebirth work). These are append-only run-history ledgers, not live
   spec; leaving them is correct (they record what was decided at the time). Not edited.
+
+
+<!-- ===== promoted from /drive run c7-gate-bypass-20260705-225936 (2026-07-06T09:45:21Z) ===== -->
+### C7 phase1 followups (2026-07-06)
+- Unify the completedAt/parse_ts parse across drive-retention.sh + drive-hook-lib.sh onto ONE pure lib (retention sources it), removing the D-h (~20-line) duplication.
+- Retention enhancement: reap aged, quiet, no-inflight run dirs lacking completedAt REGARDLESS of stage (bounded by age + liveness gates), so an abandoned never-done run self-heals the tool/worktree gate's fail-closed hot state (design-phase1 E-10) without manual run-dir removal.
+
+### C7-RESCOPE phase1 followups (2026-07-06)
+- worktree-gate repo-scoping (D-w1 residual): optionally scope the exit-2 deny to the WorktreeCreate payload `cwd`'s repo identity so native worktree creation in an unrelated repo is not blocked while a run is active elsewhere; requires sharing parse_origin/common_dir_of. Defer until the over-deny bites.
+- jq-absent DENY residual (D-w2, REVISED r1): the worktree-gate now FAIL-CLOSES (exit 2, denies native worktree creation) when jq is absent — a jq-less machine cannot create native worktrees. CONSISTENT with the shipped PreToolUse gate's identical jq-absent fail-closed; jq is a documented /drive precondition, so this is the accepted safe direction (recoverable route-to-Bash), not a bug. The narrower corrupt-active-run fail-open (a genuinely-active run whose OWN state.json is corrupted, when it is the only run) is the shared predicate's own-logic-only posture — inherited, not new.
+- Hook-chosen worktree path (D-w3 residual): with the WorktreeCreate gate installed, native worktree location is hook-chosen; reconcile with Claude Code's documented default path convention if divergence annoys.
+- Installer drift-preflight does not yet warn on a missing/partial WorktreeCreate registration (covers merge-gate + tool-gate only). Add a parallel check — nicety, not correctness.
+- G2 vendor-schema drift (inherited): the exact-enumeration matcher fingerprints vendor tool names; a GitLab MR tool rename silently fails open — the same schema-drift residual the shipped gate documents; retire when managed tool policy ships.
+
+### C7-RESCOPE slice-1.1 review-r2 followup (2026-07-06)
+- Harden the SHIPPED drive-tool-gate.sh (and the shared drive_scan_active_runs) to fail-closed on scan-tool absence / scan I/O error (missing find/sort/dirname/jq, or an unreadable RUNS_ROOT), with shared-scan-failure test coverage — a separate change from the C7 non-Bash gap-closing run, since it changes shipped PreToolUse-gate behavior and is forgery-class. The WorktreeCreate gate (drive-worktree-gate.sh) already fails-closed on these; the shipped PreToolUse gate does not (inherited pre-existing fail-open).
+
+## slop (deferred to finalize)
+bin/install-drive-hooks.sh:53 — banner still says "GitHub-MCP writes" (now GitHub+GitLab)
+docs/drive-enforcement.md:184 — says drive-tool-gate.sh "sources nothing" (now sources drive-hook-lib.sh)
+bin/drive-hook-lib.sh:2-5 — header still describes pure ref-parsing/existence only
+bin/drive-tool-gate.sh:2-8,337 — GitHub-only wording on now-shared GitHub/GitLab paths
+docs/drive-enforcement.md:108,157,302 — old lib/worktree fail-closed contract wording
+test/install-drive-hooks.test.sh:420-423 — comment says three hooks/four entries
+### C7 finalize round-2 P3 residuals (2026-07-06T08:43:59Z) — non-blocking
+- docs/drive-enforcement.md:~166 illustrative bullet still says "GitHub-MCP" (behavior documented accurately in the gate table ~106 + the G2 section); cosmetic doc-consistency nicety.
+- test/install-drive-hooks.test.sh: the variant-3w sibling-absent (missing drive-worktree-gate.sh file) WARN lacks a dedicated test mirror; the WorktreeCreate-registration variant-6 test covers the registration warn. Add a file-absent mirror if drift-preflight test depth is revisited.
+### C7 finalize round-3 residuals (2026-07-06T09:15:53Z) — non-blocking
+- [ROUTED, forgery-class] bin/drive-worktree-gate.sh:88 active-run deny path shells out to
+  `sed`/`basename` unguarded (precheck at :56 covers jq/find/sort/dirname/git). If sed/basename
+  are absent the hook STILL exits 2 (deny — fail-closed direction preserved), but stderr gets
+  "command not found" noise and the runId drops from the message. Same coreutils-absent
+  degraded-env / forgery-class scenario as D-finalize4 (find/sort). Behavior is correct; only
+  message quality degrades in an unreachable-in-practice env → deferred. Add sed/basename to
+  the precheck + a test when the shipped-gate coreutils-absent hardening lands.
+- [P3, cosmetic] drive-hook-lib.sh drive_scan_active_runs emits skip-warning stderr with a
+  hardcoded `drive-tool-gate:` prefix; worktree-gate caller suppresses it (2>/dev/null), so it
+  never mis-surfaces — byte-faithful-to-shipped by design.
+- [P3, cosmetic] install-drive-hooks.sh: the `== $REPO_DIR/bin` branch variant-3w check is
+  effectively unreachable (tool-gate-presence return precedes it); mirrors the tool-gate
+  pattern defensively at zero cost.
+### C7 finalize round-4 P3 residuals (2026-07-06T09:30:03Z) — non-blocking, illustrative
+- docs/drive-enforcement.md:202 — worktree-class origin-identity match "catches a second
+  independent clone of the same GitHub repo"; mechanism is host-agnostic (host/owner/repo key,
+  now covers GitLab clones too). Illustrative single-host example, mechanism-accurate. Trivial
+  s/GitHub repo/repo/ if a future doc touch lands here; not worth a dedicated de-slop round
+  (both finalize voices agreed it is an example, not a scope claim).
+- bin/drive-tool-gate.sh:250 — parse_origin lowercasing rationale comment cites "GitHub treats
+  host/owner/repo so"; GitLab origins lowercased by the same pass. Factual example, not a scope
+  claim.
+- test/drive-tool-gate.test.sh:594,643 — comments describe the file/branch suffixes as "shared
+  GitHub suffixes (server-wildcarded)"; historically accurate provenance (enumerated for GitHub
+  in the shipped gate, reused by GitLab via server-wildcard). Optional s/GitHub/shared/ nicety.
