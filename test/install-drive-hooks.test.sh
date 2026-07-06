@@ -13,8 +13,8 @@ STOP_GUARD="$REPO_DIR/bin/drive-stop-guard.sh"
 TOOL_GATE="$REPO_DIR/bin/drive-tool-gate.sh"
 WT_GATE="$REPO_DIR/bin/drive-worktree-gate.sh"
 # Exact matcher strings the installer writes for the two tool-gate entries (AC-9). G2 adds the
-# five GitLab merge_request-write suffixes to the MCP matcher (the pin reding is the PROOF G2
-# bit — memory gate-tightening-reds-the-allow-tests).
+# five GitLab merge_request-write suffixes to the MCP matcher (the pinned matcher redding on
+# change is the PROOF the G2 bit landed — see memory gate-tightening-reds-the-allow-tests).
 MCP_MATCHER='^mcp__.+__(update_pull_request_branch|create_or_update_file|create_merge_request|accept_merge_request|rebase_merge_request|merge_merge_request|update_merge_request|create_pull_request|merge_pull_request|update_pull_request|create_branch|delete_file|push_files)$'
 NATIVE_MATCHER='^(Agent|EnterWorktree)$'
 
@@ -375,6 +375,7 @@ bash "$INSTALLER" "$DRIFT23" 2>"$D23_ERR" >/dev/null; d23_rc=$?
 check "drift variant 2+3: installer still exits 0 (warn-only)" "$d23_rc" "0"
 check "drift variant 2 (migrate hazard) WARN fires" "$(has_warn "$D23_ERR" "live gates run from $FAKE_LIVE")" "yes"
 check "drift variant 3 (missing sibling) WARN fires" "$(has_warn "$D23_ERR" "live enforcement worktree lacks drive-tool-gate.sh")" "yes"
+check "drift variant 3w (missing worktree-gate sibling) WARN fires" "$(has_warn "$D23_ERR" "lacks drive-worktree-gate.sh")" "yes"
 d23_bak=$(ls "$DRIFT23".bak.* 2>/dev/null | wc -l | tr -d ' ')
 check "drift preflight churns NO extra backup (exactly one for the whole run)" "$d23_bak" "1"
 
@@ -452,7 +453,7 @@ check "drift variant 6: installer exits 0 (warn-only)" "$d6_rc" "0"
 check "drift variant 6 (missing WorktreeCreate) WARN fires" "$(has_warn "$D6_ERR" "the WorktreeCreate gate is not registered")" "yes"
 
 # --- AC-10: installer disclosure banner enumerates the four hooks / five entries + BOTH
-#     new matcher classes (the GitHub-MCP write matcher + Agent/EnterWorktree). Slice-owned:
+#     new matcher classes (the GitHub/GitLab-MCP write matcher + Agent/EnterWorktree). Slice-owned:
 #     tests/installers/test_install_banner_confirm.py pins only generic tokens by design
 #     (DIV-p2-1), so this is where a disclosure-text regression is caught. The banner prints
 #     to STDERR before the (skipped, explicit-target) confirm gate. FAILs if the text regresses.

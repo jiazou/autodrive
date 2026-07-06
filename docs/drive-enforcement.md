@@ -163,8 +163,8 @@ active-run scan predicate (`drive_scan_active_runs`) the tool-gate and worktree-
 `bin/drive-merge-gate.sh` fires on **Bash only**, so two tool classes could land run work
 without ever tripping a gate while a `/drive` run is active on the same repo:
 
-- **GitHub-MCP write tools** (`create_pull_request`, `push_files`, `merge_pull_request`, …)
-  reach GitHub without issuing a Bash `git`/`gh` command — the merge/ship gate never sees them.
+- **GitHub/GitLab-MCP write tools** (`create_pull_request`, `push_files`, `merge_pull_request`, …)
+  reach the remote host without issuing a Bash `git`/`gh` command — the merge/ship gate never sees them.
 - **Native worktree tools** (`Agent` with `isolation:"worktree"`, `EnterWorktree`) create a
   worktree on a **harness-named branch** (not `slice/<runId>/<id>`). **Recorded trace**
   (verified against `bin/drive-merge-gate.sh`): no `git worktree add … -b slice/…` Bash
