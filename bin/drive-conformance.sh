@@ -712,21 +712,41 @@ EOF
         (design) ;;
         (phasedesign?*) pd_keys="$pd_keys${scope#phasedesign}"$'\n' ;;
         (phase?*)
-          # PARSEABILITY BOUNDARY (root fix): a review-phase<P>-N.md is counter-parseable ONLY
-          # with BOTH `## Verdict:` (the generic guard above) AND `## Findings` — the header/body
-          # delimiter the counter's two header-region readers (is_marked, reviewed_sha_of) bind
-          # to. A phase-review file LACKING `## Findings` (a crash after the marker but before the
-          # delimiter, or a forgery) is malformed and must NOT be bucketed: is_marked would read
-          # it UNMARKED (its `seen`-flag never sets), which BOTH inflates the integration round
-          # AND drops its reviewed-sha from distinct_marked_sha — silently hiding a real surplus.
-          # Flag it `unparseable-review` (fail-closed → checkpoint not clean → the run STOPs for
-          # stranded-marker recovery / a human) and do NOT classify it. Requiring the delimiter
-          # HERE is what makes every file the readers see downstream carry it, so all their
-          # header-region edge cases vanish at the boundary. Every legitimate marked/integration
-          # review carries `## Findings` (drive-review.md schema), so this breaks no real path.
+          # PARSEABILITY BOUNDARY (root fix, COMPLETED): a review-phase<P>-N.md is
+          # counter-parseable ONLY with ALL THREE structural anchors —
+          #   1. `## Verdict:`        (the generic guard above),
+          #   2. `## Findings`        (the header/body delimiter the two header-region readers
+          #                            is_marked + reviewed_sha_of bind to), AND
+          #   3. `reviewed-sha:`      (a valid header-region 40-hex line, via reviewed_sha_of).
+          # These are the COMPLETE set of anchors this file's classification + tip-binding depend
+          # on; missing ANY leaves a silent-bucketing hole the counter cannot see through:
+          #   - no `## Findings`  → is_marked reads UNMARKED (its `seen`-flag never sets), which
+          #                          BOTH inflates the integration round AND drops the sha from
+          #                          distinct_marked_sha (hiding a real surplus);
+          #   - no reviewed-sha   → the MARKED path would swallow the miss into `msha=""` → the
+          #                          `$2!=""` filter drops it from distinct_marked_sha (hiding a
+          #                          real surplus); the UNMARKED path counts it toward the round.
+          # Flag any omission `unparseable-review` (fail-closed → checkpoint not clean → the run
+          # STOPs for stranded-marker recovery / a human) and do NOT classify the file. Requiring
+          # all three HERE makes every file the downstream readers see fully anchored, so all
+          # their header-region edge cases vanish at the boundary. The real writer ALWAYS emits
+          # all three for a phase / harden-regress review (drive-review.md schema: `## Verdict:`
+          # → `reviewed-sha:` → optional `harden-regress: yes` marker → `## Findings`), so this
+          # rejects no legitimate review. Emit the violation ONCE even if several anchors are
+          # missing. (reviewed_sha_of is itself `## Findings`-delimited, so anchor 3 subsumes
+          # anchor 2; the explicit `## Findings` check is kept for clarity of the boundary.)
+          P="${scope#phase}"
+          msha=""
           if ! grep -qE '^## Findings' "$f"; then
+            parseable=0
+          elif ! msha="$(reviewed_sha_of "$f")"; then
+            parseable=0
+          else
+            parseable=1
+          fi
+          if [ "$parseable" -eq 0 ]; then
             # Emit unparseable-review UNLESS the generic `## Verdict:` guard above ALREADY did
-            # (a file missing BOTH must not double-count the same violation).
+            # (a file missing `## Verdict:` too must not double-count the same violation).
             if grep -qE '^## Verdict:' "$f"; then
               viol_arr+=("$(violation "$base" "unparseable-review")")
             fi
@@ -735,14 +755,9 @@ EOF
             # (integration) by the header-region marker (is_marked). Integration-round =
             # count(unmarked); marked-regress = distinct reviewed-sha among marked (rule-2 below).
             # No file counts on both sides; the integration round no longer depends on the harden
-            # yes-count.
-            P="${scope#phase}"
+            # yes-count. `msha` is GUARANTEED non-empty here (the boundary rejected an empty-sha
+            # file above), so a marked file always contributes a real sha to distinct_marked_sha.
             if is_marked "$f"; then
-              # HEADER-bound sha read (reviewed_sha_of is header-bound, matching is_marked's
-              # bound): a marked file whose only `reviewed-sha:` is a body quote below
-              # `## Findings` yields empty → excluded from distinct_marked_sha's set (the `$2!=""`
-              # filter drops it) → no false regress-mismatch.
-              msha="$(reviewed_sha_of "$f" || true)"
               marked_phase_shas="$marked_phase_shas$P ${msha}"$'\n'
             else
               unmarked_phase_keys="$unmarked_phase_keys$P"$'\n'
