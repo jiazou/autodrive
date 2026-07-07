@@ -78,16 +78,49 @@ def _harden(rd, p, n, applied):
 
 
 def _marked_review(rd, scope, n, sha, verdict="CONVERGED"):
-    """A harden-regress review file — identical to `_helpers._review` PLUS a column-0
-    `harden-regress: yes` marker line in the HEADER PREAMBLE (right after `reviewed-sha:`).
-    It writes NO `## Findings` header, so the whole file is the header region → the §1.3
-    header-region classifier reads it MARKED. LOCAL to this test file on purpose: the shared
+    """A harden-regress review file matching the REAL writer schema (drive-review.md:133-136):
+    a header preamble carrying `## Verdict:`, `reviewed-sha: <sha>`, and the column-0
+    `harden-regress: yes` marker (strictly BEFORE `## Findings`), followed by the
+    always-present `## Findings` header. The header sha binds under the delimiter-required
+    `reviewed_sha_of`, and the marker (in the header preamble) reads MARKED under the §1.3
+    header-region classifier. LOCAL to this test file on purpose: the shared
     `_helpers._review` stays the UNMARKED integration writer (no marker), so the two helpers
     are the marked/unmarked pair the marker/distinct-sha contract counts. `sha` must be a
     valid 40-hex (distinct marked shas come from `"a"*40` vs `"b"*40`)."""
     (rd / f"review-{scope}-{n}.md").write_text(
         f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\n"
-        f"reviewed-sha: {sha}\nharden-regress: yes\n",
+        f"reviewed-sha: {sha}\nharden-regress: yes\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+
+
+def _findings_review(rd, scope, n, sha, verdict="CONVERGED"):
+    """A well-formed UNMARKED review matching the REAL writer schema (drive-review.md:133-136):
+    a header preamble (`## Verdict:` + `reviewed-sha: <sha>`) followed by the always-present
+    `## Findings` header, so the header sha binds under the delimiter-required
+    `reviewed_sha_of`. LOCAL to this file: the shared `_helpers._review` predates the
+    `## Findings` schema pin (its reviewed-sha is never consumed by a tip-binding gate in any
+    test) and stays untouched; use THIS helper wherever a legit review's sha must bind a gate."""
+    (rd / f"review-{scope}-{n}.md").write_text(
+        f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\n"
+        f"reviewed-sha: {sha}\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+
+
+def _no_findings_body_sha_review(rd, scope, n, tip):
+    """A MALFORMED review with NO `## Findings` header at all: its header carries NO
+    `reviewed-sha:` line; the ONLY `reviewed-sha: <tip>` is a fenced BODY quote. The real
+    writer ALWAYS emits `## Findings` (drive-review.md:136 / drive-finalize.md:202), so a
+    review lacking it is malformed. Under the pre-fix awk (which ran to EOF when `## Findings`
+    was absent) this body sha bound == tip; the delimiter-required reader emits the header
+    region ONLY when `## Findings` is seen → no `## Findings` → NO sha (fail-closed). Distinct
+    from `_body_only_sha_review`, which HAS `## Findings` and quotes the sha BELOW it — this
+    fixture is the no-`## Findings` gap the round-3 BLOCKING reopened."""
+    (rd / f"review-{scope}-{n}.md").write_text(
+        f"# Review {scope} round {n}\n## Verdict: CONVERGED\n"
+        f"Body prose (no Findings header). The writer emits it like:\n"
+        f"```\nreviewed-sha: {tip}\n```\nend.\n",
         encoding="utf-8",
     )
 
@@ -405,6 +438,112 @@ def test_ship_body_only_sha_phase_review_not_counted(tmp_path):
     rc, obj = _run_mode(repo, rd, "ship")
     assert rc == 1, f"body-only sha phase review must not satisfy ship b-i; got {obj}"
     assert "no-phase-review" in _reasons(obj), obj["violations"]
+
+
+# --------------------------------------------------------------------------- #
+# round-3 BLOCKING regression: the NO-`## Findings` gap (speculative EOF fallback).
+# The round-2 body-only pins above use `_body_only_sha_review`, which HAS a `## Findings`
+# header. The reopened bypass is a review with NO `## Findings` at all: the pre-fix
+# `reviewed_sha_of` awk (`/^## Findings/ { exit } { print }`) ran to EOF and accepted a
+# `reviewed-sha:` ANYWHERE (fenced/body). The fix REQUIRES the `## Findings` delimiter to
+# bound the header (emit the header region ONLY when `## Findings` is seen), so a malformed
+# no-`## Findings` review binds NO tip anywhere — proven on ALL FOUR reviewed_sha_of
+# consumers: checkpoint (distinct_marked_sha), phase-merge + ship b-i + finalize b-ii.
+# Each is mutation-verified against the pre-fix EOF fallback below.
+# --------------------------------------------------------------------------- #
+
+def test_checkpoint_no_findings_marked_sha_excluded_from_distinct(tmp_path):
+    """round-3 BLOCKING (checkpoint arm): a MARKED review with NO `## Findings` header
+    (header `harden-regress: yes`, NO header `reviewed-sha:`, sha only in a fenced body
+    quote) must be EXCLUDED from `distinct_marked_sha` — so with 0 harden-yes the surplus
+    guard does NOT false-fire.
+
+    Mutation-verify (REDs on the pre-fix EOF-fallback `reviewed_sha_of`): the pre-fix awk,
+    finding no `## Findings`, runs to EOF and reads the body sha → distinct = 1 → `1 > 0` →
+    regress-mismatch (rc 1). The delimiter-required reader emits nothing (no `## Findings`
+    seen) → NO sha → excluded → distinct = 0 → `0 > 0` FALSE → clean (rc 0)."""
+    repo, rd = _base_run(tmp_path, "ckpt-nofind")
+    # MARKED in the header (harden-regress: yes, whole file is header — no ## Findings) but
+    # the ONLY reviewed-sha is a fenced body quote.
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\nharden-regress: yes\n"
+        "Body prose (no Findings header):\n```\nreviewed-sha: " + "a" * 40 + "\n```\nend.\n",
+        encoding="utf-8",
+    )
+    # 0 harden-yes → the surplus guard fires iff the body sha is (wrongly) counted.
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"no-Findings body sha on a marked file must be excluded → clean; got {obj}"
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    # The file IS marked (marker in the header region) → does NOT count toward the round.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 0}, obj["counters"]
+
+
+def test_phase_merge_no_findings_body_sha_not_tip_bound(tmp_path):
+    """round-3 BLOCKING (phase-merge arm): the `--mode phase-merge:<P>` gate (via
+    `check_scope_counts` → `reviewed_sha_of`) must NOT accept a phase review with NO
+    `## Findings` header whose only `reviewed-sha: <tip>` is a fenced body quote.
+
+    Mutation-verify (REDs on the pre-fix EOF fallback): the body sha EQUALS the real
+    `phaseInt/<runId>/1` tip → the pre-fix EOF read finds it → `rsha == tip` → the scope
+    COUNTS → gate CLEAN (rc 0). The delimiter-required read yields NO sha → `sha-mismatch`
+    → gate BLOCKS (rc 1)."""
+    repo, rd = _base_run(tmp_path, "pm-nofind")
+    _git(repo, "checkout", "-q", "-b", "phaseInt/pm-nofind/1")
+    _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
+    tip = _rev(repo, "phaseInt/pm-nofind/1")
+    _no_findings_body_sha_review(rd, "phase1", 1, tip)
+    _codex(rd, "phase1")   # present so the pre-fix reader would reach a CLEAN verdict
+
+    rc, obj = _run_mode(repo, rd, "phase-merge:1")
+    assert rc == 1, f"no-Findings body sha must not tip-bind phase-merge → block; got {obj}"
+    assert "sha-mismatch" in _reasons(obj), obj["violations"]
+
+
+def test_ship_no_findings_body_sha_phase_review_not_counted(tmp_path):
+    """round-3 BLOCKING (ship b-i arm): a phase review with NO `## Findings` header whose
+    only `reviewed-sha` is a fenced body quote must NOT satisfy ship's b-i precondition —
+    `candidate_R` (via `reviewed_sha_of`) stays empty → `no-phase-review`.
+
+    Mutation-verify (REDs on the pre-fix EOF fallback): the pre-fix read counts the body sha
+    (b-i satisfied) and — no finalize artifact → `no-review`. The delimiter-required read
+    leaves `candidate_R` empty at b-i → `no-phase-review` (pins the phase reader, not just
+    finalize, is delimiter-bound)."""
+    repo, rd = _base_run(tmp_path, "ship-nofind")
+    _git(repo, "checkout", "-q", "-b", "phaseInt/ship-nofind/1")
+    _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
+    _git(repo, "checkout", "-q", "drive/ship-nofind")
+    tip = _rev(repo, "phaseInt/ship-nofind/1")
+    _no_findings_body_sha_review(rd, "phase1", 1, tip)
+    _codex(rd, "phase1")
+
+    rc, obj = _run_mode(repo, rd, "ship")
+    assert rc == 1, f"no-Findings body sha phase review must not satisfy ship b-i; got {obj}"
+    assert "no-phase-review" in _reasons(obj), obj["violations"]
+
+
+def test_ship_no_findings_finalize_review_not_tip_bound(tmp_path):
+    """round-3 BLOCKING (finalize / ship b-ii arm): with a VALID counting phase review
+    (so b-i passes), a finalize review with NO `## Findings` header whose only
+    `reviewed-sha: <tip>` is a fenced body quote must NOT bind the terminal candidate-R —
+    `reviewed_sha_of(fin_rf)` fails → `candidate_R=""` → ship blocks with `no-review`.
+
+    Mutation-verify (REDs on the pre-fix EOF fallback): the finalize body sha EQUALS the
+    featureBranch tip → the pre-fix EOF read binds it → R == tip → (a) ancestor, (b) empty
+    diff ⊆ allowlist, (c) 0 commits → ship_clean → CLEAN (rc 0). The delimiter-required read
+    yields NO finalize sha → `candidate_R` empty → `no-review` (rc 1)."""
+    repo, rd = _base_run(tmp_path, "ship-fin-nofind")
+    tip = _rev(repo, "drive/ship-fin-nofind")
+    # b-i satisfied by a well-formed CONVERGED phase review (header sha + ## Findings) + codex.
+    _findings_review(rd, "phase1", 1, sha="a" * 40)
+    _codex(rd, "phase1")
+    # b-ii finalize candidate: NO ## Findings, sha only in the body, == featureBranch tip
+    # (so the pre-fix reader would satisfy (a)(b)(c) and ship clean).
+    _no_findings_body_sha_review(rd, "finalize", 1, tip)
+    _codex(rd, "finalize")
+
+    rc, obj = _run_mode(repo, rd, "ship")
+    assert rc == 1, f"no-Findings finalize review must not tip-bind ship b-ii; got {obj}"
+    assert "no-review" in _reasons(obj), obj["violations"]
 
 
 def test_checkpoint_distinct_sha_dedup(tmp_path):

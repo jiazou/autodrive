@@ -220,14 +220,18 @@ json_from_pairs() {
 # sha-mismatch / candidate-R checks). The writer emits `reviewed-sha:` in the header preamble
 # (above `## Findings`) for every sha-binding scope (drive-review.md slice/phase/harden-regress,
 # drive-finalize.md), so this is behavior-preserving for every legitimate review and excludes
-# only body-only-sha forgeries. A review with NO `## Findings` line (awk reaches EOF) still
-# finds the header sha (whole-file-equivalent — a `## Findings` header is not required).
-# "First match" semantics are preserved (finalize relies on the FIRST reviewed-sha). awk
-# carves the header region (no interval regex, for portability across BWK/gawk); the same
+# only body-only-sha forgeries. The `## Findings` delimiter is REQUIRED to bound the header:
+# the real writer ALWAYS emits it (drive-review.md, drive-finalize.md), so a review LACKING
+# `## Findings` is malformed → awk hits EOF with `seen==0` → prints nothing → NO sha (rc1),
+# fail-closed. This removes the last whole-file/EOF fallback (a malformed review with only a
+# body/fenced `reviewed-sha:` no longer binds any tip), closing the body-only-sha bypass for
+# no-`## Findings` files. "First match" semantics are preserved (finalize relies on the FIRST
+# reviewed-sha — grep -m1 over the buffered header). awk buffers the header region and emits it
+# only when `## Findings` is seen (no interval regex, for portability across BWK/gawk); the same
 # grep -E pattern then does the 40-hex match.
 reviewed_sha_of() {
   local f="$1" line
-  line="$(awk '/^## Findings/ { exit } { print }' "$f" 2>/dev/null \
+  line="$(awk '/^## Findings/ { seen=1; exit } { buf = buf $0 "\n" } END { if (seen) printf "%s", buf }' "$f" 2>/dev/null \
     | grep -m1 -E '^reviewed-sha:[[:space:]]*[0-9a-fA-F]{40}[[:space:]]*$' || true)"
   [ -n "$line" ] || return 1
   line="${line#reviewed-sha:}"
