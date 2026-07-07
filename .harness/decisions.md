@@ -4518,3 +4518,155 @@ resolved). Codex re-raised the pre-existing shipped scan fail-open as P1 → OVE
 present in shipped main (line 199), not introduced by this run, forgery-class, out of scope
 (D-finalize3/4). NOT a forge — the phase is genuinely hardened; this persists the missing
 terminal review artifact. This is the [[drive-ship-conformance-sha-binding]] pattern.
+
+# Decisions — regress-selfid
+
+- **D1 — Marker lives in the review file body, not a sidecar.** The review already carries
+  machine-read in-body lines (`reviewed-sha:`, `## Verdict:`); a body line is atomic with
+  the file and read by the same grep the conformance scan already runs. Classification:
+  Mechanical.
+- **D2 — Marker presence = harden-regress; absence = integration (default).** Makes
+  backward-compat free (old runs read as integration = current behavior) and fails safe (a
+  lost marker degrades a regress file to integration, which the exact yes-vs-marked guard
+  catches as a drop). Classification: Mechanical.
+- **D3 (revised r1) — Redefine `regress-mismatch` as the ASYMMETRIC guard
+  `marked-regress > harden-yes` (surplus only), replacing `yc > prc`.** A deficit
+  (`marked-regress < harden-yes`) is NOT a fire — it is a drop/inflight/legacy transient
+  healed by exact resume re-dispatch of `harden-yes − marked-regress`. Reuse the violation
+  name. The asymmetry resolves both round-1 P1s (no false-fire on legacy `0 ≤ yes` nor on
+  the mid-harden crash window `0 < 1`) while keeping multi-drop unmaskable. Classification:
+  Taste.
+- **D4 — Exact marker token deferred to /drive-design** (greppable, non-incidental,
+  consistent with the existing `key: value` line style). Classification: Mechanical.
+- **D5 (new r1) — No era-version/schema field added to `state.json`.** The uniform
+  asymmetric guard makes backward-compat inherent (legacy `marked=0 ≤ harden-yes` never
+  fires), so no cutover discriminator is needed; and `--mode checkpoint` never reads
+  `state.json` (git+artifacts only), so an era signal could not live there anyway. Avoids
+  the masking hole a "zero-marked ⇒ legacy fallback" branch would reopen. Classification:
+  Mechanical.
+- **D6 (new r1) — Marker classification uses a LINE-ANCHORED grep
+  (`^harden-regress:`), never a body substring.** This feature's own phase-integration
+  review contains the literal `harden-regress:` in prose; a substring match would
+  misclassify it as marked and (via `marked > yes`) false-fire. Contract-test
+  mutation-verify: delete the marker line → file reclassifies as integration. r2: also add
+  the reverse-direction contract test (integration prose starting a line with the token must
+  NOT misclassify as marked) + constrain the token so it can't legitimately begin a line.
+  Classification: Mechanical.
+- **D2 (revised r2) — Marker-loss deficit is a DIAGNOSTIC, not the heal trigger.** A lost
+  marker shows as `marked-regress < harden-yes`; the heal fires ONLY if it left a ship-blocking
+  FINDINGS terminal on a hardened phase (D7). A marker-loss on a CONVERGED terminal already
+  ships (marker-agnostic b-i) → no-op, no converged→FINDINGS flip. Classification: Mechanical.
+- **D7 (new r2) — Heal is an ALL-PHASES resume sweep keyed off the ship symptom.** Current
+  resume has no bullet re-visiting an already-advanced phase (drive.md:235-237 = only
+  `hardening`/un-advanced `hardened`), so the c7-gate-bypass case would stay unfixed. Sweep
+  every phase (advanced included) BEFORE routing/`phaseBaseSha` overwrite, bind each surviving
+  `phaseInt/<runId>/<P>` tip, trigger ONLY on hardened-phase + FINDINGS-terminal (deficit is a
+  diagnostic, not the trigger). Classification: Taste.
+- **D8 (new r2) — Heal is a BOUNDED re-review owned by the resume sweep, fail-closed to STOP.**
+  Heal path sits outside the harden 3-fix-round loop, so own cap `HEAL_CAP` (small; counter
+  `state.healRound[<P>]`; frozen tip → one re-review usually suffices, cap bounds marker-emit
+  retries). CONVERGED → healed; FINDINGS → non-decision STOP (never forge CONVERGED);
+  marker-emit-fails → bounded retry then STOP. Not a new false-block (terminal was already
+  FINDINGS). Classification: Taste.
+- **D7 (revised r3) — Heal trigger is a STALE ship-blocking terminal (`reviewed-sha ≠ hardened
+  tip`), not the raw count.** Sweep fires only on hardened + highest-N FINDINGS + terminal
+  `reviewed-sha ≠ git rev-parse phaseInt/<runId>/<P>` (missing sha = ≠tip); the re-review writes
+  at the hardened tip so it self-terminates (CONVERGED flips the terminal; a genuine FINDINGS is
+  now bound to the tip) — no re-heal loop. `reviewed-sha` (not "unmarked-only") heals BOTH
+  marker-era (marked FINDINGS terminal) and legacy stale cases. Classification: Taste.
+- **D8 (revised r3) — Heal is a SINGLE no-counter re-review per resume leg; drop `HEAL_CAP` +
+  `state.healRound`.** `verdict_converged()` reads `## Verdict:` not the marker (self-terminating
+  on first CONVERGED write; FINDINGS STOPs first attempt → no retry to bound); `healRound` has no
+  artifact ground truth (violates `max(state,artifact)`); a `HEAL_CAP>1` retry writes a 2nd marked
+  file → `marked>yes` → self-wedge on the feature's own guard. At most ONE marked file per episode
+  ⟹ `marked ≤ harden-yes`. Classification: Taste.
+- **D9 (new r3) — Single owner by construction: resume sweep SKIPS any phase with an open
+  `inflight-harden-<P>.marker`.** Harden persists HARDENED before clearing the marker
+  (drive-harden.md:141,255); a crash there leaves open-inflight + hardened + FINDINGS → both
+  stranded-marker recovery AND the sweep eligible → double-dispatch → `marked>yes` HARD STOP. Skip
+  rule (promoted from r2 OQ2 to approach level) makes owners disjoint; `/drive-design` pins wording
+  only. Classification: Taste.
+- **D1 (reaffirmed r3) — Marker atomicity covers no-partial-marker.** The marker line is written
+  atomically WITH the review file and its `reviewed-sha`, so a heal file is fully written (marker +
+  reviewed-sha) or not at all — no torn "unmarked FINDINGS" state → no marker-emission retry
+  needed. Classification: Mechanical.
+- **D10 (new r4) — Heal re-review recovers its diff base from DURABLE per-phase refs, not the
+  mutable global `phaseBaseSha`.** Closes round-4 MAJOR-1: only one global `phaseBaseSha` is
+  persisted, overwritten each phase (drive.md:296), so an advanced phase's base is gone. Recover
+  `base(P)=phaseInt/<runId>/<P-1>` for P>1 (survives advance — drive.md:1196-1197 removes only the
+  integration worktree + slice branches; equalled phase P's frozen `phaseBaseSha` at its start),
+  `base(1)=baseRef`; heal diffs `git diff <base(P)>..phaseInt/<runId>/<P>`. Exact P=1 binding under a
+  moved main is a /drive-design detail. Classification: Taste.
+- **D11 (new r4) — `marked-regress` counted as DISTINCT `reviewed-sha` values among marked
+  review-phase<P> files, not raw file count.** Closes round-4 MAJOR-2: a stranded dual-voice
+  recovery appends a SECOND marked file (N=file-count+1, orphan not removed — drive-review.md:58,62,
+  drive.md:508) → raw count false-fires the surplus guard. Distinct-sha dedupes it (each real fix
+  round = a distinct post-fix tip; a stranded duplicate shares the tip → counted once), making both
+  the surplus guard (`distinct-marked-sha > harden-yes`) and deficit immune, and protecting the
+  NORMAL harden loop (not just the heal — the asymmetric guard would otherwise regress a benign
+  duplicate into a false STOP). `integration-round` stays `count(unmarked)` (legacy unmarked files
+  may lack reviewed-sha; inflation benign under `max(state,derived)`). Exact bash (grep reviewed-sha,
+  sort -u, count) is a /drive-design detail. Classification: Taste.
+- **D10 (revised r5) — Heal diff base keyed off `state.phaseList` ORDER, not arithmetic `P-1`;
+  injected as an explicit review arg.** Closes round-5 MAJOR-2: phase ids are ordered but may be
+  non-numeric (drive.md:1030), so `<P-1>` is wrong. `base(P) = phaseInt/<runId>/<prev>` where `<prev>`
+  is the entry immediately preceding `P` in `state.phaseList`; first entry → `state.baseSha` (D12).
+  base(P) is passed as an explicit override to /drive-review — never by temp-mutating the global
+  `phaseBaseSha` (breaks a multi-phase sweep). Classification: Taste.
+- **D12 (new r5) — Add durable `state.baseSha`, write-once at fresh-run setup, as the FIRST phase's
+  heal base.** Closes round-5 MAJOR-1: `state.baseRef` is a movable branch NAME (drive.md:295,371;
+  finalize/ship consume it live), so a moved `main` leaves no durable original base for phase-1's
+  heal. Capture `git rev-parse baseRef` at `featureBranch` cut (drive.md:288), write-once, never
+  re-derived on resume (mirrors repoRoot). NOT a checkpoint proof input (checkpoint never reads
+  state.json) and NOT a counter (no max(state,derived) rule); add it to the `state.json`
+  shape/`test_state_json_shape` pin. Classification: Taste.
+- **D6 (OQ3 corrected r5) — Prior-epoch UNMARKED review-phase files CAN co-exist; count ALL unmarked
+  across epochs.** Closes round-5 MINOR: phase-review FINDINGS→IMPLEMENT (drive.md:1167)→REDESIGN
+  (drive.md:1138) with `phaseReview[<P>].round` NOT reset (drive.md:1111,1145) persists prior-epoch
+  unmarked files. Counting all unmarked across epochs is the intended safe model (inflation benign
+  under `max(state,derived)`); the marked/harden-yes surplus stays single-epoch by construction
+  (harden never ran pre-redesign). Classification: Mechanical (correctness-forced).
+- **D12 (revised r6) — Legacy run (baseSha ABSENT) first-phase heal = FAIL-CLOSED NON-DECISION
+  STOP; keep `baseSha` OPTIONAL (state-lint never requires it).** Closes round-6 codex MAJOR: a run
+  created before `state.baseSha` resumes fine (state-lint is a positive validator, does not require
+  it — drive-conformance.sh:891-1030), but its FIRST phaseList entry has no durable base(1) and
+  re-deriving is forbidden → previously undefined. FIX: the resume sweep does NOT auto-heal the first
+  phase of a baseSha-absent run; it surfaces a NON-DECISION STOP to the documented MANUAL
+  harden-regress recovery (bind the hardened tip, re-review for real, never forge — memory
+  drive-harden-regress-must-persist-terminal-converged). Scoped ONLY to the first phaseList entry of
+  a baseSha-absent run (P>1 heals off durable `phaseInt/<prev>`; a NEW run heals its first phase off
+  `state.baseSha`). Do NOT make state-lint require `baseSha` (would false-reject legacy routing).
+  Classification: Taste.
+- **D10 (revised r6) — Inject base(P) as an OPTIONAL drive-review override, DEFAULTING to the
+  global `phaseBaseSha`.** Closes round-6 codex MINOR: the injected base(P) needs a drive-review
+  input-contract change (today `phase <P>` hardcodes the global `phaseBaseSha`, drive-review.md:36;
+  argument-hint omits a base arg, drive-review.md:3). Pin it as an OPTIONAL override arg to
+  `/drive-review phase <P>`, defaulting to the current global when not supplied — so ONLY the
+  resume-sweep heal supplies it and normal build-time `phase <P>` / `phase <P> harden-regress`
+  invocations are unchanged. Named as a touch-point. Classification: Taste.
+- **Docs (r6, Claude MINOR) — reword the base(P) non-numeric-id rationale to the `4a`-suffix
+  grammar.** The `["auth","api"]` example is impossible (state-lint enforces `^[0-9]+[a-z]?$`,
+  drive-conformance.sh:929). The DECISION stays correct (arithmetic `P-1` is undefined on suffixed
+  ids like `4a`/`4b`); reworded every occurrence (design ~76/203/271/453) to cite the real suffix
+  grammar. Classification: Mechanical (correctness-forced doc fix).
+
+## Phase-1 detailed-design decisions (design-phase1.md)
+- **DD1 — Marker classifier VALUE-anchored `^harden-regress:[[:space:]]*yes[[:space:]]*$`, token `harden-regress: yes`.** Tightens D6's `^harden-regress:` sketch: integration prose may mention the token but won't be a whole line exactly `harden-regress: yes`; closes reverse-direction misclassification without a substring match. Classification: Mechanical (correctness-forced; D4 deferred exact token here).
+- **DD2 — On surplus-guard fire, `phaseReviewRound = count(unmarked)`, NOT clamped to 0.** Integration round is now independent of the marked surplus (disjoint file sets); the old `yc>prc` clamp would undercount legitimate unmarked integration files. Surplus reported as its own `regress-mismatch`; round stays honest unmarked count (a `max(state,derived)` hint). Classification: Taste.
+- **DD3 — Base override is the named defaulted token `base=<40-hex>`.** Unambiguous vs the existing optional `harden-regress` positional; `key=val` matches run conventions; only the heal supplies it. Classification: Taste.
+- **DD4 — Heal-sweep placement: final resume reconciliation action (after Counter-reconstruction + Stranded-marker recovery, before Fresh-session-orientation).** Depends on settled inflight-harden state + reconstructed counters, must precede Execute re-entry (phaseBaseSha overwrite) — all satisfied. STOP routes via the existing Present-human-pause path. Recommended over hooking `hardening` (misses advanced phases = the c7 case). Classification: Taste.
+- **DD5 (corrected r2, Claude P2) — `baseSha` gets a NEW presence + write-once pin in `test_state_json_shape.py`, NOT added to CORE_KEYS.** `repoRoot`'s precedent is the write-once DISCIPLINE in drive.md (:311–316), NOT a test pin (test_state_json_shape has no repoRoot pin; CORE_KEYS excludes it; test_drive_retention treats it as optional). So there is no pin to "mirror" — add a NEW baseSha presence/write-once assertion from scratch; keep it out of CORE_KEYS. Classification: Taste.
+- **DD6 (new r2, Claude MAJOR / codex BLOCKING #2) — Heal dispatch uses a DISTINCT `inflight-heal-<P>.marker`, excluded from generic stranded-marker recovery, owned by the resume sweep.** Generic recovery (drive.md:161–169,:497–515) re-dispatches a stranded `inflight-review-phase<P>.marker` by scope alone as a plain `phase <P>` review → strips the heal's harden-regress flag (unmarked terminal) AND `base=` override (wrong global phaseBaseSha for an advanced phase) → NEW permanent false ship-block. Fix: distinct marker kind, carved out of generic recovery; the SWEEP recovers it (recomputes base(P) deterministically from durable data, re-dispatches at the SAME hardened tip → same reviewed-sha → deduped → never trips surplus guard; sweep-vs-recovery order irrelevant). Output still the marked review-phase<P>-N.md family; only the dispatch marker is distinct. Classification: Taste.
+- **DD7 (new r2, codex BLOCKING #2) — `base=<40-hex>` is STRIPPED before `<scope>` derivation.** drive-review scans args for `^base=([0-9a-fA-F]{40})$`, captures `<diffBase>`, removes the token, then derives scope/harden-regress from the remainder (scope stays `phase<P>`). Absent → global `phaseBaseSha`. Normal build-time invocations byte-identical. Classification: Mechanical (correctness-forced).
+- **DD8 (new r2, Claude MINOR) — Marker classifier is HEADER-REGION bound.** The value-exact anchor matches ONLY before the first `## Findings` (header preamble), so a fenced-code quote of `harden-regress: yes` in the review body (this feature's own review is the likely offender) cannot misclassify a file as marked. A structural fixed-position anchor over generated output, replacing the soft "wrap in backticks" plea as the load-bearing mechanism. Relies on the schema's always-present `## Findings` header (drive-review.md:115–118). Classification: Mechanical (correctness-forced).
+- **Refuted r2 (codex BLOCKING #1) — stale-CONVERGED terminals do NOT false-block ship; trigger stays FINDINGS-only.** Verified: ship b-i counts a phase review on `verdict_converged`+`reviewed_sha_of` PRESENCE+`codex_present` (bin/drive-conformance.sh:480–488), NO `rsha==tip` (that check is check_scope_counts:252, used by build-time phase-merge:391, not ship b-i; terminal sha-binding at ship is b-ii/finalize :505–507). A stale-CONVERGED terminal satisfies b-i; only a FINDINGS terminal fails verdict_converged. Refutation recorded in design §1.8; do NOT expand the trigger. Classification: Mechanical (evidence-refuted).
+- **drive-review.md:43 reword (r2, Claude P2) — "the ONLY difference is the counter" → TWO file-family-preserving differences** (no round increment + the `harden-regress: yes` marker). Reds the test_checkpoint_contract.py:800–808 pin; update it in the same commit (lockstep). Classification: Mechanical (correctness-forced doc fix).
+- **DD9 (r3, codex BLOCKING) — Resume sweep OWNS recovery of an OPEN `inflight-heal-<P>.marker`, keyed on the MARKER (adopt/re-dispatch), ORDERED before the stale-FINDINGS trigger.** Distinct marker (DD6) alone isn't crash-safe: `/drive-review` writes the Claude file (drive-review.md:115) before the codex sibling (:141), so a crash after the marked file lands at the hardened tip leaves the terminal `reviewed-sha == tip`, which the stale-FINDINGS trigger SKIPS → with generic recovery carved out (DD6) the marker orphans (checkpoint never clean, inflight-open glob :581). Fix: sweep's FIRST per-phase action recovers the open marker via drive.md:497–515 (adopt if marked-file-at-tip + non-empty codex, else re-dispatch recomputing base(P) at the same tip; no cap → STOP unreachable), THEN the trigger runs. Classification: Mechanical (correctness-forced crash-safety).
+- **DD10 (r3, codex BLOCKING) — `is_marked` uses a `found`-flag predicate, NOT `END { exit 1 }`; writer pins the marker to the header preamble.** In awk `END` runs after an earlier `exit`, so `/marker/ {exit 0}` + `END {exit 1}` overrides the match → every file UNMARKED → distinct-marked-sha=0 → surpluses false-pass. Correct form: set `found` on match, decide exit at `^## Findings` (`exit(found?0:1)`) or `END` (`exit(found?0:1)`). Verified in bash: marked→rc0, unmarked→rc1, quoted-below-Findings→rc1. Writer MUST place the marker after `reviewed-sha:` and before `## Findings` (schema drive-review.md:118→119 guarantees it; pinned so it can't drift). Classification: Mechanical (the pinned awk was non-functional).
+- **DD11 (r3, codex MAJOR / Claude P2) — AC14 re-scoped: resume-sweep coverage lands in `test_checkpoint_contract.py` (executable `--mode checkpoint` fixtures + prose-grep pins); `test_rebirth_e2e.py` DROPPED from the lockstep set.** That harness does NOT run the coordinator (docstring lines 9–15). The feature's executable surface lives entirely in drive-conformance.sh (marker classification, distinct-sha, surplus guard, inflight-open on the heal marker) → behavioral tests there; the coordinator prose (sweep ordering, `inflight-heal-*` carve-out, FINDINGS→STOP, `base=` strip) → prose-grep pins there. No genuinely-executable piece needs test_rebirth_e2e.py. Lockstep set = test_checkpoint_contract.py + test_state_json_shape.py. Classification: Taste.
+- **DD12 (r3, Claude MAJOR) — AC11 subtraction-pin lockstep ENUMERATED by name+line; two ABOVE-band behavioral fixtures named with corrected values; SPLIT the regress fixture.** The prior "all ~517–885" scoping UNDERCOUNTED — `test_checkpoint_clean_fixture_passes_with_counters` (:161) and `test_checkpoint_regress_mismatch_violation_and_zero_round` (:215–229) sit above the band and INVERT under the marker/distinct-sha reader (§1.3/DD2/DD3): clean `phaseReviewRound {"1":2}→{"1":3}` (3 unmarked = 3 rounds, no subtraction), and the regress fixture's yes>files premise is now a benign DEFICIT (no fire, `{"1":1}`). FIX: AC11 enumerates ALL fixtures/pins by name+line with corrected shapes — clean → `{"1":3}` (Option (a), pure integration baseline); regress SPLIT into a SURPLUS fixture that fires (2 marked distinct-sha + 1 harden-yes → `2>1`, round `{"1":1}` NOT clamped — the DD2 guard) + a DEFICIT fixture (old inputs, benign); plus in-band `test_harden_regress_no_round_increment_contract_pinned_both_voices` (mark one file → `{"1":2}` preserved) and `test_five_reconstruction_rules_pinned` rule-2 pin; plus a LOCAL `_marked_review` helper (owned; shared `_helpers.py::_review` untouched). Classification: Mechanical (correctness-forced — the "suite GREEN" guarantee was false until these are named).
+- **DD13 (r4, Claude BLOCKING, refines DD12) — AC11 restructured to representative-enumeration + grep completeness backstop + green-suite gate; `test_harden_regress_no_round_increment_contract_pinned_both_voices` owned as a WHOLE-test semantic rewrite.** Round-4 found DD12's per-line enumeration STILL missed a pin — the drive.md :774–778 "1:1 marker" clause, a second assertion of the same drive.md:256–258 span §1.6 rewrites — the enumeration treadmill. FIX: AC11's BINDING acceptance is now GREEN `python3 -m pytest tests/contracts` backed by a mandatory grep sweep of `test_checkpoint_contract.py` for every subtraction-era token (`prc - yc`, `MINUS`, `- 1 yes`, `1:1 marker`, `without incrementing the round`, `would otherwise go negative`, each `regress-mismatch` premise), rewriting each surviving occurrence — so the design no longer depends on exhaustive line-enumeration. AC11 #3 rewritten to own the whole test: half-A drive-review.md :793–799 SURVIVES (harden-regress still does not increment the round); drive.md :774–778 + drive-review.md :800–808 + conformance :819/:823/:828–834 subtraction pins RE-PINNED to the marker/distinct-sha contract. Classification: Mechanical (correctness-forced).
+
+## Finalize round 1 triage (2026-07-07T16:16:50Z)
+- **D-fin1 (P1-a OVERRULE → ARCH, Mechanical):** codex flagged the heal/`base=`/`baseSha` recovery path as a P1 missing-test. Overruled as an in-run fix with evidence: grep proves these tokens exist only in drive.md/drive-review.md PROSE + substring-pin tests; bin/drive-conformance.sh has no executable consumer. An E2E test is a new harness-driver subsystem (out of blast radius). Routed to finalize-todo.md as ARCH (codex itself co-filed it ARCH).
+- **D-fin2 (P1-b ACCEPT, Mechanical):** codex flagged body-only-sha / missing-`## Findings` as untested for the slice-merge & audit consumers of the shared check_scope_counts→reviewed_sha_of gate. Accepted (adversarial voice on a security gate; cheap in-scope; mutation-verifiable). Adding slice-merge + audit body-only-sha tests that RED on the pre-fix whole-file reader.

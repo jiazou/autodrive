@@ -807,3 +807,26 @@ test/install-drive-hooks.test.sh:420-423 — comment says three hooks/four entri
 - test/drive-tool-gate.test.sh:594,643 — comments describe the file/branch suffixes as "shared
   GitHub suffixes (server-wildcarded)"; historically accurate provenance (enumerated for GitHub
   in the shipped gate, reused by GitLab via server-wildcard). Optional s/GitHub/shared/ nicety.
+
+## slop (deferred to finalize)
+- bin/drive-conformance.sh:~223-231 — reviewed_sha_of comment narrates iteration history ("This removes the last whole-file/EOF fallback", "closing the body-only-sha bypass for no-`## Findings` files"); trim to the contract, drop the what-it-used-to-do narration.
+- bin/drive-conformance.sh:~700 — PARSEABILITY BOUNDARY comment tagged "(root fix, COMPLETED)"; iteration-status narration, cut to the invariant.
+- tests/contracts/test_checkpoint_contract.py — pervasive round-history narration in docstrings across the new fixtures ("round-3 BLOCKING", "Round-5 BLOCKING", "Round-6 boundary completion", "codex's (i)/(ii)", "codex's round-5/6 reproduction, CLOSED", "the round-4 behavior … was itself UNSAFE"); reduce to the intent each test pins, not the review-round provenance.
+- tests/contracts/test_checkpoint_contract.py:26-37 — `_findings_review` docstring aside that `_helpers._review` "predates the `## Findings` schema pin"; historical aside, state only the helper's contract.
+- tests/contracts/test_checkpoint_contract.py:367 — provenance/iteration-history narration in docstring
+- tests/contracts/test_checkpoint_contract.py:552 — provenance/iteration-history narration in docstring
+- tests/contracts/test_checkpoint_contract.py:1297 — provenance/iteration-history narration in docstring
+- test/drive-conformance.test.sh:483-484 — CK1 comment still frames phaseReviewRound as "3 review-phase1 files MINUS the 1 AppliedEdits:yes regress marker" (old subtraction rationale, conflates a harden-yes file with the now-MARKED review). Asserted value {"1":2} is correct under count(unmarked); reword to the marker rule (2 unmarked + 1 marked harden-regress → round 2, no subtraction).
+- test/drive-conformance.test.sh:535-538 — CK2 header "regress subtraction edge" + comment "yes-count exceeding the review-file count is malformed" + assert label "CK2 yes-count > review count -> exit 1" describe the OLD deficit premise; the fixture is now SURPLUS (3 distinct marked reviewed-shas > 2 harden-yes). Assertions bite correctly; retitle to the surplus semantics.
+
+## followups
+- tests/_helpers.py:59 — _review emits reviewed-sha for design/phasedesign fixtures (real writer omits it); shared-fixture fidelity, no live failure
+- test/fixtures/mkfixture.sh + test/drive-conformance.test.sh + tests/_helpers.py — review-artifact schema duplicated across 3 emitters (drift vector); structural dedup
+- test/drive-conformance.test.sh:491 — CK1 comment narrates subtraction-era 'files MINUS regress marker'; fixture is now marker-aware, update wording
+- test/drive-conformance.test.sh:544,547 — CK2 labeled 'regress subtraction edge'/'yes-count > review count'; no longer matches the marked-surplus fixture semantics
+
+## Finalize round-2 deferrals (2026-07-07T16:56:47Z) — non-blocking (audit CONVERGED; both voices 0 P1)
+- tests/contracts/test_checkpoint_contract.py:97 / tests/_helpers.py — `_findings_review` helper name still reads as "emits FINDINGS" though it defaults CONVERGED. Round 1 corrected the docstring; the NAME remains. Deferred: rename is churn across 2 call sites for a test-helper, zero production impact, and the two finalize voices split on it. (codex P2, round 1+2.)
+- test/drive-conformance.test.sh (slice-merge ~193 / audit ~398) — non-criterion matrix gap: the bash suite pins the body-only-sha variant for slice-merge+audit but not the no-`## Findings`/EOF variant through those same entrypoints. Both inputs reach the IDENTICAL `check_scope_counts`→`reviewed_sha_of` rc1 branch that round 1's body-only-sha tests already exercise there, and the shared path is proven in pytest (test_checkpoint_contract.py:692). codex itself rated it P2 and conceded the shared path is proven. (codex P2, round 2.)
+- bin/drive-conformance.sh:210, test/fixtures/mkfixture.sh:38, tests/contracts/test_checkpoint_contract.py:412 — codex flagged the long rationale blocks as removable slop; RETAINED as load-bearing "why" (awk exit→END fall-through / header-region binding / fail-closed rationale) per the Claude voice + OPERATING's "comments keep the non-obvious why". Recorded as a considered-and-declined de-slop, not a pending fix. (codex P2 vs Claude split, round 2.)
+- .claude/commands/drive-review.md:139, .claude/commands/drive.md:281 — further prose trims are VETOED: the wording is exact-string-pinned by tests/contracts/test_checkpoint_contract.py:1481 and test_state_json_shape.py:102; trimming reds those pins. (codex P2, rounds 1+2 — the "unsafe de-slop" warning.)
