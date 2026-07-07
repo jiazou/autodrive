@@ -130,6 +130,31 @@ def _run_checkpoint(repo, rd):
     return proc.returncode, json.loads(proc.stdout)
 
 
+def _run_mode(repo, rd, mode):
+    """Run an arbitrary conformance mode (e.g. `phase-merge:1`, `ship`) from inside the
+    repo; return (returncode, parsed-json). Same driver as `_run_checkpoint`, generalized
+    so the header-bound reviewed-sha contract can be proven on the SIBLING gates that also
+    consume `reviewed_sha_of` — not just `--mode checkpoint`."""
+    proc = subprocess.run(
+        ["bash", str(CONFORMANCE), str(rd), "--mode", mode],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    assert proc.stdout.strip(), f"no JSON on stdout (stderr={proc.stderr!r})"
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def _body_only_sha_review(rd, scope, tip):
+    """Write `review-<scope>-<1>.md` whose header is CONVERGED but carries NO header
+    `reviewed-sha:` — the ONLY `reviewed-sha: <tip>` line is a fenced BODY quote BELOW
+    `## Findings`. Under the pre-fix whole-file `reviewed_sha_of` this body sha == tip
+    would satisfy the gate's tip-binding; under the header-bound reader it is invisible."""
+    (rd / f"review-{scope}-1.md").write_text(
+        f"# Review {scope} round 1\n## Verdict: CONVERGED\n"
+        f"## Findings\nThe writer emits it like:\n```\nreviewed-sha: {tip}\n```\nend.\n",
+        encoding="utf-8",
+    )
+
+
 def _reasons(obj):
     return {v["reason"] for v in obj["violations"]}
 
@@ -333,6 +358,53 @@ def test_checkpoint_marked_file_body_only_sha_excluded_from_distinct(tmp_path):
     assert "regress-mismatch" not in _reasons(obj), obj["violations"]
     # The file IS marked → it does NOT count toward the integration round either.
     assert obj["counters"]["phaseReviewRound"] == {"1": 0}, obj["counters"]
+
+
+def test_phase_merge_body_only_sha_not_tip_bound(tmp_path):
+    """MAJOR-fix regression pin (unify sibling gates on the header-bound reviewed-sha reader):
+    the build-time `--mode phase-merge:<P>` gate (via `check_scope_counts` → `reviewed_sha_of`)
+    must NOT accept a phase review whose ONLY `reviewed-sha: <tip>` is a fenced BODY quote below
+    `## Findings` — matching `--mode checkpoint`'s header-only contract. Otherwise a body-only-sha
+    review would satisfy merge tip-binding but not checkpoint (the inconsistency codex flagged).
+
+    Mutation-verify (REDs on the pre-fix whole-file `reviewed_sha_of`): the body sha EQUALS the
+    real `phaseInt/<runId>/1` tip. The pre-fix whole-file read finds it → `rsha == tip` → the
+    scope COUNTS → gate CLEAN (rc 0). The header-bound read yields NO header sha → `reviewed_sha_of`
+    rc1 → `sha-mismatch` → the scope does NOT count → gate BLOCKS (rc 1)."""
+    repo, rd = _base_run(tmp_path, "pm-bodysha")
+    _git(repo, "checkout", "-q", "-b", "phaseInt/pm-bodysha/1")
+    _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
+    tip = _rev(repo, "phaseInt/pm-bodysha/1")
+    _body_only_sha_review(rd, "phase1", tip)
+    _codex(rd, "phase1")   # present so the pre-fix reader would reach a CLEAN verdict
+
+    rc, obj = _run_mode(repo, rd, "phase-merge:1")
+    assert rc == 1, f"body-only sha must not tip-bind phase-merge → block; got {obj}"
+    assert "sha-mismatch" in _reasons(obj), obj["violations"]
+
+
+def test_ship_body_only_sha_phase_review_not_counted(tmp_path):
+    """MAJOR-fix regression pin (ship b-i + finalize b-ii on the header-bound reader): a phase
+    review AND the finalize review whose ONLY `reviewed-sha` is a fenced BODY quote must NOT
+    satisfy ship's tip-binding — b-i's `candidate_R` (via `reviewed_sha_of`) stays empty →
+    `no-phase-review`. Under the pre-fix whole-file reader the body sha would populate
+    `candidate_R` → b-i passes and ship falls through to the finalize check.
+
+    Mutation-verify (REDs on the pre-fix reader): with a body-only-sha phase review + codex, the
+    pre-fix read counts it (b-i satisfied) and — no finalize artifact → `no-review`. The
+    header-bound read leaves `candidate_R` empty at b-i → `no-phase-review`. Asserting the
+    b-i-specific reason pins that the phase reader (not just finalize) is header-bound."""
+    repo, rd = _base_run(tmp_path, "ship-bodysha")
+    _git(repo, "checkout", "-q", "-b", "phaseInt/ship-bodysha/1")
+    _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
+    _git(repo, "checkout", "-q", "drive/ship-bodysha")
+    tip = _rev(repo, "phaseInt/ship-bodysha/1")
+    _body_only_sha_review(rd, "phase1", tip)
+    _codex(rd, "phase1")
+
+    rc, obj = _run_mode(repo, rd, "ship")
+    assert rc == 1, f"body-only sha phase review must not satisfy ship b-i; got {obj}"
+    assert "no-phase-review" in _reasons(obj), obj["violations"]
 
 
 def test_checkpoint_distinct_sha_dedup(tmp_path):
