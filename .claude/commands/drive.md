@@ -323,7 +323,21 @@ verdict / merge / gate.
          `/drive-review phase <P> harden-regress base=<base(P)>` at the hardened tip, then
          clear the marker. Idempotent: it binds the SAME hardened tip → SAME `reviewed-sha`
          → any stranded duplicate marked file is deduped by distinct-`reviewed-sha` → never
-         trips the surplus guard.
+         trips the surplus guard. THEN inspect the re-dispatched terminal's `## Verdict:`
+         (first line) to decide continue-vs-STOP — the stale-FINDINGS trigger (step 3) will
+         NOT make this call: the re-dispatched terminal lands at the hardened tip
+         (`reviewed-sha == tip`), which the trigger self-terminates on and SKIPS.
+         - **Re-dispatched terminal CONVERGED (at the hardened tip) → healed:** continue (the
+           same outcome as the fresh CONVERGED heal, step 5).
+         - **Re-dispatched terminal FINDINGS (at the hardened tip) → HONEST terminal
+           NON-DECISION STOP, routed to MANUAL recovery** (the SAME path as the fresh-dispatch
+           FINDINGS outcome, step 5): a genuine open P1 at the hardened tip — NOT automated
+           closure and NOT a new false block (the terminal was ALREADY FINDINGS/ship-blocking
+           before the heal). Surface a non-decision STOP (Present human pause, `waiting =
+           "stop:<short>"`) reporting the phase + hardened tip and the documented MANUAL
+           harden-regress recovery (bind the hardened tip, re-review/fix for real, NEVER
+           forge). Shippability is UNCHANGED. Self-terminating: the at-tip `reviewed-sha`
+           keeps the trigger from re-firing.
     2. **Skip the fresh trigger (steps 3–5) for a phase with an open
        `inflight-harden-<P>.marker`** (single owner) — that phase is owned by the harden
        loop's stranded-marker recovery (harden persists `## Verdict: HARDENED` before

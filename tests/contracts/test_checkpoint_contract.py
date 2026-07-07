@@ -364,6 +364,51 @@ def test_checkpoint_marker_classifies_marked_vs_unmarked_and_body_fenced(tmp_pat
     assert obj["counters"]["phaseReviewRound"] == {"1": 2}, obj["counters"]
 
 
+def test_checkpoint_negative_classifier_variants_all_unmarked(tmp_path):
+    """codex P1 (AC2 negative branches): the `^harden-regress:[[:space:]]*yes[[:space:]]*$`
+    header-region, column-0, VALUE-exact anchor classifies these three near-miss header
+    occurrences as UNMARKED (integration), NOT marked regress:
+      (a) `harden-regress: no`  — value is `no`, not `yes`;
+      (b) `  harden-regress: yes` INDENTED — not column-0 (`^` anchor);
+      (c) a prose mention of `harden-regress` before `## Findings` — not a standalone `= yes` line.
+    Each is a well-formed parseable review (header sha + `## Findings`) at a DISTINCT sha with
+    ZERO harden-yes, so if ANY misclassified MARKED its distinct sha would make
+    `distinct-marked-sha ≥ 1 > harden-yes = 0` → a `regress-mismatch` fire. All UNMARKED ⇒ no
+    fire, clean, integration-round = count(unmarked) = 3.
+
+    Mutation-verify (REDs under a LOOSER anchor): drop the value-check (`^harden-regress:` only)
+    → (a) marks; drop the column-0 `^` (`harden-regress:...yes`) → (b) marks; use a bare
+    substring (`grep -q harden-regress`) → (c) marks — any of these turns this fixture into a
+    surplus fire (rc 1), so the clean/round-3 assertion is non-vacuous on the exact anchor."""
+    repo, rd = _base_run(tmp_path, "ckpt-negclass")
+    # (a) value `no` in the header preamble (after reviewed-sha, before ## Findings)
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\nreviewed-sha: " + "a" * 40 +
+        "\nharden-regress: no\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+    # (b) INDENTED `harden-regress: yes` (leading whitespace → not column-0)
+    (rd / "review-phase1-2.md").write_text(
+        "# Review phase1 round 2\n## Verdict: CONVERGED\nreviewed-sha: " + "b" * 40 +
+        "\n  harden-regress: yes\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+    # (c) prose occurrence of the token before ## Findings (not a standalone `= yes` line)
+    (rd / "review-phase1-3.md").write_text(
+        "# Review phase1 round 3\n## Verdict: CONVERGED\nreviewed-sha: " + "c" * 40 +
+        "\nThis phase used a harden-regress review earlier; nothing marked here.\n"
+        "## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+    # ZERO harden-yes: any misclassified-marked file makes distinct-marked-sha > 0 → fire.
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"all three near-miss files must classify UNMARKED → clean; got {obj}"
+    assert obj["clean"] is True, obj
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    # all three are UNMARKED integration files → integration round = 3.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 3}, obj["counters"]
+
+
 def test_checkpoint_marked_file_body_only_sha_is_unparseable(tmp_path):
     """Round-6 boundary completion (was `...body_only_sha_excluded_from_distinct`): a MARKED
     review-phase file (header `harden-regress: yes` above `## Findings`) whose ONLY
@@ -715,6 +760,35 @@ def test_ship_no_findings_finalize_review_not_tip_bound(tmp_path):
 
     rc, obj = _run_mode(repo, rd, "ship")
     assert rc == 1, f"no-Findings finalize review must not tip-bind ship b-ii; got {obj}"
+    assert "no-review" in _reasons(obj), obj["violations"]
+
+
+def test_ship_body_only_sha_finalize_review_not_tip_bound(tmp_path):
+    """codex P1 (finalize / ship b-ii arm, the WITH-`## Findings` variant the matrix missed):
+    with a VALID counting phase review (so b-i passes), a finalize review that HAS a NORMAL
+    `## Findings` header but whose ONLY `reviewed-sha: <tip>` is a fenced BODY quote BELOW
+    `## Findings` must NOT bind the terminal candidate-R — `reviewed_sha_of(fin_rf)` reads the
+    header region ONLY (empty here) → `candidate_R=""` → ship blocks with `no-review`. The
+    sibling `test_ship_no_findings_finalize_review_not_tip_bound` covers the NO-`## Findings`
+    variant; this is the b-ii finalize case with `## Findings` present (codex verified the
+    script already blocks it — this is the missing behavioral pin).
+
+    Mutation-verify (REDs on a whole-file `reviewed_sha_of`): the finalize body sha EQUALS the
+    featureBranch tip, so a whole-file read would bind R == tip → (a) ancestor, (b) empty diff
+    ⊆ allowlist, (c) 0 commits → ship clean (rc 0). The header-bound read yields NO finalize
+    sha → `candidate_R` empty → `no-review` (rc 1)."""
+    repo, rd = _base_run(tmp_path, "ship-fin-bodysha")
+    tip = _rev(repo, "drive/ship-fin-bodysha")
+    # b-i satisfied by a well-formed CONVERGED phase review (header sha + ## Findings) + codex.
+    _findings_review(rd, "phase1", 1, sha="a" * 40)
+    _codex(rd, "phase1")
+    # b-ii finalize candidate: HAS `## Findings`, sha ONLY in a fenced BODY quote BELOW it,
+    # == featureBranch tip (so a whole-file reader would satisfy (a)(b)(c) and ship clean).
+    _body_only_sha_review(rd, "finalize", tip)
+    _codex(rd, "finalize")
+
+    rc, obj = _run_mode(repo, rd, "ship")
+    assert rc == 1, f"body-only-sha finalize review (with ## Findings) must not tip-bind ship b-ii; got {obj}"
     assert "no-review" in _reasons(obj), obj["violations"]
 
 
@@ -1506,6 +1580,47 @@ def test_resume_heal_adopt_findings_routes_to_manual_stop():
     ), (
         "the adopt path must route a FINDINGS-at-tip adopted terminal to the manual STOP "
         "(the trigger self-terminates on reviewed-sha == tip and would otherwise drop it)"
+    )
+
+
+def test_resume_heal_redispatch_findings_routes_to_manual_stop():
+    """lens-2 fix (mirror of the adopt-branch pin): the step-1 RE-DISPATCH branch must ALSO
+    inspect the resulting terminal's verdict. A re-dispatched heal lands at the hardened tip
+    (`reviewed-sha == tip`), so the stale-FINDINGS trigger (step 3) SKIPS it — so the
+    re-dispatch path itself must route a FINDINGS-at-tip re-dispatched terminal through the
+    SAME honest manual STOP as the adopt branch / fresh-dispatch outcome (step 5), not
+    silently clear-the-marker-and-continue past a genuine open P1."""
+    blob = _norm(_drive_md())
+    # re-dispatch path is verdict-aware: CONVERGED continues, FINDINGS-at-tip STOPs
+    assert "Re-dispatched terminal CONVERGED (at the hardened tip) → healed" in blob, (
+        "the re-dispatch path must continue only on a CONVERGED-at-tip re-dispatched terminal"
+    )
+    assert (
+        "Re-dispatched terminal FINDINGS (at the hardened tip) → HONEST terminal"
+        " NON-DECISION STOP, routed to MANUAL recovery" in blob
+    ), (
+        "the re-dispatch path must route a FINDINGS-at-tip re-dispatched terminal to the "
+        "manual STOP (the trigger self-terminates on reviewed-sha == tip and would otherwise "
+        "silently continue past it)"
+    )
+
+
+def test_resume_heal_sweep_skips_fresh_trigger_on_open_inflight_harden():
+    """codex P1 (AC9 single-owner): the resume sweep SKIPS the fresh trigger for a phase with
+    an OPEN `inflight-harden-<P>.marker` — that phase is owned by the harden loop's
+    stranded-marker recovery. Without the skip, both the sweep AND harden-recovery would
+    co-dispatch a regress review → two marked files at distinct shas → `distinct-marked-sha >
+    harden-yes` → a false `regress-mismatch` STOP. Mutation-verify: reword the skip clause
+    away (or drop the single-owner ownership statement) and this pin REDs."""
+    blob = _norm(_drive_md())
+    assert (
+        "Skip the fresh trigger (steps 3–5) for a phase with an open "
+        "`inflight-harden-<P>.marker`" in blob
+    ), "the sweep must skip the fresh trigger for a phase with an open inflight-harden marker"
+    # the ownership rationale (single owner — harden-recovery owns that phase) must be pinned
+    assert "single owner" in blob, (
+        "the skip must be justified as single-owner (harden-recovery owns the inflight-harden "
+        "phase; a co-dispatch would false-fire the surplus guard)"
     )
 
 
