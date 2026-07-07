@@ -393,6 +393,39 @@ def test_checkpoint_marked_file_body_only_sha_excluded_from_distinct(tmp_path):
     assert obj["counters"]["phaseReviewRound"] == {"1": 0}, obj["counters"]
 
 
+def test_checkpoint_no_findings_body_marker_not_classified_marked(tmp_path):
+    """Round-4 BLOCKING regression pin (`is_marked` delimiter-required — the sibling of the
+    round-3 `reviewed_sha_of` fix): a MALFORMED review with NO `## Findings` header whose ONLY
+    `harden-regress: yes` occurrence is a fenced BODY quote must classify UNMARKED, NOT marked.
+    The real writer ALWAYS emits `## Findings` with the marker ABOVE it, so a no-`## Findings`
+    file is malformed and FAILS CLOSED to NOT-marked — it counts as an unmarked INTEGRATION
+    file rather than being MARKED-and-excluded (which silently SUPPRESSES phaseReviewRound).
+    Both header-preamble value readers (`is_marked`, `reviewed_sha_of`) are now delimiter-bound;
+    neither has an EOF fallback.
+
+    Mutation-verify (REDs on the pre-fix `is_marked` `END { exit (found ? 0 : 1) }` EOF
+    fallback — codex's exact reproduction): under the pre-fix reader the body `harden-regress:
+    yes` sets `found` and, with no `## Findings` to bound the header, the EOF fallback returns
+    MARKED → the file is excluded from the integration count → `phaseReviewRound == {"1": 0}`
+    (the suppression codex reproduced). The delimiter-required reader honors `found` ONLY when
+    `## Findings` was seen (`seen`); no `## Findings` → UNMARKED → the file counts toward the
+    integration round → `phaseReviewRound == {"1": 1}`."""
+    repo, rd = _base_run(tmp_path, "ckpt-nofindings-marker")
+    # `## Verdict: CONVERGED`, NO `## Findings` header at all; the ONLY `harden-regress: yes`
+    # line is a fenced BODY quote — exactly codex's counterexample.
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\n"
+        "Body prose (no Findings header). The writer emits it like:\n"
+        "```\nharden-regress: yes\n```\nend.\n",
+        encoding="utf-8",
+    )
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"malformed no-Findings file fails closed to unmarked → clean; got {obj}"
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    # UNMARKED (fail-closed) → counts as one integration round; NOT suppressed to 0 (the bug).
+    assert obj["counters"]["phaseReviewRound"] == {"1": 1}, obj["counters"]
+
+
 def test_phase_merge_body_only_sha_not_tip_bound(tmp_path):
     """MAJOR-fix regression pin (unify sibling gates on the header-bound reviewed-sha reader):
     the build-time `--mode phase-merge:<P>` gate (via `check_scope_counts` → `reviewed_sha_of`)
@@ -452,30 +485,38 @@ def test_ship_body_only_sha_phase_review_not_counted(tmp_path):
 # Each is mutation-verified against the pre-fix EOF fallback below.
 # --------------------------------------------------------------------------- #
 
-def test_checkpoint_no_findings_marked_sha_excluded_from_distinct(tmp_path):
-    """round-3 BLOCKING (checkpoint arm): a MARKED review with NO `## Findings` header
-    (header `harden-regress: yes`, NO header `reviewed-sha:`, sha only in a fenced body
-    quote) must be EXCLUDED from `distinct_marked_sha` — so with 0 harden-yes the surplus
-    guard does NOT false-fire.
+def test_checkpoint_no_findings_header_marker_not_classified_marked(tmp_path):
+    """Round-4 BLOCKING (`is_marked` delimiter-required — CONSISTENCY with `reviewed_sha_of`):
+    a review with the `harden-regress: yes` marker in the header region BUT NO `## Findings`
+    header at all is MALFORMED and must FAIL CLOSED to UNMARKED — the delimiter is required
+    even for a header-positioned marker, so `is_marked` and `reviewed_sha_of` share one
+    header-region bound (neither has an EOF fallback). A real harden-regress review ALWAYS
+    emits `## Findings` with the marker above it, so this breaks no legit path; a no-`##
+    Findings` file counts as an unmarked INTEGRATION file (fail-closed direction) rather than
+    being MARKED-and-excluded (which would suppress the round) or feeding a body-only sha into
+    the surplus guard.
 
-    Mutation-verify (REDs on the pre-fix EOF-fallback `reviewed_sha_of`): the pre-fix awk,
-    finding no `## Findings`, runs to EOF and reads the body sha → distinct = 1 → `1 > 0` →
-    regress-mismatch (rc 1). The delimiter-required reader emits nothing (no `## Findings`
-    seen) → NO sha → excluded → distinct = 0 → `0 > 0` FALSE → clean (rc 0)."""
+    Mutation-verify (REDs on the pre-fix `is_marked` `END { exit (found ? 0 : 1) }` EOF
+    fallback): the pre-fix awk, finding no `## Findings`, ran to EOF with `found` set by the
+    header marker → MARKED → excluded from the integration count → `phaseReviewRound == {"1":
+    0}`. The delimiter-required reader honors `found` only when `## Findings` was seen (`seen`)
+    → no `## Findings` → UNMARKED → the file counts toward the integration round → `{"1": 1}`.
+    (The surplus guard also cannot false-fire: with 0 harden-yes and the file UNMARKED, no sha
+    enters `distinct_marked_sha` at all.)"""
     repo, rd = _base_run(tmp_path, "ckpt-nofind")
-    # MARKED in the header (harden-regress: yes, whole file is header — no ## Findings) but
-    # the ONLY reviewed-sha is a fenced body quote.
+    # `harden-regress: yes` in the header region, NO `## Findings` anywhere; the only
+    # reviewed-sha is a fenced body quote. Malformed → fails closed to UNMARKED.
     (rd / "review-phase1-1.md").write_text(
         "# Review phase1 round 1\n## Verdict: CONVERGED\nharden-regress: yes\n"
         "Body prose (no Findings header):\n```\nreviewed-sha: " + "a" * 40 + "\n```\nend.\n",
         encoding="utf-8",
     )
-    # 0 harden-yes → the surplus guard fires iff the body sha is (wrongly) counted.
+    # 0 harden-yes → the surplus guard would fire iff a sha were (wrongly) counted as marked.
     rc, obj = _run_checkpoint(repo, rd)
-    assert rc == 0, f"no-Findings body sha on a marked file must be excluded → clean; got {obj}"
+    assert rc == 0, f"no-Findings file fails closed to unmarked → clean; got {obj}"
     assert "regress-mismatch" not in _reasons(obj), obj["violations"]
-    # The file IS marked (marker in the header region) → does NOT count toward the round.
-    assert obj["counters"]["phaseReviewRound"] == {"1": 0}, obj["counters"]
+    # UNMARKED (delimiter required) → counts as one integration round; NOT suppressed to 0.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 1}, obj["counters"]
 
 
 def test_phase_merge_no_findings_body_sha_not_tip_bound(tmp_path):

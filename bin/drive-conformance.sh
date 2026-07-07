@@ -247,16 +247,30 @@ reviewed_sha_of() {
 # `harden-regress: yes` control line is present. $1=file. HEADER-REGION bound: the value-exact
 # anchor matches ONLY within the file's header preamble — the lines from BOF up to (not
 # including) the first `## Findings` section header — so a `harden-regress: yes` line quoted in
-# the review BODY (all findings prose + fenced code live after `## Findings`) cannot match. Uses
-# a `found`-flag predicate, NOT `END { exit 1 }`: in awk `END` runs after an earlier `exit`, so
-# a naive `/marker/ { exit 0 }` + `END { exit 1 }` would OVERRIDE the match → every file
-# UNMARKED. Decide the status at the header boundary (`^## Findings`) OR at `END`, honoring a set
-# `found` on either terminating path.
+# the review BODY (all findings prose + fenced code live after `## Findings`) cannot match.
+#
+# The `## Findings` delimiter is REQUIRED to bound the header, matching reviewed_sha_of's
+# contract exactly (both header-preamble VALUE readers are now delimiter-bound — no EOF
+# fallback in either). The real writer ALWAYS emits `## Findings` (drive-review.md,
+# drive-finalize.md) with the marker ABOVE it, so a review LACKING `## Findings` is malformed →
+# it FAILS CLOSED to NOT-marked. Fail-closed direction (safe under the surplus/deficit
+# semantics): a malformed no-`## Findings` file is classified UNMARKED so it counts as an
+# unmarked INTEGRATION file (honest integration-round count) rather than being MARKED-and-
+# excluded (which would silently SUPPRESS the round) or inflating distinct_marked_sha into a
+# false surplus. An extra unmarked file is benign (integration-round is `max(state,derived)`,
+# one-directional); a malformed file misclassified MARKED is not. Every legitimate marked
+# review carries `## Findings` with the marker in the preamble, so this breaks no legit path.
+#
+# Uses a `seen`-flag (`## Findings` reached) AND a `found`-flag (marker in header), NOT a bare
+# `END { exit 1 }`: in awk `END` runs after an earlier `exit`, so the `/^## Findings/` rule's
+# `exit` falls through to END — the status must be decided in END from the flags, honoring a set
+# `found` ONLY when the header actually terminated at `## Findings` (`seen`). No `## Findings`
+# (header ran to EOF) → `seen==0` → NOT-marked regardless of `found`.
 is_marked() {
   awk '
-    /^## Findings/ { exit (found ? 0 : 1) }
+    /^## Findings/ { seen = 1; exit }
     /^harden-regress:[[:space:]]*yes[[:space:]]*$/ { found = 1 }
-    END            { exit (found ? 0 : 1) }
+    END            { exit (seen && found ? 0 : 1) }
   ' "$1"
 }
 
