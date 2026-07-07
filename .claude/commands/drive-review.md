@@ -1,6 +1,6 @@
 ---
 description: REVIEW stage (Stage 3) of /drive — dual-voice review (Claude reviewer subagent + codex) over a design/slice/phase scope; converged when neither voice has an open P1. Usually invoked by /drive.
-argument-hint: design | slice <id> | phase <P> [harden-regress]
+argument-hint: design | slice <id> | phase <P> [harden-regress] [base=<sha>]
 ---
 You are running the REVIEW stage (Stage 3) — the harness's **dual-voice review
 primitive** (a passive Claude reviewer + a direct codex pass over the same scope,
@@ -34,16 +34,32 @@ refs:
 - `slice <id>` — review the slice's diff `git diff <phaseBaseSha>..slice/<runId>/<id>`
   against that slice's acceptance criteria (owned files only).
 - `phase <P>` — review the assembled integration diff
-  `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration issues (interfaces,
+  `git diff <diffBase>..phaseInt/<runId>/<P>` for integration issues (interfaces,
   cross-slice contracts). **Size reconciliation** (the estimate is self-reported — verify it
   against the real diff): measure the assembled phase's actual production SLOC (exclude tests,
   comments, blanks); if it crosses into a HIGHER band than the plan's `Size estimate` claimed
   (claimed ≲150 but actual > 150, or claimed ~150–500 but actual > 500) with no
   `heightened-review:` note, flag P2 — re-examine the decomposition on the true size.
 - `phase <P> harden-regress` — same review as `phase <P>`, but invoked by
-  `/drive-harden` as its regression guard. Identical scope/diff/mechanics; the ONLY
-  difference is the counter (below) — its bounding is owned by the harden loop, not the
-  conformance cap.
+  `/drive-harden` as its regression guard. Identical scope/diff/mechanics, differing in
+  TWO file-family-preserving ways: (a) it does NOT increment the conformance
+  `phaseReview[<P>].round` counter (its bounding is owned by the harden loop, not the
+  conformance cap), and (b) it emits the `harden-regress: yes` self-identifying control
+  line into its `review-phase<P>-N.md` (the header-preamble marker the checkpoint reader
+  classifies harden-regress vs integration reviews on — Step 1 below).
+
+**Optional diff-base override (`base=<40-hex>`, strip-before-scope).** BEFORE deriving
+`<scope>` from the invocation args, scan them for a single token matching
+`^base=([0-9a-fA-F]{40})$`; if present, set `<diffBase>` = the captured 40-hex and REMOVE
+that token from the arg list. `<scope>` and the `harden-regress` flag are then derived
+from the REMAINING tokens EXACTLY as below — `base=` never participates in
+scope/filename/log derivation (`phase <P> harden-regress base=<sha>` → `<scope>` =
+`phase<P>`, harden-regress flag ON, `<diffBase>` = `<sha>`). If no `base=` token is
+present, `<diffBase>` = the global `<phaseBaseSha>` (the unchanged default). This override
+substitutes for `<phaseBaseSha>` ONLY in the phase-integration diff (the `phase <P>` diff
+refs above/below); the slice-scope diffs are unaffected. ONLY the resume-sweep heal
+supplies `base=`; normal build-time `phase <P>` / `phase <P> harden-regress` invocations
+pass nothing and diff byte-identically to today.
 
 Let `<scope>` be `design`, `<id>` (e.g. `1.2`), `phase<P>`, or the phasedesign token (the
 per-phase design review of `design-phase<P>.md`). **Resolve the phasedesign token's
@@ -95,7 +111,7 @@ Audit the <scope>:
   must-verify-first foundation with its dependents. No code diff.
 - a slice: audit `git diff <phaseBaseSha>..slice/<runId>/<id>` against THAT slice's
   acceptance criteria, restricted to its owned files.
-- a phase: audit `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` for integration correctness.
+- a phase: audit `git diff <diffBase>..phaseInt/<runId>/<P>` for integration correctness.
   Size reconciliation: measure actual production SLOC (exclude tests/comments/blanks); if it
   crosses into a higher band than the plan's `Size estimate` claimed with no `heightened-review:`
   note, flag P2.
@@ -116,8 +132,23 @@ Write `$RUN_DIR/review-<scope>-N.md`:
   # Review <scope> N
   ## Verdict: CONVERGED | FINDINGS
   reviewed-sha: <40-hex>
+  harden-regress: yes      ← ONLY for a `phase <P> harden-regress` invocation (see below)
   ## Findings → ### [SEVERITY] Short title / **Where** file:line / Issue / Why / Fix
 CONVERGED = no P1. Return: the path, verdict, one-line count.
+
+**harden-regress self-identifying marker (harden-regress invocation ONLY).** When this
+review is a `phase <P> harden-regress` invocation, emit a control line
+`harden-regress: yes` at column 0 in the HEADER PREAMBLE — immediately after
+`reviewed-sha:` and strictly BEFORE `## Findings`. A plain `phase <P>` integration review
+MUST NOT write it. The checkpoint reader classifies harden-regress vs integration reviews
+on this marker and is **header-region bound** (it scans only the lines before the first
+`## Findings`), so the marker MUST stay above `## Findings` — a marker written below it is
+silently ignored (the review would misclassify as integration). Write the whole file in
+one `Write` call so the marker is atomic with `reviewed-sha:` and `## Verdict:` (no torn
+"unmarked FINDINGS" state). Do NOT lead an ordinary findings line with the
+`harden-regress:` token; the header-region bound already prevents a body-quoted
+`harden-regress: yes` (e.g. inside a fenced code block) from misclassifying the file, so
+this note is only belt-and-suspenders.
 
 **`reviewed-sha:` (SHA-bound proof — the enforcement gate reads this).** Emit a line
 `reviewed-sha: <40-hex>` = the **exact git tip this review diffed**, so a review only
@@ -159,7 +190,7 @@ cycle, disjoint owns, no contract contradicting real prior-phase code; FLAG a sl
 first with no why:, a test-only slice, two slices sharing a new co-authored contract instead of
 being one, or a slice bundling a must-verify-first foundation with its dependents). For a slice:
 git diff <phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owned files. For
-a phase: git diff <phaseBaseSha>..phaseInt/<runId>/<P>, integration; AND reconcile size — actual
+a phase: git diff <diffBase>..phaseInt/<runId>/<P>, integration; AND reconcile size — actual
 production SLOC (excl tests/comments/blanks) crossing into a higher band than the plan's Size
 estimate claimed with no heightened-review note is P2. Flag BLOCKING/MAJOR/
 MINOR with file:line. Prioritized." > $RUN_DIR/codex-raw-<scope>.log 2>&1

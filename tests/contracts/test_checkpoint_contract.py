@@ -77,6 +77,21 @@ def _harden(rd, p, n, applied):
     )
 
 
+def _marked_review(rd, scope, n, sha, verdict="CONVERGED"):
+    """A harden-regress review file — identical to `_helpers._review` PLUS a column-0
+    `harden-regress: yes` marker line in the HEADER PREAMBLE (right after `reviewed-sha:`).
+    It writes NO `## Findings` header, so the whole file is the header region → the §1.3
+    header-region classifier reads it MARKED. LOCAL to this test file on purpose: the shared
+    `_helpers._review` stays the UNMARKED integration writer (no marker), so the two helpers
+    are the marked/unmarked pair the marker/distinct-sha contract counts. `sha` must be a
+    valid 40-hex (distinct marked shas come from `"a"*40` vs `"b"*40`)."""
+    (rd / f"review-{scope}-{n}.md").write_text(
+        f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\n"
+        f"reviewed-sha: {sha}\nharden-regress: yes\n",
+        encoding="utf-8",
+    )
+
+
 def _redesign_marker(rd, p, r):
     (rd / f"redesign-{p}-r{r}.marker").write_text(
         json.dumps({"phase": p, "epoch": r}) + "\n", encoding="utf-8"
@@ -129,11 +144,13 @@ def _viol(scope, reason, exp="", found=""):
 
 
 def test_checkpoint_clean_fixture_passes_with_counters(tmp_path):
-    """AC1/AC2 (behavioral cross-file contract): a quiescent, well-formed run is clean
+    """AC1/AC3 (behavioral cross-file contract): a quiescent, well-formed run is clean
     (exit 0) and emits `counters` derived per the I3 rules — reviewCount from
-    pure-integer-N files; phaseReviewRound = review-phase count MINUS AppliedEdits:yes
-    harden files; hardenRound counts ONLY `yes`; phaseDesignRound from the epoch-0
-    family. Mirrors mkfixture.sh::mk_checkpoint clean."""
+    pure-integer-N files; phaseReviewRound = count of review-phase files WITHOUT the
+    harden-regress marker (no subtraction); hardenRound counts ONLY `yes`;
+    phaseDesignRound from the epoch-0 family. This is the pure integration-only clean
+    baseline (all `_review` files are UNMARKED); marked-file paths are exercised by the
+    surplus/deficit/dedup fixtures below."""
     repo, rd = _base_run(tmp_path, "ckpt-clean")
     _git(repo, "checkout", "-q", "-b", "phaseInt/ckpt-clean/1")
     _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
@@ -158,7 +175,10 @@ def test_checkpoint_clean_fixture_passes_with_counters(tmp_path):
     assert obj["tip"] == _rev(repo, "drive/ckpt-clean"), obj
     counters = obj["counters"]
     assert counters["reviewCount"] == {"1.1": 2}, counters
-    assert counters["phaseReviewRound"] == {"1": 2}, counters  # 3 files − 1 yes
+    # 3 UNMARKED integration files → 3 rounds (marker-aware; no subtraction, independent of
+    # harden-yes — the harden-regress marker, not a yes-count subtraction, is what separates
+    # a regress review from an integration review).
+    assert counters["phaseReviewRound"] == {"1": 3}, counters
     assert counters["hardenRound"] == {"1": 1}, counters        # one yes, one no
     assert counters["phaseDesignRound"] == {"1": 1}, counters   # epoch-0 family
     assert counters["redesigns"] == {}, counters
@@ -212,21 +232,120 @@ def test_checkpoint_inflight_open_violation(tmp_path):
     ], obj["violations"]
 
 
-def test_checkpoint_regress_mismatch_violation_and_zero_round(tmp_path):
-    """AC2: yes-count exceeding the review-phase file count is malformed → violation
-    `regress-mismatch` and phaseReviewRound clamped to 0 (the rule-2 subtraction would
-    otherwise go negative). 1 review-phase1 file + 2 AppliedEdits:yes harden files."""
-    repo, rd = _base_run(tmp_path, "ckpt-regress")
-    _review(rd, "phase1", 1)
-    _harden(rd, 1, 1, "yes")
-    _harden(rd, 1, 2, "yes")
+def test_checkpoint_regress_mismatch_fires_on_surplus(tmp_path):
+    """AC5 (SURPLUS guard): `distinct-marked-sha > harden-yes` is unambiguously malformed
+    (each fix round dispatches exactly one regress review, so the marked count can never
+    legitimately exceed the yes-count) → exactly one `regress-mismatch` on `phase1`, exit 1.
+    2 marked regress files at DISTINCT shas + 1 harden-yes ⇒ 2 > 1 fires. The integration
+    round is `count(unmarked)` = 1 and is NOT clamped to 0 even while the guard fires — the
+    DD2 guard: the round stays the honest unmarked count, disjoint from the marked surplus."""
+    repo, rd = _base_run(tmp_path, "ckpt-surplus")
+    _review(rd, "phase1", 1)                              # 1 UNMARKED integration file
+    _marked_review(rd, "phase1", 2, sha="a" * 40)         # marked regress, sha a
+    _marked_review(rd, "phase1", 3, sha="b" * 40)         # marked regress, sha b (distinct)
+    _harden(rd, 1, 1, "yes")                              # 1 fix round
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 1
     # EXACT: exactly one regress-mismatch on scope `phase1`, no shas, nothing else.
     assert obj["violations"] == [
         _viol("phase1", "regress-mismatch")
     ], obj["violations"]
-    assert obj["counters"]["phaseReviewRound"] == {"1": 0}
+    # NOT clamped to 0: integration-round = count(unmarked) = 1, independent of the surplus.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 1}, obj["counters"]
+
+
+def test_checkpoint_regress_deficit_is_benign(tmp_path):
+    """AC5 (DEFICIT is NOT a fire): `distinct-marked-sha < harden-yes` (a drop / mid-harden
+    crash window / legacy phase) is diagnosed, never STOPped by the guard. These are the OLD
+    subtraction-era inputs (1 review-phase + 2 harden-yes) — under the marker/distinct-sha
+    reader they INVERT: 0 marked > 2 yes is FALSE → no fire, clean, round = count(unmarked)
+    = 1 (NOT clamped to 0 as the reverted subtraction would have)."""
+    repo, rd = _base_run(tmp_path, "ckpt-deficit")
+    _review(rd, "phase1", 1)                              # 1 UNMARKED integration file
+    _harden(rd, 1, 1, "yes")
+    _harden(rd, 1, 2, "yes")                              # 2 yes, 0 marked → deficit
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"a deficit must be benign (no fire); got {obj}"
+    assert obj["clean"] is True
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {"1": 1}, obj["counters"]
+
+
+def test_checkpoint_marker_classifies_marked_vs_unmarked_and_body_fenced(tmp_path):
+    """AC2 (header-region, value-anchored classification): a `harden-regress: yes` line
+    counts as a marked regress ONLY when it appears in the header preamble (before the first
+    `## Findings`). A marker quoted in the review BODY — inside a fenced code block AFTER
+    `## Findings` (the reverse-collision this feature's OWN review triggers) — classifies
+    UNMARKED. Behavioral proof: an unmarked integration file + a header-marked file at a
+    distinct sha + a body-fenced-quote file ⇒ marked-regress counts ONLY the header-marked
+    one (distinct-sha = 1), and the body-fenced file counts toward the integration round."""
+    repo, rd = _base_run(tmp_path, "ckpt-classify")
+    _review(rd, "phase1", 1)                              # UNMARKED integration
+    _marked_review(rd, "phase1", 2, sha="a" * 40)         # header-MARKED regress
+    # A file whose exact `harden-regress: yes` line sits inside a fenced block BELOW the
+    # `## Findings` header — must classify UNMARKED (header-region bound), else it would
+    # inflate distinct-marked-sha and false-fire the surplus guard.
+    (rd / "review-phase1-3.md").write_text(
+        "# Review phase1 round 3\n\n## Verdict: FINDINGS\n\nreviewed-sha: " + "c" * 40 +
+        "\n## Findings\nThe writer emits it like:\n```\nharden-regress: yes\n```\nend.\n",
+        encoding="utf-8",
+    )
+    _harden(rd, 1, 1, "yes")                              # 1 yes → distinct-marked 1 ≤ 1, clean
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"only the header-marked file is a regress → clean; got {obj}"
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    # 2 unmarked integration files (the plain _review + the body-fenced-quote file) → round 2.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 2}, obj["counters"]
+
+
+def test_checkpoint_distinct_sha_dedup(tmp_path):
+    """AC4 (distinct-reviewed-sha dedup): two MARKED files at the SAME `reviewed-sha` count
+    as ONE regress round (a stranded dual-voice re-dispatch that appended a duplicate marked
+    file at the same tip is deduped) — so 2 marked-same-sha + 1 harden-yes is `1 > 1` FALSE
+    → clean; whereas two marked files at DISTINCT shas would be `2 > 1` → fire. The dedup is
+    what makes the surplus guard immune to stranded-review duplication (protects the NORMAL
+    harden loop, not just the heal)."""
+    repo, rd = _base_run(tmp_path, "ckpt-dedup")
+    _marked_review(rd, "phase1", 1, sha="a" * 40)         # same sha
+    _marked_review(rd, "phase1", 2, sha="a" * 40)         # duplicate of the SAME tip
+    _harden(rd, 1, 1, "yes")
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"two marked files at the same sha dedupe to 1 ≤ 1 yes → clean; got {obj}"
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    # Both files are marked → neither counts toward the integration round.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 0}, obj["counters"]
+
+
+def test_checkpoint_backward_compat_no_marked_no_baseSha(tmp_path):
+    """AC6 (backward-compat is inherent): a legacy run with NO marked review-phase files (and
+    no state.baseSha) is checkpoint-clean w.r.t. `regress-mismatch` (`0 ≤ harden-yes`), and
+    its old unmarked regress files count toward the integration round — no era field, no
+    fallback branch. 2 unmarked review-phase + 2 harden-yes ⇒ 0 marked > 2 is FALSE → clean,
+    round = count(unmarked) = 2."""
+    repo, rd = _base_run(tmp_path, "ckpt-legacy")
+    _review(rd, "phase1", 1)
+    _review(rd, "phase1", 2)
+    _harden(rd, 1, 1, "yes")
+    _harden(rd, 1, 2, "yes")
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"a legacy no-marker run must be clean; got {obj}"
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {"1": 2}, obj["counters"]
+
+
+def test_checkpoint_open_inflight_heal_marker_not_clean(tmp_path):
+    """AC13: an OPEN `inflight-heal-<P>.marker` makes `--mode checkpoint` report NOT clean
+    (the `inflight-*.marker` glob emits `inflight-open`) — the consequence that gives the
+    orphaned-heal-marker recovery teeth (the resume sweep must clear it before any
+    Execute-boundary checkpoint, so no proof is ever taken against an open heal marker)."""
+    repo, rd = _base_run(tmp_path, "ckpt-healmarker")
+    _review(rd, "phase1", 1)
+    _inflight(rd, "heal-1")
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1 and obj["clean"] is False
+    assert obj["violations"] == [
+        _viol("inflight-heal-1.marker", "inflight-open")
+    ], obj["violations"]
 
 
 def test_checkpoint_epoch_gap_violation_and_highest_r(tmp_path):
@@ -514,17 +633,20 @@ def test_resume_repair_hint_sentence_verbatim():
 def test_five_reconstruction_rules_pinned():
     """AC4/AC6: all five I3 per-counter reconstruction rules are present, each pinned as
     its CONTIGUOUS formula clause (not scattered substrings) so a semantic rewrite that
-    changes the derivation — e.g. dropping the `MINUS … AppliedEdits: yes` subtraction or
-    the `HIGHEST epoch R` rule — breaks the pin. A dropped rule is a silent resume hole."""
+    changes the derivation — e.g. reverting rule 2 to the old `MINUS … AppliedEdits: yes`
+    subtraction instead of the marker-aware `WITHOUT the harden-regress: yes marker` count,
+    or dropping the `HIGHEST epoch R` rule — breaks the pin. A dropped rule is a silent
+    resume hole."""
     blob = _norm(_drive_md())
     # Each entry is the literal contiguous formula from drive.md's reconstruction list.
     rules = [
         # rule 1 — reviewCount derivation
         "`slices[<id>].reviewCount` = max(state, count of `review-<id>-N.md`, "
         "pure-integer N)",
-        # rule 2 — phaseReview round = review-phase count MINUS AppliedEdits: yes harden
-        "`phaseReview[<P>].round` = max(state, count of `review-phase<P>-N.md` "
-        "(pure-integer N) MINUS count of `harden-<P>-*.md` with `AppliedEdits: yes`)",
+        # rule 2 — phaseReview round = count of review-phase files WITHOUT the marker (no
+        # subtraction; the harden-regress marker, not a yes-count subtraction, separates them)
+        "`phaseReview[<P>].round` = max(state, count of `review-phase<P>-N.md` files "
+        "(pure-integer N) WITHOUT the `harden-regress: yes` marker)",
         # rule 3 — hardenRound counts ONLY AppliedEdits: yes
         "`phaseReview[<P>].hardenRound` = max(state, count of `harden-<P>-*.md` with "
         "`AppliedEdits: yes`)",
@@ -614,7 +736,7 @@ def test_derived_phasedesign_status_and_resume_redesign_cap():
 def test_redesign_handler_marker_before_state_mutation():
     """AC5: the REDESIGN handler writes the epoch marker as its FIRST action, create-only
     + tmp/`mv`, strictly BEFORE the redesigns/round mutation; STOP on already-exists; the
-    marker-write → state-write span is one atomic step. Round-subtraction soundness (the
+    marker-write → state-write span is one atomic step. Round-reconstruction soundness (the
     rule-2 derivation) depends on this ordering."""
     blob = _norm(_drive_md())
     assert "redesign-<P>-r<R>.marker" in blob
@@ -717,14 +839,14 @@ def test_run_graph_and_gate_name_current_epoch_family():
 
 # --------------------------------------------------------------------------- #
 # AC10 READ-ONLY PINS — drive-harden.md Step-4 ordering that rule-2 depends on.
-# drive-harden.md is NOT edited by this phase; these pins protect the round-subtraction
-# rule from a future harden-ordering change.
+# drive-harden.md is NOT edited by this phase; these pins protect the marker/distinct-sha
+# surplus guard from a future harden-ordering change.
 # --------------------------------------------------------------------------- #
 def test_harden_sets_applied_yes_before_dispatching_regress():
     """AC10: drive-harden.md Step 4 sets `AppliedEdits: yes` BEFORE dispatching the
-    regress review — the `yes` audit is the durable 1:1 marker rule-2's round-subtraction
-    counts. If harden dispatched the regress before setting `yes`, the crash window would
-    widen and the subtraction would mis-count."""
+    regress review — the `yes` audit is the durable per-fix-round marker the checkpoint's
+    `distinct-marked-sha > harden-yes` surplus guard counts. If harden dispatched the regress
+    before setting `yes`, the crash window would widen and the guard could miscount."""
     blob = _norm(_drive_harden_md())
     # CONTIGUOUS span of the Step-4 "fix applied" branch: it must increment hardenRound,
     # set `AppliedEdits: yes`, THEN re-run the harden-regress review — pinned as one literal
@@ -740,8 +862,8 @@ def test_harden_sets_applied_yes_before_dispatching_regress():
 
 def test_harden_one_regress_per_fix_round():
     """AC10: exactly ONE regress pass per fix round — a fix round sets yes once and runs
-    one harden-regress review; the 1:1 (yes-file : regress-review) correspondence is what
-    makes the rule-2 subtraction exact. Pinned via the per-invocation `hardenRound += 1`
+    one harden-regress review; the (harden-yes : distinct-marked-sha) correspondence is what
+    makes the surplus guard exact. Pinned via the per-invocation `hardenRound += 1`
     + single regress dispatch in the same branch."""
     blob = _norm(_drive_harden_md())
     assert "One round per invocation" in blob, (
@@ -753,42 +875,42 @@ def test_harden_one_regress_per_fix_round():
 
 
 def test_harden_regress_no_round_increment_contract_pinned_both_voices():
-    """AC10 (load-bearing): the harden-regress round-scheme contract that the rule-2
-    reconstruction depends on. The contract has TWO halves — (A) harden-regress does NOT
-    increment `phaseReview[<P>].round`, and (B) it writes into the SAME `review-phase<P>-N.md`
-    family — and BOTH halves are pinned on BOTH prose voices (drive.md and drive-review.md) as
-    CONTIGUOUS clauses, so a drift to a DIFFERENT round/file scheme (a separate counter, a new
-    file family, or an incrementing harden-regress) in EITHER voice breaks this test.
+    """AC10 + AC3 (load-bearing): the harden-regress round-scheme contract the checkpoint
+    rule-2 reconstruction depends on, RE-PINNED to the marker/distinct-sha derivation (no
+    subtraction). The contract has TWO halves — (A) harden-regress does NOT increment
+    `phaseReview[<P>].round`, and (B) it writes into the SAME `review-phase<P>-N.md` family,
+    self-identifying with the `harden-regress: yes` marker and counted SEPARATELY as
+    distinct-`reviewed-sha` — and BOTH halves are pinned on BOTH prose voices (drive.md and
+    drive-review.md) as CONTIGUOUS clauses, so a drift to a DIFFERENT round/file scheme in
+    EITHER voice breaks this test.
 
-    The contract: a harden-regress review writes into the SAME `review-phase<P>-N.md`
-    family WITHOUT incrementing the conformance `phaseReview[<P>].round`. That is the exact
-    basis for the checkpoint counter rule `phaseReview.round = count(review-phase<P>-N.md)
-    MINUS count(harden-<P>-*.md AppliedEdits: yes)`: each fix round adds one review-phase
-    file (no round bump) and one `yes` audit, so subtracting the yes-count recovers the
-    real round. If the prose drifted to a different scheme, the reconstruction would over-
-    or under-count silently and lossless rebirth counter recovery would break."""
-    # 1a. drive.md — the contiguous clause that states the same-family / no-round-increment
-    # half of rule 2. Pinned as one literal span (not scattered words) so a reword onto a
-    # different round/file scheme fails. `_norm` collapses the wrap so the clause is one line.
+    The contract: a harden-regress review writes into the SAME `review-phase<P>-N.md` family
+    WITHOUT incrementing the conformance round; the checkpoint derives
+    `phaseReview.round = count(UNMARKED review-phase<P>-N.md)` DIRECTLY (no subtraction) and
+    counts marked-regress separately as distinct `reviewed-sha`. If the prose drifted to a
+    different scheme, the reconstruction would over- or under-count silently and lossless
+    rebirth counter recovery would break."""
+    # 1a. drive.md — the contiguous clause that states the same-family / no-round-inflation /
+    # marker half of rule 2. Pinned as one literal span so a reword onto a different scheme
+    # fails. `_norm` collapses the wrap so the clause is one line.
     drive = _norm(_drive_md())
     assert (
-        "harden-regress reviews write into the same `review-phase<P>-N.md` family "
-        "without incrementing the round, and each fix round's `AppliedEdits: yes` audit "
-        "is its durable 1:1 marker"
+        "A harden-regress review self-identifies with the `harden-regress: yes` header "
+        "marker and is counted separately as marked-regress (the DISTINCT `reviewed-sha` "
+        "among marked files); it never inflates the integration round"
     ) in drive, (
-        "drive.md rule 2 must keep the contiguous 'harden-regress … same `review-phase<P>-"
-        "N.md` family without incrementing the round' clause — a drift to a different "
-        "round/file scheme must break this pin"
+        "drive.md rule 2 must keep the contiguous 'harden-regress … self-identifies … marker "
+        "… never inflates the integration round' clause — a drift to a different round/file "
+        "scheme must break this pin"
     )
-    # 1b. drive-review.md — BOTH halves of the contract at the review-write point, each a
-    # contiguous clause so a reword onto a different scheme/family fails:
+    # 1b. drive-review.md — BOTH halves of the contract at the review-write point:
     #   half A (no round increment): the harden-regress exception must NOT read/increment/cap
-    #     the conformance round, naming the SAME `phaseReview[<P>].round` counter.
-    #   half B (same review-phase<P>-N.md family): harden-regress is the SAME review as
-    #     `phase <P>` with identical scope/mechanics — so it writes the SAME `review-<scope>-N.md`
-    #     file (`<scope>` = `phase<P>`), i.e. the `review-phase<P>-N.md` family — the ONLY
-    #     difference being the counter. A drift rerouting harden-regress to a DIFFERENT file
-    #     family must change this clause and red the test.
+    #     the conformance round, naming the SAME `phaseReview[<P>].round` counter. UNCHANGED —
+    #     harden-regress STILL does not increment the conformance round under the marker design.
+    #   half B (same family, TWO file-family-preserving differences): harden-regress is the
+    #     SAME review as `phase <P>` differing only by the no-round-increment AND the
+    #     `harden-regress: yes` marker — same `review-phase<P>-N.md` family. A drift rerouting
+    #     it to a DIFFERENT file family must change this clause and red the test.
     review = _norm(_drive_review_md())
     assert (
         "Exception — `harden-regress`:** do NOT read, increment, or cap against the "
@@ -798,47 +920,46 @@ def test_harden_regress_no_round_increment_contract_pinned_both_voices():
         "increment the conformance `phaseReview[<P>].round`) — the write-point half A"
     )
     assert (
-        "same review as `phase <P>`, but invoked by `/drive-harden` as its regression "
-        "guard. Identical scope/diff/mechanics; the ONLY difference is the counter"
+        "Identical scope/diff/mechanics, differing in TWO file-family-preserving ways"
     ) in review, (
-        "drive-review.md must pin the harden-regress same-family half: harden-regress is the "
-        "SAME review as `phase <P>` with identical scope/mechanics, so it writes the SAME "
-        "`review-phase<P>-N.md` family (`<scope>` = `phase<P>` → `review-<scope>-N.md`) — a "
-        "drift rerouting it to a DIFFERENT file family must break this pin (half B)"
+        "drive-review.md must pin the harden-regress same-family half as TWO "
+        "file-family-preserving differences (no round increment + the marker) — not the "
+        "stale 'ONLY difference is the counter'"
+    )
+    assert (
+        "it emits the `harden-regress: yes` self-identifying control line"
+    ) in review, (
+        "drive-review.md must name the `harden-regress: yes` self-identifying marker as the "
+        "second file-family-preserving difference (half B)"
     )
 
     # 2. CROSS-CHECK prose ⇆ script describe the SAME contract. The script's rule-2 derives
-    # `phaseReviewRound = review-phase<P> file count MINUS AppliedEdits: yes harden files`.
-    # The prose's "no round increment for harden-regress" and the script's "MINUS yes-count"
-    # are the two ends of ONE contract: because harden-regress does not bump the round, the
-    # extra review-phase file each fix round emits is corrected for by subtracting that
-    # round's `yes` audit. Assert both ends so a one-sided drift (prose says no-increment but
-    # script stops subtracting, or vice versa) is caught.
+    # `phaseReviewRound = count(UNMARKED review-phase<P> files)` DIRECTLY (no subtraction) and
+    # fires regress-mismatch on a SURPLUS (distinct-marked-sha > harden-yes). Assert both the
+    # no-subtraction derivation AND the surplus guard so a one-sided drift is caught.
     conf = _conformance()
-    # (a) the script subtraction exists and is keyed on the SAME family + the `yes` audit.
-    assert "review-phase<P> file count MINUS AppliedEdits: yes" in conf, (
-        "drive-conformance.sh rule-2 must subtract the AppliedEdits:yes harden count from "
-        "the review-phase<P> file count"
+    # (a) the direct count(unmarked) derivation exists and the subtraction is GONE.
+    assert "integration-round = count(UNMARKED review-phase<P> files)" in conf, (
+        "drive-conformance.sh rule-2 must derive the round as count(UNMARKED review-phase "
+        "files) directly — no subtraction"
     )
-    assert "$((prc - yc))" in conf, (
-        "the script must literally compute review-file-count MINUS yes-count for the round"
+    assert "$((prc - yc))" not in conf, (
+        "the subtraction `$((prc - yc))` must be GONE from the script (marker/distinct-sha "
+        "replaces it)"
     )
-    # (b) the script's own rationale comment names the SAME no-increment / same-family fact
-    # the prose pins — so the two files cannot drift apart on the scheme silently.
-    assert (
-        "harden-regress writes into the same review-phase<P>-N.md\n"
-        "    # family without incrementing the round"
-    ) in conf, (
-        "drive-conformance.sh rule-2 rationale must state the SAME 'harden-regress … same "
-        "review-phase<P>-N.md family without incrementing the round' contract the prose pins"
+    assert "distinct_marked_sha" in conf, (
+        "the script must count marked-regress via the distinct-reviewed-sha helper"
+    )
+    # (b) the surplus-only guard: regress-mismatch fires iff distinct-marked-sha > harden-yes.
+    assert '[ "$mreg" -gt "$yc" ]' in conf, (
+        "regress-mismatch must fire on a SURPLUS (distinct-marked-sha > harden-yes), not a "
+        "deficit and not the old yes>review-count comparison"
     )
 
-    # 3. BEHAVIORAL agreement: the subtraction is live, not just commented. A clean phase
-    # with 3 review-phase files and 1 AppliedEdits:yes harden file must reconstruct
-    # phaseReviewRound == 2 (3 − 1) — i.e. the harden-regress review file did NOT add a
-    # round. (Covered structurally by test_checkpoint_clean_fixture_passes_with_counters;
-    # re-asserted here bound to THIS contract so a regression in the subtraction surfaces
-    # against the prose pin it must agree with.)
+    # 3. BEHAVIORAL agreement: a MARKED regress file does NOT inflate the integration round.
+    # 2 unmarked integration files + 1 MARKED regress file + 1 harden-yes → round == 2
+    # (the marked file is a harden-regress write, counted separately, so it did NOT bump the
+    # integration round; distinct-marked 1 ≤ harden-yes 1 → clean).
     import tempfile, pathlib
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
@@ -850,14 +971,110 @@ def test_harden_regress_no_round_increment_contract_pinned_both_voices():
         _commit(repo, "drive.sh", "echo", "work")
         _review(rd, "phase1", 1)
         _review(rd, "phase1", 2)
-        _review(rd, "phase1", 3)   # one of these three is a harden-regress write
-        _harden(rd, 1, 1, "yes")   # the matching fix-round audit
+        _marked_review(rd, "phase1", 3, sha="a" * 40)   # a harden-regress write (MARKED)
+        _harden(rd, 1, 1, "yes")                        # the matching fix-round audit
         rc, obj = _run_checkpoint(repo, rd)
         assert rc == 0, obj
         assert obj["counters"]["phaseReviewRound"] == {"1": 2}, (
-            "3 review-phase files − 1 AppliedEdits:yes harden = round 2 (harden-regress "
-            "added a review file but NOT a round) — script and prose must agree"
+            "2 UNMARKED integration files + 1 MARKED regress file = round 2 (the marked "
+            "harden-regress file did NOT bump the integration round) — script and prose "
+            "must agree"
         )
+
+
+# --------------------------------------------------------------------------- #
+# SELF-IDENTIFYING HARDEN-REGRESS MARKER — writer + resume-sweep PROSE PINS.
+# The resume all-phases heal sweep, the generic-recovery carve-out, the base= strip, and
+# the FINDINGS→STOP routing are /drive COORDINATOR PROSE (no executable resume consumer);
+# the executable surface (marker classification, distinct-sha, surplus guard, inflight-open
+# on the heal marker) is covered behaviorally above. These pin the prose so an edit cannot
+# silently drop a load-bearing directive.
+# --------------------------------------------------------------------------- #
+def test_drive_review_writer_emits_harden_regress_marker():
+    """AC1: drive-review.md instructs the writer to emit the `harden-regress: yes` control
+    line in the HEADER PREAMBLE (after `reviewed-sha:`, before `## Findings`) ONLY for a
+    harden-regress invocation — the header-region placement the reader's classifier binds to."""
+    blob = _norm(_drive_review_md())
+    assert "harden-regress self-identifying marker (harden-regress invocation ONLY)" in blob, (
+        "drive-review.md must instruct the writer to emit the marker for harden-regress only"
+    )
+    assert "at column 0 in the HEADER PREAMBLE" in blob
+    assert "immediately after `reviewed-sha:` and strictly BEFORE `## Findings`" in blob, (
+        "the marker placement (after reviewed-sha, before ## Findings) must be pinned so it "
+        "cannot drift below `## Findings` where the header-region classifier ignores it"
+    )
+
+
+def test_drive_review_base_override_strip_before_scope():
+    """AC8 (DD7): drive-review.md defines the OPTIONAL `base=<40-hex>` diff-base override,
+    parsed by scanning args for `^base=([0-9a-fA-F]{40})$`, STRIPPED before `<scope>`
+    derivation (so scope stays `phase<P>`), defaulting to the global `phaseBaseSha` when
+    absent. Named in the argument-hint. Only the resume-sweep heal supplies it."""
+    text = _drive_review_md()
+    assert "[base=<sha>]" in text, "the argument-hint must name the optional base override"
+    blob = _norm(text)
+    assert "^base=([0-9a-fA-F]{40})$" in blob, "the base= token regex must be pinned"
+    assert "REMOVE that token from the arg list" in blob, (
+        "base= must be STRIPPED before scope derivation (strip-before-scope, DD7)"
+    )
+    assert "ONLY the resume-sweep heal supplies `base=`" in blob
+
+
+def test_resume_heal_sweep_marker_recovery_before_trigger():
+    """AC9/AC13 (DD9): the resume all-phases heal sweep is present, visits every phaseList
+    entry (advanced included), and its FIRST per-phase action recovers an OPEN
+    `inflight-heal-<P>.marker` (adopt / re-dispatch) ORDERED BEFORE the stale-FINDINGS
+    trigger — the marker-keyed crash-safety the distinct marker alone does not provide."""
+    blob = _norm(_drive_md())
+    assert "All-phases harden-regress heal sweep" in blob, (
+        "drive.md resume must define the all-phases harden-regress heal sweep"
+    )
+    assert "advanced phases included" in blob, "the sweep must visit advanced phases"
+    assert "marker-recovery BEFORE the trigger" in blob, (
+        "the sweep must recover an open inflight-heal marker BEFORE evaluating the trigger"
+    )
+    assert "FIRST recover any OPEN `inflight-heal-<P>.marker`" in blob
+
+
+def test_resume_heal_sweep_carves_out_inflight_heal_from_generic_recovery():
+    """AC13 (DD6): `inflight-heal-<P>.marker` is a DISTINCT marker kind in the registry and
+    is EXCLUDED from generic stranded-marker recovery (owned by the resume sweep) — else
+    generic recovery would re-run a stranded heal as a plain `phase <P>` review, stripping
+    the harden-regress flag and the base= override."""
+    blob = _norm(_drive_md())
+    assert "inflight-heal-<P>.marker" in blob, "the new marker kind must appear in drive.md"
+    # the resume Stranded-in-flight bullet excludes it
+    assert "EXCEPT `inflight-heal-<P>.marker`" in blob, (
+        "the resume generic stranded-marker recovery must EXCLUDE inflight-heal"
+    )
+    # the § Durable checkpoint contract stranded-recovery also excludes it
+    assert "EXCLUDES `inflight-heal-<P>.marker`" in blob, (
+        "the Durable checkpoint contract stranded-recovery must exclude inflight-heal"
+    )
+
+
+def test_resume_heal_findings_routes_to_manual_stop():
+    """AC9: a heal that returns FINDINGS on an already-advanced phase is an HONEST terminal
+    NON-DECISION STOP routed to the documented MANUAL harden-regress recovery (bind the
+    hardened tip, re-review/fix for real, NEVER forge) — not a claim of automated closure,
+    shippability unchanged. Both outcomes self-terminate via `reviewed-sha == hardened tip`."""
+    blob = _norm(_drive_md())
+    assert "FINDINGS → HONEST terminal NON-DECISION STOP, routed to MANUAL recovery" in blob
+    assert "NEVER forge" in blob, "the manual-recovery routing must forbid forging CONVERGED"
+    assert "self-identifies" in blob  # marker semantics present in resume prose
+    # legacy first-phase (baseSha absent) also fail-closed STOPs, never auto-heals
+    assert "LEGACY fail-closed" in blob, (
+        "a baseSha-absent first-phase heal must fail closed to a NON-DECISION STOP"
+    )
+
+
+def test_resume_heal_base_recovery_phaselist_order():
+    """AC8: `base(P)` is recovered off `state.phaseList` ORDER (never arithmetic `P−1`) —
+    `phaseInt/<runId>/<prev>` for a non-first entry, else `state.baseSha`."""
+    blob = _norm(_drive_md())
+    assert "keyed off `state.phaseList` ORDER (never arithmetic `P−1`" in blob
+    assert "`base(P) = git rev-parse phaseInt/<runId>/<prev>`" in blob
+    assert "`P` IS the first entry → `base(P) = state.baseSha`" in blob
 
 
 def _harden_cap_stop_branch_body(md):
@@ -873,21 +1090,22 @@ def _harden_cap_stop_branch_body(md):
 
 def test_harden_cap_stop_dispatches_no_regress():
     """AC10: a cap-STOP round applies no fix and dispatches NO regress review — so it
-    writes no `AppliedEdits: yes`, preserving the rule-2 subtraction. The cap-STOP branch
-    returns STOP without the fix→yes→regress sequence."""
+    writes no `AppliedEdits: yes`, preserving the harden-yes / distinct-marked-sha
+    correspondence. The cap-STOP branch returns STOP without the fix→yes→regress sequence."""
     md = _drive_harden_md()
     branch = _harden_cap_stop_branch_body(md)
     # The branch returns STOP …
     assert "return `STOP`" in branch, (
         "the `hardenRound >= HARDEN_CAP` + open-P1 branch must return `STOP`"
     )
-    # … and — the load-bearing assertion the round-subtraction depends on — it dispatches
-    # NO regress review: a `harden-regress` re-run added to THIS branch would write an
-    # `AppliedEdits: yes` audit and break rule-2's `MINUS yes-count` subtraction. Pinned on
-    # the branch's OWN text (not the whole Step) so adding a regress dispatch here BITES.
+    # … and — the load-bearing assertion the marker/distinct-sha guard depends on — it
+    # dispatches NO regress review: a `harden-regress` re-run added to THIS branch would
+    # write an `AppliedEdits: yes` audit (and a marked review file) with no matching fix,
+    # skewing the harden-yes vs distinct-marked-sha correspondence. Pinned on the branch's
+    # OWN text (not the whole Step) so adding a regress dispatch here BITES.
     assert "harden-regress" not in branch, (
         "the cap-STOP branch must dispatch NO `harden-regress` review (a regress re-run "
-        "here writes AppliedEdits: yes and breaks the rule-2 round-subtraction)"
+        "here writes AppliedEdits: yes and skews the harden-yes / distinct-marked-sha guard)"
     )
     # Sanity that the branch bound is the LOCAL bullet (not the whole doc): the sibling
     # "fix applied" branch — which DOES dispatch harden-regress — must lie OUTSIDE it, so

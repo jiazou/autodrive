@@ -221,6 +221,33 @@ reviewed_sha_of() {
   printf '%s\n' "$line"
 }
 
+# Is a review file a self-identifying harden-regress review? rc0 iff a header-preamble
+# `harden-regress: yes` control line is present. $1=file. HEADER-REGION bound: the value-exact
+# anchor matches ONLY within the file's header preamble — the lines from BOF up to (not
+# including) the first `## Findings` section header — so a `harden-regress: yes` line quoted in
+# the review BODY (all findings prose + fenced code live after `## Findings`) cannot match. Uses
+# a `found`-flag predicate, NOT `END { exit 1 }`: in awk `END` runs after an earlier `exit`, so
+# a naive `/marker/ { exit 0 }` + `END { exit 1 }` would OVERRIDE the match → every file
+# UNMARKED. Decide the status at the header boundary (`^## Findings`) OR at `END`, honoring a set
+# `found` on either terminating path.
+is_marked() {
+  awk '
+    /^## Findings/ { exit (found ? 0 : 1) }
+    /^harden-regress:[[:space:]]*yes[[:space:]]*$/ { found = 1 }
+    END            { exit (found ? 0 : 1) }
+  ' "$1"
+}
+
+# Count the DISTINCT non-empty `reviewed-sha` values among the marked (harden-regress)
+# review-phase<P> files for phase $1 — the true number of regress rounds, deduping a stranded
+# dual-voice re-dispatch that appended a second marked file at the SAME tip. Reads the global
+# `marked_phase_shas` accumulator (lines "<P> <sha>", populated by the review scan). Echoes the
+# count (0 on none).
+distinct_marked_sha() {   # $1=P
+  printf '%s' "$marked_phase_shas" | awk -v p="$1" '$1==p && $2!="" {print $2}' \
+    | sort -u | grep -c . || true
+}
+
 # Does the highest-N review for scope have CONVERGED verdict? rc0 yes. $1=file
 # Decide on the FIRST `## Verdict:` line ONLY — the schema puts the real verdict first
 # (drive-review.md). A later standalone `## Verdict: CONVERGED` heading elsewhere in a
@@ -628,7 +655,8 @@ EOF
     # epoch-suffixed phasedesign artifact with no redesign-<P>-r<R>.marker — fail closed).
     # Round files are review-<scope>-N.md with pure-integer N; classify the scope:
     # design (not a counter) | phasedesign<P>[-r<R>] | phase<P> | else a slice id.
-    slice_keys=""; phase_keys=""; pd_keys=""; finalize_yes_count=0
+    slice_keys=""; unmarked_phase_keys=""; marked_phase_shas=""; all_phase_ids=""
+    pd_keys=""; finalize_yes_count=0
     for f in "$RUN_DIR"/review-*.md; do
       # -e || -L: a DANGLING review dirent is corruption, not absence — skipping it would
       # UNDERCOUNT reviewCount/phaseReviewRound (the counters the resume path consumes) and
@@ -646,7 +674,19 @@ EOF
       case "$scope" in
         (design) ;;
         (phasedesign?*) pd_keys="$pd_keys${scope#phasedesign}"$'\n' ;;
-        (phase?*)       phase_keys="$phase_keys${scope#phase}"$'\n' ;;
+        (phase?*)
+          # Classify each phase-round file MARKED (harden-regress) vs UNMARKED (integration)
+          # by the header-region marker (is_marked). Integration-round = count(unmarked);
+          # marked-regress = distinct reviewed-sha among marked (rule-2 below). No file counts
+          # on both sides; the integration round no longer depends on the harden yes-count.
+          P="${scope#phase}"
+          if is_marked "$f"; then
+            msha="$(reviewed_sha_of "$f" || true)"
+            marked_phase_shas="$marked_phase_shas$P ${msha}"$'\n'
+          else
+            unmarked_phase_keys="$unmarked_phase_keys$P"$'\n'
+          fi
+          all_phase_ids="$all_phase_ids$P"$'\n' ;;
         (finalize)
           # finalize is run-singleton — NOT a slice (no phantom slice/<runId>/finalize branch).
           # Count its `AppliedEdits: yes` fix rounds for finalizeRound (B5); FAIL CLOSED on a
@@ -722,20 +762,25 @@ EOF
     done
     hrj="$(printf '%s' "$hr_pairs" | json_from_pairs)"
 
-    # phaseReviewRound[<P>] = R_conf = review-phase<P> file count MINUS AppliedEdits: yes
-    # harden files (I3 rule 2 — harden-regress writes into the same review-phase<P>-N.md
-    # family without incrementing the round; each fix round's `yes` audit is its durable
-    # 1:1 marker). yes-count > review-file count is malformed → regress-mismatch, value 0.
+    # phaseReviewRound[<P>] = integration-round = count(UNMARKED review-phase<P> files) —
+    # DIRECT, no subtraction (I3 rule 2). harden-regress reviews self-identify with the
+    # `harden-regress: yes` header marker and are counted SEPARATELY as marked-regress =
+    # distinct reviewed-sha among the marked files; a marked file never inflates the
+    # integration round (disjoint file sets). regress-mismatch is SURPLUS-ONLY: it fires iff
+    # marked-regress > harden-yes (unambiguously malformed — each fix round dispatches exactly
+    # one regress review, so the marked count can never legitimately exceed the yes-count). A
+    # DEFICIT (marked-regress < harden-yes: a drop / mid-harden crash window / legacy phase) is
+    # diagnosed by the resume sweep, NEVER STOPped by this guard; the integration round stays
+    # the honest unmarked count even while the surplus guard fires (NOT clamped to 0).
     prr_pairs=""
-    for P in $(printf '%s\n%s' "$phase_keys" "$harden_all" | sort -u); do
-      prc="$(count_in_list "$phase_keys" "$P")"
+    for P in $(printf '%s\n%s' "$all_phase_ids" "$harden_all" | sort -u); do
+      integ="$(count_in_list "$unmarked_phase_keys" "$P")"
+      mreg="$(distinct_marked_sha "$P")"
       yc="$(count_in_list "$harden_yes" "$P")"
-      if [ "$yc" -gt "$prc" ]; then
+      if [ "$mreg" -gt "$yc" ]; then
         viol_arr+=("$(violation "phase$P" "regress-mismatch")")
-        prr_pairs="$prr_pairs$P 0"$'\n'
-      else
-        prr_pairs="$prr_pairs$P $((prc - yc))"$'\n'
       fi
+      prr_pairs="$prr_pairs$P $integ"$'\n'
     done
     prrj="$(printf '%s' "$prr_pairs" | json_from_pairs)"
 
