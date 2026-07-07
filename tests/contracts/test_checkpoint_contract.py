@@ -278,7 +278,12 @@ def test_checkpoint_marker_classifies_marked_vs_unmarked_and_body_fenced(tmp_pat
     `## Findings` (the reverse-collision this feature's OWN review triggers) — classifies
     UNMARKED. Behavioral proof: an unmarked integration file + a header-marked file at a
     distinct sha + a body-fenced-quote file ⇒ marked-regress counts ONLY the header-marked
-    one (distinct-sha = 1), and the body-fenced file counts toward the integration round."""
+    one (distinct-sha = 1), and the body-fenced file counts toward the integration round.
+
+    Mutation-verify (non-vacuous vs the base subtraction reader): 3 review-phase files, 2
+    harden-yes ⇒ the OLD `files − yes` reader would give `3 − 2 = 1`, but the marker reader
+    counts `count(unmarked) = 2` — so `phaseReviewRound == {"1": 2}` REDs on the base
+    subtraction code and only greens under the marker classifier."""
     repo, rd = _base_run(tmp_path, "ckpt-classify")
     _review(rd, "phase1", 1)                              # UNMARKED integration
     _marked_review(rd, "phase1", 2, sha="a" * 40)         # header-MARKED regress
@@ -290,12 +295,44 @@ def test_checkpoint_marker_classifies_marked_vs_unmarked_and_body_fenced(tmp_pat
         "\n## Findings\nThe writer emits it like:\n```\nharden-regress: yes\n```\nend.\n",
         encoding="utf-8",
     )
-    _harden(rd, 1, 1, "yes")                              # 1 yes → distinct-marked 1 ≤ 1, clean
+    _harden(rd, 1, 1, "yes")                              # 2 harden-yes: distinct-marked 1 ≤ 2,
+    _harden(rd, 1, 2, "yes")                              # and `files − yes = 1` ≠ count(unmarked)
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 0, f"only the header-marked file is a regress → clean; got {obj}"
     assert "regress-mismatch" not in _reasons(obj), obj["violations"]
     # 2 unmarked integration files (the plain _review + the body-fenced-quote file) → round 2.
+    # DIVERGES from the base `3 − 2 = 1` subtraction, so this asserts the marker reader, not
+    # a value both readers happen to produce.
     assert obj["counters"]["phaseReviewRound"] == {"1": 2}, obj["counters"]
+
+
+def test_checkpoint_marked_file_body_only_sha_excluded_from_distinct(tmp_path):
+    """BLOCKING-fix regression pin (header-bound sha read): a MARKED review-phase file
+    (header `harden-regress: yes` above `## Findings`) whose ONLY `reviewed-sha:` line is a
+    fenced BODY quote BELOW `## Findings` — no header sha — must be EXCLUDED from
+    `distinct_marked_sha`, so it does NOT false-fire the surplus `regress-mismatch` guard.
+
+    Mutation-verify (REDs on the pre-fix whole-file `reviewed_sha_of`): with 0 harden-yes the
+    surplus guard fires iff `distinct-marked-sha > 0`. The pre-fix whole-file read would find
+    the body-quoted sha → distinct = 1 → `1 > 0` → regress-mismatch (rc 1). The header-bound
+    read yields an EMPTY header sha → excluded by the `$2 != ""` filter → distinct = 0 →
+    `0 > 0` FALSE → clean (rc 0). The file is MARKED, so it also does NOT count toward the
+    integration round."""
+    repo, rd = _base_run(tmp_path, "ckpt-bodysha")
+    # MARKED in the header (harden-regress: yes strictly above ## Findings) but the ONLY
+    # reviewed-sha is a body quote in a fenced block BELOW ## Findings.
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\nharden-regress: yes\n"
+        "## Findings\nThe writer emits it like:\n```\nreviewed-sha: " + "a" * 40 +
+        "\n```\nend.\n",
+        encoding="utf-8",
+    )
+    # 0 harden-yes → the surplus guard fires iff the body sha is (wrongly) counted.
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"body-only sha on a marked file must be excluded → clean; got {obj}"
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    # The file IS marked → it does NOT count toward the integration round either.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 0}, obj["counters"]
 
 
 def test_checkpoint_distinct_sha_dedup(tmp_path):

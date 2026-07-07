@@ -221,6 +221,27 @@ reviewed_sha_of() {
   printf '%s\n' "$line"
 }
 
+# Read `reviewed-sha:` (first match) from ONLY the HEADER PREAMBLE of a review file — the
+# lines from BOF up to (not including) the first `## Findings` — matching is_marked's
+# header-region bound. A `reviewed-sha:` quoted in the review BODY (e.g. a fenced code block
+# below `## Findings`) is NOT read. Echo sha (lowercased) or empty/rc1. $1=file. Used ONLY by
+# distinct_marked_sha's marked-file sha count, so a MARKED review whose only `reviewed-sha:`
+# is a body quote yields empty (excluded from the distinct-sha set) → never a false
+# regress-mismatch. `reviewed_sha_of` (whole-file) is deliberately UNCHANGED: ship /
+# check_scope_counts consume a review whose real header sha is the one that binds the tip.
+# awk carves the header region (no interval regex, for portability across BWK/gawk); the
+# same grep -E pattern as reviewed_sha_of then does the 40-hex match.
+header_reviewed_sha_of() {
+  local f="$1" line
+  line="$(awk '/^## Findings/ { exit } { print }' "$f" 2>/dev/null \
+    | grep -m1 -E '^reviewed-sha:[[:space:]]*[0-9a-fA-F]{40}[[:space:]]*$' || true)"
+  [ -n "$line" ] || return 1
+  line="${line#reviewed-sha:}"
+  line="${line//[[:space:]]/}"
+  line="$(printf '%s' "$line" | tr 'A-F' 'a-f')"
+  printf '%s\n' "$line"
+}
+
 # Is a review file a self-identifying harden-regress review? rc0 iff a header-preamble
 # `harden-regress: yes` control line is present. $1=file. HEADER-REGION bound: the value-exact
 # anchor matches ONLY within the file's header preamble — the lines from BOF up to (not
@@ -681,7 +702,10 @@ EOF
           # on both sides; the integration round no longer depends on the harden yes-count.
           P="${scope#phase}"
           if is_marked "$f"; then
-            msha="$(reviewed_sha_of "$f" || true)"
+            # HEADER-bound sha read (matches is_marked's bound): a marked file whose only
+            # `reviewed-sha:` is a body quote below `## Findings` yields empty → excluded from
+            # distinct_marked_sha's set (the `$2!=""` filter drops it) → no false regress-mismatch.
+            msha="$(header_reviewed_sha_of "$f" || true)"
             marked_phase_shas="$marked_phase_shas$P ${msha}"$'\n'
           else
             unmarked_phase_keys="$unmarked_phase_keys$P"$'\n'
