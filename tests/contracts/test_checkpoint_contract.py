@@ -95,12 +95,12 @@ def _marked_review(rd, scope, n, sha, verdict="CONVERGED"):
 
 
 def _findings_review(rd, scope, n, sha, verdict="CONVERGED"):
-    """A well-formed UNMARKED review matching the REAL writer schema (drive-review.md:133-136):
-    a header preamble (`## Verdict:` + `reviewed-sha: <sha>`) followed by the always-present
-    `## Findings` header, so the header sha binds under the delimiter-required
-    `reviewed_sha_of`. LOCAL to this file: the shared `_helpers._review` predates the
-    `## Findings` schema pin (its reviewed-sha is never consumed by a tip-binding gate in any
-    test) and stays untouched; use THIS helper wherever a legit review's sha must bind a gate."""
+    """A well-formed UNMARKED review (same output shape as `_helpers._review`): a header
+    preamble (`## Verdict:` + `reviewed-sha: <sha>`) followed by the always-present `## Findings`
+    header, so the header sha binds under the delimiter-required `reviewed_sha_of`. Defaults to a
+    CONVERGED verdict (despite the name); pass `verdict="FINDINGS"` for the not-converged case.
+    Kept LOCAL alongside `_marked_review` so this file's marked/unmarked fixture pair reads
+    together."""
     (rd / f"review-{scope}-{n}.md").write_text(
         f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\n"
         f"reviewed-sha: {sha}\n## Findings\n\nNo open P1.\n",
@@ -365,7 +365,7 @@ def test_checkpoint_marker_classifies_marked_vs_unmarked_and_body_fenced(tmp_pat
 
 
 def test_checkpoint_negative_classifier_variants_all_unmarked(tmp_path):
-    """codex P1 (AC2 negative branches): the `^harden-regress:[[:space:]]*yes[[:space:]]*$`
+    """AC2 negative branches: the `^harden-regress:[[:space:]]*yes[[:space:]]*$`
     header-region, column-0, VALUE-exact anchor classifies these three near-miss header
     occurrences as UNMARKED (integration), NOT marked regress:
       (a) `harden-regress: no`  — value is `no`, not `yes`;
@@ -410,22 +410,20 @@ def test_checkpoint_negative_classifier_variants_all_unmarked(tmp_path):
 
 
 def test_checkpoint_marked_file_body_only_sha_is_unparseable(tmp_path):
-    """Round-6 boundary completion (was `...body_only_sha_excluded_from_distinct`): a MARKED
-    review-phase file (header `harden-regress: yes` above `## Findings`) whose ONLY
-    `reviewed-sha:` line is a fenced BODY quote BELOW `## Findings` — NO header-region sha — is
-    now `unparseable-review`, NOT silently excluded-and-clean. The completed boundary requires a
-    valid header-region `reviewed-sha:` anchor: a marked file whose header sha reads EMPTY is
-    exactly the silent-bucketing hole (its empty sha dropped from `distinct_marked_sha` could hide
-    a real surplus), so it is rejected fail-closed at the boundary rather than absorbed.
+    """PARSEABILITY BOUNDARY (the reviewed-sha anchor, body-only case): a MARKED review-phase file
+    (header `harden-regress: yes` above `## Findings`) whose ONLY `reviewed-sha:` line is a fenced
+    BODY quote BELOW `## Findings` — NO header-region sha — is `unparseable-review`, NOT silently
+    excluded-and-clean. The boundary requires a valid header-region `reviewed-sha:` anchor: a
+    marked file whose header sha reads EMPTY is exactly the silent-bucketing hole (its empty sha
+    dropped from `distinct_marked_sha` could hide a real surplus), so it is rejected fail-closed at
+    the boundary rather than absorbed.
 
     (The real writer ALWAYS emits `reviewed-sha:` in the header preamble above `## Findings`;
-    a body-only-sha file is malformed/forged, so rejecting it breaks no legit review — this
-    tightens the round-5 "excluded → clean" contract, which is why that older assertion is
-    superseded here.)
+    a body-only-sha file is malformed/forged, so rejecting it breaks no legit review.)
 
-    Mutation-verify (REDs on the round-5 code lacking the reviewed-sha requirement): pre-fix the
+    Mutation-verify (REDs on pre-fix code lacking the reviewed-sha requirement): pre-fix the
     empty header sha was excluded from distinct → `0 > 0` FALSE → CLEAN (rc 0) with
-    `phaseReviewRound == {"1": 0}`. The completed boundary flags it `unparseable-review`, rc 1."""
+    `phaseReviewRound == {"1": 0}`. The boundary flags it `unparseable-review`, rc 1."""
     repo, rd = _base_run(tmp_path, "ckpt-bodysha")
     # MARKED in the header (harden-regress: yes strictly above ## Findings) but the ONLY
     # reviewed-sha is a body quote in a fenced block BELOW ## Findings → NO header sha anchor.
@@ -446,18 +444,17 @@ def test_checkpoint_marked_file_body_only_sha_is_unparseable(tmp_path):
 
 
 def test_checkpoint_no_findings_review_phase_unparseable_body_marker(tmp_path):
-    """Round-5 BLOCKING root fix (PARSEABILITY BOUNDARY — `## Findings` REQUIRED for a
-    review-phase<P> file, mirroring the `## Verdict:` requirement): a MALFORMED review with NO
-    `## Findings` header — here with a `harden-regress: yes` line quoted in a fenced BODY block —
-    is NOT silently bucketed. The round-4 behavior (fail-closed to UNMARKED, counted as
-    integration) was itself UNSAFE: a no-`## Findings` file cannot be safely classified (a marked
-    file truncated after the marker but before the delimiter would read UNMARKED → its sha drops
-    from distinct_marked_sha, hiding a real surplus). The fix flags it `unparseable-review` at the
-    boundary → checkpoint NOT clean (rc 1) → the run STOPs for stranded-marker recovery / a human.
+    """PARSEABILITY BOUNDARY (`## Findings` REQUIRED for a review-phase<P> file, mirroring the
+    `## Verdict:` requirement): a MALFORMED review with NO `## Findings` header — here with a
+    `harden-regress: yes` line quoted in a fenced BODY block — is NOT silently bucketed. A
+    no-`## Findings` file cannot be safely classified (a marked file truncated after the marker
+    but before the delimiter would read UNMARKED → its sha drops from distinct_marked_sha, hiding
+    a real surplus), so it is flagged `unparseable-review` at the boundary → checkpoint NOT clean
+    (rc 1) → the run STOPs for stranded-marker recovery / a human.
 
-    Mutation-verify (REDs on the pre-fix code that lacked the `## Findings` parseability
-    requirement — it read this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix
-    yields exactly one `unparseable-review` on the offending file, rc 1, NOT clean."""
+    Mutation-verify (REDs on pre-fix code lacking the `## Findings` parseability requirement — it
+    read this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix yields exactly
+    one `unparseable-review` on the offending file, rc 1, NOT clean."""
     repo, rd = _base_run(tmp_path, "ckpt-nofindings-marker")
     # `## Verdict: CONVERGED`, NO `## Findings` header at all; a `harden-regress: yes` line sits
     # in a fenced BODY quote — malformed either way; the boundary rejects it on the missing
@@ -539,16 +536,15 @@ def test_ship_body_only_sha_phase_review_not_counted(tmp_path):
 # --------------------------------------------------------------------------- #
 
 def test_checkpoint_no_findings_review_phase_unparseable_header_marker(tmp_path):
-    """Round-5 BLOCKING root fix (PARSEABILITY BOUNDARY — the header-marker arm): a review with
-    the `harden-regress: yes` marker in the header region BUT NO `## Findings` header at all is
-    MALFORMED and must be flagged `unparseable-review` — NOT silently bucketed. This is precisely
-    the crash-window / forgery the boundary closes: a marked-INTENT review truncated before the
-    `## Findings` delimiter. The round-4 behavior (fail-closed to UNMARKED) hid such a file's
-    reviewed-sha from distinct_marked_sha, which could mask a real surplus; the fix rejects it at
-    the boundary instead (checkpoint rc 1, not clean).
+    """PARSEABILITY BOUNDARY (the header-marker arm): a review with the `harden-regress: yes`
+    marker in the header region BUT NO `## Findings` header at all is MALFORMED and must be flagged
+    `unparseable-review` — NOT silently bucketed. This is the crash-window / forgery the boundary
+    closes: a marked-INTENT review truncated before the `## Findings` delimiter. Bucketing it
+    UNMARKED would hide its reviewed-sha from distinct_marked_sha, masking a real surplus; the fix
+    rejects it at the boundary instead (checkpoint rc 1, not clean).
 
-    Mutation-verify (REDs on the pre-fix code lacking the `## Findings` parseability requirement —
-    it read this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix yields exactly
+    Mutation-verify (REDs on pre-fix code lacking the `## Findings` parseability requirement — it
+    read this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix yields exactly
     one `unparseable-review`, rc 1, NOT clean."""
     repo, rd = _base_run(tmp_path, "ckpt-nofind")
     # `harden-regress: yes` in the header region, NO `## Findings` anywhere; the only
@@ -595,16 +591,16 @@ def test_checkpoint_no_findings_plain_review_phase_unparseable(tmp_path):
 
 
 def test_checkpoint_surplus_marked_missing_findings_is_unparseable_not_hidden(tmp_path):
-    """Codex's round-5 reproduction, CLOSED. The surplus scenario
-    (`test_checkpoint_regress_mismatch_fires_on_surplus`: 2 marked distinct-sha reviews + 1
-    harden-yes → `regress-mismatch`) must NOT be silently suppressed by dropping `## Findings`
-    from one marked review. Pre-fix, a no-`## Findings` marked file fell into the UNMARKED bucket
-    (its sha dropped from distinct_marked_sha), so `2 > 1` collapsed to `1 > 1` FALSE → CLEAN,
-    HIDING the surplus. With the parseability boundary the malformed file is `unparseable-review`
+    """PARSEABILITY BOUNDARY (surplus not suppressed by a dropped `## Findings`): the surplus
+    scenario (`test_checkpoint_regress_mismatch_fires_on_surplus`: 2 marked distinct-sha reviews +
+    1 harden-yes → `regress-mismatch`) must NOT be silently suppressed by dropping `## Findings`
+    from one marked review. Without the boundary, a no-`## Findings` marked file fell into the
+    UNMARKED bucket (its sha dropped from distinct_marked_sha), so `2 > 1` collapsed to `1 > 1`
+    FALSE → CLEAN, HIDING the surplus. With the boundary the malformed file is `unparseable-review`
     (rc 1, not clean) — the surplus is never hidden.
 
-    Mutation-verify (REDs on the pre-fix code: it read CLEAN with `phaseReviewRound == {"1": 1}`
-    and NO unparseable-review — exactly codex's suppression): the fix flags the malformed file."""
+    Mutation-verify (REDs on pre-fix code: it read CLEAN with `phaseReviewRound == {"1": 1}`
+    and NO unparseable-review — the suppression): the fix flags the malformed file."""
     repo, rd = _base_run(tmp_path, "ckpt-surplus-nofind")
     _marked_review(rd, "phase1", 1, sha="a" * 40)         # well-formed marked regress, sha a
     # The SECOND marked regress (DISTINCT sha b) with `## Findings` REMOVED — the exact mutation
@@ -627,21 +623,20 @@ def test_checkpoint_surplus_marked_missing_findings_is_unparseable_not_hidden(tm
 
 
 def test_checkpoint_surplus_marked_missing_sha_is_unparseable_not_hidden(tmp_path):
-    """Round-6 BLOCKING (PARSEABILITY BOUNDARY COMPLETED — the reviewed-sha anchor). Codex's
-    round-6 reproduction, CLOSED: a review-phase file with `## Verdict:` + `## Findings` +
-    `harden-regress: yes` but NO `reviewed-sha:` line was STILL silently bucketed after round-5
-    (which only required `## Findings`). The marked path swallowed the missing sha into `msha=""`,
-    which the `$2!=""` filter drops from distinct_marked_sha → a real surplus is HIDDEN.
+    """PARSEABILITY BOUNDARY (the reviewed-sha anchor): a review-phase file with `## Verdict:` +
+    `## Findings` + `harden-regress: yes` but NO `reviewed-sha:` line must NOT be silently
+    bucketed. The marked path would swallow the missing sha into `msha=""`, which the `$2!=""`
+    filter drops from distinct_marked_sha → a real surplus is HIDDEN.
 
-    Scenario (codex's (i)): 1 well-formed marked regress (sha a) + 1 marked regress with NO
-    reviewed-sha + 1 harden-yes. Pre-fix (round-5 code), the no-sha marked file bucketed marked
-    with an empty sha → distinct_marked_sha counts only `a` = 1 ≤ harden-yes 1 → NO fire, CLEAN,
+    Scenario: 1 well-formed marked regress (sha a) + 1 marked regress with NO reviewed-sha +
+    1 harden-yes. Without the reviewed-sha anchor the no-sha marked file bucketed marked with an
+    empty sha → distinct_marked_sha counts only `a` = 1 ≤ harden-yes 1 → NO fire, CLEAN,
     `phaseReviewRound == {"1": 0}` (both marked, 0 unmarked) — the surplus SILENTLY hidden. The
-    completed boundary flags the no-sha file `unparseable-review` (rc 1, not clean) instead.
+    boundary flags the no-sha file `unparseable-review` (rc 1, not clean) instead.
 
-    Mutation-verify (REDs on the round-5 code lacking the reviewed-sha requirement): pre-fix reads
-    CLEAN with NO unparseable-review and `phaseReviewRound == {"1": 0}` — exactly codex's silent
-    bucketing. The fix flags the malformed file, rc 1."""
+    Mutation-verify (REDs on pre-fix code lacking the reviewed-sha requirement): pre-fix reads
+    CLEAN with NO unparseable-review and `phaseReviewRound == {"1": 0}` — the silent bucketing.
+    The fix flags the malformed file, rc 1."""
     repo, rd = _base_run(tmp_path, "ckpt-surplus-nosha")
     _marked_review(rd, "phase1", 1, sha="a" * 40)         # well-formed marked regress, sha a
     # A SECOND marked regress with `## Verdict:` + `## Findings` + the header marker but NO
@@ -667,16 +662,15 @@ def test_checkpoint_surplus_marked_missing_sha_is_unparseable_not_hidden(tmp_pat
 
 
 def test_checkpoint_unmarked_review_phase_missing_sha_is_unparseable(tmp_path):
-    """Round-6 BLOCKING (PARSEABILITY BOUNDARY COMPLETED — the UNMARKED arm). Codex's (ii): an
-    UNMARKED (integration) review-phase file with `## Verdict:` + `## Findings` but NO
-    `reviewed-sha:` line must be `unparseable-review` — NOT silently counted toward the round.
+    """PARSEABILITY BOUNDARY (the UNMARKED arm): an UNMARKED (integration) review-phase file with
+    `## Verdict:` + `## Findings` but NO `reviewed-sha:` line must be `unparseable-review` — NOT
+    silently counted toward the round.
 
-    Pre-fix (round-5 code, which only required `## Verdict:` + `## Findings`) this file passed the
-    boundary, read UNMARKED, and counted toward the integration round → CLEAN with
-    `phaseReviewRound == {"1": 1}`. The completed boundary requires the reviewed-sha anchor too, so
-    an integration file omitting its sha is rejected fail-closed.
+    Without the reviewed-sha anchor this file passed the boundary, read UNMARKED, and counted
+    toward the integration round → CLEAN with `phaseReviewRound == {"1": 1}`. The boundary requires
+    the reviewed-sha anchor too, so an integration file omitting its sha is rejected fail-closed.
 
-    Mutation-verify (REDs on the round-5 code): pre-fix reads CLEAN with NO unparseable-review and
+    Mutation-verify (REDs on pre-fix code): pre-fix reads CLEAN with NO unparseable-review and
     `phaseReviewRound == {"1": 1}`. The fix flags it, rc 1, and does NOT bucket it."""
     repo, rd = _base_run(tmp_path, "ckpt-unmarked-nosha")
     # UNMARKED (no `harden-regress:` marker), well-formed `## Verdict:` + `## Findings`, but NO

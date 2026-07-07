@@ -199,6 +199,14 @@ read -r repo rd < <(mk_slice_missing_review)
 run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc "AC2 slice-merge missing review" 1 "$RC"
 read -r repo rd < <(mk_slice_no_codex)
 run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc "AC2 slice-merge no codex" 1 "$RC"
+# body-only-sha: the review's ONLY reviewed-sha is a fenced BODY quote below `## Findings` (body
+# sha == the real slice tip). The header-bound reviewed_sha_of reads NO header sha -> sha-mismatch
+# -> BLOCK. Pins the slice-merge consumer of the hardened reader (was covered only for
+# phase-merge/ship/checkpoint). RED against the pre-fix whole-file reader (body sha == tip -> counts
+# -> clean rc 0).
+read -r repo rd < <(mk_slice_body_only_sha)
+run_conf "$repo" "$rd" --mode slice-merge:4a;       assert_rc  "AC2 slice-merge body-only-sha blocked" 1 "$RC"
+                                                    assert_out "AC2 slice-merge body-only-sha reason is sha-mismatch" "sha-mismatch"
 
 echo "=== AC3: codex_present rule — ANY non-empty codex file satisfies; empty does not ==="
 # The gate does NOT parse the marker: a first-line CODEX_UNAVAILABLE degradation file is
@@ -393,6 +401,13 @@ run_conf "$repo" "$rd" --mode audit;                assert_rc "AC5 audit flags m
 # audit negative: same shape but slice IS reviewed -> exit 0
 read -r repo rd < <(mk_audit reviewed)
 run_conf "$repo" "$rd" --mode audit;                assert_rc "AC5 audit clean when merged slice reviewed" 0 "$RC"
+# audit body-only-sha: a merged slice whose review's ONLY reviewed-sha is a fenced BODY quote below
+# `## Findings` (body sha == the slice tip) -> the header-bound reviewed_sha_of reads NO sha ->
+# the merged slice has no counting review -> audit FLAGS (rc 1). Pins the audit consumer of the
+# hardened reader (was covered only for phase-merge/ship/checkpoint). RED against the pre-fix
+# whole-file reader (body sha == tip -> counts -> clean rc 0).
+read -r repo rd < <(mk_audit body_only)
+run_conf "$repo" "$rd" --mode audit;                assert_rc "AC5 audit flags merged slice with body-only-sha review" 1 "$RC"
 
 echo "=== AC5b: induced git/IO error (corrupt object) -> exit 2, never a clean/violation verdict ==="
 # ship: R resolves + is ancestor + R..tip=1 commit, but the tip's TREE is corrupt so the
@@ -489,9 +504,10 @@ run_conf "$repo" "$rd" --mode checkpoint
 assert_rc "CK1 quiescent well-formed fixture clean (state.json corrupt — never read)" 0 "$RC"
 assert_out_contains "CK1 clean envelope" '"clean":true,"mode":"checkpoint"'
 # All six I3 rules in one assertion: reviewCount from pure-integer-N counts (the
-# review-1.1-final.md non-round file does NOT count); phaseReviewRound = 3 review-phase1
-# files MINUS the 1 AppliedEdits:yes regress marker (regress files don't overcount the
-# round); hardenRound counts ONLY yes (one yes + one no -> 1); phaseDesignRound epoch-0;
+# review-1.1-final.md non-round file does NOT count); phaseReviewRound = count(unmarked) —
+# 2 unmarked integration files -> 2 rounds (marker-aware; the 3rd review-phase1 file is a
+# marked harden-regress, counted separately, not in the round); hardenRound counts ONLY yes
+# (one yes + one no -> 1); phaseDesignRound epoch-0;
 # finalizeRound = 0 (a bare integer — the run-singleton 6th counter — this fixture seeds no
 # review-finalize-*.md, so the AppliedEdits:yes count over that family is 0).
 assert_out_contains "CK1 counters per I3" \
@@ -541,12 +557,13 @@ run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 non-numeric p
 read -r repo rd < <(mk_slice_clean ckpt-nodrive)
 run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK1 absent featureBranch -> exit 2" 2 "$RC"
 
-echo "=== CK2: counters — regress subtraction edge + epoch-scoped design rounds ==="
-# yes-count exceeding the review-file count is malformed: regress-mismatch, value 0.
+echo "=== CK2: counters — surplus regress guard + epoch-scoped design rounds ==="
+# SURPLUS: 3 distinct MARKED harden-regress reviewed-shas > 2 harden-yes -> regress-mismatch;
+# 0 unmarked integration files -> phaseReviewRound {"1":0} (count(unmarked), not a clamp).
 read -r repo rd < <(mk_checkpoint regress_mismatch)
-run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 yes-count > review count -> exit 1" 1 "$RC"
+run_conf "$repo" "$rd" --mode checkpoint;           assert_rc "CK2 distinct marked-regress > harden-yes -> exit 1" 1 "$RC"
 assert_out_contains "CK2 regress-mismatch violation" '"reason":"regress-mismatch"'
-assert_out_contains "CK2 phaseReviewRound reported 0" '"phaseReviewRound":{"1":0}'
+assert_out_contains "CK2 phaseReviewRound is count(unmarked)=0" '"phaseReviewRound":{"1":0}'
 assert_out_contains "CK2 hardenRound counts both yes files" '"hardenRound":{"1":2}'
 # phaseDesignRound counts ONLY the current epoch's files once an r1 marker exists.
 read -r repo rd < <(mk_checkpoint epoch_files)

@@ -223,9 +223,7 @@ json_from_pairs() {
 # only body-only-sha forgeries. The `## Findings` delimiter is REQUIRED to bound the header:
 # the real writer ALWAYS emits it (drive-review.md, drive-finalize.md), so a review LACKING
 # `## Findings` is malformed → awk hits EOF with `seen==0` → prints nothing → NO sha (rc1),
-# fail-closed. This removes the last whole-file/EOF fallback (a malformed review with only a
-# body/fenced `reviewed-sha:` no longer binds any tip), closing the body-only-sha bypass for
-# no-`## Findings` files. "First match" semantics are preserved (finalize relies on the FIRST
+# fail-closed. "First match" semantics are preserved (finalize relies on the FIRST
 # reviewed-sha — grep -m1 over the buffered header). awk buffers the header region and emits it
 # only when `## Findings` is seen (no interval regex, for portability across BWK/gawk); the same
 # grep -E pattern then does the 40-hex match.
@@ -712,7 +710,7 @@ EOF
         (design) ;;
         (phasedesign?*) pd_keys="$pd_keys${scope#phasedesign}"$'\n' ;;
         (phase?*)
-          # PARSEABILITY BOUNDARY (root fix, COMPLETED): a review-phase<P>-N.md is
+          # PARSEABILITY BOUNDARY: a review-phase<P>-N.md is
           # counter-parseable ONLY with ALL THREE structural anchors —
           #   1. `## Verdict:`        (the generic guard above),
           #   2. `## Findings`        (the header/body delimiter the two header-region readers

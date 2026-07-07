@@ -35,11 +35,10 @@ _commit() {
   _gitc "$r" rev-parse HEAD
 }
 
-# Write a CONVERGED review artifact matching the REAL writer schema (drive-review.md): a header
-# preamble (`## Verdict:` + `reviewed-sha:`) then the ALWAYS-present `## Findings` delimiter. The
-# delimiter is load-bearing — the reader's parseability boundary requires it and it bounds the
-# header region the delimiter-required reviewed_sha_of/is_marked read. This is an UNMARKED
-# (integration) review; the marked shape is _write_marked_review. $1=run_dir $2=scope $3=N $4=sha
+# Write a CONVERGED UNMARKED (integration) review. Schema per the real writer (drive-review.md
+# § "Write review-<scope>-N.md"): a `## Verdict:` + `reviewed-sha:` header preamble then the
+# load-bearing `## Findings` delimiter (it bounds the header region the delimiter-required
+# reviewed_sha_of/is_marked read). Marked shape = _write_marked_review. $1=run_dir $2=scope $3=N $4=sha
 _write_review() {
   local rd="$1" scope="$2" n="$3" sha="$4"
   mkdir -p "$rd"
@@ -90,6 +89,27 @@ _write_marked_review() {
     echo "## Findings"
     echo
     echo "No open P1."
+  } > "$rd/review-$scope-$n.md"
+}
+
+# Write a MALFORMED body-only-sha review: the header carries `## Verdict: CONVERGED` and the
+# `## Findings` delimiter but NO header `reviewed-sha:`; the ONLY `reviewed-sha: <sha>` is a
+# fenced quote in the BODY, BELOW `## Findings`. The header-region reviewed_sha_of reads NO sha
+# (fail-closed), so this binds NO tip on any check_scope_counts consumer. Pass the REAL branch
+# tip as $4 so a pre-fix whole-file reader would find body sha == tip and wrongly COUNT it.
+# Mirrors the pytest `_body_only_sha_review` fixture. $1=run_dir $2=scope $3=N $4=sha
+_write_body_only_sha_review() {
+  local rd="$1" scope="$2" n="$3" sha="$4"
+  mkdir -p "$rd"
+  {
+    echo "# Review $scope round $n"
+    echo "## Verdict: CONVERGED"
+    echo "## Findings"
+    echo "The writer emits it like:"
+    echo '```'
+    echo "reviewed-sha: $sha"
+    echo '```'
+    echo "end."
   } > "$rd/review-$scope-$n.md"
 }
 
@@ -237,6 +257,22 @@ mk_slice_findings() {
   _gitc "$repo" checkout -q -b "slice/$name/4a"
   local tip; tip="$(_commit "$repo" "feature.sh" "echo hi" "slice 4a work")"
   _write_review_findings "$rd" "4a" 1 "$tip"
+  _write_codex "$rd" "4a"
+  echo "$repo $rd"
+}
+
+# slice with a body-only-sha review whose ONLY reviewed-sha is a fenced BODY quote below
+# `## Findings` (body sha == the real slice tip) + codex present. The header-bound
+# reviewed_sha_of reads NO header sha -> sha-mismatch -> slice-merge must BLOCK (rc 1). RED
+# against the pre-fix whole-file reader (finds body sha == tip -> counts -> clean rc 0).
+mk_slice_body_only_sha() {
+  local name="${1:-slice-body-only-sha}"
+  local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
+  _init_repo "$repo"
+  _commit "$repo" "README" "base" "base" >/dev/null
+  _gitc "$repo" checkout -q -b "slice/$name/4a"
+  local tip; tip="$(_commit "$repo" "feature.sh" "echo hi" "slice 4a work")"
+  _write_body_only_sha_review "$rd" "4a" 1 "$tip"
   _write_codex "$rd" "4a"
   echo "$repo $rd"
 }
@@ -461,7 +497,9 @@ mk_phase_harden() {
 
 # Audit fixture: a live phaseInt/<runId>/<P> with one slice merged in. drive/<runId>
 # sits at the base, so the phaseInt tip descends from it (live, per the ancestry rule).
-# variant: reviewed (slice has a counting review) | unreviewed (slice merged, no review)
+# variant: reviewed (slice has a counting review) | unreviewed (slice merged, no review) |
+#          findings (merged, FINDINGS review) | body_only (merged, body-only-sha review) |
+#          not_merged (unreviewed sibling not integrated)
 mk_audit() {
   local variant="$1" name="${2:-audit-$1}" P=1
   local repo="$FIXROOT/$name-repo" rd="$FIXROOT/$name"
@@ -478,6 +516,7 @@ mk_audit() {
     reviewed)   _write_review "$rd" "4a" 1 "$stip" ;;
     unreviewed) : ;;   # no review-4a-*.md -> audit must flag it
     findings)   _write_review_findings "$rd" "4a" 1 "$stip" ;;   # merged slice, FINDINGS review -> flag
+    body_only)  _write_body_only_sha_review "$rd" "4a" 1 "$stip" ;;   # body-only-sha review -> no header sha -> flag
     not_merged)
       # 4a is reviewed+merged (won't flag); add an unreviewed slice/4b cut from base that is
       # NOT an ancestor of phaseInt -> audit must SKIP it (only flags merged-but-unreviewed).
@@ -572,8 +611,9 @@ mk_audit_multi_live() {
 #                        counter artifacts covering the I3 rules; state.json is
 #                        CORRUPT garbage (proves the mode never reads it).
 #                        Expected counters: reviewCount {"1.1":2} (review-1.1-final.md
-#                        is not a round file), phaseReviewRound {"1":2} (3 review-phase1
-#                        files MINUS 1 AppliedEdits:yes regress marker), hardenRound
+#                        is not a round file), phaseReviewRound {"1":2} (count(unmarked):
+#                        2 unmarked integration files; the 3rd review-phase1 file is a
+#                        marked harden-regress, counted separately), hardenRound
 #                        {"1":1} (one yes + one no), phaseDesignRound {"1":1} (epoch 0),
 #                        redesigns {}.
 #   inflight          -- clean-shaped + one open inflight-*.marker        -> inflight-open
