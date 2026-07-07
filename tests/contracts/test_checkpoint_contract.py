@@ -393,26 +393,23 @@ def test_checkpoint_marked_file_body_only_sha_excluded_from_distinct(tmp_path):
     assert obj["counters"]["phaseReviewRound"] == {"1": 0}, obj["counters"]
 
 
-def test_checkpoint_no_findings_body_marker_not_classified_marked(tmp_path):
-    """Round-4 BLOCKING regression pin (`is_marked` delimiter-required — the sibling of the
-    round-3 `reviewed_sha_of` fix): a MALFORMED review with NO `## Findings` header whose ONLY
-    `harden-regress: yes` occurrence is a fenced BODY quote must classify UNMARKED, NOT marked.
-    The real writer ALWAYS emits `## Findings` with the marker ABOVE it, so a no-`## Findings`
-    file is malformed and FAILS CLOSED to NOT-marked — it counts as an unmarked INTEGRATION
-    file rather than being MARKED-and-excluded (which silently SUPPRESSES phaseReviewRound).
-    Both header-preamble value readers (`is_marked`, `reviewed_sha_of`) are now delimiter-bound;
-    neither has an EOF fallback.
+def test_checkpoint_no_findings_review_phase_unparseable_body_marker(tmp_path):
+    """Round-5 BLOCKING root fix (PARSEABILITY BOUNDARY — `## Findings` REQUIRED for a
+    review-phase<P> file, mirroring the `## Verdict:` requirement): a MALFORMED review with NO
+    `## Findings` header — here with a `harden-regress: yes` line quoted in a fenced BODY block —
+    is NOT silently bucketed. The round-4 behavior (fail-closed to UNMARKED, counted as
+    integration) was itself UNSAFE: a no-`## Findings` file cannot be safely classified (a marked
+    file truncated after the marker but before the delimiter would read UNMARKED → its sha drops
+    from distinct_marked_sha, hiding a real surplus). The fix flags it `unparseable-review` at the
+    boundary → checkpoint NOT clean (rc 1) → the run STOPs for stranded-marker recovery / a human.
 
-    Mutation-verify (REDs on the pre-fix `is_marked` `END { exit (found ? 0 : 1) }` EOF
-    fallback — codex's exact reproduction): under the pre-fix reader the body `harden-regress:
-    yes` sets `found` and, with no `## Findings` to bound the header, the EOF fallback returns
-    MARKED → the file is excluded from the integration count → `phaseReviewRound == {"1": 0}`
-    (the suppression codex reproduced). The delimiter-required reader honors `found` ONLY when
-    `## Findings` was seen (`seen`); no `## Findings` → UNMARKED → the file counts toward the
-    integration round → `phaseReviewRound == {"1": 1}`."""
+    Mutation-verify (REDs on the pre-fix code that lacked the `## Findings` parseability
+    requirement — it read this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix
+    yields exactly one `unparseable-review` on the offending file, rc 1, NOT clean."""
     repo, rd = _base_run(tmp_path, "ckpt-nofindings-marker")
-    # `## Verdict: CONVERGED`, NO `## Findings` header at all; the ONLY `harden-regress: yes`
-    # line is a fenced BODY quote — exactly codex's counterexample.
+    # `## Verdict: CONVERGED`, NO `## Findings` header at all; a `harden-regress: yes` line sits
+    # in a fenced BODY quote — malformed either way; the boundary rejects it on the missing
+    # delimiter alone (independent of the marker).
     (rd / "review-phase1-1.md").write_text(
         "# Review phase1 round 1\n## Verdict: CONVERGED\n"
         "Body prose (no Findings header). The writer emits it like:\n"
@@ -420,10 +417,14 @@ def test_checkpoint_no_findings_body_marker_not_classified_marked(tmp_path):
         encoding="utf-8",
     )
     rc, obj = _run_checkpoint(repo, rd)
-    assert rc == 0, f"malformed no-Findings file fails closed to unmarked → clean; got {obj}"
-    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
-    # UNMARKED (fail-closed) → counts as one integration round; NOT suppressed to 0 (the bug).
-    assert obj["counters"]["phaseReviewRound"] == {"1": 1}, obj["counters"]
+    assert rc == 1, f"a no-Findings review-phase file must be unparseable (not clean); got {obj}"
+    assert obj["clean"] is False, obj
+    # EXACT: one unparseable-review on the offending file's basename, no shas, no extras. The file
+    # is NOT bucketed, so it contributes no integration round.
+    assert obj["violations"] == [
+        _viol("review-phase1-1.md", "unparseable-review")
+    ], obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {}, obj["counters"]
 
 
 def test_phase_merge_body_only_sha_not_tip_bound(tmp_path):
@@ -485,38 +486,92 @@ def test_ship_body_only_sha_phase_review_not_counted(tmp_path):
 # Each is mutation-verified against the pre-fix EOF fallback below.
 # --------------------------------------------------------------------------- #
 
-def test_checkpoint_no_findings_header_marker_not_classified_marked(tmp_path):
-    """Round-4 BLOCKING (`is_marked` delimiter-required — CONSISTENCY with `reviewed_sha_of`):
-    a review with the `harden-regress: yes` marker in the header region BUT NO `## Findings`
-    header at all is MALFORMED and must FAIL CLOSED to UNMARKED — the delimiter is required
-    even for a header-positioned marker, so `is_marked` and `reviewed_sha_of` share one
-    header-region bound (neither has an EOF fallback). A real harden-regress review ALWAYS
-    emits `## Findings` with the marker above it, so this breaks no legit path; a no-`##
-    Findings` file counts as an unmarked INTEGRATION file (fail-closed direction) rather than
-    being MARKED-and-excluded (which would suppress the round) or feeding a body-only sha into
-    the surplus guard.
+def test_checkpoint_no_findings_review_phase_unparseable_header_marker(tmp_path):
+    """Round-5 BLOCKING root fix (PARSEABILITY BOUNDARY — the header-marker arm): a review with
+    the `harden-regress: yes` marker in the header region BUT NO `## Findings` header at all is
+    MALFORMED and must be flagged `unparseable-review` — NOT silently bucketed. This is precisely
+    the crash-window / forgery the boundary closes: a marked-INTENT review truncated before the
+    `## Findings` delimiter. The round-4 behavior (fail-closed to UNMARKED) hid such a file's
+    reviewed-sha from distinct_marked_sha, which could mask a real surplus; the fix rejects it at
+    the boundary instead (checkpoint rc 1, not clean).
 
-    Mutation-verify (REDs on the pre-fix `is_marked` `END { exit (found ? 0 : 1) }` EOF
-    fallback): the pre-fix awk, finding no `## Findings`, ran to EOF with `found` set by the
-    header marker → MARKED → excluded from the integration count → `phaseReviewRound == {"1":
-    0}`. The delimiter-required reader honors `found` only when `## Findings` was seen (`seen`)
-    → no `## Findings` → UNMARKED → the file counts toward the integration round → `{"1": 1}`.
-    (The surplus guard also cannot false-fire: with 0 harden-yes and the file UNMARKED, no sha
-    enters `distinct_marked_sha` at all.)"""
+    Mutation-verify (REDs on the pre-fix code lacking the `## Findings` parseability requirement —
+    it read this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix yields exactly
+    one `unparseable-review`, rc 1, NOT clean."""
     repo, rd = _base_run(tmp_path, "ckpt-nofind")
     # `harden-regress: yes` in the header region, NO `## Findings` anywhere; the only
-    # reviewed-sha is a fenced body quote. Malformed → fails closed to UNMARKED.
+    # reviewed-sha is a fenced body quote. Malformed → unparseable at the boundary.
     (rd / "review-phase1-1.md").write_text(
         "# Review phase1 round 1\n## Verdict: CONVERGED\nharden-regress: yes\n"
         "Body prose (no Findings header):\n```\nreviewed-sha: " + "a" * 40 + "\n```\nend.\n",
         encoding="utf-8",
     )
-    # 0 harden-yes → the surplus guard would fire iff a sha were (wrongly) counted as marked.
     rc, obj = _run_checkpoint(repo, rd)
-    assert rc == 0, f"no-Findings file fails closed to unmarked → clean; got {obj}"
-    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
-    # UNMARKED (delimiter required) → counts as one integration round; NOT suppressed to 0.
-    assert obj["counters"]["phaseReviewRound"] == {"1": 1}, obj["counters"]
+    assert rc == 1, f"a no-Findings review-phase file must be unparseable (not clean); got {obj}"
+    assert obj["clean"] is False, obj
+    # EXACT: one unparseable-review; the file is not bucketed (no integration round, no sha into
+    # the surplus guard).
+    assert obj["violations"] == [
+        _viol("review-phase1-1.md", "unparseable-review")
+    ], obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {}, obj["counters"]
+
+
+def test_checkpoint_no_findings_plain_review_phase_unparseable(tmp_path):
+    """Root-fix boundary (marker-AGNOSTIC): even a PLAIN, NON-marked review-phase file with a
+    valid `## Verdict:` header + `reviewed-sha:` but NO `## Findings` header is
+    `unparseable-review`. The requirement is structural (the delimiter must be present), not
+    conditional on a marker — a valid-verdict file reaching the counter path without the
+    delimiter would otherwise be silently bucketed UNMARKED, the exact silent path the boundary
+    closes (and the shape a marked review truncated before `## Findings` degenerates to).
+
+    Mutation-verify (REDs on the pre-fix code lacking the `## Findings` requirement — it read
+    this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix flags it, rc 1."""
+    repo, rd = _base_run(tmp_path, "ckpt-nofind-plain")
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\nreviewed-sha: " + "a" * 40 +
+        "\nno findings header here\n",
+        encoding="utf-8",
+    )
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1, f"a plain no-Findings review-phase file must be unparseable; got {obj}"
+    assert obj["clean"] is False, obj
+    assert obj["violations"] == [
+        _viol("review-phase1-1.md", "unparseable-review")
+    ], obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {}, obj["counters"]
+
+
+def test_checkpoint_surplus_marked_missing_findings_is_unparseable_not_hidden(tmp_path):
+    """Codex's round-5 reproduction, CLOSED. The surplus scenario
+    (`test_checkpoint_regress_mismatch_fires_on_surplus`: 2 marked distinct-sha reviews + 1
+    harden-yes → `regress-mismatch`) must NOT be silently suppressed by dropping `## Findings`
+    from one marked review. Pre-fix, a no-`## Findings` marked file fell into the UNMARKED bucket
+    (its sha dropped from distinct_marked_sha), so `2 > 1` collapsed to `1 > 1` FALSE → CLEAN,
+    HIDING the surplus. With the parseability boundary the malformed file is `unparseable-review`
+    (rc 1, not clean) — the surplus is never hidden.
+
+    Mutation-verify (REDs on the pre-fix code: it read CLEAN with `phaseReviewRound == {"1": 1}`
+    and NO unparseable-review — exactly codex's suppression): the fix flags the malformed file."""
+    repo, rd = _base_run(tmp_path, "ckpt-surplus-nofind")
+    _marked_review(rd, "phase1", 1, sha="a" * 40)         # well-formed marked regress, sha a
+    # The SECOND marked regress (DISTINCT sha b) with `## Findings` REMOVED — the exact mutation
+    # from the surplus repro (a crash after the marker, or a forgery). Pre-fix it fell UNMARKED
+    # (sha b dropped from distinct_marked_sha) → 2>1 collapsed to 1>1 FALSE → clean, hiding it.
+    (rd / "review-phase1-2.md").write_text(
+        "# Review phase1 round 2\n## Verdict: CONVERGED\nreviewed-sha: " + "b" * 40 +
+        "\nharden-regress: yes\nno findings header\n",
+        encoding="utf-8",
+    )
+    _harden(rd, 1, 1, "yes")                              # 1 fix round
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1, f"a marked review missing ## Findings must be unparseable, not hidden; got {obj}"
+    assert obj["clean"] is False, obj
+    # EXACT: the malformed file is flagged unparseable-review (not silently absorbed into the
+    # buckets). The well-formed marked `a` (distinct=1) ≤ harden-yes 1 → no regress-mismatch.
+    assert obj["violations"] == [
+        _viol("review-phase1-2.md", "unparseable-review")
+    ], obj["violations"]
 
 
 def test_phase_merge_no_findings_body_sha_not_tip_bound(tmp_path):

@@ -250,16 +250,17 @@ reviewed_sha_of() {
 # the review BODY (all findings prose + fenced code live after `## Findings`) cannot match.
 #
 # The `## Findings` delimiter is REQUIRED to bound the header, matching reviewed_sha_of's
-# contract exactly (both header-preamble VALUE readers are now delimiter-bound — no EOF
-# fallback in either). The real writer ALWAYS emits `## Findings` (drive-review.md,
-# drive-finalize.md) with the marker ABOVE it, so a review LACKING `## Findings` is malformed →
-# it FAILS CLOSED to NOT-marked. Fail-closed direction (safe under the surplus/deficit
-# semantics): a malformed no-`## Findings` file is classified UNMARKED so it counts as an
-# unmarked INTEGRATION file (honest integration-round count) rather than being MARKED-and-
-# excluded (which would silently SUPPRESS the round) or inflating distinct_marked_sha into a
-# false surplus. An extra unmarked file is benign (integration-round is `max(state,derived)`,
-# one-directional); a malformed file misclassified MARKED is not. Every legitimate marked
-# review carries `## Findings` with the marker in the preamble, so this breaks no legit path.
+# contract exactly (both header-preamble VALUE readers are delimiter-bound — no EOF fallback in
+# either). The real writer ALWAYS emits `## Findings` (drive-review.md, drive-finalize.md) with
+# the marker ABOVE it. A review-phase<P> file LACKING `## Findings` never reaches this reader:
+# the checkpoint counter path (review-*.md scan) now treats it as an `unparseable-review`
+# violation at the PARSEABILITY BOUNDARY (both `## Verdict:` and `## Findings` required) BEFORE
+# any classification — a no-`## Findings` file cannot be safely bucketed (is_marked can't tell a
+# genuinely-unmarked file from a marked one truncated before the delimiter, and either UNMARKED
+# bucketing inflates the integration round OR drops a real reviewed-sha from distinct_marked_sha,
+# hiding a surplus). So requiring the delimiter upstream means every file this reader sees HAS
+# it. is_marked stays delimiter-bound as a DEFENSIVE BACKSTOP (a no-`## Findings` file → `seen==0`
+# → NOT-marked), never load-bearing in the counter path now that the boundary rejects such files.
 #
 # Uses a `seen`-flag (`## Findings` reached) AND a `found`-flag (marker in header), NOT a bare
 # `END { exit 1 }`: in awk `END` runs after an earlier `exit`, so the `/^## Findings/` rule's
@@ -711,22 +712,43 @@ EOF
         (design) ;;
         (phasedesign?*) pd_keys="$pd_keys${scope#phasedesign}"$'\n' ;;
         (phase?*)
-          # Classify each phase-round file MARKED (harden-regress) vs UNMARKED (integration)
-          # by the header-region marker (is_marked). Integration-round = count(unmarked);
-          # marked-regress = distinct reviewed-sha among marked (rule-2 below). No file counts
-          # on both sides; the integration round no longer depends on the harden yes-count.
-          P="${scope#phase}"
-          if is_marked "$f"; then
-            # HEADER-bound sha read (reviewed_sha_of is header-bound, matching is_marked's
-            # bound): a marked file whose only `reviewed-sha:` is a body quote below
-            # `## Findings` yields empty → excluded from distinct_marked_sha's set (the `$2!=""`
-            # filter drops it) → no false regress-mismatch.
-            msha="$(reviewed_sha_of "$f" || true)"
-            marked_phase_shas="$marked_phase_shas$P ${msha}"$'\n'
+          # PARSEABILITY BOUNDARY (root fix): a review-phase<P>-N.md is counter-parseable ONLY
+          # with BOTH `## Verdict:` (the generic guard above) AND `## Findings` — the header/body
+          # delimiter the counter's two header-region readers (is_marked, reviewed_sha_of) bind
+          # to. A phase-review file LACKING `## Findings` (a crash after the marker but before the
+          # delimiter, or a forgery) is malformed and must NOT be bucketed: is_marked would read
+          # it UNMARKED (its `seen`-flag never sets), which BOTH inflates the integration round
+          # AND drops its reviewed-sha from distinct_marked_sha — silently hiding a real surplus.
+          # Flag it `unparseable-review` (fail-closed → checkpoint not clean → the run STOPs for
+          # stranded-marker recovery / a human) and do NOT classify it. Requiring the delimiter
+          # HERE is what makes every file the readers see downstream carry it, so all their
+          # header-region edge cases vanish at the boundary. Every legitimate marked/integration
+          # review carries `## Findings` (drive-review.md schema), so this breaks no real path.
+          if ! grep -qE '^## Findings' "$f"; then
+            # Emit unparseable-review UNLESS the generic `## Verdict:` guard above ALREADY did
+            # (a file missing BOTH must not double-count the same violation).
+            if grep -qE '^## Verdict:' "$f"; then
+              viol_arr+=("$(violation "$base" "unparseable-review")")
+            fi
           else
-            unmarked_phase_keys="$unmarked_phase_keys$P"$'\n'
-          fi
-          all_phase_ids="$all_phase_ids$P"$'\n' ;;
+            # Classify a PARSEABLE phase-round file MARKED (harden-regress) vs UNMARKED
+            # (integration) by the header-region marker (is_marked). Integration-round =
+            # count(unmarked); marked-regress = distinct reviewed-sha among marked (rule-2 below).
+            # No file counts on both sides; the integration round no longer depends on the harden
+            # yes-count.
+            P="${scope#phase}"
+            if is_marked "$f"; then
+              # HEADER-bound sha read (reviewed_sha_of is header-bound, matching is_marked's
+              # bound): a marked file whose only `reviewed-sha:` is a body quote below
+              # `## Findings` yields empty → excluded from distinct_marked_sha's set (the `$2!=""`
+              # filter drops it) → no false regress-mismatch.
+              msha="$(reviewed_sha_of "$f" || true)"
+              marked_phase_shas="$marked_phase_shas$P ${msha}"$'\n'
+            else
+              unmarked_phase_keys="$unmarked_phase_keys$P"$'\n'
+            fi
+            all_phase_ids="$all_phase_ids$P"$'\n'
+          fi ;;
         (finalize)
           # finalize is run-singleton — NOT a slice (no phantom slice/<runId>/finalize branch).
           # Count its `AppliedEdits: yes` fix rounds for finalizeRound (B5); FAIL CLOSED on a
