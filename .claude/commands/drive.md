@@ -300,8 +300,22 @@ verdict / merge / gate.
        wait**; the heal has NO cap so STOP is unreachable):
        - **Adopt** if the COMPLETE artifact set exists — the marked `review-phase<P>-N.md`
          at the hardened tip (`reviewed-sha == git rev-parse phaseInt/<runId>/<P>`) AND a
-         non-empty `codex-review-phase<P>.md` sibling → clear `inflight-heal-<P>.marker`,
-         done.
+         non-empty `codex-review-phase<P>.md` sibling. The heal COMPLETED (both artifacts
+         are durable), so clear `inflight-heal-<P>.marker`; THEN inspect the adopted
+         terminal's `## Verdict:` (first line) to decide continue-vs-STOP — the stale-FINDINGS
+         trigger (step 3) will NOT make this call: it self-terminates on this at-tip terminal
+         (`reviewed-sha == tip`).
+         - **Adopted terminal CONVERGED (at the hardened tip) → healed:** continue (the same
+           outcome as the fresh CONVERGED heal, step 5).
+         - **Adopted terminal FINDINGS (at the hardened tip) → HONEST terminal NON-DECISION
+           STOP, routed to MANUAL recovery** (the SAME path as the fresh-dispatch FINDINGS
+           outcome, step 5): a genuine open P1 at the hardened tip — NOT automated closure and
+           NOT a new false block (the terminal was ALREADY FINDINGS/ship-blocking before the
+           heal). Surface a non-decision STOP (Present human pause, `waiting = "stop:<short>"`)
+           reporting the phase + hardened tip and the documented MANUAL harden-regress
+           recovery (bind the hardened tip, re-review/fix for real, NEVER forge). Shippability
+           is UNCHANGED. Self-terminating: the at-tip `reviewed-sha` keeps the trigger from
+           re-firing.
        - **Re-dispatch** otherwise (marked file at the tip but codex sibling missing/empty,
          OR no marked file): recompute `base(P)` deterministically (step 4 — it need NOT
          have survived the crash), first `mv` the `codex-raw-phase<P>.log` aside (an orphaned

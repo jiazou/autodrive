@@ -1488,6 +1488,27 @@ def test_resume_heal_findings_routes_to_manual_stop():
     )
 
 
+def test_resume_heal_adopt_findings_routes_to_manual_stop():
+    """codex phase1 BLOCKING: the step-1 ADOPT path must inspect the recovered terminal's
+    verdict before continuing. A crash after a real-FINDINGS heal completed (both artifacts
+    written, marker not yet cleared) resumes → ADOPTS; the marked terminal is at the hardened
+    tip (`reviewed-sha == tip`) so the stale-FINDINGS trigger (step 3) SKIPS it — so the adopt
+    path itself must route a FINDINGS-at-tip adopted terminal through the SAME honest manual
+    STOP as the fresh-dispatch FINDINGS outcome (step 5), not silently clear-and-continue."""
+    blob = _norm(_drive_md())
+    # adopt path is verdict-aware: CONVERGED continues, FINDINGS-at-tip STOPs
+    assert "Adopted terminal CONVERGED (at the hardened tip) → healed" in blob, (
+        "the adopt path must continue only on a CONVERGED-at-tip adopted terminal"
+    )
+    assert (
+        "Adopted terminal FINDINGS (at the hardened tip) → HONEST terminal NON-DECISION STOP,"
+        " routed to MANUAL recovery" in blob
+    ), (
+        "the adopt path must route a FINDINGS-at-tip adopted terminal to the manual STOP "
+        "(the trigger self-terminates on reviewed-sha == tip and would otherwise drop it)"
+    )
+
+
 def test_resume_heal_base_recovery_phaselist_order():
     """AC8: `base(P)` is recovered off `state.phaseList` ORDER (never arithmetic `P−1`) —
     `phaseInt/<runId>/<prev>` for a non-first entry, else `state.baseSha`."""
