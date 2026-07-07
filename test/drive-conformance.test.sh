@@ -38,6 +38,9 @@ seed_finalize() {
     echo "## AppliedEdits: $applied"
     echo
     echo "reviewed-sha: $sha"
+    echo "## Findings"
+    echo
+    echo "No open P1."
   } > "$rd/review-finalize-$n.md"
   { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
 }
@@ -56,6 +59,9 @@ seed_finalize_findings() {
     echo "## AppliedEdits: no"
     echo
     echo "reviewed-sha: $sha"
+    echo "## Findings"
+    echo
+    echo "No open P1."
   } > "$rd/review-finalize-$n.md"
   { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
 }
@@ -71,6 +77,9 @@ seed_finalize_no_sha() {
     echo
     echo "## Verdict: CONVERGED"
     echo "## AppliedEdits: no"
+    echo "## Findings"
+    echo
+    echo "No open P1."
   } > "$rd/review-finalize-$n.md"
   { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
 }

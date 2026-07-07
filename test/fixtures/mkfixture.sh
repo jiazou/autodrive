@@ -35,7 +35,11 @@ _commit() {
   _gitc "$r" rev-parse HEAD
 }
 
-# Write a CONVERGED review artifact. $1=run_dir $2=scope $3=N $4=reviewed-sha
+# Write a CONVERGED review artifact matching the REAL writer schema (drive-review.md): a header
+# preamble (`## Verdict:` + `reviewed-sha:`) then the ALWAYS-present `## Findings` delimiter. The
+# delimiter is load-bearing — the reader's parseability boundary requires it and it bounds the
+# header region the delimiter-required reviewed_sha_of/is_marked read. This is an UNMARKED
+# (integration) review; the marked shape is _write_marked_review. $1=run_dir $2=scope $3=N $4=sha
 _write_review() {
   local rd="$1" scope="$2" n="$3" sha="$4"
   mkdir -p "$rd"
@@ -45,10 +49,14 @@ _write_review() {
     echo "## Verdict: CONVERGED"
     echo
     echo "reviewed-sha: $sha"
+    echo "## Findings"
+    echo
+    echo "No open P1."
   } > "$rd/review-$scope-$n.md"
 }
 
-# Write a FINDINGS review artifact. $1=run_dir $2=scope $3=N $4=reviewed-sha
+# Write a FINDINGS review artifact (same schema as _write_review, FINDINGS verdict).
+# $1=run_dir $2=scope $3=N $4=reviewed-sha
 _write_review_findings() {
   local rd="$1" scope="$2" n="$3" sha="$4"
   mkdir -p "$rd"
@@ -58,6 +66,30 @@ _write_review_findings() {
     echo "## Verdict: FINDINGS"
     echo
     echo "reviewed-sha: $sha"
+    echo "## Findings"
+    echo
+    echo "No open P1."
+  } > "$rd/review-$scope-$n.md"
+}
+
+# Write a MARKED harden-regress review (drive-review.md schema): header preamble with
+# `## Verdict:` + `reviewed-sha:` + the column-0 `harden-regress: yes` marker (strictly ABOVE
+# `## Findings`), then the `## Findings` delimiter. Reads MARKED under is_marked and its
+# reviewed-sha binds under reviewed_sha_of. $4 MUST be a valid 40-hex (distinct marked shas
+# feed distinct_marked_sha). $1=run_dir $2=scope $3=N $4=reviewed-sha
+_write_marked_review() {
+  local rd="$1" scope="$2" n="$3" sha="$4"
+  mkdir -p "$rd"
+  {
+    echo "# Review $scope round $n"
+    echo
+    echo "## Verdict: CONVERGED"
+    echo
+    echo "reviewed-sha: $sha"
+    echo "harden-regress: yes"
+    echo "## Findings"
+    echo
+    echo "No open P1."
   } > "$rd/review-$scope-$n.md"
 }
 
@@ -609,9 +641,9 @@ mk_checkpoint() {
       _write_review "$rd" "1.1" 1 "$zeros"
       _write_review "$rd" "1.1" 2 "$zeros"
       printf 'notes, not a round file\n' > "$rd/review-1.1-final.md"  # non-integer N
-      _write_review "$rd" phase1 1 "$zeros"
-      _write_review "$rd" phase1 2 "$zeros"
-      _write_review "$rd" phase1 3 "$zeros"
+      _write_review "$rd" phase1 1 "$zeros"          # unmarked integration
+      _write_review "$rd" phase1 2 "$zeros"          # unmarked integration
+      _write_marked_review "$rd" phase1 3 "$zeros"   # marked harden-regress (not an integration round)
       _write_harden "$rd" 1 1 yes
       _write_harden "$rd" 1 2 no
       _write_review "$rd" phasedesign1 1 "$zeros"
@@ -633,7 +665,13 @@ mk_checkpoint() {
       printf '{"phaseDesign":{"1":{"redesigns":2,"round":0}}}\n' > "$rd/state.json"
       ;;
     regress_mismatch)
-      _write_review "$rd" phase1 1 "$zeros"
+      # SURPLUS: marked-regress (distinct marked reviewed-shas) > harden-yes is malformed
+      # (each fix round dispatches exactly one regress review). 3 distinct marked reviews,
+      # 0 UNMARKED integration reviews (phaseReviewRound {"1":0}), 2 harden-yes files
+      # (hardenRound {"1":2}) -> mreg 3 > yc 2 -> regress-mismatch.
+      _write_marked_review "$rd" phase1 1 "$(printf 'a%.0s' {1..40})"
+      _write_marked_review "$rd" phase1 2 "$(printf 'b%.0s' {1..40})"
+      _write_marked_review "$rd" phase1 3 "$(printf 'c%.0s' {1..40})"
       _write_harden "$rd" 1 1 yes
       _write_harden "$rd" 1 2 yes
       ;;
