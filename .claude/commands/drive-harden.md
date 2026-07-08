@@ -233,7 +233,9 @@ flagged P1 — a non-P1 improvement outside the diff → `$RUN_DIR/followups.md`
   "Flagged:" return line so the next round's audit surfaces it and Step-2's always-runs
   persist (with its dedup rule) records it. Never write a second slop-persist path from
   this step.
-Run the FULL build + integration tests until green. Commit to `phaseInt/<runId>/<P>`
+Run the FULL suite — **`bin/run-tests.sh`** (the canonical runner: `python3 -m pytest
+tests/` AND every `test/*.test.sh`, all suites, no early-exit) — plus any build step,
+until green; do NOT hand-pick a subset. Commit to `phaseInt/<runId>/<P>`
 (`git add -A && git commit`) before returning.
 
 Return STATUS as the FIRST line, then the changed-file list:

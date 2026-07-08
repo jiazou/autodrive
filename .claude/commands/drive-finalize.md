@@ -313,7 +313,9 @@ improvement outside the diff → `$RUN_DIR/followups.md`, skip it.
 Do NOT create any `TODO.md` — architectural findings go to the durable
 `$RUN_DIR/finalize-todo.md` OUTSIDE the worktree (the ship stage materializes the driven
 `TODO.md`), so `git add -A` does not touch it.
-Run the **driven project's FULL test suite** (not one phase's tests) until green. Commit
+Run the **driven project's FULL test suite** (not one phase's tests) until green — via
+**`bin/run-tests.sh`** (the canonical runner: `python3 -m pytest tests/` AND every
+`test/*.test.sh`, all suites, no early-exit); do NOT hand-pick a subset. Commit
 to `featureBranch` (`git add -A && git commit`) before returning.
 
 Return STATUS as the FIRST line, then the changed-file list:
@@ -338,7 +340,7 @@ single `reviewed-sha:` line **IN PLACE** (REPLACE it — never append a second o
   line at the unchanged `git rev-parse <featureBranch>` tip → return `CONVERGED`.
 - **A fix was applied** → `finalizeRound += 1`; set `AppliedEdits: yes`; REPLACE the single
   `reviewed-sha:` line with the POST-fix tip (Step-1 binding). Run the **driven project's FULL
-  suite** as the regression guard: **a reddened test from a de-slop edit is a REAL
+  suite** (`bin/run-tests.sh` — pytest + every `test/*.test.sh`) as the regression guard: **a reddened test from a de-slop edit is a REAL
   REGRESSION → REVERT the offending edit (do NOT reconcile by editing the test)**, re-run,
   and fold any still-open P1 into the next round's fix set. Return `FINDINGS` (the next
   invocation re-audits; a subsequent clean audit returns CONVERGED).
