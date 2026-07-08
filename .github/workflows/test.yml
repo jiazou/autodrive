@@ -18,7 +18,7 @@ jobs:
       - name: Install test deps
         run: python -m pip install --upgrade pip pytest pyyaml
       - name: Run test suite
-        run: python -m pytest -q
+        run: ./bin/run-tests.sh --pytest-only
 
   bash-suite:
     # Separate job for an independent red/green signal: the bash suite is the
@@ -30,8 +30,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Run bash test suite
-        run: |
-          for f in test/*.test.sh; do
-            echo "== $f =="
-            bash "$f" || exit 1
-          done
+        # Canonical runner: runs ALL test/*.test.sh and reports every failure (no
+        # early exit) — the old first-failure loop stopped at the first failing file
+        # and masked downstream fails.
+        run: ./bin/run-tests.sh --bash-only

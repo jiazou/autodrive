@@ -87,7 +87,10 @@ These entries are promoted into `.harness/followups.md` by the ledger commit alr
 
 ## Run the full suite (flaky-retry)
 
-Run the FULL test suite in the ship worktree. **Red → retry once**; green →
+Run the FULL test suite — **`bin/run-tests.sh`** (the canonical runner: `python3 -m pytest
+tests/` AND every `test/*.test.sh`, all suites, no early-exit) — in the ship worktree.
+Do NOT hand-pick a subset (pytest + one bash file misses the other gate suites). **Red →
+retry once**; green →
 continue (log the flake to `$RUN_DIR/event-log.jsonl`); **still red → STOP** and
 report the failures (a human-fix blocker, not a decision) **via the Present human pause
 routine** — set `state.waiting="stop:suite-red"`, then emit the run graph (read
