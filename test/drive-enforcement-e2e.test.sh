@@ -73,9 +73,11 @@ _commit() {
   _gitc "$r" add -A; _gitc "$r" commit -q -m "$m"; _gitc "$r" rev-parse HEAD
 }
 # Write a COUNTING review artifact: CONVERGED verdict + reviewed-sha bound to $sha.
+# reviewed-sha lives in the header preamble ABOVE the `## Findings` delimiter, which
+# reviewed_sha_of REQUIRES to bound the header region (a review lacking it binds no tip).
 _write_review() {
   local rd="$1" scope="$2" n="$3" sha="$4"; mkdir -p "$rd"
-  { echo "# review $scope $n"; echo; echo "## Verdict: CONVERGED"; echo; echo "reviewed-sha: $sha"; } \
+  { echo "# review $scope $n"; echo; echo "## Verdict: CONVERGED"; echo; echo "reviewed-sha: $sha"; echo; echo "## Findings"; } \
     > "$rd/review-$scope-$n.md"
 }
 _write_codex() {
@@ -86,7 +88,7 @@ _write_codex() {
 # phase review is demoted to a no-phase-review precondition). $1=rd $2=N $3=reviewed-sha.
 _write_finalize() {
   local rd="$1" n="$2" sha="$3"; mkdir -p "$rd"
-  { echo "# review finalize $n"; echo; echo "## Verdict: CONVERGED"; echo "## AppliedEdits: no"; echo; echo "reviewed-sha: $sha"; } \
+  { echo "# review finalize $n"; echo; echo "## Verdict: CONVERGED"; echo "## AppliedEdits: no"; echo; echo "reviewed-sha: $sha"; echo; echo "## Findings"; } \
     > "$rd/review-finalize-$n.md"
   { echo "codex review for finalize"; echo ok; } > "$rd/codex-review-finalize.md"
 }
