@@ -2,6 +2,225 @@
 
 Architectural follow-ups deferred by /drive finalize passes.
 
+## /drive efficiency plan R1–R9 — from docs/efficiency-audit-2026-07-08.md (2026-07-08)
+
+**Problem:** a ~1000-line change takes a full day. The audit (19-agent workflow: 5 history
+miners over 22 runs' event logs / 262 codex logs / 189 review artifacts → 12 candidates →
+12 adversarial verifications) found the day is NOT mostly review compute:
+- ~half is **human latency**: 43.2h of decision-free `/drive <runId>` paste waits at
+  rebirth seams (16 seams / 7 runs, median 2.12h each — an *attended* Seam B handoff costs
+  7 min) + 40.2h of unnoticed gate parks (6 runs parked at human-answer states as of the
+  audit date, one at gateB 3+ weeks).
+- Next third is **codex**: ~72% of machine-active loop time; median 5.4 min/call, p90
+  10.3 min, 12 calls >1h, one silent 10.4h overnight auth-outage death; codex re-runs the
+  full suites (321 pytest + 216 bash) inside every round.
+- **Round churn** is real but third-order: of 101 classified rounds ≥2, only ~12% found a
+  genuinely NEW orthogonal P1; ~23% same-class residuals, ~28% pure all-clear
+  certifications, ≥13 rounds adjudicating codex false-positives (worst overrule 3h28m).
+
+**Quality constraint (binding):** every item below preserves the layers history shows are
+sole catchers. DO NOT revive the refuted variants — each was killed by a specific
+historical counterexample recorded in docs/efficiency-audit-2026-07-08.md § Dropped
+components: pressure-conditional seams, reviewer narrowed to closure-verification,
+settled-scope re-audit prohibition, slice-review-adopted-as-phase-review,
+plan+phasedesign collapse, same-invocation harden/finalize convergence on green-suite,
+wall-clock codex kill, blanket round-2+ effort downgrade, textual pin-exists→P2,
+time-boxed overrule repros minting refutations. Also out of scope for this plan: R10–R12
+(confirm-round diet, single-phase fast paths, phase-finding routing) — opportunistic,
+lower ratio, some parked behind a TR-9-style re-measure.
+
+**Global implementation constraints:** (1) any `.claude/commands/drive*.md` edit reds
+string-pin contract tests in BOTH suites — run `python3 -m pytest` AND
+`test/drive-conformance.test.sh` (canonical: `bin/run-tests.sh`) during implement, and use
+the token-sweep + green-full-suite migration pattern (OPERATING.md), never per-line pin
+enumeration. (2) R5–R9 are all spec edits over the same three review specs — land them as
+ONE batch (single pin-suite migration), not five. (3) Implementation order by
+(hours-saved / risk): R2 → R1+R3 → R4 → R5–R9 batch.
+
+### Tier A — human-latency pool (the biggest lever, ~3–8h/run)
+- [ ] **R2 (P1/small/spec-only)** Codex-first dual-voice overlap: in drive-review.md
+  (Step 1 ~L87 / Step 2 ~L172), drive-harden.md (~L105–166), drive-finalize.md
+  (~L152–230), launch the background `codex exec` FIRST, spawn the Claude reviewer while
+  codex runs, wait for BOTH before the Combine step. Log/marker/stranded-log mechanics
+  byte-identical. While in there: add `--sandbox read-only` to the review/harden/finalize
+  codex calls, and pin that coordinator prompt enrichment may reference PRIOR rounds only
+  (no same-round Claude→codex flow — none exists in any of 17 raw logs). Verified SAFE:
+  gates check artifact existence/verdict/SHA, never voice ordering; the overlapped
+  behavior already ran ad hoc in production (regress-selfid slice-1.1 rounds 4–8), and an
+  overlapped round is where codex caught its best Claude-missed BLOCKING (is_marked EOF
+  fallback). Saves 0.5–1.5h/run of pure serialization. Do this first — one afternoon.
+- [ ] **R1 (P1/medium/code)** Auto-resume at rebirth seams — **this is C3 (Tier 4 below),
+  promoted to top priority by the audit; implement as ONE item, keep C3's scoping.**
+  Audit additions to C3's spec: key strictly on `waiting=='rebirth'` + a valid
+  `checkpoint-complete.marker`; the resume **atomically claims the marker (mv-rename)
+  before proceeding** so a simultaneous human paste and auto-resume cannot double-drive
+  (the loser reads run status and exits) — the same fix class decisions.md D-4269
+  required; one resume attempt per marker, exponential backoff, notify on repeated
+  failure. gateA/gateB/stop:/ask: stay strictly human. The fenced ↻ REBIRTH block stays
+  byte-for-byte as the plain-CLI fallback; edit drive.md I1 step 6 only. Quality-safe
+  because the resume path is initiator-agnostic and fail-closed by design
+  (`bin/drive-conformance.sh --mode checkpoint` / `--mode state-lint` re-prove before
+  continuing; a forged `waiting` without the prove→marker→wait sequence STOPs; gate hooks
+  are global in `~/.claude/settings.json` so a spawned session inherits the full
+  enforcement chain); fresh-context-per-leg + decant-at-clear are untouched. Residual
+  from closed C2 to fold in: a verified `claude-fable-5` entry in
+  bin/rebirth-thresholds.json (+ statusline.sh inline fallback) — hygiene, not
+  load-bearing. REFUTED sibling (do not build): pressure-conditional Seam A/B — the
+  43.2h pool is paste latency, not seam ceremony (attended Seam B = 7 min), and it would
+  make the never-once-fired class-A rebirth the sole overflow guard. Captures ~all of the
+  43.2h pool (2–6h/run).
+- [ ] **R3 (P1/small/code+spec)** Push-notify decision-bearing parks + observability
+  logging. Notification side-effect on every transition to `waiting` ∈ {gateA, gateB,
+  stop:, ask:}, with four HARD constraints: (1) fail-open by construction — always exit
+  0, never a block decision, network send backgrounded with timeout (must never wedge
+  drive-stop-hook.py's allow-stop-when-waiting contract); (2) gateB content
+  differentiated — carries the gate QUESTION + "reply 'approve' after reviewing the
+  diff", NEVER a bare `/drive <runId>` paste line (memory drive-gate-repaste-not-approval:
+  a repaste is the continuation token, not approval of a push); (3) never writes
+  state.json — dedup via `notified-<waiting>-<tipSha>.marker` in $RUN_DIR (a torn
+  state.json write trips the waiting-malformed lint, drive-conformance.sh ~L1129–1135);
+  (4) coordinator-side sub-event logging (subagent-started, codex-started,
+  suite-run-started/finished, fix-applied, idle_detected at >30min), `date -u`
+  forward-only, never rewrite historical log lines. Key /harvest on `state.waiting`.
+  Scope pings to decision-bearing waits (exclude rebirth once R1 lands). Quality-safe:
+  purely additive — no layer/round/gate is cut; all event-log consumers are tolerant by
+  contract (retention skips unparseable lines; retro pins "NO stat requires a specific
+  event kind"; conformance validates waiting grammar, never event kinds). Saves 1–4h/run
+  + kills the multi-week parked tail; the logging half converts the 61.9h
+  unattributable-stall bucket into measurable classes for the next audit.
+
+### Tier B — codex tail-bounding (~15 min vs 8–10h worst case)
+- [ ] **R4 (P1/small/code+spec)** Codex progress-watchdog + outage degrade. Kill a codex
+  call ONLY when `codex-raw-<scope>.log` has appended **no bytes for 15 minutes**
+  (mtime/size polled in the existing wait loop), absolute backstop 3h; retry once; then
+  write a DISTINCT first-line marker `CODEX_KILLED_TIMEOUT` (never masquerading as
+  `CODEX_UNAVAILABLE`, which the combined-verdict rule reads as "contributes zero") and
+  continue on the already-spec'd degraded single-voice path. Health-probe before
+  dispatch; a probed outage → degraded single-voice for non-gate-enforced scopes. Effort
+  tiering ONLY for call classes history shows are pure confirmations (harden-regress
+  re-confirmations; finalize/phase re-audits whose immediately-prior round had zero codex
+  findings) — NEVER blanket round-2+ (round-2+ codex repeatedly returned NEW P1s,
+  including a round-7 fresh-regression catch), and gate/hook/parser/conformance files are
+  security-sensitive at EVERY round. REFUTED variant (do not build): any wall-clock
+  kill — the corpus's single best catch was a 109-minute round-1 call that reproduced a
+  BLOCKING fail-open in the WorktreeCreate gate the Claude voice CONVERGED past; genuine
+  long calls stream continuously, only the pathologies (.neterr, .r5-failed, .r1-died,
+  the 8.7h outage pair) go silent — the progress signature separates them where a wall
+  clock cannot. Degradation is already gate-accepted (15/178 CODEX_UNAVAILABLE summaries;
+  trash-dash-convert shipped fully degraded). x-ref C12 (extend, not duplicate: C12's
+  degraded-second-voice tier + distinct-marker requirement is the same mechanism).
+
+### Tier C — round-churn set (~1.5–3h/run; land as ONE spec-edit batch)
+- [ ] **R5 (P2/small/spec-only)** Class-sweep as a fix-round contract (fix-side only).
+  drive-implement.md / drive-finalize.md fix-dispatch prompts: when a P1 is a
+  parser/validator/regex/classifier/reader/wording defect, grep-enumerate every sibling
+  site of the same input shape, fix ALL in one round, state the class boundary in the
+  commit message, mutation-verify per site. Codex round-1 prompt gains: "enumerate all
+  members of any class you flag, with file:line". Include the de-slop wording-class sweep
+  (c7 RL-1: GitHub→GitLab wording recurred across all 4 finalize rounds). The round-N+1
+  reviewer prompt ADDS "verify the stated class boundary is closed" as a checklist item
+  but RETAINS the unchanged open-ended adversarial hunt. Class members outside the
+  slice's owned files: record and route via the existing BLOCKED/ownership-widening path,
+  never edit. Evidence: regress-selfid slice 1.1 burned rounds 2–6 on ONE parser class,
+  one instance per round (the r4 review note literally says "sibling of r3; fix whole
+  class"); promotes memory drive-finalize-adversarial-class-fix to spec. REFUTED variant
+  (do not build): narrowing the reviewer to closure-verification — the reviewer certified
+  "class closed" twice in the flagship run and was wrong both times; codex's open-ended
+  hunt then found real BLOCKINGs in the conformance gate. Saves ~1–1.5h per parser-shaped
+  run.
+- [ ] **R6 (P2/small-medium/spec-only)** Delta-scoped round-N≥2 re-reviews (class-scoped,
+  with suite-rerun ban). drive-review.md gains a round-N≥2 diff-scope form: "the fix
+  delta PLUS the prior finding's full class and consumer surface", with "do not re-verify
+  acceptance criteria the delta doesn't touch; you MAY flag any P1 anywhere in scope" —
+  explicitly NO settled-scope prohibition (REFUTED: three genuine repro-confirmed P1s
+  lived in settled scope untouched by the preceding fix — regress r4/r5/r6; discovery was
+  empirically serial, the rounds would relocate not vanish). Security-sensitive scopes
+  (bin/drive-*.sh, gate hooks, matchers, parsers) keep FULL-scope codex every round —
+  every historical settled-scope BLOCKING lived there. Unconditional cheap win: the
+  round-N≥2 codex prompt says "do NOT re-run the full test suites — spot-run only tests
+  pinning your prior finding" (suite re-runs were most of each call's 6–10 min and
+  duplicate the implementer's runs). Terminal full-scope confirming round kept; delta
+  rounds do NOT increment cap-8 (mirroring the harden-regress exception). Evidence: the
+  improvised round-8 delta prompt in regress-selfid ran 63k codex tokens vs 116–211k
+  full-scope, ~3 min vs 6–10, and still caught a genuine in-delta MAJOR. Saves
+  0.5–1.5h/run + 6–10h aggregate codex time.
+- [ ] **R7 (P2/small-medium/spec+$RUN_DIR files)** Durable refutation ledger +
+  severity-tag triage (replay-based). `$RUN_DIR/codex-refuted-<scope>.md` + a repo-level
+  cross-run file, with five HARD bounds: (1) every entry records the verbatim
+  reproduction command + full env; on any re-flag the coordinator RE-EXECUTES the
+  recorded repro in the faithful env (minutes, vs the 3h28m worst re-adjudication) — a
+  differing result voids the refutation, and an executed red in the faithful env ALWAYS
+  defeats the ledger; (2) the refutation preamble is NEVER injected into harden/finalize
+  auditor prompts (the c7 TMPDIR catch depended on that voice's independence from the
+  do-not-re-raise steer); (3) repo-level entries are finding-specific with recorded
+  evidence and run-scope qualifiers — never class-level "X-like findings are settled"
+  (regress-selfid's "forgery-class" contained both an overruled trick AND the genuine
+  body-only-sha hole); (4) the P1→P2 downgrade path requires the coordinator's OWN
+  reproduction of the fail-safe direction (retention DP9/DP8: believed-fail-safe designs
+  failed open), and the threat-model arm applies only to verbatim
+  docs/drive-enforcement.md exclusions; (5) a repro timeout leaves the finding
+  UN-refuted — it never mints a ledger entry (the shortcut repro — unset TMPDIR — is
+  exactly what poisoned c7's AC-9 overrule; see memory
+  unset-tmpdir-masks-trailing-slash-test-bug). Codify count-tags-not-prose
+  (codex-severity-tag-outranks-prose-verdict) in drive-review.md Step 3. Evidence: ≥7
+  explicit overrule events in history; the pre-ship-absent-ledger class re-flagged EVERY
+  run (memory codex-reflags-preship-absent-ledger); c7's retro RL-2 independently
+  proposed this mechanism. Saves 0.5–2h per churn-heavy run.
+- [ ] **R8 (P2/small/spec-only)** Design author-verification gate. drive-plan.md +
+  drive-design.md pre-round-1 checklist: (1) every citation/snippet/empirical claim ships
+  with an ARTIFACT-shaped verification transcript (`verify-design-claims-<P>.md`,
+  commands + outputs) whose existence the coordinator checks — never a prose "verified"
+  attestation (memory dont-make-the-model-the-meter; main pd2 r1's falsified completedAt
+  claim was written by an author who believed it verified; regress pd1 burned a codex
+  BLOCKING on a pinned awk snippet non-functional as written); (2) classifier/matcher
+  rules require a runnable calibration script + corpus + stated imprecision budget as
+  design INPUT, which reviewers run for precision IN ADDITION TO — never instead of — an
+  independent recall probe (main pd2 r6: the author's script inherits the rule's blind
+  spots; the missed bold-before-bracket carrier dropping 36 real findings was found only
+  by independent shape enumeration; x-ref memory
+  calibration-treadmill-restructure-not-patch); (3) new-machinery P1s may exit to a
+  revision leg that whole-chain-traces before re-entering, but the leg consumes a
+  phaseDesign.round tick (preserves the D12 cap-8 runaway detector), mints no new
+  artifact family (avoids the epoch-unmarked conformance trap), and re-entry is a full
+  fresh dual-voice round. Evidence: scopes with unverified round-1 empirical claims
+  averaged 5+ review rounds vs ~1.6 for verified ones. Budget the saving at ~1 round per
+  design-heavy run — regress design rounds 2–7 were codex's sequential discoveries, not
+  author sloppiness.
+- [ ] **R9 (P2/small/spec-only)** Pin-depth design standard with mutation-survival
+  semantics. drive-design.md: a required pin-depth-per-AC section fixes test-pin depth
+  (mutation-verified vs smoke) at design time, with token-sweep + green-full-suite as the
+  default spec-pin-migration pattern (the already-promoted OPERATING.md rule applied
+  proactively). drive-review.md: "a pin exists" is defined by MUTATION SURVIVAL, not
+  textual presence — a pin counts only if it reds on deletion/partial-revert of the exact
+  clause it guards; a vacuous pin = NO pin = stays P1 (REFUTED variant: textual
+  pin-exists→P2 — a vacuous pin once green-lit a reverted fail-closed gate,
+  main-20260705 parseable-gate; see memory spec-pin-mutation-verify). "Could be stronger"
+  (reds on core mutation but lacks permutation/exclusivity/composed-order coverage) = P2,
+  logged for harden/finalize. Demoting a codex BLOCKING/MAJOR on pin depth requires
+  SHOWING the core-mutation red (preserves codex-tag-outranks-prose). Fail-closed gate
+  surfaces (drive-conformance contracts, gate hooks, drive-retention safety clauses) are
+  carved out: exclusivity/composed-order gaps there stay P1. Evidence: the pin-depth
+  churn instances (lever2 1.3 r2/r4/r5, main 2.1 r2, retention finalize r3) all fall on
+  the P2 side and none caught a product bug — the real bugs in those runs were caught by
+  integration review, harden, and finalize, all preserved. Gates parse no severity
+  tokens → no hook conflict. Saves 0.5–1.5h/run.
+
+**What must NOT be touched (audit § 3, evidence-backed sole-catchers):** full-scope
+adversarial codex on gates/matchers/parsers every round; the phase-integration fresh
+review even on single-slice fast-forward (caught a BLOCKING after 7 clean slice rounds);
+the forced next-invocation fresh dual-voice re-audit after any logic-bearing fix round
+(retention harden-2-3: fix-introduced P1 found AFTER regress-CONVERGED at the same tip);
+finalize's whole-run fresh sweep (out-of-delta TOCTOU catch); Seams A/B themselves
+(R1 automates the paste, not the seam); Gate A/B human-only semantics +
+repaste-is-not-approval; the SHA-bound omission-proof artifact chain and cap-8 counters;
+the overrule-with-evidence discipline.
+
+**Expected net effect** (audit § Net effect): R1+R3 remove 3–8h of pure human latency;
+R2+R4 remove 0.5–1.5h serialization and bound the multi-hour codex tail to minutes;
+R5–R9 remove 1.5–3h of round churn without touching any sole-catcher layer. A run that
+today spans a full day compresses to an attended morning: ~4–6h machine-active, human
+touches only at Gate A, Gate B, and genuine STOPs.
+
 ## Trellis pattern adoption — from docs/trellis-analysis.md (2026-07-04)
 
 - [ ] **TR-2 (S/L2)** Per-turn `<drive-state>` breadcrumb: a UserPromptSubmit hook reading
@@ -92,7 +311,9 @@ seams; the model/harness owns how work gets dispatched.
   relax the 150-word digest cap.
 
 ### Tier 4 — new-capability adoption (opt-in, staged)
-- [ ] **C3 (P1/medium/L1)** Self-scheduled seam resume: at non-gate context-clear seams,
+- [ ] **C3 (P1/medium/L1)** *(promoted: implement as R1 in the efficiency plan above —
+  same item, R1 adds the atomic marker-claim race guard and backoff/notify semantics;
+  keep this entry's scoping constraints.)* Self-scheduled seam resume: at non-gate context-clear seams,
   feature-detect fresh-session triggers (create_trigger with create_new_session_on_fire —
   send_later is same-session, not a seam) and schedule `/drive <runId>` instead of
   requiring the human paste; the fail-closed resume path (single-use checkpoint marker +
