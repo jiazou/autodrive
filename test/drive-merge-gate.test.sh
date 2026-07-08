@@ -71,7 +71,9 @@ _commit() {
 _write_review() {
   local rd="$1" scope="$2" n="$3" sha="$4"
   mkdir -p "$rd"
-  { echo "# Review $scope $n"; echo; echo "## Verdict: CONVERGED"; echo; echo "reviewed-sha: $sha"; } > "$rd/review-$scope-$n.md"
+  # reviewed-sha lives in the header preamble ABOVE `## Findings`, which reviewed_sha_of
+  # REQUIRES as the header-region delimiter (a review lacking it binds no tip).
+  { echo "# Review $scope $n"; echo; echo "## Verdict: CONVERGED"; echo; echo "reviewed-sha: $sha"; echo; echo "## Findings"; } > "$rd/review-$scope-$n.md"
 }
 _write_codex() {
   local rd="$1" scope="$2"
@@ -90,7 +92,8 @@ seed_finalize() {
     echo "# Review finalize round $n"; echo
     echo "## Verdict: CONVERGED"
     echo "## AppliedEdits: no"; echo
-    echo "reviewed-sha: $sha"
+    echo "reviewed-sha: $sha"; echo
+    echo "## Findings"
   } > "$rd/review-finalize-$n.md"
   { echo "codex review for finalize"; echo ok; } > "$rd/codex-review-finalize.md"
 }

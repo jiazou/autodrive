@@ -57,8 +57,15 @@ def _commit(repo, path, content, msg):
 
 
 def _review(rd, scope, n, sha="0" * 40, verdict="CONVERGED"):
+    # Schema per the real writer (drive-review.md § "Write review-<scope>-N.md"): a `## Verdict:`
+    # + `reviewed-sha:` header preamble then the load-bearing `## Findings` delimiter — the
+    # checkpoint counter's review-phase parseability boundary REQUIRES it (a review-phase file
+    # lacking it is `unparseable-review`) and it bounds the header region the delimiter-required
+    # `reviewed_sha_of`/`is_marked` read. UNMARKED (integration) shape; marked/no-Findings shapes
+    # have their own dedicated fixtures.
     (rd / f"review-{scope}-{n}.md").write_text(
-        f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\nreviewed-sha: {sha}\n",
+        f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\n"
+        f"reviewed-sha: {sha}\n## Findings\n\nNo open P1.\n",
         encoding="utf-8",
     )
 

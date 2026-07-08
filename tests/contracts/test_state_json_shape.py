@@ -99,6 +99,29 @@ def test_core_keys_present_in_claude_md_description():
     )
 
 
+def test_base_sha_present_and_write_once_documented():
+    """DD5/AC7: the fresh-run `state.json` template carries a top-level `baseSha` (the
+    write-once run-start `git rev-parse baseRef` — the first phase's heal diff base), and
+    drive.md documents it write-once / never-re-derived on resume. It is an OPTIONAL field:
+    deliberately NOT in CORE_KEYS (a legacy run predating it must still route — requiring it
+    would false-reject that run), mirroring how `repoRoot` is a write-once discipline in
+    drive.md but not a CORE key here."""
+    _, obj = _drive_md_json()
+    assert "baseSha" in obj, "drive.md example state.json must carry a top-level `baseSha`"
+    assert "baseSha" not in CORE_KEYS, (
+        "baseSha is an OPTIONAL field — it must NOT be in CORE_KEYS (would false-reject "
+        "legacy runs predating the field)"
+    )
+    text = (REPO_ROOT / ".claude" / "commands" / "drive.md").read_text(encoding="utf-8")
+    norm = re.sub(r"\s+", " ", text)
+    assert "Record `baseSha` (write-once at fresh-run setup)" in norm, (
+        "drive.md must document baseSha as write-once at fresh-run setup"
+    )
+    assert "write-once at fresh-run setup and NEVER re-derived on resume" in norm, (
+        "drive.md must document baseSha as never re-derived on resume (like repoRoot)"
+    )
+
+
 def test_stage_documented_in_both():
     """`stage` is a real top-level run-model key and is now documented in BOTH
     artifacts. Guard that it stays so: it must appear in drive.md's JSON, in

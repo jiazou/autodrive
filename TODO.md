@@ -209,3 +209,6 @@ promoted to repo-root TODO.md at ship).
   predicate (or a shared wrapper) would close the residual shipped-tool-gate fail-open uniformly.
   Forgery-class; out of scope for this omission-focused run. Pairs with the deferred
   "harden shipped drive-tool-gate.sh fail-closed" followup.
+
+## /drive run regress-selfid-20260706-143429 — architectural follow-ups (2026-07-07T16:16:50Z)
+- **.claude/commands/drive.md, .claude/commands/drive-review.md (coordinator resume/heal semantics)**: the new inflight-heal / `base=<sha>` / `baseSha` recovery path — and coordinator resume semantics generally — live as markdown protocol pinned by substring/contract tests, with NO executable state-machine consumer (grep confirms these tokens are absent from bin/drive-conformance.sh). Consequence: the highest-risk cross-phase behavior (a real resumed run writing baseSha once, stripping `base=` before scope derivation, and heal/adopt/re-dispatch) is verifiable only by a full harness E2E, not a unit test. Out of scope for this run (an E2E driver is a new subsystem, boil-the-ocean). Consider extracting the resume consumer into executable code testable end-to-end. (Raised by both finalize voices; codex flagged P1-as-missing-test + ARCH.)

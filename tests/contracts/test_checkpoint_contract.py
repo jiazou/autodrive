@@ -77,6 +77,54 @@ def _harden(rd, p, n, applied):
     )
 
 
+def _marked_review(rd, scope, n, sha, verdict="CONVERGED"):
+    """A harden-regress review file matching the REAL writer schema (drive-review.md:133-136):
+    a header preamble carrying `## Verdict:`, `reviewed-sha: <sha>`, and the column-0
+    `harden-regress: yes` marker (strictly BEFORE `## Findings`), followed by the
+    always-present `## Findings` header. The header sha binds under the delimiter-required
+    `reviewed_sha_of`, and the marker (in the header preamble) reads MARKED under the §1.3
+    header-region classifier. LOCAL to this test file on purpose: the shared
+    `_helpers._review` stays the UNMARKED integration writer (no marker), so the two helpers
+    are the marked/unmarked pair the marker/distinct-sha contract counts. `sha` must be a
+    valid 40-hex (distinct marked shas come from `"a"*40` vs `"b"*40`)."""
+    (rd / f"review-{scope}-{n}.md").write_text(
+        f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\n"
+        f"reviewed-sha: {sha}\nharden-regress: yes\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+
+
+def _findings_review(rd, scope, n, sha, verdict="CONVERGED"):
+    """A well-formed UNMARKED review (same output shape as `_helpers._review`): a header
+    preamble (`## Verdict:` + `reviewed-sha: <sha>`) followed by the always-present `## Findings`
+    header, so the header sha binds under the delimiter-required `reviewed_sha_of`. Defaults to a
+    CONVERGED verdict (despite the name); pass `verdict="FINDINGS"` for the not-converged case.
+    Kept LOCAL alongside `_marked_review` so this file's marked/unmarked fixture pair reads
+    together."""
+    (rd / f"review-{scope}-{n}.md").write_text(
+        f"# Review {scope} round {n}\n\n## Verdict: {verdict}\n\n"
+        f"reviewed-sha: {sha}\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+
+
+def _no_findings_body_sha_review(rd, scope, n, tip):
+    """A MALFORMED review with NO `## Findings` header at all: its header carries NO
+    `reviewed-sha:` line; the ONLY `reviewed-sha: <tip>` is a fenced BODY quote. The real
+    writer ALWAYS emits `## Findings` (drive-review.md:136 / drive-finalize.md:202), so a
+    review lacking it is malformed. Under the pre-fix awk (which ran to EOF when `## Findings`
+    was absent) this body sha bound == tip; the delimiter-required reader emits the header
+    region ONLY when `## Findings` is seen → no `## Findings` → NO sha (fail-closed). Distinct
+    from `_body_only_sha_review`, which HAS `## Findings` and quotes the sha BELOW it — this
+    fixture is the no-`## Findings` gap the round-3 BLOCKING reopened."""
+    (rd / f"review-{scope}-{n}.md").write_text(
+        f"# Review {scope} round {n}\n## Verdict: CONVERGED\n"
+        f"Body prose (no Findings header). The writer emits it like:\n"
+        f"```\nreviewed-sha: {tip}\n```\nend.\n",
+        encoding="utf-8",
+    )
+
+
 def _redesign_marker(rd, p, r):
     (rd / f"redesign-{p}-r{r}.marker").write_text(
         json.dumps({"phase": p, "epoch": r}) + "\n", encoding="utf-8"
@@ -115,6 +163,31 @@ def _run_checkpoint(repo, rd):
     return proc.returncode, json.loads(proc.stdout)
 
 
+def _run_mode(repo, rd, mode):
+    """Run an arbitrary conformance mode (e.g. `phase-merge:1`, `ship`) from inside the
+    repo; return (returncode, parsed-json). Same driver as `_run_checkpoint`, generalized
+    so the header-bound reviewed-sha contract can be proven on the SIBLING gates that also
+    consume `reviewed_sha_of` — not just `--mode checkpoint`."""
+    proc = subprocess.run(
+        ["bash", str(CONFORMANCE), str(rd), "--mode", mode],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    assert proc.stdout.strip(), f"no JSON on stdout (stderr={proc.stderr!r})"
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def _body_only_sha_review(rd, scope, tip):
+    """Write `review-<scope>-<1>.md` whose header is CONVERGED but carries NO header
+    `reviewed-sha:` — the ONLY `reviewed-sha: <tip>` line is a fenced BODY quote BELOW
+    `## Findings`. Under the pre-fix whole-file `reviewed_sha_of` this body sha == tip
+    would satisfy the gate's tip-binding; under the header-bound reader it is invisible."""
+    (rd / f"review-{scope}-1.md").write_text(
+        f"# Review {scope} round 1\n## Verdict: CONVERGED\n"
+        f"## Findings\nThe writer emits it like:\n```\nreviewed-sha: {tip}\n```\nend.\n",
+        encoding="utf-8",
+    )
+
+
 def _reasons(obj):
     return {v["reason"] for v in obj["violations"]}
 
@@ -129,11 +202,13 @@ def _viol(scope, reason, exp="", found=""):
 
 
 def test_checkpoint_clean_fixture_passes_with_counters(tmp_path):
-    """AC1/AC2 (behavioral cross-file contract): a quiescent, well-formed run is clean
+    """AC1/AC3 (behavioral cross-file contract): a quiescent, well-formed run is clean
     (exit 0) and emits `counters` derived per the I3 rules — reviewCount from
-    pure-integer-N files; phaseReviewRound = review-phase count MINUS AppliedEdits:yes
-    harden files; hardenRound counts ONLY `yes`; phaseDesignRound from the epoch-0
-    family. Mirrors mkfixture.sh::mk_checkpoint clean."""
+    pure-integer-N files; phaseReviewRound = count of review-phase files WITHOUT the
+    harden-regress marker (no subtraction); hardenRound counts ONLY `yes`;
+    phaseDesignRound from the epoch-0 family. This is the pure integration-only clean
+    baseline (all `_review` files are UNMARKED); marked-file paths are exercised by the
+    surplus/deficit/dedup fixtures below."""
     repo, rd = _base_run(tmp_path, "ckpt-clean")
     _git(repo, "checkout", "-q", "-b", "phaseInt/ckpt-clean/1")
     _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
@@ -158,7 +233,10 @@ def test_checkpoint_clean_fixture_passes_with_counters(tmp_path):
     assert obj["tip"] == _rev(repo, "drive/ckpt-clean"), obj
     counters = obj["counters"]
     assert counters["reviewCount"] == {"1.1": 2}, counters
-    assert counters["phaseReviewRound"] == {"1": 2}, counters  # 3 files − 1 yes
+    # 3 UNMARKED integration files → 3 rounds (marker-aware; no subtraction, independent of
+    # harden-yes — the harden-regress marker, not a yes-count subtraction, is what separates
+    # a regress review from an integration review).
+    assert counters["phaseReviewRound"] == {"1": 3}, counters
     assert counters["hardenRound"] == {"1": 1}, counters        # one yes, one no
     assert counters["phaseDesignRound"] == {"1": 1}, counters   # epoch-0 family
     assert counters["redesigns"] == {}, counters
@@ -212,21 +290,550 @@ def test_checkpoint_inflight_open_violation(tmp_path):
     ], obj["violations"]
 
 
-def test_checkpoint_regress_mismatch_violation_and_zero_round(tmp_path):
-    """AC2: yes-count exceeding the review-phase file count is malformed → violation
-    `regress-mismatch` and phaseReviewRound clamped to 0 (the rule-2 subtraction would
-    otherwise go negative). 1 review-phase1 file + 2 AppliedEdits:yes harden files."""
-    repo, rd = _base_run(tmp_path, "ckpt-regress")
-    _review(rd, "phase1", 1)
-    _harden(rd, 1, 1, "yes")
-    _harden(rd, 1, 2, "yes")
+def test_checkpoint_regress_mismatch_fires_on_surplus(tmp_path):
+    """AC5 (SURPLUS guard): `distinct-marked-sha > harden-yes` is unambiguously malformed
+    (each fix round dispatches exactly one regress review, so the marked count can never
+    legitimately exceed the yes-count) → exactly one `regress-mismatch` on `phase1`, exit 1.
+    2 marked regress files at DISTINCT shas + 1 harden-yes ⇒ 2 > 1 fires. The integration
+    round is `count(unmarked)` = 1 and is NOT clamped to 0 even while the guard fires — the
+    DD2 guard: the round stays the honest unmarked count, disjoint from the marked surplus."""
+    repo, rd = _base_run(tmp_path, "ckpt-surplus")
+    _review(rd, "phase1", 1)                              # 1 UNMARKED integration file
+    _marked_review(rd, "phase1", 2, sha="a" * 40)         # marked regress, sha a
+    _marked_review(rd, "phase1", 3, sha="b" * 40)         # marked regress, sha b (distinct)
+    _harden(rd, 1, 1, "yes")                              # 1 fix round
     rc, obj = _run_checkpoint(repo, rd)
     assert rc == 1
     # EXACT: exactly one regress-mismatch on scope `phase1`, no shas, nothing else.
     assert obj["violations"] == [
         _viol("phase1", "regress-mismatch")
     ], obj["violations"]
-    assert obj["counters"]["phaseReviewRound"] == {"1": 0}
+    # NOT clamped to 0: integration-round = count(unmarked) = 1, independent of the surplus.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 1}, obj["counters"]
+
+
+def test_checkpoint_regress_deficit_is_benign(tmp_path):
+    """AC5 (DEFICIT is NOT a fire): `distinct-marked-sha < harden-yes` (a drop / mid-harden
+    crash window / legacy phase) is diagnosed, never STOPped by the guard. These are the OLD
+    subtraction-era inputs (1 review-phase + 2 harden-yes) — under the marker/distinct-sha
+    reader they INVERT: 0 marked > 2 yes is FALSE → no fire, clean, round = count(unmarked)
+    = 1 (NOT clamped to 0 as the reverted subtraction would have)."""
+    repo, rd = _base_run(tmp_path, "ckpt-deficit")
+    _review(rd, "phase1", 1)                              # 1 UNMARKED integration file
+    _harden(rd, 1, 1, "yes")
+    _harden(rd, 1, 2, "yes")                              # 2 yes, 0 marked → deficit
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"a deficit must be benign (no fire); got {obj}"
+    assert obj["clean"] is True
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {"1": 1}, obj["counters"]
+
+
+def test_checkpoint_marker_classifies_marked_vs_unmarked_and_body_fenced(tmp_path):
+    """AC2 (header-region, value-anchored classification): a `harden-regress: yes` line
+    counts as a marked regress ONLY when it appears in the header preamble (before the first
+    `## Findings`). A marker quoted in the review BODY — inside a fenced code block AFTER
+    `## Findings` (the reverse-collision this feature's OWN review triggers) — classifies
+    UNMARKED. Behavioral proof: an unmarked integration file + a header-marked file at a
+    distinct sha + a body-fenced-quote file ⇒ marked-regress counts ONLY the header-marked
+    one (distinct-sha = 1), and the body-fenced file counts toward the integration round.
+
+    Mutation-verify (non-vacuous vs the base subtraction reader): 3 review-phase files, 2
+    harden-yes ⇒ the OLD `files − yes` reader would give `3 − 2 = 1`, but the marker reader
+    counts `count(unmarked) = 2` — so `phaseReviewRound == {"1": 2}` REDs on the base
+    subtraction code and only greens under the marker classifier."""
+    repo, rd = _base_run(tmp_path, "ckpt-classify")
+    _review(rd, "phase1", 1)                              # UNMARKED integration
+    _marked_review(rd, "phase1", 2, sha="a" * 40)         # header-MARKED regress
+    # A file whose exact `harden-regress: yes` line sits inside a fenced block BELOW the
+    # `## Findings` header — must classify UNMARKED (header-region bound), else it would
+    # inflate distinct-marked-sha and false-fire the surplus guard.
+    (rd / "review-phase1-3.md").write_text(
+        "# Review phase1 round 3\n\n## Verdict: FINDINGS\n\nreviewed-sha: " + "c" * 40 +
+        "\n## Findings\nThe writer emits it like:\n```\nharden-regress: yes\n```\nend.\n",
+        encoding="utf-8",
+    )
+    _harden(rd, 1, 1, "yes")                              # 2 harden-yes: distinct-marked 1 ≤ 2,
+    _harden(rd, 1, 2, "yes")                              # and `files − yes = 1` ≠ count(unmarked)
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"only the header-marked file is a regress → clean; got {obj}"
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    # 2 unmarked integration files (the plain _review + the body-fenced-quote file) → round 2.
+    # DIVERGES from the base `3 − 2 = 1` subtraction, so this asserts the marker reader, not
+    # a value both readers happen to produce.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 2}, obj["counters"]
+
+
+def test_checkpoint_negative_classifier_variants_all_unmarked(tmp_path):
+    """AC2 negative branches: the `^harden-regress:[[:space:]]*yes[[:space:]]*$`
+    header-region, column-0, VALUE-exact anchor classifies these three near-miss header
+    occurrences as UNMARKED (integration), NOT marked regress:
+      (a) `harden-regress: no`  — value is `no`, not `yes`;
+      (b) `  harden-regress: yes` INDENTED — not column-0 (`^` anchor);
+      (c) a prose mention of `harden-regress` before `## Findings` — not a standalone `= yes` line.
+    Each is a well-formed parseable review (header sha + `## Findings`) at a DISTINCT sha with
+    ZERO harden-yes, so if ANY misclassified MARKED its distinct sha would make
+    `distinct-marked-sha ≥ 1 > harden-yes = 0` → a `regress-mismatch` fire. All UNMARKED ⇒ no
+    fire, clean, integration-round = count(unmarked) = 3.
+
+    Mutation-verify (REDs under a LOOSER anchor): drop the value-check (`^harden-regress:` only)
+    → (a) marks; drop the column-0 `^` (`harden-regress:...yes`) → (b) marks; use a bare
+    substring (`grep -q harden-regress`) → (c) marks — any of these turns this fixture into a
+    surplus fire (rc 1), so the clean/round-3 assertion is non-vacuous on the exact anchor."""
+    repo, rd = _base_run(tmp_path, "ckpt-negclass")
+    # (a) value `no` in the header preamble (after reviewed-sha, before ## Findings)
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\nreviewed-sha: " + "a" * 40 +
+        "\nharden-regress: no\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+    # (b) INDENTED `harden-regress: yes` (leading whitespace → not column-0)
+    (rd / "review-phase1-2.md").write_text(
+        "# Review phase1 round 2\n## Verdict: CONVERGED\nreviewed-sha: " + "b" * 40 +
+        "\n  harden-regress: yes\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+    # (c) prose occurrence of the token before ## Findings (not a standalone `= yes` line)
+    (rd / "review-phase1-3.md").write_text(
+        "# Review phase1 round 3\n## Verdict: CONVERGED\nreviewed-sha: " + "c" * 40 +
+        "\nThis phase used a harden-regress review earlier; nothing marked here.\n"
+        "## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+    # ZERO harden-yes: any misclassified-marked file makes distinct-marked-sha > 0 → fire.
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"all three near-miss files must classify UNMARKED → clean; got {obj}"
+    assert obj["clean"] is True, obj
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    # all three are UNMARKED integration files → integration round = 3.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 3}, obj["counters"]
+
+
+def test_checkpoint_marked_file_body_only_sha_is_unparseable(tmp_path):
+    """PARSEABILITY BOUNDARY (the reviewed-sha anchor, body-only case): a MARKED review-phase file
+    (header `harden-regress: yes` above `## Findings`) whose ONLY `reviewed-sha:` line is a fenced
+    BODY quote BELOW `## Findings` — NO header-region sha — is `unparseable-review`, NOT silently
+    excluded-and-clean. The boundary requires a valid header-region `reviewed-sha:` anchor: a
+    marked file whose header sha reads EMPTY is exactly the silent-bucketing hole (its empty sha
+    dropped from `distinct_marked_sha` could hide a real surplus), so it is rejected fail-closed at
+    the boundary rather than absorbed.
+
+    (The real writer ALWAYS emits `reviewed-sha:` in the header preamble above `## Findings`;
+    a body-only-sha file is malformed/forged, so rejecting it breaks no legit review.)
+
+    Mutation-verify (REDs on pre-fix code lacking the reviewed-sha requirement): pre-fix the
+    empty header sha was excluded from distinct → `0 > 0` FALSE → CLEAN (rc 0) with
+    `phaseReviewRound == {"1": 0}`. The boundary flags it `unparseable-review`, rc 1."""
+    repo, rd = _base_run(tmp_path, "ckpt-bodysha")
+    # MARKED in the header (harden-regress: yes strictly above ## Findings) but the ONLY
+    # reviewed-sha is a body quote in a fenced block BELOW ## Findings → NO header sha anchor.
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\nharden-regress: yes\n"
+        "## Findings\nThe writer emits it like:\n```\nreviewed-sha: " + "a" * 40 +
+        "\n```\nend.\n",
+        encoding="utf-8",
+    )
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1, f"body-only sha on a marked file lacks the header sha anchor → unparseable; got {obj}"
+    assert obj["clean"] is False, obj
+    # EXACT: unparseable-review at the boundary, NOT bucketed (no distinct sha, no round).
+    assert obj["violations"] == [
+        _viol("review-phase1-1.md", "unparseable-review")
+    ], obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {}, obj["counters"]
+
+
+def test_checkpoint_no_findings_review_phase_unparseable_body_marker(tmp_path):
+    """PARSEABILITY BOUNDARY (`## Findings` REQUIRED for a review-phase<P> file, mirroring the
+    `## Verdict:` requirement): a MALFORMED review with NO `## Findings` header — here with a
+    `harden-regress: yes` line quoted in a fenced BODY block — is NOT silently bucketed. A
+    no-`## Findings` file cannot be safely classified (a marked file truncated after the marker
+    but before the delimiter would read UNMARKED → its sha drops from distinct_marked_sha, hiding
+    a real surplus), so it is flagged `unparseable-review` at the boundary → checkpoint NOT clean
+    (rc 1) → the run STOPs for stranded-marker recovery / a human.
+
+    Mutation-verify (REDs on pre-fix code lacking the `## Findings` parseability requirement — it
+    read this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix yields exactly
+    one `unparseable-review` on the offending file, rc 1, NOT clean."""
+    repo, rd = _base_run(tmp_path, "ckpt-nofindings-marker")
+    # `## Verdict: CONVERGED`, NO `## Findings` header at all; a `harden-regress: yes` line sits
+    # in a fenced BODY quote — malformed either way; the boundary rejects it on the missing
+    # delimiter alone (independent of the marker).
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\n"
+        "Body prose (no Findings header). The writer emits it like:\n"
+        "```\nharden-regress: yes\n```\nend.\n",
+        encoding="utf-8",
+    )
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1, f"a no-Findings review-phase file must be unparseable (not clean); got {obj}"
+    assert obj["clean"] is False, obj
+    # EXACT: one unparseable-review on the offending file's basename, no shas, no extras. The file
+    # is NOT bucketed, so it contributes no integration round.
+    assert obj["violations"] == [
+        _viol("review-phase1-1.md", "unparseable-review")
+    ], obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {}, obj["counters"]
+
+
+def test_phase_merge_body_only_sha_not_tip_bound(tmp_path):
+    """MAJOR-fix regression pin (unify sibling gates on the header-bound reviewed-sha reader):
+    the build-time `--mode phase-merge:<P>` gate (via `check_scope_counts` → `reviewed_sha_of`)
+    must NOT accept a phase review whose ONLY `reviewed-sha: <tip>` is a fenced BODY quote below
+    `## Findings` — matching `--mode checkpoint`'s header-only contract. Otherwise a body-only-sha
+    review would satisfy merge tip-binding but not checkpoint (the inconsistency codex flagged).
+
+    Mutation-verify (REDs on the pre-fix whole-file `reviewed_sha_of`): the body sha EQUALS the
+    real `phaseInt/<runId>/1` tip. The pre-fix whole-file read finds it → `rsha == tip` → the
+    scope COUNTS → gate CLEAN (rc 0). The header-bound read yields NO header sha → `reviewed_sha_of`
+    rc1 → `sha-mismatch` → the scope does NOT count → gate BLOCKS (rc 1)."""
+    repo, rd = _base_run(tmp_path, "pm-bodysha")
+    _git(repo, "checkout", "-q", "-b", "phaseInt/pm-bodysha/1")
+    _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
+    tip = _rev(repo, "phaseInt/pm-bodysha/1")
+    _body_only_sha_review(rd, "phase1", tip)
+    _codex(rd, "phase1")   # present so the pre-fix reader would reach a CLEAN verdict
+
+    rc, obj = _run_mode(repo, rd, "phase-merge:1")
+    assert rc == 1, f"body-only sha must not tip-bind phase-merge → block; got {obj}"
+    assert "sha-mismatch" in _reasons(obj), obj["violations"]
+
+
+def test_ship_body_only_sha_phase_review_not_counted(tmp_path):
+    """MAJOR-fix regression pin (ship b-i + finalize b-ii on the header-bound reader): a phase
+    review AND the finalize review whose ONLY `reviewed-sha` is a fenced BODY quote must NOT
+    satisfy ship's tip-binding — b-i's `candidate_R` (via `reviewed_sha_of`) stays empty →
+    `no-phase-review`. Under the pre-fix whole-file reader the body sha would populate
+    `candidate_R` → b-i passes and ship falls through to the finalize check.
+
+    Mutation-verify (REDs on the pre-fix reader): with a body-only-sha phase review + codex, the
+    pre-fix read counts it (b-i satisfied) and — no finalize artifact → `no-review`. The
+    header-bound read leaves `candidate_R` empty at b-i → `no-phase-review`. Asserting the
+    b-i-specific reason pins that the phase reader (not just finalize) is header-bound."""
+    repo, rd = _base_run(tmp_path, "ship-bodysha")
+    _git(repo, "checkout", "-q", "-b", "phaseInt/ship-bodysha/1")
+    _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
+    _git(repo, "checkout", "-q", "drive/ship-bodysha")
+    tip = _rev(repo, "phaseInt/ship-bodysha/1")
+    _body_only_sha_review(rd, "phase1", tip)
+    _codex(rd, "phase1")
+
+    rc, obj = _run_mode(repo, rd, "ship")
+    assert rc == 1, f"body-only sha phase review must not satisfy ship b-i; got {obj}"
+    assert "no-phase-review" in _reasons(obj), obj["violations"]
+
+
+# --------------------------------------------------------------------------- #
+# round-3 BLOCKING regression: the NO-`## Findings` gap (speculative EOF fallback).
+# The round-2 body-only pins above use `_body_only_sha_review`, which HAS a `## Findings`
+# header. The reopened bypass is a review with NO `## Findings` at all: the pre-fix
+# `reviewed_sha_of` awk (`/^## Findings/ { exit } { print }`) ran to EOF and accepted a
+# `reviewed-sha:` ANYWHERE (fenced/body). The fix REQUIRES the `## Findings` delimiter to
+# bound the header (emit the header region ONLY when `## Findings` is seen), so a malformed
+# no-`## Findings` review binds NO tip anywhere — proven on ALL FOUR reviewed_sha_of
+# consumers: checkpoint (distinct_marked_sha), phase-merge + ship b-i + finalize b-ii.
+# Each is mutation-verified against the pre-fix EOF fallback below.
+# --------------------------------------------------------------------------- #
+
+def test_checkpoint_no_findings_review_phase_unparseable_header_marker(tmp_path):
+    """PARSEABILITY BOUNDARY (the header-marker arm): a review with the `harden-regress: yes`
+    marker in the header region BUT NO `## Findings` header at all is MALFORMED and must be flagged
+    `unparseable-review` — NOT silently bucketed. This is the crash-window / forgery the boundary
+    closes: a marked-INTENT review truncated before the `## Findings` delimiter. Bucketing it
+    UNMARKED would hide its reviewed-sha from distinct_marked_sha, masking a real surplus; the fix
+    rejects it at the boundary instead (checkpoint rc 1, not clean).
+
+    Mutation-verify (REDs on pre-fix code lacking the `## Findings` parseability requirement — it
+    read this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix yields exactly
+    one `unparseable-review`, rc 1, NOT clean."""
+    repo, rd = _base_run(tmp_path, "ckpt-nofind")
+    # `harden-regress: yes` in the header region, NO `## Findings` anywhere; the only
+    # reviewed-sha is a fenced body quote. Malformed → unparseable at the boundary.
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\nharden-regress: yes\n"
+        "Body prose (no Findings header):\n```\nreviewed-sha: " + "a" * 40 + "\n```\nend.\n",
+        encoding="utf-8",
+    )
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1, f"a no-Findings review-phase file must be unparseable (not clean); got {obj}"
+    assert obj["clean"] is False, obj
+    # EXACT: one unparseable-review; the file is not bucketed (no integration round, no sha into
+    # the surplus guard).
+    assert obj["violations"] == [
+        _viol("review-phase1-1.md", "unparseable-review")
+    ], obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {}, obj["counters"]
+
+
+def test_checkpoint_no_findings_plain_review_phase_unparseable(tmp_path):
+    """Root-fix boundary (marker-AGNOSTIC): even a PLAIN, NON-marked review-phase file with a
+    valid `## Verdict:` header + `reviewed-sha:` but NO `## Findings` header is
+    `unparseable-review`. The requirement is structural (the delimiter must be present), not
+    conditional on a marker — a valid-verdict file reaching the counter path without the
+    delimiter would otherwise be silently bucketed UNMARKED, the exact silent path the boundary
+    closes (and the shape a marked review truncated before `## Findings` degenerates to).
+
+    Mutation-verify (REDs on the pre-fix code lacking the `## Findings` requirement — it read
+    this file clean/UNMARKED with `phaseReviewRound == {"1": 1}`): the fix flags it, rc 1."""
+    repo, rd = _base_run(tmp_path, "ckpt-nofind-plain")
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n## Verdict: CONVERGED\nreviewed-sha: " + "a" * 40 +
+        "\nno findings header here\n",
+        encoding="utf-8",
+    )
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1, f"a plain no-Findings review-phase file must be unparseable; got {obj}"
+    assert obj["clean"] is False, obj
+    assert obj["violations"] == [
+        _viol("review-phase1-1.md", "unparseable-review")
+    ], obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {}, obj["counters"]
+
+
+def test_checkpoint_surplus_marked_missing_findings_is_unparseable_not_hidden(tmp_path):
+    """PARSEABILITY BOUNDARY (surplus not suppressed by a dropped `## Findings`): the surplus
+    scenario (`test_checkpoint_regress_mismatch_fires_on_surplus`: 2 marked distinct-sha reviews +
+    1 harden-yes → `regress-mismatch`) must NOT be silently suppressed by dropping `## Findings`
+    from one marked review. Without the boundary, a no-`## Findings` marked file fell into the
+    UNMARKED bucket (its sha dropped from distinct_marked_sha), so `2 > 1` collapsed to `1 > 1`
+    FALSE → CLEAN, HIDING the surplus. With the boundary the malformed file is `unparseable-review`
+    (rc 1, not clean) — the surplus is never hidden.
+
+    Mutation-verify (REDs on pre-fix code: it read CLEAN with `phaseReviewRound == {"1": 1}`
+    and NO unparseable-review — the suppression): the fix flags the malformed file."""
+    repo, rd = _base_run(tmp_path, "ckpt-surplus-nofind")
+    _marked_review(rd, "phase1", 1, sha="a" * 40)         # well-formed marked regress, sha a
+    # The SECOND marked regress (DISTINCT sha b) with `## Findings` REMOVED — the exact mutation
+    # from the surplus repro (a crash after the marker, or a forgery). Pre-fix it fell UNMARKED
+    # (sha b dropped from distinct_marked_sha) → 2>1 collapsed to 1>1 FALSE → clean, hiding it.
+    (rd / "review-phase1-2.md").write_text(
+        "# Review phase1 round 2\n## Verdict: CONVERGED\nreviewed-sha: " + "b" * 40 +
+        "\nharden-regress: yes\nno findings header\n",
+        encoding="utf-8",
+    )
+    _harden(rd, 1, 1, "yes")                              # 1 fix round
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1, f"a marked review missing ## Findings must be unparseable, not hidden; got {obj}"
+    assert obj["clean"] is False, obj
+    # EXACT: the malformed file is flagged unparseable-review (not silently absorbed into the
+    # buckets). The well-formed marked `a` (distinct=1) ≤ harden-yes 1 → no regress-mismatch.
+    assert obj["violations"] == [
+        _viol("review-phase1-2.md", "unparseable-review")
+    ], obj["violations"]
+
+
+def test_checkpoint_surplus_marked_missing_sha_is_unparseable_not_hidden(tmp_path):
+    """PARSEABILITY BOUNDARY (the reviewed-sha anchor): a review-phase file with `## Verdict:` +
+    `## Findings` + `harden-regress: yes` but NO `reviewed-sha:` line must NOT be silently
+    bucketed. The marked path would swallow the missing sha into `msha=""`, which the `$2!=""`
+    filter drops from distinct_marked_sha → a real surplus is HIDDEN.
+
+    Scenario: 1 well-formed marked regress (sha a) + 1 marked regress with NO reviewed-sha +
+    1 harden-yes. Without the reviewed-sha anchor the no-sha marked file bucketed marked with an
+    empty sha → distinct_marked_sha counts only `a` = 1 ≤ harden-yes 1 → NO fire, CLEAN,
+    `phaseReviewRound == {"1": 0}` (both marked, 0 unmarked) — the surplus SILENTLY hidden. The
+    boundary flags the no-sha file `unparseable-review` (rc 1, not clean) instead.
+
+    Mutation-verify (REDs on pre-fix code lacking the reviewed-sha requirement): pre-fix reads
+    CLEAN with NO unparseable-review and `phaseReviewRound == {"1": 0}` — the silent bucketing.
+    The fix flags the malformed file, rc 1."""
+    repo, rd = _base_run(tmp_path, "ckpt-surplus-nosha")
+    _marked_review(rd, "phase1", 1, sha="a" * 40)         # well-formed marked regress, sha a
+    # A SECOND marked regress with `## Verdict:` + `## Findings` + the header marker but NO
+    # `reviewed-sha:` line at all — the exact sibling-omission codex reproduced (a crash before
+    # the sha, or a forgery). Pre-fix it bucketed marked with an empty sha (dropped from the
+    # distinct set) → the `a`-only distinct=1 ≤ harden-yes 1 → surplus hidden.
+    (rd / "review-phase1-2.md").write_text(
+        "# Review phase1 round 2\n\n## Verdict: CONVERGED\n\n"
+        "harden-regress: yes\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+    _harden(rd, 1, 1, "yes")                              # 1 fix round
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1, f"a marked review missing reviewed-sha must be unparseable, not hidden; got {obj}"
+    assert obj["clean"] is False, obj
+    # EXACT: the malformed file is flagged unparseable-review (not silently absorbed into the
+    # buckets). The well-formed marked `a` (distinct=1) ≤ harden-yes 1 → no regress-mismatch.
+    assert obj["violations"] == [
+        _viol("review-phase1-2.md", "unparseable-review")
+    ], obj["violations"]
+    # NOT bucketed: the no-sha file contributes neither an integration round nor a distinct sha.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 0}, obj["counters"]
+
+
+def test_checkpoint_unmarked_review_phase_missing_sha_is_unparseable(tmp_path):
+    """PARSEABILITY BOUNDARY (the UNMARKED arm): an UNMARKED (integration) review-phase file with
+    `## Verdict:` + `## Findings` but NO `reviewed-sha:` line must be `unparseable-review` — NOT
+    silently counted toward the round.
+
+    Without the reviewed-sha anchor this file passed the boundary, read UNMARKED, and counted
+    toward the integration round → CLEAN with `phaseReviewRound == {"1": 1}`. The boundary requires
+    the reviewed-sha anchor too, so an integration file omitting its sha is rejected fail-closed.
+
+    Mutation-verify (REDs on pre-fix code): pre-fix reads CLEAN with NO unparseable-review and
+    `phaseReviewRound == {"1": 1}`. The fix flags it, rc 1, and does NOT bucket it."""
+    repo, rd = _base_run(tmp_path, "ckpt-unmarked-nosha")
+    # UNMARKED (no `harden-regress:` marker), well-formed `## Verdict:` + `## Findings`, but NO
+    # `reviewed-sha:` line anywhere in the header preamble.
+    (rd / "review-phase1-1.md").write_text(
+        "# Review phase1 round 1\n\n## Verdict: CONVERGED\n\n## Findings\n\nNo open P1.\n",
+        encoding="utf-8",
+    )
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1, f"an unmarked review-phase file missing reviewed-sha must be unparseable; got {obj}"
+    assert obj["clean"] is False, obj
+    assert obj["violations"] == [
+        _viol("review-phase1-1.md", "unparseable-review")
+    ], obj["violations"]
+    # NOT bucketed: contributes no integration round.
+    assert obj["counters"]["phaseReviewRound"] == {}, obj["counters"]
+
+
+def test_phase_merge_no_findings_body_sha_not_tip_bound(tmp_path):
+    """round-3 BLOCKING (phase-merge arm): the `--mode phase-merge:<P>` gate (via
+    `check_scope_counts` → `reviewed_sha_of`) must NOT accept a phase review with NO
+    `## Findings` header whose only `reviewed-sha: <tip>` is a fenced body quote.
+
+    Mutation-verify (REDs on the pre-fix EOF fallback): the body sha EQUALS the real
+    `phaseInt/<runId>/1` tip → the pre-fix EOF read finds it → `rsha == tip` → the scope
+    COUNTS → gate CLEAN (rc 0). The delimiter-required read yields NO sha → `sha-mismatch`
+    → gate BLOCKS (rc 1)."""
+    repo, rd = _base_run(tmp_path, "pm-nofind")
+    _git(repo, "checkout", "-q", "-b", "phaseInt/pm-nofind/1")
+    _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
+    tip = _rev(repo, "phaseInt/pm-nofind/1")
+    _no_findings_body_sha_review(rd, "phase1", 1, tip)
+    _codex(rd, "phase1")   # present so the pre-fix reader would reach a CLEAN verdict
+
+    rc, obj = _run_mode(repo, rd, "phase-merge:1")
+    assert rc == 1, f"no-Findings body sha must not tip-bind phase-merge → block; got {obj}"
+    assert "sha-mismatch" in _reasons(obj), obj["violations"]
+
+
+def test_ship_no_findings_body_sha_phase_review_not_counted(tmp_path):
+    """round-3 BLOCKING (ship b-i arm): a phase review with NO `## Findings` header whose
+    only `reviewed-sha` is a fenced body quote must NOT satisfy ship's b-i precondition —
+    `candidate_R` (via `reviewed_sha_of`) stays empty → `no-phase-review`.
+
+    Mutation-verify (REDs on the pre-fix EOF fallback): the pre-fix read counts the body sha
+    (b-i satisfied) and — no finalize artifact → `no-review`. The delimiter-required read
+    leaves `candidate_R` empty at b-i → `no-phase-review` (pins the phase reader, not just
+    finalize, is delimiter-bound)."""
+    repo, rd = _base_run(tmp_path, "ship-nofind")
+    _git(repo, "checkout", "-q", "-b", "phaseInt/ship-nofind/1")
+    _commit(repo, "phase.sh", "echo p1", "phase 1 integration")
+    _git(repo, "checkout", "-q", "drive/ship-nofind")
+    tip = _rev(repo, "phaseInt/ship-nofind/1")
+    _no_findings_body_sha_review(rd, "phase1", 1, tip)
+    _codex(rd, "phase1")
+
+    rc, obj = _run_mode(repo, rd, "ship")
+    assert rc == 1, f"no-Findings body sha phase review must not satisfy ship b-i; got {obj}"
+    assert "no-phase-review" in _reasons(obj), obj["violations"]
+
+
+def test_ship_no_findings_finalize_review_not_tip_bound(tmp_path):
+    """round-3 BLOCKING (finalize / ship b-ii arm): with a VALID counting phase review
+    (so b-i passes), a finalize review with NO `## Findings` header whose only
+    `reviewed-sha: <tip>` is a fenced body quote must NOT bind the terminal candidate-R —
+    `reviewed_sha_of(fin_rf)` fails → `candidate_R=""` → ship blocks with `no-review`.
+
+    Mutation-verify (REDs on the pre-fix EOF fallback): the finalize body sha EQUALS the
+    featureBranch tip → the pre-fix EOF read binds it → R == tip → (a) ancestor, (b) empty
+    diff ⊆ allowlist, (c) 0 commits → ship_clean → CLEAN (rc 0). The delimiter-required read
+    yields NO finalize sha → `candidate_R` empty → `no-review` (rc 1)."""
+    repo, rd = _base_run(tmp_path, "ship-fin-nofind")
+    tip = _rev(repo, "drive/ship-fin-nofind")
+    # b-i satisfied by a well-formed CONVERGED phase review (header sha + ## Findings) + codex.
+    _findings_review(rd, "phase1", 1, sha="a" * 40)
+    _codex(rd, "phase1")
+    # b-ii finalize candidate: NO ## Findings, sha only in the body, == featureBranch tip
+    # (so the pre-fix reader would satisfy (a)(b)(c) and ship clean).
+    _no_findings_body_sha_review(rd, "finalize", 1, tip)
+    _codex(rd, "finalize")
+
+    rc, obj = _run_mode(repo, rd, "ship")
+    assert rc == 1, f"no-Findings finalize review must not tip-bind ship b-ii; got {obj}"
+    assert "no-review" in _reasons(obj), obj["violations"]
+
+
+def test_ship_body_only_sha_finalize_review_not_tip_bound(tmp_path):
+    """codex P1 (finalize / ship b-ii arm, the WITH-`## Findings` variant the matrix missed):
+    with a VALID counting phase review (so b-i passes), a finalize review that HAS a NORMAL
+    `## Findings` header but whose ONLY `reviewed-sha: <tip>` is a fenced BODY quote BELOW
+    `## Findings` must NOT bind the terminal candidate-R — `reviewed_sha_of(fin_rf)` reads the
+    header region ONLY (empty here) → `candidate_R=""` → ship blocks with `no-review`. The
+    sibling `test_ship_no_findings_finalize_review_not_tip_bound` covers the NO-`## Findings`
+    variant; this is the b-ii finalize case with `## Findings` present (codex verified the
+    script already blocks it — this is the missing behavioral pin).
+
+    Mutation-verify (REDs on a whole-file `reviewed_sha_of`): the finalize body sha EQUALS the
+    featureBranch tip, so a whole-file read would bind R == tip → (a) ancestor, (b) empty diff
+    ⊆ allowlist, (c) 0 commits → ship clean (rc 0). The header-bound read yields NO finalize
+    sha → `candidate_R` empty → `no-review` (rc 1)."""
+    repo, rd = _base_run(tmp_path, "ship-fin-bodysha")
+    tip = _rev(repo, "drive/ship-fin-bodysha")
+    # b-i satisfied by a well-formed CONVERGED phase review (header sha + ## Findings) + codex.
+    _findings_review(rd, "phase1", 1, sha="a" * 40)
+    _codex(rd, "phase1")
+    # b-ii finalize candidate: HAS `## Findings`, sha ONLY in a fenced BODY quote BELOW it,
+    # == featureBranch tip (so a whole-file reader would satisfy (a)(b)(c) and ship clean).
+    _body_only_sha_review(rd, "finalize", tip)
+    _codex(rd, "finalize")
+
+    rc, obj = _run_mode(repo, rd, "ship")
+    assert rc == 1, f"body-only-sha finalize review (with ## Findings) must not tip-bind ship b-ii; got {obj}"
+    assert "no-review" in _reasons(obj), obj["violations"]
+
+
+def test_checkpoint_distinct_sha_dedup(tmp_path):
+    """AC4 (distinct-reviewed-sha dedup): two MARKED files at the SAME `reviewed-sha` count
+    as ONE regress round (a stranded dual-voice re-dispatch that appended a duplicate marked
+    file at the same tip is deduped) — so 2 marked-same-sha + 1 harden-yes is `1 > 1` FALSE
+    → clean; whereas two marked files at DISTINCT shas would be `2 > 1` → fire. The dedup is
+    what makes the surplus guard immune to stranded-review duplication (protects the NORMAL
+    harden loop, not just the heal)."""
+    repo, rd = _base_run(tmp_path, "ckpt-dedup")
+    _marked_review(rd, "phase1", 1, sha="a" * 40)         # same sha
+    _marked_review(rd, "phase1", 2, sha="a" * 40)         # duplicate of the SAME tip
+    _harden(rd, 1, 1, "yes")
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"two marked files at the same sha dedupe to 1 ≤ 1 yes → clean; got {obj}"
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    # Both files are marked → neither counts toward the integration round.
+    assert obj["counters"]["phaseReviewRound"] == {"1": 0}, obj["counters"]
+
+
+def test_checkpoint_backward_compat_no_marked_no_baseSha(tmp_path):
+    """AC6 (backward-compat is inherent): a legacy run with NO marked review-phase files (and
+    no state.baseSha) is checkpoint-clean w.r.t. `regress-mismatch` (`0 ≤ harden-yes`), and
+    its old unmarked regress files count toward the integration round — no era field, no
+    fallback branch. 2 unmarked review-phase + 2 harden-yes ⇒ 0 marked > 2 is FALSE → clean,
+    round = count(unmarked) = 2."""
+    repo, rd = _base_run(tmp_path, "ckpt-legacy")
+    _review(rd, "phase1", 1)
+    _review(rd, "phase1", 2)
+    _harden(rd, 1, 1, "yes")
+    _harden(rd, 1, 2, "yes")
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 0, f"a legacy no-marker run must be clean; got {obj}"
+    assert "regress-mismatch" not in _reasons(obj), obj["violations"]
+    assert obj["counters"]["phaseReviewRound"] == {"1": 2}, obj["counters"]
+
+
+def test_checkpoint_open_inflight_heal_marker_not_clean(tmp_path):
+    """AC13: an OPEN `inflight-heal-<P>.marker` makes `--mode checkpoint` report NOT clean
+    (the `inflight-*.marker` glob emits `inflight-open`) — the consequence that gives the
+    orphaned-heal-marker recovery teeth (the resume sweep must clear it before any
+    Execute-boundary checkpoint, so no proof is ever taken against an open heal marker)."""
+    repo, rd = _base_run(tmp_path, "ckpt-healmarker")
+    _review(rd, "phase1", 1)
+    _inflight(rd, "heal-1")
+    rc, obj = _run_checkpoint(repo, rd)
+    assert rc == 1 and obj["clean"] is False
+    assert obj["violations"] == [
+        _viol("inflight-heal-1.marker", "inflight-open")
+    ], obj["violations"]
 
 
 def test_checkpoint_epoch_gap_violation_and_highest_r(tmp_path):
@@ -514,17 +1121,20 @@ def test_resume_repair_hint_sentence_verbatim():
 def test_five_reconstruction_rules_pinned():
     """AC4/AC6: all five I3 per-counter reconstruction rules are present, each pinned as
     its CONTIGUOUS formula clause (not scattered substrings) so a semantic rewrite that
-    changes the derivation — e.g. dropping the `MINUS … AppliedEdits: yes` subtraction or
-    the `HIGHEST epoch R` rule — breaks the pin. A dropped rule is a silent resume hole."""
+    changes the derivation — e.g. reverting rule 2 to the old `MINUS … AppliedEdits: yes`
+    subtraction instead of the marker-aware `WITHOUT the harden-regress: yes marker` count,
+    or dropping the `HIGHEST epoch R` rule — breaks the pin. A dropped rule is a silent
+    resume hole."""
     blob = _norm(_drive_md())
     # Each entry is the literal contiguous formula from drive.md's reconstruction list.
     rules = [
         # rule 1 — reviewCount derivation
         "`slices[<id>].reviewCount` = max(state, count of `review-<id>-N.md`, "
         "pure-integer N)",
-        # rule 2 — phaseReview round = review-phase count MINUS AppliedEdits: yes harden
-        "`phaseReview[<P>].round` = max(state, count of `review-phase<P>-N.md` "
-        "(pure-integer N) MINUS count of `harden-<P>-*.md` with `AppliedEdits: yes`)",
+        # rule 2 — phaseReview round = count of review-phase files WITHOUT the marker (no
+        # subtraction; the harden-regress marker, not a yes-count subtraction, separates them)
+        "`phaseReview[<P>].round` = max(state, count of `review-phase<P>-N.md` files "
+        "(pure-integer N) WITHOUT the `harden-regress: yes` marker)",
         # rule 3 — hardenRound counts ONLY AppliedEdits: yes
         "`phaseReview[<P>].hardenRound` = max(state, count of `harden-<P>-*.md` with "
         "`AppliedEdits: yes`)",
@@ -614,7 +1224,7 @@ def test_derived_phasedesign_status_and_resume_redesign_cap():
 def test_redesign_handler_marker_before_state_mutation():
     """AC5: the REDESIGN handler writes the epoch marker as its FIRST action, create-only
     + tmp/`mv`, strictly BEFORE the redesigns/round mutation; STOP on already-exists; the
-    marker-write → state-write span is one atomic step. Round-subtraction soundness (the
+    marker-write → state-write span is one atomic step. Round-reconstruction soundness (the
     rule-2 derivation) depends on this ordering."""
     blob = _norm(_drive_md())
     assert "redesign-<P>-r<R>.marker" in blob
@@ -717,14 +1327,14 @@ def test_run_graph_and_gate_name_current_epoch_family():
 
 # --------------------------------------------------------------------------- #
 # AC10 READ-ONLY PINS — drive-harden.md Step-4 ordering that rule-2 depends on.
-# drive-harden.md is NOT edited by this phase; these pins protect the round-subtraction
-# rule from a future harden-ordering change.
+# drive-harden.md is NOT edited by this phase; these pins protect the marker/distinct-sha
+# surplus guard from a future harden-ordering change.
 # --------------------------------------------------------------------------- #
 def test_harden_sets_applied_yes_before_dispatching_regress():
     """AC10: drive-harden.md Step 4 sets `AppliedEdits: yes` BEFORE dispatching the
-    regress review — the `yes` audit is the durable 1:1 marker rule-2's round-subtraction
-    counts. If harden dispatched the regress before setting `yes`, the crash window would
-    widen and the subtraction would mis-count."""
+    regress review — the `yes` audit is the durable per-fix-round marker the checkpoint's
+    `distinct-marked-sha > harden-yes` surplus guard counts. If harden dispatched the regress
+    before setting `yes`, the crash window would widen and the guard could miscount."""
     blob = _norm(_drive_harden_md())
     # CONTIGUOUS span of the Step-4 "fix applied" branch: it must increment hardenRound,
     # set `AppliedEdits: yes`, THEN re-run the harden-regress review — pinned as one literal
@@ -740,8 +1350,8 @@ def test_harden_sets_applied_yes_before_dispatching_regress():
 
 def test_harden_one_regress_per_fix_round():
     """AC10: exactly ONE regress pass per fix round — a fix round sets yes once and runs
-    one harden-regress review; the 1:1 (yes-file : regress-review) correspondence is what
-    makes the rule-2 subtraction exact. Pinned via the per-invocation `hardenRound += 1`
+    one harden-regress review; the (harden-yes : distinct-marked-sha) correspondence is what
+    makes the surplus guard exact. Pinned via the per-invocation `hardenRound += 1`
     + single regress dispatch in the same branch."""
     blob = _norm(_drive_harden_md())
     assert "One round per invocation" in blob, (
@@ -753,42 +1363,42 @@ def test_harden_one_regress_per_fix_round():
 
 
 def test_harden_regress_no_round_increment_contract_pinned_both_voices():
-    """AC10 (load-bearing): the harden-regress round-scheme contract that the rule-2
-    reconstruction depends on. The contract has TWO halves — (A) harden-regress does NOT
-    increment `phaseReview[<P>].round`, and (B) it writes into the SAME `review-phase<P>-N.md`
-    family — and BOTH halves are pinned on BOTH prose voices (drive.md and drive-review.md) as
-    CONTIGUOUS clauses, so a drift to a DIFFERENT round/file scheme (a separate counter, a new
-    file family, or an incrementing harden-regress) in EITHER voice breaks this test.
+    """AC10 + AC3 (load-bearing): the harden-regress round-scheme contract the checkpoint
+    rule-2 reconstruction depends on, RE-PINNED to the marker/distinct-sha derivation (no
+    subtraction). The contract has TWO halves — (A) harden-regress does NOT increment
+    `phaseReview[<P>].round`, and (B) it writes into the SAME `review-phase<P>-N.md` family,
+    self-identifying with the `harden-regress: yes` marker and counted SEPARATELY as
+    distinct-`reviewed-sha` — and BOTH halves are pinned on BOTH prose voices (drive.md and
+    drive-review.md) as CONTIGUOUS clauses, so a drift to a DIFFERENT round/file scheme in
+    EITHER voice breaks this test.
 
-    The contract: a harden-regress review writes into the SAME `review-phase<P>-N.md`
-    family WITHOUT incrementing the conformance `phaseReview[<P>].round`. That is the exact
-    basis for the checkpoint counter rule `phaseReview.round = count(review-phase<P>-N.md)
-    MINUS count(harden-<P>-*.md AppliedEdits: yes)`: each fix round adds one review-phase
-    file (no round bump) and one `yes` audit, so subtracting the yes-count recovers the
-    real round. If the prose drifted to a different scheme, the reconstruction would over-
-    or under-count silently and lossless rebirth counter recovery would break."""
-    # 1a. drive.md — the contiguous clause that states the same-family / no-round-increment
-    # half of rule 2. Pinned as one literal span (not scattered words) so a reword onto a
-    # different round/file scheme fails. `_norm` collapses the wrap so the clause is one line.
+    The contract: a harden-regress review writes into the SAME `review-phase<P>-N.md` family
+    WITHOUT incrementing the conformance round; the checkpoint derives
+    `phaseReview.round = count(UNMARKED review-phase<P>-N.md)` DIRECTLY (no subtraction) and
+    counts marked-regress separately as distinct `reviewed-sha`. If the prose drifted to a
+    different scheme, the reconstruction would over- or under-count silently and lossless
+    rebirth counter recovery would break."""
+    # 1a. drive.md — the contiguous clause that states the same-family / no-round-inflation /
+    # marker half of rule 2. Pinned as one literal span so a reword onto a different scheme
+    # fails. `_norm` collapses the wrap so the clause is one line.
     drive = _norm(_drive_md())
     assert (
-        "harden-regress reviews write into the same `review-phase<P>-N.md` family "
-        "without incrementing the round, and each fix round's `AppliedEdits: yes` audit "
-        "is its durable 1:1 marker"
+        "A harden-regress review self-identifies with the `harden-regress: yes` header "
+        "marker and is counted separately as marked-regress (the DISTINCT `reviewed-sha` "
+        "among marked files); it never inflates the integration round"
     ) in drive, (
-        "drive.md rule 2 must keep the contiguous 'harden-regress … same `review-phase<P>-"
-        "N.md` family without incrementing the round' clause — a drift to a different "
-        "round/file scheme must break this pin"
+        "drive.md rule 2 must keep the contiguous 'harden-regress … self-identifies … marker "
+        "… never inflates the integration round' clause — a drift to a different round/file "
+        "scheme must break this pin"
     )
-    # 1b. drive-review.md — BOTH halves of the contract at the review-write point, each a
-    # contiguous clause so a reword onto a different scheme/family fails:
+    # 1b. drive-review.md — BOTH halves of the contract at the review-write point:
     #   half A (no round increment): the harden-regress exception must NOT read/increment/cap
-    #     the conformance round, naming the SAME `phaseReview[<P>].round` counter.
-    #   half B (same review-phase<P>-N.md family): harden-regress is the SAME review as
-    #     `phase <P>` with identical scope/mechanics — so it writes the SAME `review-<scope>-N.md`
-    #     file (`<scope>` = `phase<P>`), i.e. the `review-phase<P>-N.md` family — the ONLY
-    #     difference being the counter. A drift rerouting harden-regress to a DIFFERENT file
-    #     family must change this clause and red the test.
+    #     the conformance round, naming the SAME `phaseReview[<P>].round` counter. UNCHANGED —
+    #     harden-regress STILL does not increment the conformance round under the marker design.
+    #   half B (same family, TWO file-family-preserving differences): harden-regress is the
+    #     SAME review as `phase <P>` differing only by the no-round-increment AND the
+    #     `harden-regress: yes` marker — same `review-phase<P>-N.md` family. A drift rerouting
+    #     it to a DIFFERENT file family must change this clause and red the test.
     review = _norm(_drive_review_md())
     assert (
         "Exception — `harden-regress`:** do NOT read, increment, or cap against the "
@@ -798,47 +1408,46 @@ def test_harden_regress_no_round_increment_contract_pinned_both_voices():
         "increment the conformance `phaseReview[<P>].round`) — the write-point half A"
     )
     assert (
-        "same review as `phase <P>`, but invoked by `/drive-harden` as its regression "
-        "guard. Identical scope/diff/mechanics; the ONLY difference is the counter"
+        "Identical scope/diff/mechanics, differing in TWO file-family-preserving ways"
     ) in review, (
-        "drive-review.md must pin the harden-regress same-family half: harden-regress is the "
-        "SAME review as `phase <P>` with identical scope/mechanics, so it writes the SAME "
-        "`review-phase<P>-N.md` family (`<scope>` = `phase<P>` → `review-<scope>-N.md`) — a "
-        "drift rerouting it to a DIFFERENT file family must break this pin (half B)"
+        "drive-review.md must pin the harden-regress same-family half as TWO "
+        "file-family-preserving differences (no round increment + the marker) — not the "
+        "stale 'ONLY difference is the counter'"
+    )
+    assert (
+        "it emits the `harden-regress: yes` self-identifying control line"
+    ) in review, (
+        "drive-review.md must name the `harden-regress: yes` self-identifying marker as the "
+        "second file-family-preserving difference (half B)"
     )
 
     # 2. CROSS-CHECK prose ⇆ script describe the SAME contract. The script's rule-2 derives
-    # `phaseReviewRound = review-phase<P> file count MINUS AppliedEdits: yes harden files`.
-    # The prose's "no round increment for harden-regress" and the script's "MINUS yes-count"
-    # are the two ends of ONE contract: because harden-regress does not bump the round, the
-    # extra review-phase file each fix round emits is corrected for by subtracting that
-    # round's `yes` audit. Assert both ends so a one-sided drift (prose says no-increment but
-    # script stops subtracting, or vice versa) is caught.
+    # `phaseReviewRound = count(UNMARKED review-phase<P> files)` DIRECTLY (no subtraction) and
+    # fires regress-mismatch on a SURPLUS (distinct-marked-sha > harden-yes). Assert both the
+    # no-subtraction derivation AND the surplus guard so a one-sided drift is caught.
     conf = _conformance()
-    # (a) the script subtraction exists and is keyed on the SAME family + the `yes` audit.
-    assert "review-phase<P> file count MINUS AppliedEdits: yes" in conf, (
-        "drive-conformance.sh rule-2 must subtract the AppliedEdits:yes harden count from "
-        "the review-phase<P> file count"
+    # (a) the direct count(unmarked) derivation exists and the subtraction is GONE.
+    assert "integration-round = count(UNMARKED review-phase<P> files)" in conf, (
+        "drive-conformance.sh rule-2 must derive the round as count(UNMARKED review-phase "
+        "files) directly — no subtraction"
     )
-    assert "$((prc - yc))" in conf, (
-        "the script must literally compute review-file-count MINUS yes-count for the round"
+    assert "$((prc - yc))" not in conf, (
+        "the subtraction `$((prc - yc))` must be GONE from the script (marker/distinct-sha "
+        "replaces it)"
     )
-    # (b) the script's own rationale comment names the SAME no-increment / same-family fact
-    # the prose pins — so the two files cannot drift apart on the scheme silently.
-    assert (
-        "harden-regress writes into the same review-phase<P>-N.md\n"
-        "    # family without incrementing the round"
-    ) in conf, (
-        "drive-conformance.sh rule-2 rationale must state the SAME 'harden-regress … same "
-        "review-phase<P>-N.md family without incrementing the round' contract the prose pins"
+    assert "distinct_marked_sha" in conf, (
+        "the script must count marked-regress via the distinct-reviewed-sha helper"
+    )
+    # (b) the surplus-only guard: regress-mismatch fires iff distinct-marked-sha > harden-yes.
+    assert '[ "$mreg" -gt "$yc" ]' in conf, (
+        "regress-mismatch must fire on a SURPLUS (distinct-marked-sha > harden-yes), not a "
+        "deficit and not the old yes>review-count comparison"
     )
 
-    # 3. BEHAVIORAL agreement: the subtraction is live, not just commented. A clean phase
-    # with 3 review-phase files and 1 AppliedEdits:yes harden file must reconstruct
-    # phaseReviewRound == 2 (3 − 1) — i.e. the harden-regress review file did NOT add a
-    # round. (Covered structurally by test_checkpoint_clean_fixture_passes_with_counters;
-    # re-asserted here bound to THIS contract so a regression in the subtraction surfaces
-    # against the prose pin it must agree with.)
+    # 3. BEHAVIORAL agreement: a MARKED regress file does NOT inflate the integration round.
+    # 2 unmarked integration files + 1 MARKED regress file + 1 harden-yes → round == 2
+    # (the marked file is a harden-regress write, counted separately, so it did NOT bump the
+    # integration round; distinct-marked 1 ≤ harden-yes 1 → clean).
     import tempfile, pathlib
     with tempfile.TemporaryDirectory() as td:
         tmp = pathlib.Path(td)
@@ -850,14 +1459,172 @@ def test_harden_regress_no_round_increment_contract_pinned_both_voices():
         _commit(repo, "drive.sh", "echo", "work")
         _review(rd, "phase1", 1)
         _review(rd, "phase1", 2)
-        _review(rd, "phase1", 3)   # one of these three is a harden-regress write
-        _harden(rd, 1, 1, "yes")   # the matching fix-round audit
+        _marked_review(rd, "phase1", 3, sha="a" * 40)   # a harden-regress write (MARKED)
+        _harden(rd, 1, 1, "yes")                        # the matching fix-round audit
         rc, obj = _run_checkpoint(repo, rd)
         assert rc == 0, obj
         assert obj["counters"]["phaseReviewRound"] == {"1": 2}, (
-            "3 review-phase files − 1 AppliedEdits:yes harden = round 2 (harden-regress "
-            "added a review file but NOT a round) — script and prose must agree"
+            "2 UNMARKED integration files + 1 MARKED regress file = round 2 (the marked "
+            "harden-regress file did NOT bump the integration round) — script and prose "
+            "must agree"
         )
+
+
+# --------------------------------------------------------------------------- #
+# SELF-IDENTIFYING HARDEN-REGRESS MARKER — writer + resume-sweep PROSE PINS.
+# The resume all-phases heal sweep, the generic-recovery carve-out, the base= strip, and
+# the FINDINGS→STOP routing are /drive COORDINATOR PROSE (no executable resume consumer);
+# the executable surface (marker classification, distinct-sha, surplus guard, inflight-open
+# on the heal marker) is covered behaviorally above. These pin the prose so an edit cannot
+# silently drop a load-bearing directive.
+# --------------------------------------------------------------------------- #
+def test_drive_review_writer_emits_harden_regress_marker():
+    """AC1: drive-review.md instructs the writer to emit the `harden-regress: yes` control
+    line in the HEADER PREAMBLE (after `reviewed-sha:`, before `## Findings`) ONLY for a
+    harden-regress invocation — the header-region placement the reader's classifier binds to."""
+    blob = _norm(_drive_review_md())
+    assert "harden-regress self-identifying marker (harden-regress invocation ONLY)" in blob, (
+        "drive-review.md must instruct the writer to emit the marker for harden-regress only"
+    )
+    assert "at column 0 in the HEADER PREAMBLE" in blob
+    assert "immediately after `reviewed-sha:` and strictly BEFORE `## Findings`" in blob, (
+        "the marker placement (after reviewed-sha, before ## Findings) must be pinned so it "
+        "cannot drift below `## Findings` where the header-region classifier ignores it"
+    )
+
+
+def test_drive_review_base_override_strip_before_scope():
+    """AC8 (DD7): drive-review.md defines the OPTIONAL `base=<40-hex>` diff-base override,
+    parsed by scanning args for `^base=([0-9a-fA-F]{40})$`, STRIPPED before `<scope>`
+    derivation (so scope stays `phase<P>`), defaulting to the global `phaseBaseSha` when
+    absent. Named in the argument-hint. Only the resume-sweep heal supplies it."""
+    text = _drive_review_md()
+    assert "[base=<sha>]" in text, "the argument-hint must name the optional base override"
+    blob = _norm(text)
+    assert "^base=([0-9a-fA-F]{40})$" in blob, "the base= token regex must be pinned"
+    assert "REMOVE that token from the arg list" in blob, (
+        "base= must be STRIPPED before scope derivation (strip-before-scope, DD7)"
+    )
+    assert "ONLY the resume-sweep heal supplies `base=`" in blob
+
+
+def test_resume_heal_sweep_marker_recovery_before_trigger():
+    """AC9/AC13 (DD9): the resume all-phases heal sweep is present, visits every phaseList
+    entry (advanced included), and its FIRST per-phase action recovers an OPEN
+    `inflight-heal-<P>.marker` (adopt / re-dispatch) ORDERED BEFORE the stale-FINDINGS
+    trigger — the marker-keyed crash-safety the distinct marker alone does not provide."""
+    blob = _norm(_drive_md())
+    assert "All-phases harden-regress heal sweep" in blob, (
+        "drive.md resume must define the all-phases harden-regress heal sweep"
+    )
+    assert "advanced phases included" in blob, "the sweep must visit advanced phases"
+    assert "marker-recovery BEFORE the trigger" in blob, (
+        "the sweep must recover an open inflight-heal marker BEFORE evaluating the trigger"
+    )
+    assert "FIRST recover any OPEN `inflight-heal-<P>.marker`" in blob
+
+
+def test_resume_heal_sweep_carves_out_inflight_heal_from_generic_recovery():
+    """AC13 (DD6): `inflight-heal-<P>.marker` is a DISTINCT marker kind in the registry and
+    is EXCLUDED from generic stranded-marker recovery (owned by the resume sweep) — else
+    generic recovery would re-run a stranded heal as a plain `phase <P>` review, stripping
+    the harden-regress flag and the base= override."""
+    blob = _norm(_drive_md())
+    assert "inflight-heal-<P>.marker" in blob, "the new marker kind must appear in drive.md"
+    # the resume Stranded-in-flight bullet excludes it
+    assert "EXCEPT `inflight-heal-<P>.marker`" in blob, (
+        "the resume generic stranded-marker recovery must EXCLUDE inflight-heal"
+    )
+    # the § Durable checkpoint contract stranded-recovery also excludes it
+    assert "EXCLUDES `inflight-heal-<P>.marker`" in blob, (
+        "the Durable checkpoint contract stranded-recovery must exclude inflight-heal"
+    )
+
+
+def test_resume_heal_findings_routes_to_manual_stop():
+    """AC9: a heal that returns FINDINGS on an already-advanced phase is an HONEST terminal
+    NON-DECISION STOP routed to the documented MANUAL harden-regress recovery (bind the
+    hardened tip, re-review/fix for real, NEVER forge) — not a claim of automated closure,
+    shippability unchanged. Both outcomes self-terminate via `reviewed-sha == hardened tip`."""
+    blob = _norm(_drive_md())
+    assert "FINDINGS → HONEST terminal NON-DECISION STOP, routed to MANUAL recovery" in blob
+    assert "NEVER forge" in blob, "the manual-recovery routing must forbid forging CONVERGED"
+    assert "self-identifies" in blob  # marker semantics present in resume prose
+    # legacy first-phase (baseSha absent) also fail-closed STOPs, never auto-heals
+    assert "LEGACY fail-closed" in blob, (
+        "a baseSha-absent first-phase heal must fail closed to a NON-DECISION STOP"
+    )
+
+
+def test_resume_heal_adopt_findings_routes_to_manual_stop():
+    """codex phase1 BLOCKING: the step-1 ADOPT path must inspect the recovered terminal's
+    verdict before continuing. A crash after a real-FINDINGS heal completed (both artifacts
+    written, marker not yet cleared) resumes → ADOPTS; the marked terminal is at the hardened
+    tip (`reviewed-sha == tip`) so the stale-FINDINGS trigger (step 3) SKIPS it — so the adopt
+    path itself must route a FINDINGS-at-tip adopted terminal through the SAME honest manual
+    STOP as the fresh-dispatch FINDINGS outcome (step 5), not silently clear-and-continue."""
+    blob = _norm(_drive_md())
+    # adopt path is verdict-aware: CONVERGED continues, FINDINGS-at-tip STOPs
+    assert "Adopted terminal CONVERGED (at the hardened tip) → healed" in blob, (
+        "the adopt path must continue only on a CONVERGED-at-tip adopted terminal"
+    )
+    assert (
+        "Adopted terminal FINDINGS (at the hardened tip) → HONEST terminal NON-DECISION STOP,"
+        " routed to MANUAL recovery" in blob
+    ), (
+        "the adopt path must route a FINDINGS-at-tip adopted terminal to the manual STOP "
+        "(the trigger self-terminates on reviewed-sha == tip and would otherwise drop it)"
+    )
+
+
+def test_resume_heal_redispatch_findings_routes_to_manual_stop():
+    """lens-2 fix (mirror of the adopt-branch pin): the step-1 RE-DISPATCH branch must ALSO
+    inspect the resulting terminal's verdict. A re-dispatched heal lands at the hardened tip
+    (`reviewed-sha == tip`), so the stale-FINDINGS trigger (step 3) SKIPS it — so the
+    re-dispatch path itself must route a FINDINGS-at-tip re-dispatched terminal through the
+    SAME honest manual STOP as the adopt branch / fresh-dispatch outcome (step 5), not
+    silently clear-the-marker-and-continue past a genuine open P1."""
+    blob = _norm(_drive_md())
+    # re-dispatch path is verdict-aware: CONVERGED continues, FINDINGS-at-tip STOPs
+    assert "Re-dispatched terminal CONVERGED (at the hardened tip) → healed" in blob, (
+        "the re-dispatch path must continue only on a CONVERGED-at-tip re-dispatched terminal"
+    )
+    assert (
+        "Re-dispatched terminal FINDINGS (at the hardened tip) → HONEST terminal"
+        " NON-DECISION STOP, routed to MANUAL recovery" in blob
+    ), (
+        "the re-dispatch path must route a FINDINGS-at-tip re-dispatched terminal to the "
+        "manual STOP (the trigger self-terminates on reviewed-sha == tip and would otherwise "
+        "silently continue past it)"
+    )
+
+
+def test_resume_heal_sweep_skips_fresh_trigger_on_open_inflight_harden():
+    """codex P1 (AC9 single-owner): the resume sweep SKIPS the fresh trigger for a phase with
+    an OPEN `inflight-harden-<P>.marker` — that phase is owned by the harden loop's
+    stranded-marker recovery. Without the skip, both the sweep AND harden-recovery would
+    co-dispatch a regress review → two marked files at distinct shas → `distinct-marked-sha >
+    harden-yes` → a false `regress-mismatch` STOP. Mutation-verify: reword the skip clause
+    away (or drop the single-owner ownership statement) and this pin REDs."""
+    blob = _norm(_drive_md())
+    assert (
+        "Skip the fresh trigger (steps 3–5) for a phase with an open "
+        "`inflight-harden-<P>.marker`" in blob
+    ), "the sweep must skip the fresh trigger for a phase with an open inflight-harden marker"
+    # the ownership rationale (single owner — harden-recovery owns that phase) must be pinned
+    assert "single owner" in blob, (
+        "the skip must be justified as single-owner (harden-recovery owns the inflight-harden "
+        "phase; a co-dispatch would false-fire the surplus guard)"
+    )
+
+
+def test_resume_heal_base_recovery_phaselist_order():
+    """AC8: `base(P)` is recovered off `state.phaseList` ORDER (never arithmetic `P−1`) —
+    `phaseInt/<runId>/<prev>` for a non-first entry, else `state.baseSha`."""
+    blob = _norm(_drive_md())
+    assert "keyed off `state.phaseList` ORDER (never arithmetic `P−1`" in blob
+    assert "`base(P) = git rev-parse phaseInt/<runId>/<prev>`" in blob
+    assert "`P` IS the first entry → `base(P) = state.baseSha`" in blob
 
 
 def _harden_cap_stop_branch_body(md):
@@ -873,21 +1640,22 @@ def _harden_cap_stop_branch_body(md):
 
 def test_harden_cap_stop_dispatches_no_regress():
     """AC10: a cap-STOP round applies no fix and dispatches NO regress review — so it
-    writes no `AppliedEdits: yes`, preserving the rule-2 subtraction. The cap-STOP branch
-    returns STOP without the fix→yes→regress sequence."""
+    writes no `AppliedEdits: yes`, preserving the harden-yes / distinct-marked-sha
+    correspondence. The cap-STOP branch returns STOP without the fix→yes→regress sequence."""
     md = _drive_harden_md()
     branch = _harden_cap_stop_branch_body(md)
     # The branch returns STOP …
     assert "return `STOP`" in branch, (
         "the `hardenRound >= HARDEN_CAP` + open-P1 branch must return `STOP`"
     )
-    # … and — the load-bearing assertion the round-subtraction depends on — it dispatches
-    # NO regress review: a `harden-regress` re-run added to THIS branch would write an
-    # `AppliedEdits: yes` audit and break rule-2's `MINUS yes-count` subtraction. Pinned on
-    # the branch's OWN text (not the whole Step) so adding a regress dispatch here BITES.
+    # … and — the load-bearing assertion the marker/distinct-sha guard depends on — it
+    # dispatches NO regress review: a `harden-regress` re-run added to THIS branch would
+    # write an `AppliedEdits: yes` audit (and a marked review file) with no matching fix,
+    # skewing the harden-yes vs distinct-marked-sha correspondence. Pinned on the branch's
+    # OWN text (not the whole Step) so adding a regress dispatch here BITES.
     assert "harden-regress" not in branch, (
         "the cap-STOP branch must dispatch NO `harden-regress` review (a regress re-run "
-        "here writes AppliedEdits: yes and breaks the rule-2 round-subtraction)"
+        "here writes AppliedEdits: yes and skews the harden-yes / distinct-marked-sha guard)"
     )
     # Sanity that the branch bound is the LOCAL bullet (not the whole doc): the sibling
     # "fix applied" branch — which DOES dispatch harden-regress — must lie OUTSIDE it, so

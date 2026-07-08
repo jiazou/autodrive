@@ -207,10 +207,30 @@ json_from_pairs() {
   printf '{%s}' "$out"
 }
 
-# Read `reviewed-sha:` (first match) from a review file; echo sha or empty. $1=file
+# Read `reviewed-sha:` (first match) from ONLY the HEADER PREAMBLE of a review file — the
+# lines from BOF up to (not including) the first `## Findings` — matching is_marked's
+# header-region bound. A `reviewed-sha:` quoted in the review BODY (e.g. a fenced code block
+# below `## Findings`) is NOT read. Echo sha (lowercased) or empty/rc1. $1=file.
+#
+# This is the SINGLE canonical reviewed-sha reader for EVERY tip-binding consumer — the
+# checkpoint marked-sha count (distinct_marked_sha), check_scope_counts (build-time
+# phase-merge / slice / audit), ship b-i, and finalize — so all gates honor the same
+# header-only contract: a review whose only `reviewed-sha:` is a body quote below
+# `## Findings` binds NO tip anywhere (excluded from distinct_marked_sha's set; fails the
+# sha-mismatch / candidate-R checks). The writer emits `reviewed-sha:` in the header preamble
+# (above `## Findings`) for every sha-binding scope (drive-review.md slice/phase/harden-regress,
+# drive-finalize.md), so this is behavior-preserving for every legitimate review and excludes
+# only body-only-sha forgeries. The `## Findings` delimiter is REQUIRED to bound the header:
+# the real writer ALWAYS emits it (drive-review.md, drive-finalize.md), so a review LACKING
+# `## Findings` is malformed → awk hits EOF with `seen==0` → prints nothing → NO sha (rc1),
+# fail-closed. "First match" semantics are preserved (finalize relies on the FIRST
+# reviewed-sha — grep -m1 over the buffered header). awk buffers the header region and emits it
+# only when `## Findings` is seen (no interval regex, for portability across BWK/gawk); the same
+# grep -E pattern then does the 40-hex match.
 reviewed_sha_of() {
   local f="$1" line
-  line="$(grep -m1 -E '^reviewed-sha:[[:space:]]*[0-9a-fA-F]{40}[[:space:]]*$' "$f" 2>/dev/null || true)"
+  line="$(awk '/^## Findings/ { seen=1; exit } { buf = buf $0 "\n" } END { if (seen) printf "%s", buf }' "$f" 2>/dev/null \
+    | grep -m1 -E '^reviewed-sha:[[:space:]]*[0-9a-fA-F]{40}[[:space:]]*$' || true)"
   [ -n "$line" ] || return 1
   line="${line#reviewed-sha:}"
   # trim whitespace
@@ -219,6 +239,48 @@ reviewed_sha_of() {
   # otherwise-correct review written with an uppercase sha would spuriously sha-mismatch.
   line="$(printf '%s' "$line" | tr 'A-F' 'a-f')"
   printf '%s\n' "$line"
+}
+
+# Is a review file a self-identifying harden-regress review? rc0 iff a header-preamble
+# `harden-regress: yes` control line is present. $1=file. HEADER-REGION bound: the value-exact
+# anchor matches ONLY within the file's header preamble — the lines from BOF up to (not
+# including) the first `## Findings` section header — so a `harden-regress: yes` line quoted in
+# the review BODY (all findings prose + fenced code live after `## Findings`) cannot match.
+#
+# The `## Findings` delimiter is REQUIRED to bound the header, matching reviewed_sha_of's
+# contract exactly (both header-preamble VALUE readers are delimiter-bound — no EOF fallback in
+# either). The real writer ALWAYS emits `## Findings` (drive-review.md, drive-finalize.md) with
+# the marker ABOVE it. A review-phase<P> file LACKING `## Findings` never reaches this reader:
+# the checkpoint counter path (review-*.md scan) now treats it as an `unparseable-review`
+# violation at the PARSEABILITY BOUNDARY (both `## Verdict:` and `## Findings` required) BEFORE
+# any classification — a no-`## Findings` file cannot be safely bucketed (is_marked can't tell a
+# genuinely-unmarked file from a marked one truncated before the delimiter, and either UNMARKED
+# bucketing inflates the integration round OR drops a real reviewed-sha from distinct_marked_sha,
+# hiding a surplus). So requiring the delimiter upstream means every file this reader sees HAS
+# it. is_marked stays delimiter-bound as a DEFENSIVE BACKSTOP (a no-`## Findings` file → `seen==0`
+# → NOT-marked), never load-bearing in the counter path now that the boundary rejects such files.
+#
+# Uses a `seen`-flag (`## Findings` reached) AND a `found`-flag (marker in header), NOT a bare
+# `END { exit 1 }`: in awk `END` runs after an earlier `exit`, so the `/^## Findings/` rule's
+# `exit` falls through to END — the status must be decided in END from the flags, honoring a set
+# `found` ONLY when the header actually terminated at `## Findings` (`seen`). No `## Findings`
+# (header ran to EOF) → `seen==0` → NOT-marked regardless of `found`.
+is_marked() {
+  awk '
+    /^## Findings/ { seen = 1; exit }
+    /^harden-regress:[[:space:]]*yes[[:space:]]*$/ { found = 1 }
+    END            { exit (seen && found ? 0 : 1) }
+  ' "$1"
+}
+
+# Count the DISTINCT non-empty `reviewed-sha` values among the marked (harden-regress)
+# review-phase<P> files for phase $1 — the true number of regress rounds, deduping a stranded
+# dual-voice re-dispatch that appended a second marked file at the SAME tip. Reads the global
+# `marked_phase_shas` accumulator (lines "<P> <sha>", populated by the review scan). Echoes the
+# count (0 on none).
+distinct_marked_sha() {   # $1=P
+  printf '%s' "$marked_phase_shas" | awk -v p="$1" '$1==p && $2!="" {print $2}' \
+    | sort -u | grep -c . || true
 }
 
 # Does the highest-N review for scope have CONVERGED verdict? rc0 yes. $1=file
@@ -628,7 +690,8 @@ EOF
     # epoch-suffixed phasedesign artifact with no redesign-<P>-r<R>.marker — fail closed).
     # Round files are review-<scope>-N.md with pure-integer N; classify the scope:
     # design (not a counter) | phasedesign<P>[-r<R>] | phase<P> | else a slice id.
-    slice_keys=""; phase_keys=""; pd_keys=""; finalize_yes_count=0
+    slice_keys=""; unmarked_phase_keys=""; marked_phase_shas=""; all_phase_ids=""
+    pd_keys=""; finalize_yes_count=0
     for f in "$RUN_DIR"/review-*.md; do
       # -e || -L: a DANGLING review dirent is corruption, not absence — skipping it would
       # UNDERCOUNT reviewCount/phaseReviewRound (the counters the resume path consumes) and
@@ -646,7 +709,59 @@ EOF
       case "$scope" in
         (design) ;;
         (phasedesign?*) pd_keys="$pd_keys${scope#phasedesign}"$'\n' ;;
-        (phase?*)       phase_keys="$phase_keys${scope#phase}"$'\n' ;;
+        (phase?*)
+          # PARSEABILITY BOUNDARY: a review-phase<P>-N.md is
+          # counter-parseable ONLY with ALL THREE structural anchors —
+          #   1. `## Verdict:`        (the generic guard above),
+          #   2. `## Findings`        (the header/body delimiter the two header-region readers
+          #                            is_marked + reviewed_sha_of bind to), AND
+          #   3. `reviewed-sha:`      (a valid header-region 40-hex line, via reviewed_sha_of).
+          # These are the COMPLETE set of anchors this file's classification + tip-binding depend
+          # on; missing ANY leaves a silent-bucketing hole the counter cannot see through:
+          #   - no `## Findings`  → is_marked reads UNMARKED (its `seen`-flag never sets), which
+          #                          BOTH inflates the integration round AND drops the sha from
+          #                          distinct_marked_sha (hiding a real surplus);
+          #   - no reviewed-sha   → the MARKED path would swallow the miss into `msha=""` → the
+          #                          `$2!=""` filter drops it from distinct_marked_sha (hiding a
+          #                          real surplus); the UNMARKED path counts it toward the round.
+          # Flag any omission `unparseable-review` (fail-closed → checkpoint not clean → the run
+          # STOPs for stranded-marker recovery / a human) and do NOT classify the file. Requiring
+          # all three HERE makes every file the downstream readers see fully anchored, so all
+          # their header-region edge cases vanish at the boundary. The real writer ALWAYS emits
+          # all three for a phase / harden-regress review (drive-review.md schema: `## Verdict:`
+          # → `reviewed-sha:` → optional `harden-regress: yes` marker → `## Findings`), so this
+          # rejects no legitimate review. Emit the violation ONCE even if several anchors are
+          # missing. (reviewed_sha_of is itself `## Findings`-delimited, so anchor 3 subsumes
+          # anchor 2; the explicit `## Findings` check is kept for clarity of the boundary.)
+          P="${scope#phase}"
+          msha=""
+          if ! grep -qE '^## Findings' "$f"; then
+            parseable=0
+          elif ! msha="$(reviewed_sha_of "$f")"; then
+            parseable=0
+          else
+            parseable=1
+          fi
+          if [ "$parseable" -eq 0 ]; then
+            # Emit unparseable-review UNLESS the generic `## Verdict:` guard above ALREADY did
+            # (a file missing `## Verdict:` too must not double-count the same violation).
+            if grep -qE '^## Verdict:' "$f"; then
+              viol_arr+=("$(violation "$base" "unparseable-review")")
+            fi
+          else
+            # Classify a PARSEABLE phase-round file MARKED (harden-regress) vs UNMARKED
+            # (integration) by the header-region marker (is_marked). Integration-round =
+            # count(unmarked); marked-regress = distinct reviewed-sha among marked (rule-2 below).
+            # No file counts on both sides; the integration round no longer depends on the harden
+            # yes-count. `msha` is GUARANTEED non-empty here (the boundary rejected an empty-sha
+            # file above), so a marked file always contributes a real sha to distinct_marked_sha.
+            if is_marked "$f"; then
+              marked_phase_shas="$marked_phase_shas$P ${msha}"$'\n'
+            else
+              unmarked_phase_keys="$unmarked_phase_keys$P"$'\n'
+            fi
+            all_phase_ids="$all_phase_ids$P"$'\n'
+          fi ;;
         (finalize)
           # finalize is run-singleton — NOT a slice (no phantom slice/<runId>/finalize branch).
           # Count its `AppliedEdits: yes` fix rounds for finalizeRound (B5); FAIL CLOSED on a
@@ -722,20 +837,25 @@ EOF
     done
     hrj="$(printf '%s' "$hr_pairs" | json_from_pairs)"
 
-    # phaseReviewRound[<P>] = R_conf = review-phase<P> file count MINUS AppliedEdits: yes
-    # harden files (I3 rule 2 — harden-regress writes into the same review-phase<P>-N.md
-    # family without incrementing the round; each fix round's `yes` audit is its durable
-    # 1:1 marker). yes-count > review-file count is malformed → regress-mismatch, value 0.
+    # phaseReviewRound[<P>] = integration-round = count(UNMARKED review-phase<P> files) —
+    # DIRECT, no subtraction (I3 rule 2). harden-regress reviews self-identify with the
+    # `harden-regress: yes` header marker and are counted SEPARATELY as marked-regress =
+    # distinct reviewed-sha among the marked files; a marked file never inflates the
+    # integration round (disjoint file sets). regress-mismatch is SURPLUS-ONLY: it fires iff
+    # marked-regress > harden-yes (unambiguously malformed — each fix round dispatches exactly
+    # one regress review, so the marked count can never legitimately exceed the yes-count). A
+    # DEFICIT (marked-regress < harden-yes: a drop / mid-harden crash window / legacy phase) is
+    # diagnosed by the resume sweep, NEVER STOPped by this guard; the integration round stays
+    # the honest unmarked count even while the surplus guard fires (NOT clamped to 0).
     prr_pairs=""
-    for P in $(printf '%s\n%s' "$phase_keys" "$harden_all" | sort -u); do
-      prc="$(count_in_list "$phase_keys" "$P")"
+    for P in $(printf '%s\n%s' "$all_phase_ids" "$harden_all" | sort -u); do
+      integ="$(count_in_list "$unmarked_phase_keys" "$P")"
+      mreg="$(distinct_marked_sha "$P")"
       yc="$(count_in_list "$harden_yes" "$P")"
-      if [ "$yc" -gt "$prc" ]; then
+      if [ "$mreg" -gt "$yc" ]; then
         viol_arr+=("$(violation "phase$P" "regress-mismatch")")
-        prr_pairs="$prr_pairs$P 0"$'\n'
-      else
-        prr_pairs="$prr_pairs$P $((prc - yc))"$'\n'
       fi
+      prr_pairs="$prr_pairs$P $integ"$'\n'
     done
     prrj="$(printf '%s' "$prr_pairs" | json_from_pairs)"
 

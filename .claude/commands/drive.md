@@ -158,11 +158,15 @@ verdict / merge / gate.
   - **Redesign cap at resume:** artifact-derived `redesigns >= 3` (reconstruction rule 4
     below) with the current epoch unconverged → STOP — the step-4 handler's verdict,
     re-derived without re-entering the handler.
-  - **Stranded in-flight markers:** at resume, every open `$RUN_DIR/inflight-*.marker` is
-    stranded by definition (the dispatching session is gone). Apply the recovery rule in
-    § Durable checkpoint contract — **adopt / re-dispatch / STOP, never wait** for a
-    worker; adopt of a review unit requires BOTH the round's `review-<scope>-N.md` AND a
-    non-empty `codex-review-<scope>.md` sibling. A stranded `inflight-finalize.marker` is
+  - **Stranded in-flight markers:** at resume, every open `$RUN_DIR/inflight-*.marker`
+    **EXCEPT `inflight-heal-<P>.marker`** is stranded by definition (the dispatching
+    session is gone). Apply the recovery rule in § Durable checkpoint contract — **adopt /
+    re-dispatch / STOP, never wait** for a worker; adopt of a review unit requires BOTH the
+    round's `review-<scope>-N.md` AND a non-empty `codex-review-<scope>.md` sibling.
+    `inflight-heal-<P>.marker` is CARVED OUT of this generic recovery — it is owned by the
+    resume all-phases heal sweep below (which recovers it keyed on the open marker,
+    recomputing `base(P)` deterministically); re-dispatching it here by scope alone would
+    strip the heal's `harden-regress` flag and `base=` override. A stranded `inflight-finalize.marker` is
     a review unit (scope `finalize`): adopt only if BOTH `review-finalize-N.md` (verdict
     line) AND a non-empty `codex-review-finalize.md` exist; else re-dispatch (first `mv`
     the `codex-raw-finalize.log` aside, as for any review unit); STOP if re-dispatch would
@@ -251,12 +255,13 @@ verdict / merge / gate.
     never a proof input.
     1. `slices[<id>].reviewCount` = max(state, count of `review-<id>-N.md`,
        pure-integer N).
-    2. `phaseReview[<P>].round` = max(state, count of `review-phase<P>-N.md`
-       (pure-integer N) MINUS count of `harden-<P>-*.md` with `AppliedEdits: yes`) —
-       harden-regress reviews write into the same `review-phase<P>-N.md` family without
-       incrementing the round, and each fix round's `AppliedEdits: yes` audit is its
-       durable 1:1 marker, so the bare file count is only an upper bound. yes-count >
-       review-file count is malformed → use 0 (checkpoint flags `regress-mismatch`).
+    2. `phaseReview[<P>].round` = max(state, count of `review-phase<P>-N.md` files
+       (pure-integer N) WITHOUT the `harden-regress: yes` marker) — no subtraction. A
+       harden-regress review self-identifies with the `harden-regress: yes` header marker
+       and is counted separately as marked-regress (the DISTINCT `reviewed-sha` among
+       marked files); it never inflates the integration round. `distinct-marked-sha >
+       harden-yes` is malformed → checkpoint flags `regress-mismatch` (a surplus only; a
+       deficit is diagnosed, never STOPped).
     3. `phaseReview[<P>].hardenRound` = max(state, count of `harden-<P>-*.md` with
        `AppliedEdits: yes`) — a confirming clean audit writes `AppliedEdits: no` and
        does NOT count (cap-3 is on fix rounds); never count all harden files.
@@ -273,6 +278,117 @@ verdict / merge / gate.
        (Mirrors rule 3's harden rule, but over the `review-finalize-*.md` family — NOT the
        harden loop. The checkpoint proof asserts ONLY the artifact-derived value;
        `state.finalizeRound` is a one-directional resume hint.)
+  - **All-phases harden-regress heal sweep (after Counter-reconstruction and
+    Stranded-marker recovery, before Fresh-session-orientation).** A stale harden-regress
+    review — dropped between `AppliedEdits: yes` and the regress-review write — leaves a
+    genuinely-hardened phase with a stale FINDINGS `review-phase<P>-N.md` terminal that
+    false-blocks ship `no-phase-review` on resume, even for an already-**advanced** phase
+    (whose `phaseInt/<runId>/<P>` ref survives advance — Execute step 6 removes only the
+    integration worktree + slice branches, never the ref). This sweep heals it. It runs on
+    resume BEFORE routing re-enters Execute (so it precedes any Execute-step-2
+    `phaseBaseSha` overwrite) and observes every phase's frozen `phaseInt/<runId>/<P>` tip.
+    Per phase `P` in `state.phaseList` (**advanced phases included**), in this ORDER
+    (**marker-recovery BEFORE the trigger**):
+    1. **FIRST recover any OPEN `inflight-heal-<P>.marker`** — keyed on the OPEN MARKER, not
+       the trigger (the sweep OWNS this marker; generic recovery is carved out of it). The
+       crash window is not covered by the trigger alone: `/drive-review` writes the marked
+       Claude `review-phase<P>-N.md` BEFORE its codex sibling, so a crash after the marked
+       file lands at the hardened tip leaves the terminal at `reviewed-sha == tip` (CONVERGED
+       or FINDINGS) — which the stale-FINDINGS trigger (step 3, `reviewed-sha ≠ tip`) SKIPS,
+       orphaning the marker (checkpoint never clean while it is open). Apply the
+       stranded-marker rule (§ Durable checkpoint contract — **adopt / re-dispatch, never
+       wait**; the heal has NO cap so STOP is unreachable):
+       - **Adopt** if the COMPLETE artifact set exists — the marked `review-phase<P>-N.md`
+         at the hardened tip (`reviewed-sha == git rev-parse phaseInt/<runId>/<P>`) AND a
+         non-empty `codex-review-phase<P>.md` sibling. The heal COMPLETED (both artifacts
+         are durable), so clear `inflight-heal-<P>.marker`; THEN inspect the adopted
+         terminal's `## Verdict:` (first line) to decide continue-vs-STOP — the stale-FINDINGS
+         trigger (step 3) will NOT make this call: it self-terminates on this at-tip terminal
+         (`reviewed-sha == tip`).
+         - **Adopted terminal CONVERGED (at the hardened tip) → healed:** continue (the same
+           outcome as the fresh CONVERGED heal, step 5).
+         - **Adopted terminal FINDINGS (at the hardened tip) → HONEST terminal NON-DECISION
+           STOP, routed to MANUAL recovery** (the SAME path as the fresh-dispatch FINDINGS
+           outcome, step 5): a genuine open P1 at the hardened tip — NOT automated closure and
+           NOT a new false block (the terminal was ALREADY FINDINGS/ship-blocking before the
+           heal). Surface a non-decision STOP (Present human pause, `waiting = "stop:<short>"`)
+           reporting the phase + hardened tip and the documented MANUAL harden-regress
+           recovery (bind the hardened tip, re-review/fix for real, NEVER forge). Shippability
+           is UNCHANGED. Self-terminating: the at-tip `reviewed-sha` keeps the trigger from
+           re-firing.
+       - **Re-dispatch** otherwise (marked file at the tip but codex sibling missing/empty,
+         OR no marked file): recompute `base(P)` deterministically (step 4 — it need NOT
+         have survived the crash), first `mv` the `codex-raw-phase<P>.log` aside (an orphaned
+         background codex may still be appending), re-run
+         `/drive-review phase <P> harden-regress base=<base(P)>` at the hardened tip, then
+         clear the marker. Idempotent: it binds the SAME hardened tip → SAME `reviewed-sha`
+         → any stranded duplicate marked file is deduped by distinct-`reviewed-sha` → never
+         trips the surplus guard. THEN inspect the re-dispatched terminal's `## Verdict:`
+         (first line) to decide continue-vs-STOP — the stale-FINDINGS trigger (step 3) will
+         NOT make this call: the re-dispatched terminal lands at the hardened tip
+         (`reviewed-sha == tip`), which the trigger self-terminates on and SKIPS.
+         - **Re-dispatched terminal CONVERGED (at the hardened tip) → healed:** continue (the
+           same outcome as the fresh CONVERGED heal, step 5).
+         - **Re-dispatched terminal FINDINGS (at the hardened tip) → HONEST terminal
+           NON-DECISION STOP, routed to MANUAL recovery** (the SAME path as the fresh-dispatch
+           FINDINGS outcome, step 5): a genuine open P1 at the hardened tip — NOT automated
+           closure and NOT a new false block (the terminal was ALREADY FINDINGS/ship-blocking
+           before the heal). Surface a non-decision STOP (Present human pause, `waiting =
+           "stop:<short>"`) reporting the phase + hardened tip and the documented MANUAL
+           harden-regress recovery (bind the hardened tip, re-review/fix for real, NEVER
+           forge). Shippability is UNCHANGED. Self-terminating: the at-tip `reviewed-sha`
+           keeps the trigger from re-firing.
+    2. **Skip the fresh trigger (steps 3–5) for a phase with an open
+       `inflight-harden-<P>.marker`** (single owner) — that phase is owned by the harden
+       loop's stranded-marker recovery (harden persists `## Verdict: HARDENED` before
+       clearing its marker, so a crash in that window leaves open-harden + hardened +
+       FINDINGS; letting BOTH recover would double-dispatch → `marked > yes` → a HARD STOP).
+       Step 1's heal-marker recovery is unconditional; this skip governs only the fresh
+       trigger. (MAY also skip on an open `inflight-review-phase<P>.marker` to avoid
+       co-dispatch — benign under distinct-sha; recommended.)
+    3. **Compute the trigger** (all three required, else skip the phase):
+       - **hardened(P):** the highest-N `harden-<P>-*.md` first `## Verdict:` line is
+         `HARDENED` (no harden file / highest is FINDINGS → not hardened → skip).
+       - **terminal FINDINGS:** the highest-N `review-phase<P>-N.md` first `## Verdict:`
+         line is NOT CONVERGED.
+       - **stale:** that terminal's `reviewed-sha` ≠ `git rev-parse phaseInt/<runId>/<P>`
+         (a missing `reviewed-sha` counts as ≠tip).
+       A CONVERGED terminal (marked OR unmarked) is NEVER re-reviewed (it already satisfies
+       marker-agnostic ship b-i). A FINDINGS terminal already bound to the hardened tip
+       (`reviewed-sha == tip`) is already-healed-or-genuinely-blocked → NEVER re-reviewed
+       (self-termination).
+    4. **Recover `base(P)` — keyed off `state.phaseList` ORDER (never arithmetic `P−1`; ids
+       may be suffixed like `4a`/`4b`).** Let `prev` = the phaseList entry IMMEDIATELY
+       PRECEDING `P`. `P` is NOT the first entry → `base(P) = git rev-parse
+       phaseInt/<runId>/<prev>` (this ref survives advance, and equalled phase P's frozen
+       `phaseBaseSha` at P's start). `P` IS the first entry → `base(P) = state.baseSha`.
+       **LEGACY fail-closed:** if `P` is the FIRST phaseList entry AND `state.baseSha` is
+       ABSENT, there is no durable base(1) and re-deriving is forbidden → do NOT auto-heal;
+       surface a **NON-DECISION STOP** (Present human pause, `waiting = "stop:<short>"`)
+       reporting the phase + hardened tip (`git rev-parse phaseInt/<runId>/<firstPhase>`)
+       and the documented MANUAL harden-regress recovery (bind the hardened tip, re-review
+       for real, NEVER forge — memory *drive-harden-regress-must-persist-terminal-converged*).
+       Scoped to the first entry of a baseSha-absent run ONLY (P>1 heals off
+       `phaseInt/<prev>`; a NEW run heals its first phase off `state.baseSha`).
+    5. **Heal = ONE dual-voice re-review per resume leg** (NO `HEAL_CAP`, NO
+       `state.healRound`): invoke `/drive-review phase <P> harden-regress base=<base(P)>` at
+       the hardened tip, bracketed by a DISTINCT `inflight-heal-<P>.marker`
+       (write-before-dispatch, clear-after-record). It writes into the
+       `review-phase<P>-N.md` MARKED family (marker + `reviewed-sha == hardened tip`).
+       Outcomes, both SELF-TERMINATING (the new highest-N carries `reviewed-sha == hardened
+       tip`, so the trigger cannot re-fire next resume — no re-heal loop, no marked
+       accumulation):
+       - **CONVERGED → healed:** the terminal is now a CONVERGED marked regress at the
+         hardened tip → ship b-i passes → the next sweep sees CONVERGED and does not
+         re-trigger.
+       - **FINDINGS → HONEST terminal NON-DECISION STOP, routed to MANUAL recovery.** A
+         genuine open P1 at the hardened tip. This is NOT automated closure and NOT a new
+         false block — the terminal was ALREADY FINDINGS/ship-blocking before the heal; the
+         heal merely REPLACES a STALE block (an earlier tip) with a REAL one at the hardened
+         tip. Because `state.phase` re-opens only the current/unadvanced phase, an advanced
+         phase's real-FINDINGS is surfaced as a non-decision STOP (Present human pause) and
+         routed to the documented MANUAL harden-regress recovery (bind the hardened tip,
+         re-review/fix for real, NEVER forge). Shippability is UNCHANGED by the heal.
   - **Fresh-session orientation (LAST — after reconciliation, before autonomous work):**
     once all the reconciliation above has completed AND the run is proceeding to autonomous
     work (a reconcile that ends in a STOP takes the Present-human-pause path instead, which
@@ -292,7 +408,7 @@ verdict / merge / gate.
 
 ```json
 { "runId": "<id>", "task": "<task>", "stage": "premises",
-  "baseRef": "main", "featureBranch": "drive/<id>", "repoRoot": "<git rev-parse --show-toplevel>",
+  "baseRef": "main", "baseSha": "<git rev-parse baseRef>", "featureBranch": "drive/<id>", "repoRoot": "<git rev-parse --show-toplevel>",
   "phase": 1, "phaseList": [], "phaseBaseSha": null, "concurrencyCap": 4, "designReview": 0,
   "budget": { "ceilingCalls": null, "ceilingMin": null, "calls": 0, "startedAt": "<iso>" },
   "slices": {}, "phaseDesign": {}, "phaseReview": {}, "finalizeRound": 0, "lastGate": null,
@@ -314,6 +430,18 @@ repo). Build it JSON-safely via `jq` like every other field (the never-string-su
 above). It is **write-once at fresh-run setup and NEVER re-derived on resume** — a resume
 re-pasted from any cwd reuses the persisted value. It feeds the retention helper's
 `resolve_owning_repo` and the ship/resume teardown's cd-target selection.
+
+**Record `baseSha` (write-once at fresh-run setup).** Set `baseSha = git rev-parse
+<baseRef>` at the exact moment `featureBranch` is cut from the (possibly fast-forwarded)
+`baseRef`. Build it JSON-safely via `jq`. It is the durable run-start base commit — the
+first phase's heal diff base (§ resume all-phases heal sweep, `base(P)`). It is
+**write-once at fresh-run setup and NEVER re-derived on resume** (mirrors the `repoRoot`
+discipline) — `state.baseRef` is only a movable branch NAME, so a `main` that moves after
+run start must not change `baseSha`. It is an OPTIONAL field: it is NOT a checkpoint proof
+input (`--mode checkpoint` never reads `state.json`) and NOT a counter (no
+`max(state,derived)` rule), and `--mode state-lint` does NOT require it (a legacy run that
+predates the field routes and resumes normally; requiring it would false-reject every such
+run).
 
 **Atomic write — every `state.json` write goes through a temp file + `mv`.** Write to
 `$RUN_DIR/.tmp.state.json.$$` (or equivalent) and `mv` it over `state.json`; never an
@@ -435,7 +563,13 @@ the coordinator's self-report. Two marker families carry the contract:
   `phase<P>`, `phasedesign<P>[-r<R>]`; this ONE marker brackets the whole dual-voice
   chain: reviewer subagent → background codex → post-process → counter/state record),
   `inflight-harden-<P>.marker`, `inflight-finalize.marker`, `inflight-verify.marker`,
-  `inflight-ship.marker`.
+  `inflight-ship.marker`, and `inflight-heal-<P>.marker` (a DISTINCT kind bracketing the
+  resume all-phases heal sweep's per-phase re-review — NOT the generic
+  `inflight-review-phase<P>.marker`). **`inflight-heal-<P>.marker` is EXCLUDED from generic
+  stranded-marker recovery** (below): it is owned SOLELY by the resume heal sweep, which
+  recovers it keyed on the open marker (adopt / re-dispatch, recomputing `base(P)`
+  deterministically). Re-dispatching it by scope alone as a plain `phase <P>` review would
+  strip the heal's `harden-regress` flag AND its `base=` override → a new false ship-block.
   **Epoch resolution (single owner — the marker WRITER).** Whoever writes a
   `phasedesign<P>[-r<R>]` scope token resolves `<R>` at write time by the ONE rule: `R`
   = highest epoch among `$RUN_DIR/redesign-<P>-r*.marker` (0 → the bare `phasedesign<P>`;
@@ -496,7 +630,12 @@ violations JSON. Never set `waiting = "rebirth"` on a failing proof.
 
 **Stranded-marker recovery (adopt / re-dispatch / STOP — never wait):** an open marker
 with no live worker (died before the dispatch ran, or died after the work but before the
-clear — indistinguishable on disk, treated the same):
+clear — indistinguishable on disk, treated the same). This generic recovery handles the
+kinds it can re-dispatch by scope
+(design/implement/review/harden/finalize/verify/ship) and **EXCLUDES
+`inflight-heal-<P>.marker`**, which is owned solely by the resume all-phases heal sweep
+(§ Run setup & resume) — recovering a stranded heal here by scope alone would strip its
+`harden-regress` flag and `base=` override:
 1. **Adopt** only if the unit's COMPLETE artifact set exists and parses — for a review
    unit BOTH the round's `review-<scope>-N.md` (verdict line) AND a non-empty
    `codex-review-<scope>.md` sibling (any non-empty content satisfies; the first-line

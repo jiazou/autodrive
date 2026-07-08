@@ -45,7 +45,8 @@ _commit() {
 }
 _write_review() {
   local rd="$1" scope="$2" n="$3" sha="$4"; mkdir -p "$rd"
-  { echo "# review"; echo; echo "## Verdict: CONVERGED"; echo; echo "reviewed-sha: $sha"; } \
+  # reviewed-sha in the header preamble ABOVE `## Findings` (the delimiter reviewed_sha_of requires).
+  { echo "# review"; echo; echo "## Verdict: CONVERGED"; echo; echo "reviewed-sha: $sha"; echo; echo "## Findings"; } \
     > "$rd/review-$scope-$n.md"
 }
 _write_codex() {
