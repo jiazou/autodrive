@@ -20,20 +20,25 @@ Zero refutations on hand-trace. All carry **[V]**. Two caveats found during that
 new bugs live.
 
 ### P1 — real defects with gate-integrity or corruption impact
-- [ ] **[V] `.claude/commands/drive-finalize.md:341`** — a codex-only-P1 fix round re-binds
+- [x] **[V] `.claude/commands/drive-finalize.md:341`** — a codex-only-P1 fix round re-binds
   `reviewed-sha` to the post-fix tip but never downgrades the Claude `## Verdict: CONVERGED`
   line, so all three finalize-CONVERGED consumers (drive.md resume router, drive-ship
   precondition #3, `drive-conformance.sh --mode ship`) read the artifact as terminal and a
   rebirth-at-boundary → ship silently skips the mandated fresh dual-voice re-audit of a
   logic-bearing fix (a TODO-named sole-catcher). *Fix:* on any `AppliedEdits: yes` round
   rewrite `## Verdict:` to FINDINGS (a fix round can never be terminal-converged); mirror in
-  drive.md's resume criterion. Run the drive*.md pin suites.
-- [ ] **[V] `.claude/commands/drive-ship.md:86`** — line 79 runs the Design-doc handoff audit
+  drive.md's resume criterion. Run the drive*.md pin suites. — **DONE (PR #76, 2026-07-09):**
+  producer rewrites the FIRST `## Verdict:` line in place on both branches + all 3 consumers
+  require the first `## AppliedEdits:` header == `no` via a shared first-match `applied_edits_no()`.
+- [x] **[V] `.claude/commands/drive-ship.md:86`** — line 79 runs the Design-doc handoff audit
   *after* the single ledger commit, then line 86 claims the appended `HANDOFF:` entries "are
   promoted into `.harness/followups.md` by the ledger commit already made above" —
   chronologically impossible. The entries strand in `$RUN_DIR/followups.md` (GC-swept); a 2nd
   commit to fix it trips the ≤1-commit ship allowlist. *Fix:* run the handoff audit BEFORE the
-  ledger-promotion commit; delete the "already made above" claim.
+  ledger-promotion commit; delete the "already made above" claim. — **DONE (2026-07-10):** audit
+  runs as the ledger-promotion's FIRST action (forward-path only) so HANDOFF entries ride the
+  same single commit; claim corrected; idempotent append closes the pre-commit-resume dup window
+  (codex P2).
 - [ ] **[V] `mission-control/bin/done.py:41`** — `LOG_SECTION_RE = r"(^##\s+Log[ \t]*\r?\n?)…"`
   has a fully-optional terminator, so it prefix-matches `## Logistics` / `## Logs` / `## Logbook`
   (confirmed live: group1 → `## Log` for all three). `mc done` then splits the heading and

@@ -56,7 +56,11 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
   second commit would break the `R..tip ≤1 commit` ship-gate invariant). Append+commit
   ONLY when the tip is still AT `R` (`R == tip`, pre-ledger). The forward path (first
   ship entry, `R == tip`) is unchanged.
-- **Promote the run ledgers into the repo's committed ones:** append this run's
+- **Promote the run ledgers into the repo's committed ones:** FIRST run the *Design-doc
+  handoff audit* (§ below) so any `HANDOFF:` entries it appends are already in
+  `$RUN_DIR/followups.md` and ride THIS single commit (forward path only — on the resume
+  SKIP path above, skip the audit too, since its entries already rode the original commit).
+  Then append this run's
   `$RUN_DIR/decisions.md` + `$RUN_DIR/followups.md` entries to the repo's
   `.harness/decisions.md` + `.harness/followups.md` (the cross-task ledgers). Then,
   **if** `$RUN_DIR/finalize-todo.md` is non-empty (finalize produced architectural
@@ -78,14 +82,19 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
 
 ## Design-doc handoff audit
 
-After the ledger commit, audit `$RUN_DIR/decisions.md` for **cross-run decisions** — decisions that introduce or change contracts, surface API methods, naming conventions, or cross-slice ownership rules that future runs will need to build on. A decision is cross-run if its subject (a method name, a carrier field, a paradigm label, a directive contract) does not appear in the driven project's shared design doc.
+**BEFORE the ledger-promotion append+commit above** (it is that step's FIRST action, forward
+path only), audit `$RUN_DIR/decisions.md` for **cross-run decisions** — decisions that introduce or change contracts, surface API methods, naming conventions, or cross-slice ownership rules that future runs will need to build on. A decision is cross-run if its subject (a method name, a carrier field, a paradigm label, a directive contract) does not appear in the driven project's shared design doc.
 
 For each cross-run decision not yet reflected in the design doc, append a `HANDOFF:` entry to `$RUN_DIR/followups.md` in the form:
 ```
 HANDOFF: [D-N] <subject> — land in <design-doc path> before next run starts
 ```
+Append each entry **idempotently** — only if that exact `HANDOFF: [D-N] …` line is not already
+present in `$RUN_DIR/followups.md`. A ship crash in the narrow audit→commit window leaves the
+tip still at `R == tip` (pre-ledger), so resume re-enters this forward-path audit; the idempotent
+append means the re-run adds nothing (no duplicate `HANDOFF:` lines ride the eventual commit).
 
-These entries are promoted into `.harness/followups.md` by the ledger commit already made above. Surface them at Gate B alongside the PR summary so the user sees what the next run must pick up. Do NOT block Gate B on unresolved handoffs — they are advisory, not a hard gate.
+Because these entries are appended to `$RUN_DIR/followups.md` **before** the ledger-promotion append reads it, they ride that SAME single ledger commit into `.harness/followups.md` — never a second commit (which would strand them in the GC-swept `$RUN_DIR/followups.md` AND trip the `R..tip ≤1 commit` ship allowlist). Surface them at Gate B alongside the PR summary so the user sees what the next run must pick up. Do NOT block Gate B on unresolved handoffs — they are advisory, not a hard gate.
 
 ## Run the full suite (flaky-retry)
 
