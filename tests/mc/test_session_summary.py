@@ -80,6 +80,57 @@ def test_tail_text_skips_bad_json_and_empty_turns(mc_env, claude_state):
 
 
 # --------------------------------------------------------------------------- #
+# tail_text — DEGRADE (docstring's "on any failure prints {}" contract)
+# --------------------------------------------------------------------------- #
+def test_tail_text_nondict_message_dropped_not_raised(mc_env, claude_state):
+    """A transcript entry whose `message` is NOT a dict (e.g. a bare string, or a null)
+    must be DROPPED, not raise AttributeError from `.get("content")`. Regression: the old
+    `e.get("message", {}).get("content")` crashed on such a note."""
+    sid = "sess-nondict"
+    claude_state.add_transcript(sid, [
+        {"type": "user", "message": {"content": "real turn"}},
+        {"type": "assistant", "message": "oops-not-a-dict"},   # non-dict message → drop, not crash
+        {"type": "user", "message": None},                     # null message → drop, not crash
+    ])
+    blob = mc_env.session_summary.tail_text(sid)   # must NOT raise
+    assert blob == "user: real turn"               # the valid turn survives; bad ones dropped
+
+
+def test_tail_text_unreadable_transcript_returns_empty(mc_env, claude_state, monkeypatch):
+    """A transcript that exists at glob time but fails to open (removed in the race, a
+    permission error) must return "" — NOT raise through harvest.build_summaries' ex.map
+    and crash the whole unattended harvest. Regression: the old `open(hits[0])` was
+    unguarded and `summarize` called `tail_text` OUTSIDE its try."""
+    sid = "sess-unreadable"
+    claude_state.add_transcript(sid, [{"type": "user", "message": {"content": "hi"}}])
+    real_open = open
+
+    def _boom_open(path, *a, **k):
+        if isinstance(path, str) and path.endswith(sid + ".jsonl"):
+            raise OSError("transcript vanished mid-read")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", _boom_open)
+    assert mc_env.session_summary.tail_text(sid) == ""     # degrades, does not raise
+
+
+def test_summarize_degrades_to_empty_on_unreadable_transcript(mc_env, claude_state, monkeypatch):
+    """End-to-end degrade: an unreadable transcript makes summarize return {} (goal+status
+    fallback), never propagating an exception to the caller's ex.map."""
+    sid = "sess-summ-degrade"
+    claude_state.add_transcript(sid, [{"type": "user", "message": {"content": "hi"}}])
+    real_open = open
+
+    def _boom_open(path, *a, **k):
+        if isinstance(path, str) and path.endswith(sid + ".jsonl"):
+            raise OSError("gone")
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr("builtins.open", _boom_open)
+    assert mc_env.session_summary.summarize(sid) == {}     # degrade contract, no crash
+
+
+# --------------------------------------------------------------------------- #
 # summarize — empty transcript -> {} (no claude -p call)
 # --------------------------------------------------------------------------- #
 def test_summarize_returns_empty_dict_on_empty_transcript(mc_env, monkeypatch):

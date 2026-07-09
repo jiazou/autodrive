@@ -44,17 +44,28 @@ def tail_text(sid):
     if not hits:
         return ""
     turns = []
-    with open(hits[0]) as fh:
-        for line in fh:
-            try:
-                e = json.loads(line)
-            except Exception:
-                continue
-            if e.get("type") in ("user", "assistant"):
-                t = _text(e.get("message", {}).get("content"))
+    # Read defensively → "" on any failure (the docstring's "on any failure prints {}"
+    # degrade contract, honored via summarize's `if not blob: return {}` short-circuit).
+    # A transcript removed/unreadable between the glob and the open (a race in the
+    # unattended 6:45am job), a permission error, or a malformed entry must NOT raise
+    # through harvest.build_summaries' ex.map and crash the whole harvest.
+    try:
+        with open(hits[0]) as fh:
+            for line in fh:
+                try:
+                    e = json.loads(line)
+                except Exception:
+                    continue
+                if not isinstance(e, dict) or e.get("type") not in ("user", "assistant"):
+                    continue
+                msg = e.get("message")
+                content = msg.get("content") if isinstance(msg, dict) else None
+                t = _text(content)
                 t = " ".join(t.split())
                 if t:
                     turns.append(f"{e['type']}: {t[:600]}")
+    except Exception:
+        return ""
     blob = "\n".join(turns[-TAIL_MESSAGES:])
     return blob[-MAX_CHARS:]
 
