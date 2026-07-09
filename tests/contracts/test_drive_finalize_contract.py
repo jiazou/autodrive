@@ -425,43 +425,47 @@ def test_finalize_verdict_applied_edits_terminal_contract():
     prose consumers (drive.md resume criterion, drive-ship.md precondition #3) require the FIRST
     `## AppliedEdits:` line read exactly `## AppliedEdits: no`. Each pin is SECTION/SUB-BLOCK-
     bounded so a bare-token match elsewhere cannot satisfy it, and reds on a real regression."""
-    # ---- (a) producer: Step-4 in-place Verdict rewrite on BOTH branches. -------------- #
-    step4 = _norm(_section(_text(DRIVE_FINALIZE), r"^##\s+Step 4\b.*Regression guard"))
-    # A fix round replaces the FIRST `## Verdict:` line with FINDINGS (never terminal-converged).
+    # ---- (a) producer: Step-4 in-place Verdict rewrite, ANCHORED PER BRANCH. ----------- #
+    # Slice each Step-4 branch bullet SEPARATELY. A section-wide `.*` match is partially
+    # vacuous: it can satisfy the fix-branch contract by MIXING the no-fix bullet's "FIRST
+    # `## Verdict:` line IN PLACE" with the fix bullet's "FINDINGS", so a fix-branch-ONLY
+    # weakening (drop the in-place first-line rewrite) would still pass. Per-bullet slicing
+    # binds each verdict to its own branch — LOAD-BEARING: if a fix branch APPENDED a second
+    # `## Verdict: FINDINGS` after the Step-1 `## Verdict: CONVERGED` instead of replacing the
+    # first line, `verdict_converged` (first-match) reads the stale CONVERGED and the ORIGINAL
+    # hole reopens (codex finalize-r3 anti-vacuity fix).
+    df = _text(DRIVE_FINALIZE)
+    fix_bullet = _norm(_slice_between(df, r"\*\*A fix was applied\*\*", r"FINALIZE_CAP"))
+    nofix_bullet = _norm(
+        _slice_between(df, r"\*\*No fix applied this invocation\*\*", r"\*\*A fix was applied\*\*")
+    )
+    # FIX branch → replace the FIRST `## Verdict:` line IN PLACE with `## Verdict: FINDINGS`.
     assert re.search(
-        r"FIRST\s+`?## Verdict:`?\s+line\b.*\bFINDINGS\b", step4, re.IGNORECASE
+        r"FIRST\s+`?## Verdict:`?\s+line\s+IN\s+PLACE\s+with\s+`?## Verdict:\s+FINDINGS",
+        fix_bullet, re.IGNORECASE,
     ), (
-        "Step 4's fix branch must replace the FIRST `## Verdict:` line IN PLACE with "
-        "`## Verdict: FINDINGS` (a fix round is never terminal-converged)"
+        "Step 4's FIX bullet must replace the FIRST `## Verdict:` line IN PLACE with "
+        "`## Verdict: FINDINGS` (anchored to the fix branch — a fix round is never "
+        "terminal-converged)"
     )
-    assert "## Verdict: FINDINGS" in step4, (
-        "Step 4 must name the literal `## Verdict: FINDINGS` the fix branch writes"
+    assert re.search(r"never append a second\s+`?## Verdict:", fix_bullet, re.IGNORECASE), (
+        "Step 4's FIX bullet must forbid APPENDING a second `## Verdict:` line (verdict_converged "
+        "is first-match, so an appended FINDINGS after a stale CONVERGED would reopen the hole)"
     )
-    # The no-fix confirming round affirmatively rewrites to CONVERGED + sets `## AppliedEdits: no`.
-    assert "## Verdict: CONVERGED" in step4, (
-        "Step 4's no-fix branch must affirmatively rewrite the FIRST `## Verdict:` line to "
-        "`## Verdict: CONVERGED` (symmetric to the fix branch)"
+    # NO-FIX branch → affirmatively replace the FIRST `## Verdict:` line IN PLACE with
+    # `## Verdict: CONVERGED`, and set the terminal `## AppliedEdits: no` marker.
+    assert re.search(
+        r"FIRST\s+`?## Verdict:`?\s+line\s+IN\s+PLACE\s+with\s+`?## Verdict:\s+CONVERGED",
+        nofix_bullet, re.IGNORECASE,
+    ), (
+        "Step 4's NO-FIX bullet must affirmatively replace the FIRST `## Verdict:` line IN "
+        "PLACE with `## Verdict: CONVERGED` (anchored to the no-fix branch)"
     )
-    assert "## AppliedEdits: no" in step4, (
-        "Step 4's no-fix branch must set the terminal marker `## AppliedEdits: no` (the "
-        "ship gate's finalize-terminal requirement)"
+    assert "## AppliedEdits: no" in nofix_bullet, (
+        "Step 4's NO-FIX bullet must set the terminal marker `## AppliedEdits: no` (the ship "
+        "gate's finalize-terminal requirement)"
     )
-    # LOAD-BEARING: the rewrite must be IN PLACE and MUST NOT append a second `## Verdict:`
-    # line. If a fix branch APPENDED `## Verdict: FINDINGS` after the Step-1 `## Verdict:
-    # CONVERGED` instead of replacing it, `verdict_converged` (first-match) would read the
-    # stale CONVERGED first line and the ORIGINAL hole reopens. Pin the never-append discipline
-    # so a spec edit that drops it reds (harden: codex append-vs-replace gap).
-    # Bind IN PLACE to the `## Verdict:` line specifically (NOT a bare `in place`, which
-    # false-passes: pre-fix Step 4 already said the `reviewed-sha:` update was IN PLACE).
-    assert re.search(r"`?## Verdict:`?\s+line\s+in place\b", step4, re.IGNORECASE), (
-        "Step 4 must require the `## Verdict:` LINE rewrite be IN PLACE (replace the first "
-        "line) — bound to the Verdict line, not a bare `in place` that the pre-fix reviewed-sha "
-        "clause already satisfied"
-    )
-    assert re.search(r"never append a second\s+`?## Verdict:", step4, re.IGNORECASE), (
-        "Step 4 must forbid APPENDING a second `## Verdict:` line (verdict_converged is "
-        "first-match, so an appended FINDINGS after a stale CONVERGED would reopen the hole)"
-    )
+    # (the never-append discipline is asserted per-branch in the FIX bullet above)
 
     # ---- (b) prose consumers require the FIRST `## AppliedEdits:` line be exactly `no`. -- #
     # drive.md resume criterion — SUB-BLOCK-bounded to the finalize-CONVERGED clause (from
