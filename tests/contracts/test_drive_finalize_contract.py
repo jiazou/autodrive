@@ -2,8 +2,9 @@
 
 Phase 1 added `drive-finalize.md` + narrowed `drive-harden.md`; Phase 2 wired the
 stage into drive.md, drive-ship.md, bin/drive-conformance.sh, bin/drive-merge-gate.sh,
-and CLAUDE.md. These are PURE SPEC-PROSE pins (the script BEHAVIOR is covered by the
-bash conformance suite, slice 3.1) so a later edit cannot silently drop the wiring.
+and CLAUDE.md. Most pins are SPEC-PROSE (a later edit cannot silently drop the wiring);
+the AC45 block additionally carries a COMPACT behavioral `--mode ship` RED→GREEN proof
+(the exhaustive behavioral matrix lives in the bash conformance suite).
 
 Two anti-vacuity disciplines run throughout (per design D-P3-7):
 
@@ -24,9 +25,14 @@ Each assertion PASSES on the current correct worktree and reds only on a real
 regression — a dropped dispatch/transition, a re-applied harden de-slop lens, a
 dropped artifact-contract clause, or a token drop/spelling-drift in a required carrier.
 """
+import json
 import re
+import shutil
+import subprocess
 
-from _helpers import REPO_ROOT
+import pytest
+
+from _helpers import REPO_ROOT, _git, _rev, _commit, _codex, _review
 
 # --------------------------------------------------------------------------- #
 # Paths
@@ -408,6 +414,102 @@ def test_finalize_emits_shipgate_artifact_contract():
     )
 
 
+# =========================================================================== #
+# AC45 — the finalize Verdict/AppliedEdits terminal contract (producer + 2 prose consumers)
+# =========================================================================== #
+def test_finalize_verdict_applied_edits_terminal_contract():
+    """The gate-integrity contract's SPEC-PROSE half (behavior is covered by the bash + pytest
+    ship-mode cases): (a) drive-finalize.md Step 4 rewrites the FIRST `## Verdict:` line IN
+    PLACE on BOTH branches — a fix round -> `## Verdict: FINDINGS` (never terminal-converged),
+    the no-fix confirming round -> `## Verdict: CONVERGED` + `## AppliedEdits: no`; (b) the two
+    prose consumers (drive.md resume criterion, drive-ship.md precondition #3) require the FIRST
+    `## AppliedEdits:` line read exactly `## AppliedEdits: no`. Each pin is SECTION/SUB-BLOCK-
+    bounded so a bare-token match elsewhere cannot satisfy it, and reds on a real regression."""
+    # ---- (a) producer: Step-4 in-place Verdict rewrite, ANCHORED PER BRANCH. ----------- #
+    # Slice each Step-4 branch bullet SEPARATELY. A section-wide `.*` match is partially
+    # vacuous: it can satisfy the fix-branch contract by MIXING the no-fix bullet's "FIRST
+    # `## Verdict:` line IN PLACE" with the fix bullet's "FINDINGS", so a fix-branch-ONLY
+    # weakening (drop the in-place first-line rewrite) would still pass. Per-bullet slicing
+    # binds each verdict to its own branch — LOAD-BEARING: if a fix branch APPENDED a second
+    # `## Verdict: FINDINGS` after the Step-1 `## Verdict: CONVERGED` instead of replacing the
+    # first line, `verdict_converged` (first-match) reads the stale CONVERGED and the ORIGINAL
+    # hole reopens (codex finalize-r3 anti-vacuity fix).
+    df = _text(DRIVE_FINALIZE)
+    fix_bullet = _norm(_slice_between(df, r"\*\*A fix was applied\*\*", r"FINALIZE_CAP"))
+    nofix_bullet = _norm(
+        _slice_between(df, r"\*\*No fix applied this invocation\*\*", r"\*\*A fix was applied\*\*")
+    )
+    # FIX branch → replace the FIRST `## Verdict:` line IN PLACE with `## Verdict: FINDINGS`.
+    assert re.search(
+        r"FIRST\s+`?## Verdict:`?\s+line\s+IN\s+PLACE\s+with\s+`?## Verdict:\s+FINDINGS",
+        fix_bullet, re.IGNORECASE,
+    ), (
+        "Step 4's FIX bullet must replace the FIRST `## Verdict:` line IN PLACE with "
+        "`## Verdict: FINDINGS` (anchored to the fix branch — a fix round is never "
+        "terminal-converged)"
+    )
+    assert re.search(r"never append a second\s+`?## Verdict:", fix_bullet, re.IGNORECASE), (
+        "Step 4's FIX bullet must forbid APPENDING a second `## Verdict:` line (verdict_converged "
+        "is first-match, so an appended FINDINGS after a stale CONVERGED would reopen the hole)"
+    )
+    # NO-FIX branch → affirmatively replace the FIRST `## Verdict:` line IN PLACE with
+    # `## Verdict: CONVERGED`, and set the terminal `## AppliedEdits: no` marker.
+    assert re.search(
+        r"FIRST\s+`?## Verdict:`?\s+line\s+IN\s+PLACE\s+with\s+`?## Verdict:\s+CONVERGED",
+        nofix_bullet, re.IGNORECASE,
+    ), (
+        "Step 4's NO-FIX bullet must affirmatively replace the FIRST `## Verdict:` line IN "
+        "PLACE with `## Verdict: CONVERGED` (anchored to the no-fix branch)"
+    )
+    assert "## AppliedEdits: no" in nofix_bullet, (
+        "Step 4's NO-FIX bullet must set the terminal marker `## AppliedEdits: no` (the ship "
+        "gate's finalize-terminal requirement)"
+    )
+    # (the never-append discipline is asserted per-branch in the FIX bullet above)
+
+    # ---- (b) prose consumers require the FIRST `## AppliedEdits:` line be exactly `no`. -- #
+    # drive.md resume criterion — SUB-BLOCK-bounded to the finalize-CONVERGED clause (from
+    # `finalize has CONVERGED iff` to the `stage = finalize` route), so the requirement is
+    # pinned AT the criterion, not anywhere the literal recurs in the resume prose.
+    resume = _norm(
+        _slice_between(
+            _drive_md_text(), r"finalize has CONVERGED iff", r"stage\s*=\s*`?\s*finalize"
+        )
+    )
+    assert re.search(
+        r"first\s+`?## AppliedEdits:`?.*exactly.*## AppliedEdits: no", resume, re.IGNORECASE
+    ), (
+        "drive.md's finalize-CONVERGED resume criterion must require the FIRST "
+        "`## AppliedEdits:` (header) line read exactly `## AppliedEdits: no`"
+    )
+    # And the otherwise-route must name a first `## AppliedEdits:` that is not `no` as a
+    # `stage = finalize` cause (so a fix-round `yes` / `pending` / missing routes back to finalize).
+    otherwise = _norm(
+        _slice_between(
+            _drive_md_text(),
+            r"otherwise \(no finalize artifact",
+            r"stage\s*=\s*`?\s*finalize",
+        )
+    )
+    assert re.search(
+        r"first\s+`?## AppliedEdits:`?\s+line\b.*not\b.*## AppliedEdits: no",
+        otherwise,
+        re.IGNORECASE,
+    ), (
+        "drive.md's resume otherwise-route must route a first `## AppliedEdits:` line that is "
+        "not `## AppliedEdits: no` back to `stage = finalize`"
+    )
+
+    # drive-ship.md precondition #3 — SECTION-BOUNDED to `## Preconditions`.
+    pre = _norm(_section(_text(DRIVE_SHIP), r"^##\s+Preconditions\b"))
+    assert re.search(
+        r"first\s+`?## AppliedEdits:`?\s+line\b.*exactly.*## AppliedEdits: no", pre, re.IGNORECASE
+    ), (
+        "drive-ship.md precondition #3 must require finalize's FIRST `## AppliedEdits:` line "
+        "read exactly `## AppliedEdits: no` (a fix round is non-terminal)"
+    )
+
+
 def test_finalize_scope_creep_gate_and_arch_todo():
     """drive-finalize.md states: the diff scope `baseRef..featureBranch`, the edit-scope
     HARD GATE (run diff + test-support + flagged-P1 root cause), the three lenses (de-slop
@@ -752,6 +854,13 @@ _REQUIRED_CARRIERS = {
     # `AppliedEdits: yes` only); NOT CLAUDE.md (never the literal heading). Requiring
     # either would red on correct code.
     "## AppliedEdits: yes": (DRIVE_MD, DRIVE_FINALIZE, CONFORMANCE),
+    # The exact `## AppliedEdits: no` literal — the finalize-terminal marker the ship gate
+    # requires. Producer (drive-finalize.md Step 4 no-fix branch), the two prose consumers
+    # (drive.md resume criterion, drive-ship.md precondition #3), and the CONFORMANCE helper
+    # comment all embed the CONTIGUOUS byte-string, so the first-match reader has an unambiguous
+    # value to match. Consistent ONLY because every required carrier embeds the literal — prose
+    # that split `## AppliedEdits:` from `no` would red this. NOT CLAUDE.md / drive-harden.md.
+    "## AppliedEdits: no": (DRIVE_MD, DRIVE_FINALIZE, DRIVE_SHIP, CONFORMANCE),
 }
 
 
@@ -768,3 +877,117 @@ def test_finalize_token_consistency_across_files():
             f"token {token!r} is REQUIRED in {[p.name for p in required]} but is "
             f"missing from {missing} (a drop or spelling-drift in a required carrier)"
         )
+
+
+# =========================================================================== #
+# AC45 — behavioral: `--mode ship` enforces the finalize `## AppliedEdits: no` gate
+# =========================================================================== #
+# A COMPACT behavioral RED->GREEN proof over the CORE THREE cases (yes->BLOCK, no->SHIP,
+# body-quoted-no->BLOCK); the exhaustive matrix (AC45.a–i: incl. pending / missing / no-Findings
+# / bare-no / highest-N / first-match-dup-header) lives in the bash suite
+# (test/drive-conformance.test.sh AC45) so pytest stays non-duplicative.
+# Mirrors test_checkpoint_contract's subprocess + repo/RUN_DIR builder (the pattern already in
+# the pytest tree). Each case is built OTHERWISE-ship-valid (valid b-i counting phase review +
+# a CONVERGED finalize whose reviewed-sha == the featureBranch tip + codex sibling) so the
+# ship/block ISOLATES to applied_edits_no.
+CONFORMANCE_SH = REPO_ROOT / "bin" / "drive-conformance.sh"
+
+# Scoped to the 3 behavioral tests only (NOT module-level pytestmark — the prose pins above
+# need no git/bash and must not be skipped when a tool is absent).
+_needs_git_bash = pytest.mark.skipif(
+    shutil.which("git") is None or shutil.which("bash") is None,
+    reason="needs git + bash to exercise drive-conformance.sh --mode ship",
+)
+
+
+def _base_ship_run(tmp_path, name):
+    """A repo on `drive/<name>` (runId = basename(RUN_DIR) = name -> featureBranch =
+    drive/<name>) + an empty RUN_DIR. The drive tip is the finalize reviewed-sha target."""
+    repo = tmp_path / f"{name}-repo"
+    rd = tmp_path / name
+    repo.mkdir(parents=True)
+    rd.mkdir(parents=True)
+    _git(repo, "init", "-q", "-b", "main")
+    _commit(repo, "README", "base", "base")
+    _git(repo, "checkout", "-q", "-b", f"drive/{name}")
+    _commit(repo, "drive.sh", "echo drive", "drive work")
+    return repo, rd
+
+
+def _finalize_review(rd, n, sha, applied, *, body_applied=None):
+    """Write review-finalize-<n>.md: CONVERGED verdict, HEADER `## AppliedEdits: <applied>`,
+    header `reviewed-sha: <sha>`, the `## Findings` delimiter, and optionally a BODY
+    `## AppliedEdits: <body_applied>` line below `## Findings` (the body-quote fixture — a
+    legacy fix-round artifact quoting the literal in its findings prose). Writes the codex
+    sibling."""
+    body = ""
+    if body_applied is not None:
+        body = (
+            "The spec doc contains the literal on its own line:\n"
+            f"## AppliedEdits: {body_applied}\n"
+        )
+    (rd / f"review-finalize-{n}.md").write_text(
+        f"# Review finalize round {n}\n\n## Verdict: CONVERGED\n"
+        f"## AppliedEdits: {applied}\n\nreviewed-sha: {sha}\n## Findings\n\n{body}No open P1.\n",
+        encoding="utf-8",
+    )
+    _codex(rd, "finalize")
+
+
+def _run_ship(repo, rd):
+    """Run `drive-conformance.sh --mode ship` from inside the repo; return (rc, parsed-json)."""
+    proc = subprocess.run(
+        ["bash", str(CONFORMANCE_SH), str(rd), "--mode", "ship"],
+        cwd=str(repo), capture_output=True, text=True,
+    )
+    assert proc.stdout.strip(), f"no JSON on stdout (stderr={proc.stderr!r})"
+    return proc.returncode, json.loads(proc.stdout)
+
+
+def _reasons(obj):
+    return {v["reason"] for v in obj["violations"]}
+
+
+@_needs_git_bash
+def test_ship_finalize_applied_edits_no_ships(tmp_path):
+    """Liveness (happy path): a genuinely-finalized run — HEADER `## AppliedEdits: no`,
+    reviewed-sha == tip, codex present, + the b-i counting phase review — SHIPS (rc 0)."""
+    repo, rd = _base_ship_run(tmp_path, "ship-fin-no")
+    tip = _rev(repo, "drive/ship-fin-no")
+    _review(rd, "phase1", 1, sha=tip)   # b-i counting phase review at the tip
+    _codex(rd, "phase1")
+    _finalize_review(rd, 1, tip, "no")
+    rc, obj = _run_ship(repo, rd)
+    assert rc == 0, f"AppliedEdits:no finalize must ship (liveness); got {obj}"
+    assert obj["clean"] is True, obj
+
+
+@_needs_git_bash
+def test_ship_finalize_applied_edits_yes_blocked(tmp_path):
+    """Core regression: an un-re-audited fix round — HEADER `## AppliedEdits: yes` on an
+    OTHERWISE-ship-valid finalize artifact — must NOT tip-bind the terminal candidate-R ->
+    ship blocks `no-review`. RED against pre-fix (no applied_edits_no conjunct -> ships)."""
+    repo, rd = _base_ship_run(tmp_path, "ship-fin-yes")
+    tip = _rev(repo, "drive/ship-fin-yes")
+    _review(rd, "phase1", 1, sha=tip)
+    _codex(rd, "phase1")
+    _finalize_review(rd, 1, tip, "yes")
+    rc, obj = _run_ship(repo, rd)
+    assert rc == 1, f"AppliedEdits:yes fix-round finalize must NOT ship; got {obj}"
+    assert "no-review" in _reasons(obj), obj["violations"]
+
+
+@_needs_git_bash
+def test_ship_finalize_body_quoted_no_blocked(tmp_path):
+    """First-match/header-bound regression guard: HEADER `## AppliedEdits: yes` + a BODY
+    `## AppliedEdits: no` quote (below `## Findings`). An anywhere-grep would read the body
+    `no` and ship an un-re-audited fix; the header-bound reader reads the header `yes` and
+    blocks `no-review`. RED against pre-fix AND against a naive anywhere-grep helper."""
+    repo, rd = _base_ship_run(tmp_path, "ship-fin-bodyq")
+    tip = _rev(repo, "drive/ship-fin-bodyq")
+    _review(rd, "phase1", 1, sha=tip)
+    _codex(rd, "phase1")
+    _finalize_review(rd, 1, tip, "yes", body_applied="no")
+    rc, obj = _run_ship(repo, rd)
+    assert rc == 1, f"body-quoted `## AppliedEdits: no` (header yes) must NOT ship; got {obj}"
+    assert "no-review" in _reasons(obj), obj["violations"]
