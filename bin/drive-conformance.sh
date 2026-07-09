@@ -299,17 +299,22 @@ verdict_converged() {
 # verdict_converged: a `## AppliedEdits: no` quoted in the review BODY (below `## Findings`)
 # must NOT satisfy this gate (finalize audits this repo, whose docs contain the literal).
 # EXTRACT-first-then-COMPARE (like reviewed_sha_of) — NOT the checkpoint counter's anywhere
-# `grep -q`. A finalize fix round writes `## AppliedEdits: yes`; only the free confirming
-# round writes `## AppliedEdits: no`, so exactly-`no` (not "not yes") also fails closed on a
-# mid-flight `pending` or a missing line. A malformed file lacking `## Findings` → awk
-# `seen==0` → empty buf → rc1 (fail-closed, blocks), the same delimiter contract as
-# reviewed_sha_of.
+# `grep -q`. Require the MANDATORY `## ` heading — the SAME `^## Verdict:` strictness as the
+# sibling `verdict_converged`, NOT the checkpoint yes-COUNTER's optional `(##[[:space:]]*)?`:
+# the producer ALWAYS emits `## AppliedEdits: no|yes|pending` (heading; drive-finalize.md
+# schema + Step 4), so a bare `AppliedEdits: no` (no `## `) is malformed and this fail-OPEN
+# `no`-GATE must FAIL CLOSED on it, not accept it (the yes-COUNTER can stay permissive —
+# over-count is fail-closed on the cap). A finalize fix round writes `## AppliedEdits: yes`;
+# only the free confirming round writes `## AppliedEdits: no`, so exactly-`no` (not "not yes")
+# also fails closed on a mid-flight `pending` or a missing line. A malformed file lacking
+# `## Findings` → awk `seen==0` → empty buf → rc1 (fail-closed, blocks), the same delimiter
+# contract as reviewed_sha_of.
 applied_edits_no() {
   local line
   line="$(awk '/^## Findings/ { seen=1; exit } { buf = buf $0 "\n" } END { if (seen) printf "%s", buf }' "$1" 2>/dev/null \
-    | grep -m1 -E '^(##[[:space:]]*)?AppliedEdits:' || true)"
+    | grep -m1 -E '^## AppliedEdits:' || true)"
   [ -n "$line" ] || return 1
-  printf '%s\n' "$line" | grep -qE '^(##[[:space:]]*)?AppliedEdits:[[:space:]]*no[[:space:]]*$'
+  printf '%s\n' "$line" | grep -qE '^## AppliedEdits:[[:space:]]*no[[:space:]]*$'
 }
 
 # Evaluate whether scope <id> has a COUNTING review for tip <sha>.

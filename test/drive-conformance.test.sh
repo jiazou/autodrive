@@ -145,6 +145,27 @@ seed_finalize_no_findings() {
   { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
 }
 
+# A malformed finalize artifact whose AppliedEdits line is BARE `AppliedEdits: no` (no `## `
+# heading). The producer ALWAYS emits `## AppliedEdits: no` (heading), so a `no`-gate must
+# fail closed on the bare form (it must be at least as strict as verdict_converged's mandatory
+# `^## Verdict:`). Everything else is ship-valid so the block isolates to applied_edits_no.
+seed_finalize_bare_no() {
+  local rd="$1" n="$2" sha="$3"
+  mkdir -p "$rd"
+  {
+    echo "# Review finalize round $n"
+    echo
+    echo "## Verdict: CONVERGED"
+    echo "AppliedEdits: no"
+    echo
+    echo "reviewed-sha: $sha"
+    echo "## Findings"
+    echo
+    echo "No open P1."
+  } > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
+}
+
 # Assert exit code. $1=desc $2=expected-rc $3=actual-rc
 assert_rc() {
   if [ "$2" = "$3" ]; then
@@ -471,6 +492,14 @@ read -r repo rd < <(mk_ship clean ac45f-ship)
 seed_finalize_no_findings "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
 run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.f ship finalize missing ## Findings blocked" 1 "$RC"
                                                     assert_out "AC45.f reason is no-review (malformed, no ## Findings)" '"reason":"no-review"'
+
+# AC45.g — BARE `AppliedEdits: no` (no `## ` heading): the producer always emits the `##`
+# heading, so a `no`-GATE must be as strict as verdict_converged (mandatory `^## Verdict:`) and
+# fail closed on the bare form. An optional-`##` matcher would ship this malformed artifact.
+read -r repo rd < <(mk_ship clean ac45g-ship)
+seed_finalize_bare_no "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.g ship finalize bare AppliedEdits:no (no ## heading) blocked" 1 "$RC"
+                                                    assert_out "AC45.g reason is no-review (mandatory ## heading)" '"reason":"no-review"'
 
 echo "=== AC4c: HARDEN->advance consumes post-harden review ==="
 read -r repo rd < <(mk_phase_harden post_harden_ok 1)
