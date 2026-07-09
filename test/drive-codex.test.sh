@@ -89,6 +89,22 @@ mkfake fake_forking_stream \
   '( sleep 2; touch "$SURVIVOR" ) &' \
   'printf "streaming\n"; sleep 60'
 
+# exec FORKS a bg child that (after 2s) APPENDS to raw.log AND touches $SURVIVOR, then the LEADER
+# exits 0 (⇒ clean OK). The child inherits the exec's fd1 (raw.log). Proves FIX A supervises the
+# whole PGID on the OK path: the descendant is reaped (no survivor, no post-OK raw.log append).
+mkfake fake_fork_then_ok \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  '( sleep 2; echo "LATE-APPEND-AFTER-OK"; touch "$SURVIVOR" ) &' \
+  'printf "the real review\nMINOR nit\n"; exit 0'
+
+# doctor FORKS a bg child (sleep 2; touch $SURVIVOR) then exits 0 (clean probe); exec streams OK.
+# Proves the probe path reaps forked doctor descendants (group-kill after the probe) on the clean path.
+mkfake fake_probe_fork_ok \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) ( sleep 2; touch "$SURVIVOR" ) & exit 0 ;; esac' \
+  'printf "review\nok\n"; exit 0'
+
 # logs its exec argv to $ARGVLOG (for sandbox/effort composition assertions); exec exits OK.
 mkfake fake_argv \
   '#!/usr/bin/env bash' \
@@ -490,6 +506,49 @@ if [ ! -f "$WORK/codex-raw-fd2.log" ]; then pass "FIX-D env garbage rung ⇒ cod
 check_contains "FIX-D valid --sandbox danger-full-access composes" "$(cat "$WORK/argv.log")" "--sandbox danger-full-access"
 : > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv fd4 slice "$WORK/codex-review-fd4.md" --poll-secs 0.05 --sandbox off
 check_absent "FIX-D --sandbox off (explicit kill switch) ⇒ no --sandbox flag" "$(cat "$WORK/argv.log")" "--sandbox"
+
+echo "=== R3-A (codex BLOCKING): descendant leak on the clean-OK path — supervise the whole PGID ==="
+# codex forks a bg child then exits 0. The watchdog/wait track the LEADER only, so pre-fix the child
+# survived PAST the backstop and could append to raw.log AFTER OK (corrupting the post-process read).
+# FIX A reaps any surviving PGID member on EVERY terminal path (incl. OK) before classifying.
+# NON-VACUOUS: the child touches + appends after 2s; we observe past that. Proven RED on round-2.
+SURV_A="$WORK/survivor_okfork"; rm -f "$SURV_A"
+SURVIVOR="$SURV_A" disp fake_fork_then_ok r3a slice "$WORK/codex-review-r3a.md" --poll-secs 0.05 --stall-secs 100 --backstop-secs 100
+check "R3-A forked-child-then-exit-0 still classifies OK" "$OUT" "OK"
+sleep 2.6
+if [ ! -f "$SURV_A" ]; then pass "R3-A OK-path forked descendant REAPED (no survivor)"; else fail "R3-A descendant survived the clean-OK path"; fi
+check_absent "R3-A no POST-OK append reached raw.log (post-process read uncorrupted)" "$(cat "$WORK/codex-raw-r3a.log" 2>/dev/null)" "LATE-APPEND-AFTER-OK"
+
+echo "=== R3-A(probe): clean-probe forked doctor descendant is reaped too (process-supervision class) ==="
+SURV_AP="$WORK/survivor_probefork"; rm -f "$SURV_AP"
+SURVIVOR="$SURV_AP" disp fake_probe_fork_ok r3ap slice "$WORK/codex-review-r3ap.md" --poll-secs 0.05 --probe-timeout-secs 30
+check "R3-A(probe) exec runs after the clean probe ⇒ OK" "$OUT" "OK"
+sleep 2.6
+if [ ! -f "$SURV_AP" ]; then pass "R3-A(probe) forked doctor descendant reaped on the clean probe path"; else fail "R3-A(probe) doctor descendant survived"; fi
+
+echo "=== R3-B (codex MAJOR): non-empty but UNREADABLE --prompt-file ⇒ HELPER_ERROR pre-launch ==="
+# A chmod-000 non-empty prompt passes -s but cat's to "" ⇒ pre-fix a degenerate empty-prompt exec ⇒
+# false OK (defeats AC-H20). FIX B reads the prompt PRE-LAUNCH and fails closed on a read error.
+UNREAD="$WORK/unreadable-prompt.txt"; printf 'a real non-empty prompt body' > "$UNREAD"; chmod 000 "$UNREAD"
+rm -f "$WORK/codex-raw-r3b.log"
+OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope r3b --scope-class slice --attempt-log "$ALOG" \
+   --raw-log "$WORK/codex-raw-r3b.log" --marker "$WORK/codex-review-r3b.md" --prompt-file "$UNREAD" --poll-secs 0.05 2>/dev/null)"; RC=$?
+check "R3-B unreadable non-empty prompt ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+check "R3-B unreadable prompt exit 2" "$RC" "2"
+if [ ! -f "$WORK/codex-raw-r3b.log" ]; then pass "R3-B unreadable prompt ⇒ codex un-spawned"; else fail "R3-B codex spawned on unreadable prompt"; fi
+chmod 644 "$UNREAD"   # readable now — must run (no over-rejection)
+disp fake_ok r3bok slice "$WORK/codex-review-r3bok.md" --poll-secs 0.05
+check "R3-B readable non-empty prompt still runs ⇒ OK" "$OUT" "OK"
+
+echo "=== R3-C (required-file-read class): an UNREADABLE clean --prior-codex ⇒ FULL effort (not down-tier) ==="
+# Pre-fix an unreadable prior's failed grep fell through to || EFFORT_LOW=1 and WRONGLY down-tiered.
+# The -r guard fails toward FULL effort (conservative) when the prior can't be read/confirmed clean.
+PRIOR_UNR="$WORK/codex-review-prior-unread.md"; printf 'Codex review\nLooks fine; nothing to change.\n' > "$PRIOR_UNR"; chmod 000 "$PRIOR_UNR"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv r3c slice "$WORK/codex-review-r3c.md" --poll-secs 0.05 --confirmation-class --prior-codex "$PRIOR_UNR"
+check_absent "R3-C unreadable clean prior ⇒ FULL effort (no -c down-tier)" "$(cat "$WORK/argv.log")" "model_reasoning_effort"
+chmod 644 "$PRIOR_UNR"   # readable clean prior STILL down-tiers (no over-correction)
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv r3cok slice "$WORK/codex-review-r3cok.md" --poll-secs 0.05 --confirmation-class --prior-codex "$PRIOR_UNR"
+check_contains "R3-C readable clean prior still down-tiers" "$(cat "$WORK/argv.log")" "model_reasoning_effort=medium"
 
 echo ""
 echo "===================================================================="

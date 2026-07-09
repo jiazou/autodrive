@@ -65,16 +65,25 @@
 #   VALIDATED pre-launch (a bad value ⇒ HELPER_ERROR exit 2, codex un-spawned):
 #     --mode {probe,dispatch} · --scope ^[A-Za-z0-9._-]+$ · --scope-class {design,slice,phase,finalize}
 #     · --attempt-log (regular writable file, not FIFO/socket) · --marker parent (writable)
-#     · --prompt-file (exists, non-empty) · --stall-secs/--backstop-secs/--poll-secs/--probe-timeout-secs
+#     · --prompt-file (exists, non-empty, AND READABLE with non-empty content — read pre-launch, FIX B)
+#     · --stall-secs/--backstop-secs/--poll-secs/--probe-timeout-secs
 #     (strictly-positive number) · --max-attempts (positive integer) · --sandbox AND DRIVE_CODEX_SANDBOX
 #     (rung ∈ {read-only,workspace-write,danger-full-access,off}) · DRIVE_CODEX_STALL_MINS /
 #     DRIVE_CODEX_BACKSTOP_HOURS (strictly-positive number, THEN `awk -v`, NEVER interpolated — the
 #     former command-injection hole).
 #   Numeric values reach awk ONLY via `awk -v var=value` (parameterized), never program interpolation.
-#   Trusted-by-contract, NOT eval'd by the helper: --raw-log/--marker/--prior-codex (quoted paths),
-#     the prompt CONTENT (a quoted argv handed to codex), DRIVE_CODEX_CMD (the binary to exec — a test
-#     seam). Boolean env compared literally (`= off` / `= 1`): DRIVE_CODEX_WATCHDOG,
-#     DRIVE_CODEX_EFFORT_TIER, DRIVE_CODEX_INJECT_INTERNAL_FAULT.
+#   Trusted-by-contract, NOT eval'd by the helper: --raw-log/--marker (quoted paths), the prompt
+#     CONTENT (a quoted argv handed to codex), DRIVE_CODEX_CMD (the binary to exec — a test seam).
+#     Boolean env compared literally (`= off` / `= 1`): DRIVE_CODEX_WATCHDOG, DRIVE_CODEX_EFFORT_TIER,
+#     DRIVE_CODEX_INJECT_INTERNAL_FAULT.
+#   REQUIRED-FILE READS fail CLOSED on a read error (not just an existence/`-s` check): --prompt-file
+#     ⇒ HELPER_ERROR (required); --prior-codex is optional/best-effort so its `-r` guard fails toward
+#     FULL codex effort (never silently down-tiers on an unreadable prior).
+#   PROCESS SUPERVISION (no descendant survives helper return on ANY terminal path): every spawned
+#     child is group-supervised under monitor mode — the `codex exec` group is reaped via a post-`wait`
+#     `-<pgid>`-liveness check on EVERY path incl. clean OK (FIX A, `_reap_pgid`); the `doctor` probe
+#     group is group-killed after the probe; the probe timeout-watcher is group-killed (its `sleep`
+#     child never orphaned); and one installed reaper trap group-reaps all of them on TERM/INT/HUP/EXIT.
 #
 # Best-effort supervisor: deliberately NOT `set -euo pipefail`. rc is managed explicitly. No
 # `set -u` (also sidesteps the same-line `local a=$1 b=$a` expansion gotcha).
@@ -128,7 +137,7 @@ need_value() {
 }
 
 MODE=""; SCOPE=""; ATTEMPT_LOG=""
-SCOPE_CLASS=""; RAW_LOG=""; MARKER=""; PROMPT_FILE=""
+SCOPE_CLASS=""; RAW_LOG=""; MARKER=""; PROMPT_FILE=""; PROMPT_TEXT=""
 SECURITY_DIFF=0; CONFIRMATION_CLASS=0; PRIOR_CODEX=""
 STALL_SECS=""; BACKSTOP_SECS=""; POLL_SECS=""; PROBE_TIMEOUT_SECS=""
 SANDBOX_OVERRIDE=""; SANDBOX_OVERRIDE_SET=0
@@ -243,6 +252,20 @@ _log_nonempty() {
 _grace_then_kill() {
   local pgid="$1" i=0
   while [ "$i" -lt 20 ] && kill -0 "$pgid" 2>/dev/null; do sleep 0.05; i=$((i + 1)); done
+  kill -KILL -"$pgid" 2>/dev/null
+}
+
+# Reap a whole process GROUP if ANY member is still alive (keyed on GROUP liveness `kill -0 -pgid`,
+# NOT the leader): TERM, brief grace, KILL. This is what supervises a codex that FORKS a background
+# child and then self-exits — the leader `wait` reaps only the leader, leaving the child alive in the
+# PGID. Called on EVERY terminal path (incl. clean OK) so no descendant survives helper return (and
+# none can append to raw.log after OK). No-op (returns fast) when the group is already empty, so it is
+# idempotent with the watchdog kill paths that already group-killed. $1 = pgid.
+_reap_pgid() {
+  local pgid="$1" i=0
+  kill -0 -"$pgid" 2>/dev/null || return 0     # group already empty — nothing to reap
+  kill -TERM -"$pgid" 2>/dev/null
+  while [ "$i" -lt 20 ] && kill -0 -"$pgid" 2>/dev/null; do sleep 0.05; i=$((i + 1)); done
   kill -KILL -"$pgid" 2>/dev/null
 }
 
@@ -381,9 +404,9 @@ run_attempt() {
   local -a cmd=("$DRIVE_CODEX_CMD" exec)
   [ "$SANDBOX_FLAG_ON" = 1 ] && cmd+=(--sandbox "$RUNG")
   [ "$EFFORT_LOW" = 1 ] && cmd+=(-c "model_reasoning_effort=$EFFORT_TIER_LOW")
-  local prompt; prompt="$(cat "$PROMPT_FILE" 2>/dev/null)"
-
-  "${cmd[@]}" "$prompt" > "$RAW_LOG" 2>&1 &
+  # $PROMPT_TEXT was read + validated PRE-LAUNCH (FIX B) — reuse it, never a second cat that could
+  # read-fail to "" and slip a degenerate empty prompt past the pre-launch guard.
+  "${cmd[@]}" "$PROMPT_TEXT" > "$RAW_LOG" 2>&1 &
   local child=$! pgid; pgid=$child          # under monitor mode the job leader pid == its pgid
   # FIX C / round-6 MAJOR: track the codex group for the ONE installed reaper trap (do_dispatch),
   # so a helper that is itself killed/exits REAPS its codex child group instead of orphaning it.
@@ -393,6 +416,7 @@ run_attempt() {
   # TEST knob: a post-launch internal fault maps to CODEX_UNAVAILABLE(internal), never HELPER_ERROR.
   if [ "${DRIVE_CODEX_INJECT_INTERNAL_FAULT:-}" = 1 ]; then
     kill -TERM -"$pgid" 2>/dev/null; _grace_then_kill "$pgid"; wait "$child" 2>/dev/null
+    _reap_pgid "$pgid"   # FIX A: reap any forked descendant on this terminal path too (uniform)
     WATCH_PGID=""
     ATTEMPT_RESULT=internal-fault; return
   fi
@@ -448,7 +472,14 @@ run_attempt() {
   else
     wait "$child" 2>/dev/null; wstatus=$?
   fi
-  WATCH_PGID=""   # codex reaped by our own wait — clear so the reaper trap is a no-op on exit
+  # FIX A (round-3, BLOCKING): supervise the whole PROCESS GROUP, not just the leader. A codex that
+  # forks a background child then self-exits leaves that child alive in the PGID — the `wait`/watchdog
+  # track the LEADER only. Reap any surviving group member on EVERY terminal path (incl. clean OK)
+  # BEFORE clearing WATCH_PGID / classifying, so no descendant survives helper return and none can
+  # append to raw.log after OK (which would corrupt the post-process read). Idempotent with the kill
+  # paths (already group-killed ⇒ this no-ops).
+  _reap_pgid "$pgid"
+  WATCH_PGID=""   # codex + any descendant reaped — clear so the reaper trap is a no-op on exit
   CODEX_RC="$wstatus"
 
   if [ "$kill_confirmed" = 1 ]; then
@@ -483,6 +514,12 @@ do_dispatch() {
   [ -n "$PROMPT_FILE" ] || helper_error "--prompt-file required for dispatch"
   # --prompt-file must name an EXISTING NON-EMPTY file (else a degenerate `codex exec ""`).
   [ -s "$PROMPT_FILE" ] || helper_error "--prompt-file missing or empty: '$PROMPT_FILE'"
+  # FIX B (round-3, MAJOR): READ the prompt in the PRE-LAUNCH zone and FAIL CLOSED on a read error —
+  # a non-empty but UNREADABLE file (chmod 000) passes `-s` but `cat`s to "" ⇒ a degenerate
+  # empty-prompt exec ⇒ a false OK, defeating AC-H20. Require non-empty CONTENT after the read. Read
+  # ONCE here; run_attempt reuses $PROMPT_TEXT (no second cat that could read-fail differently).
+  PROMPT_TEXT="$(cat "$PROMPT_FILE" 2>/dev/null)" || helper_error "--prompt-file unreadable: '$PROMPT_FILE'"
+  [ -n "$PROMPT_TEXT" ] || helper_error "--prompt-file has no readable content: '$PROMPT_FILE'"
   # --marker PARENT must be writable (early OK-path guard — a structurally-unwritable parent would
   # otherwise doom the eventual marker/post-process write and silently drop the codex voice). This
   # does NOT subsume the post-launch marker-WRITE fail-closed path (§A.9), which stays the authority
@@ -521,8 +558,13 @@ do_dispatch() {
 
   # effort carve-out (§F): down-tier IFF confirmation-class AND NOT security-diff AND the
   # --prior-codex scan is clean (non-degraded first line AND zero severity tags) AND tiering on.
+  # REQUIRED-FILE-READ class (round-3): the `-r` guard makes an UNREADABLE --prior-codex fail toward
+  # FULL effort (the conservative/closed direction — we can't confirm the prior is clean, so don't
+  # down-tier), rather than the pre-fix behavior where an unreadable prior's failed `grep` fell
+  # through to `|| EFFORT_LOW=1` and WRONGLY down-tiered. --prior-codex is optional/best-effort (not a
+  # required input), so a read failure is NOT HELPER_ERROR — it just declines the down-tier.
   EFFORT_LOW=0
-  if [ "$TIERING_ON" = 1 ] && [ "$CONFIRMATION_CLASS" = 1 ] && [ "$SECURITY_DIFF" != 1 ] && [ -n "$PRIOR_CODEX" ] && [ -f "$PRIOR_CODEX" ]; then
+  if [ "$TIERING_ON" = 1 ] && [ "$CONFIRMATION_CLASS" = 1 ] && [ "$SECURITY_DIFF" != 1 ] && [ -n "$PRIOR_CODEX" ] && [ -f "$PRIOR_CODEX" ] && [ -r "$PRIOR_CODEX" ]; then
     local fl; fl="$(head -n1 "$PRIOR_CODEX" 2>/dev/null)"
     case "$fl" in
       CODEX_UNAVAILABLE*|CODEX_KILLED_TIMEOUT*) : ;;   # degraded prior → full effort
