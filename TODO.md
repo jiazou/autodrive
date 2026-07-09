@@ -433,3 +433,16 @@ promoted to repo-root TODO.md at ship).
 
 ## /drive run regress-selfid-20260706-143429 — architectural follow-ups (2026-07-07T16:16:50Z)
 - **.claude/commands/drive.md, .claude/commands/drive-review.md (coordinator resume/heal semantics)**: the new inflight-heal / `base=<sha>` / `baseSha` recovery path — and coordinator resume semantics generally — live as markdown protocol pinned by substring/contract tests, with NO executable state-machine consumer (grep confirms these tokens are absent from bin/drive-conformance.sh). Consequence: the highest-risk cross-phase behavior (a real resumed run writing baseSha once, stripping `base=` before scope derivation, and heal/adopt/re-dispatch) is verifiable only by a full harness E2E, not a unit test. Out of scope for this run (an E2E driver is a new subsystem, boil-the-ocean). Consider extracting the resume consumer into executable code testable end-to-end. (Raised by both finalize voices; codex flagged P1-as-missing-test + ARCH.)
+
+## /drive run r2r4-codex-20260708-144534 — architectural follow-ups (2026-07-09T21:06:11Z)
+
+- `.claude/commands/{drive-review,drive-harden,drive-finalize,drive,drive-ship}.md`: the codex
+  token/marker state machine (OK / CODEX_KILLED_TIMEOUT / CODEX_UNAVAILABLE / HELPER_ERROR →
+  render/degrade/STOP) is specified in Markdown prose across the spec runners, NOT in executable
+  coordinator code. Consequence (codex finalize ARCH): contract tests can pin the *wording* of each
+  branch but cannot run a full review/harden/finalize leg end-to-end, so branch-coverage of the
+  combine state-machine is structurally spec-integration-only. This is a deliberate harness
+  architecture (operational /drive stages are prose runners the coordinator executes, per CLAUDE.md),
+  not a defect introduced by this run — recorded as a durable follow-up: if the combine state-machine
+  grows further, consider extracting it into a small `bin/` helper (like `drive-codex.sh` itself)
+  that is directly unit-testable. Out of scope for R2/R4 (whole-harness refactor).
