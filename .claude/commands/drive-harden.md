@@ -104,13 +104,52 @@ working code. A non-P1 improvement outside the diff → `$RUN_DIR/followups.md`,
 
 ## Step 1 — Audit (dual-voice, 2-lens + slop-note)
 
-Run the **same dual-voice mechanics as `/drive-review`** (a passive Claude reviewer
-subagent + a direct codex pass over the same scope), but with the **harden 2-lens
-prompt** below instead of the conformance prompt. CRITICAL BOUNDARY: pass PATHS +
+Run the **same dual-voice mechanics as `/drive-review`** (codex FIRST as a background helper + a
+passive Claude reviewer spawned WHILE it runs), **including its outcome tier TABLE** (`/drive-review`
+Step 1 — the `OK` / `CODEX_KILLED_TIMEOUT` / `CODEX_UNAVAILABLE` / `HELPER_ERROR` tier), but with the
+**harden 2-lens prompt** below instead of the conformance prompt. CRITICAL BOUNDARY: pass PATHS +
 git refs only — never any implementer's or harden-fixer's notes/rationale (preserves
 the reviewer's independent judgment, exactly as conformance review does).
 
-Spawn a generic reviewer subagent:
+Codex FIRST (run `bin/drive-codex.sh` from the MAIN context via `Bash(run_in_background:true)`,
+NEVER inside a subagent that waits on it). First `mkdir -p "$RUN_DIR/tmp"` (TMPDIR-namespaced). The
+dispatch block (snapshot → quarantine → dispatch):
+
+```
+case "$scope" in *[!A-Za-z0-9._-]*) echo "non-decision STOP: invalid <scope> charset"; exit ;; esac   # belt-and-suspenders: HELPER's permissive charset BEFORE composing any <scope>-derived filename
+mkdir -p "$RUN_DIR/tmp"
+[ -f "$RUN_DIR/codex-harden-<P>.log" ] && mv "$RUN_DIR/codex-harden-<P>.log" "$RUN_DIR/codex-harden-<P>.log.stranded"   # re-dispatch: mv the raw log aside (an orphaned codex may still be appending)
+[ -f "$RUN_DIR/codex-harden-<P>.md" ] && cp "$RUN_DIR/codex-harden-<P>.md" "$RUN_DIR/tmp/codex-prior-<scope>.md"   # SNAPSHOT the prior sibling for --prior-codex BEFORE the quarantine hides it. Ordering: snapshot → quarantine → dispatch
+[ -f "$RUN_DIR/codex-harden-<P>.md" ] && mv "$RUN_DIR/codex-harden-<P>.md" "$RUN_DIR/codex-harden-<P>.md.stranded"   # QUARANTINE the STALE codex SIBLING so a crashed round leaves NO current sibling for stranded-adopt
+for x in out err; do [ -f "$RUN_DIR/tmp/helper-<scope>.$x" ] && mv "$RUN_DIR/tmp/helper-<scope>.$x" "$RUN_DIR/tmp/helper-<scope>.$x.stranded"; done   # stale token/err file aside
+cat > "$RUN_DIR/tmp/codex-prompt-<scope>.txt" <<'PROMPT'
+Harden phase <P>: review git diff <phaseBaseSha>..phaseInt/<runId>/<P> for (1)
+missing tests to add (acceptance criteria, branches, edge/error paths), (2) logic
+bugs. Flag P1 (real bug / missing test on a criterion) vs P2 (non-criterion test gap)
+with file:line. Also LIST (do not propose removing) any AI slop you see (file:line) —
+it is deferred to a later aggregate pass. Prioritized.
+PROMPT
+REDISPATCH=0; [ -e "$RUN_DIR/inflight-review-<scope>.marker" ] && REDISPATCH=1   # re-dispatch = a PRE-EXISTING OPEN inflight marker (a prior crashed attempt of THIS round)
+if [ "$REDISPATCH" = 0 ]; then
+  CONF=(--confirmation-class --prior-codex "$RUN_DIR/tmp/codex-prior-<scope>.md")   # CLEAN FIRST dispatch (incl. a confirming re-audit): --prior-codex = the step-0 SNAPSHOT of codex-harden-<P>.md
+else
+  CONF=()                                                                            # RE-DISPATCH ⇒ NO --confirmation-class ⇒ FULL effort
+fi
+TMPDIR="$RUN_DIR/tmp" bin/drive-codex.sh --mode dispatch \
+  --scope <scope> --scope-class phase [--security-diff] \
+  --raw-log "$RUN_DIR/codex-harden-<P>.log" --marker "$RUN_DIR/codex-harden-<P>.md" \
+  --attempt-log "$RUN_DIR/codex-attempts-<runId>.jsonl" \
+  --prompt-file "$RUN_DIR/tmp/codex-prompt-<scope>.txt" \
+  "${CONF[@]}" \
+  > "$RUN_DIR/tmp/helper-<scope>.out" 2> "$RUN_DIR/tmp/helper-<scope>.err"   # token on STDOUT only; stderr SEPARATE
+```
+
+(`<scope>` = `phase<P>`; a phase scope is gate-enforced regardless, `--security-diff` iff the phase
+diff is sensitive. The `--prior-codex` snapshot source is **`codex-harden-<P>.md`** — harden's OWN
+prior sibling, NOT `codex-review-<scope>.md`. Coordinator prompt enrichment may reference PRIOR
+rounds only — never the same-round Claude reviewer output.)
+
+Spawn a generic reviewer subagent WHILE the codex helper runs:
 
 ----- BEGIN SUBAGENT SCOPE -----
 Audit `git diff <phaseBaseSha>..phaseInt/<runId>/<P>` and the files it touches, against the
@@ -150,26 +189,24 @@ transcribe source Step 2 reads — anything not listed here is not reliably carr
 HARDENED = no open P1 AND nothing cheap-P2 left to apply. Return: path, verdict, one-line count.
 ----- END SUBAGENT SCOPE -----
 
-Codex pass (run DIRECTLY from main, background, per-scope log — NEVER inside a
-subagent that waits on it):
+Wait for BOTH the helper's completion notification (the outcome token = the LAST line of
+`$RUN_DIR/tmp/helper-<scope>.out`; stderr is in `.err`, never merged) AND the reviewer's return,
+then Combine — post-process the codex raw log ONLY on `OK`, branching via drive-review.md's outcome
+tier TABLE + coordinator state-machine. `OK` + non-empty raw log → run a bounded post-process
+subagent: "Read `$RUN_DIR/codex-harden-<P>.log`, extract codex's final findings, write
+`$RUN_DIR/codex-harden-<P>.md` (same severity/lens tags, <150 words)." The post-process WRITES
+ATOMICALLY — to `$RUN_DIR/tmp/codex-harden-<P>.md.tmp.$$` then `mv` into the `--marker` path — so a
+mid-write crash leaves NO torn/partial marker (the complete file, or none); THEN require a non-empty
+`codex-harden-<P>.md` at that path (crashed subagent / unwritable ⇒ **fail-closed non-decision
+STOP**). `HELPER_ERROR` (exit 2) OR shell rc 126/127 ⇒ **broken-helper NON-DECISION STOP** (fix
+`bin/drive-codex.sh` / `chmod +x` / reinstall, then resume — NO codex launched, NO marker written,
+NO `codex exec` fallback).
 
-```
-codex exec "Harden phase <P>: review git diff <phaseBaseSha>..phaseInt/<runId>/<P> for (1)
-missing tests to add (acceptance criteria, branches, edge/error paths), (2) logic
-bugs. Flag P1 (real bug / missing test on a criterion) vs P2 (non-criterion test gap)
-with file:line. Also LIST (do not propose removing) any AI slop you see (file:line) —
-it is deferred to a later aggregate pass. Prioritized." > $RUN_DIR/codex-harden-<P>.log 2>&1
-```
-
-run_in_background; wait for completion; then a bounded post-process subagent: "Read
-`$RUN_DIR/codex-harden-<P>.log`, extract codex's final findings, write
-`$RUN_DIR/codex-harden-<P>.md` (same severity/lens tags, <150 words)."
-
-Degradation (do NOT hard-fail): codex missing OR hangs/times out → write
-`codex-harden-<P>.md` with the **anchored first-line token `CODEX_UNAVAILABLE`** (exactly
-that bare token as the file's FIRST line — the same form drive-review.md emits, so the
-run-graph's codex-n/a detection is uniform across review and harden), optionally followed
-by an explanatory note; continue.
+Degradation (do NOT hard-fail): the helper writes `codex-harden-<P>.md` with the first-line token
+`CODEX_UNAVAILABLE` (codex missing / probed outage) or `CODEX_KILLED_TIMEOUT` (watchdog
+stall/backstop kill) — exactly that bare token as the file's FIRST line, the same form
+drive-review.md emits, so the run-graph's codex-n/a detection is uniform across review and harden;
+optionally an explanatory note on later lines; continue.
 
 ## Step 2 — Triage
 

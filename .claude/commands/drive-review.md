@@ -46,7 +46,7 @@ refs:
   `phaseReview[<P>].round` counter (its bounding is owned by the harden loop, not the
   conformance cap), and (b) it emits the `harden-regress: yes` self-identifying control
   line into its `review-phase<P>-N.md` (the header-preamble marker the checkpoint reader
-  classifies harden-regress vs integration reviews on — Step 1 below).
+  classifies harden-regress vs integration reviews on — Step 2 below).
 
 **Optional diff-base override (`base=<40-hex>`, strip-before-scope).** BEFORE deriving
 `<scope>` from the invocation args, scan them for a single token matching
@@ -84,10 +84,96 @@ conformance `phaseReview[<P>].round`. The harden loop already bounds the number 
 these passes (its 3-fix-round cap), so there is no N>8 STOP here; just run the review
 and report CONVERGED/FINDINGS.
 
-## Step 1 — Claude reviewer (passive, separation-preserving)
+## Step 1 — Cross-model codex pass FIRST (background helper, per-scope log)
 
-CRITICAL BOUNDARY: do NOT include any implementer notes/rationale in the reviewer's
-prompt. Pass PATHS + git refs only. Spawn a generic reviewer subagent:
+**R2 (codex-first, overlap-reliable).** Dispatch codex FIRST as a background helper, then spawn
+the Claude reviewer (Step 2) WHILE it runs, wait for BOTH, and Combine — post-processing the codex
+raw log ONLY on `OK` (Step 3). Run the supervisor `bin/drive-codex.sh` from the MAIN context via
+`Bash(run_in_background:true)` — NEVER inside a subagent that waits on it — then await its
+completion notification. The helper watchdogs codex (stall/backstop kill) and prints ONE closed
+outcome token (the LAST line of its stdout): `OK | CODEX_KILLED_TIMEOUT | CODEX_UNAVAILABLE |
+HELPER_ERROR`. Use a **per-scope** log so parallel slice reviews don't collide.
+
+The single authoritative **outcome → marker → post-process → verdict → rendering** tier TABLE
+(`/drive-harden` and `/drive-finalize` REFERENCE this one, including its outcome tier TABLE):
+
+| helper outcome | marker 1st line | post-process | combined-verdict | run-graph render |
+|---|---|---|---|---|
+| `OK` | none (real review) | YES | counts codex P1 normally | normal |
+| `CODEX_KILLED_TIMEOUT` | `CODEX_KILLED_TIMEOUT` | NO | contributes **zero P1** | `Codex killed (stall)` / `Codex killed (backstop)` — never `(partial)` |
+| `CODEX_UNAVAILABLE` | `CODEX_UNAVAILABLE` | NO | contributes **zero P1** | `Codex n/a` |
+| `HELPER_ERROR` | none | N/A → **coordinator STOP (broken helper)** | (run halts) | **no codex tier rendered** |
+
+First, ONCE per run, `mkdir -p "$RUN_DIR/tmp"`; the helper is TMPDIR-namespaced so codex's scratch
+lands in the run dir, not the shared `/tmp`. The dispatch block (snapshot → quarantine → dispatch):
+
+```
+# 0. belt-and-suspenders: assert <scope> matches the HELPER's OWN PERMISSIVE charset BEFORE
+#    composing any <scope>-derived temp/log filename — accepts design / phasedesign1 / phase1 /
+#    slice 1.2; rejects path-traversal/injection chars. NOT the bare phase/slice-id grammar.
+case "$scope" in *[!A-Za-z0-9._-]*) echo "non-decision STOP: invalid <scope> charset"; exit ;; esac
+# 1. codex FIRST (background), TMPDIR-namespaced.
+mkdir -p "$RUN_DIR/tmp"
+[ -f "$RUN_DIR/codex-review-<scope>.md" ] && cp "$RUN_DIR/codex-review-<scope>.md" "$RUN_DIR/tmp/codex-prior-<scope>.md"   # SNAPSHOT the prior sibling for --prior-codex BEFORE the quarantine mv hides it (else effort-tiering is dead). Ordering: snapshot → quarantine → dispatch
+[ -f "$RUN_DIR/codex-review-<scope>.md" ] && mv "$RUN_DIR/codex-review-<scope>.md" "$RUN_DIR/codex-review-<scope>.md.stranded"   # QUARANTINE the STALE codex SIBLING so a crashed round leaves NO current sibling for stranded-adopt
+for x in out err; do [ -f "$RUN_DIR/tmp/helper-<scope>.$x" ] && mv "$RUN_DIR/tmp/helper-<scope>.$x" "$RUN_DIR/tmp/helper-<scope>.$x.stranded"; done   # stale token/err file aside
+# write the byte-identical review prompt to the prompt file (delivered via --prompt-file):
+cat > "$RUN_DIR/tmp/codex-prompt-<scope>.txt" <<'PROMPT'
+Review <scope>. For 'design': audit $RUN_DIR/design.md — high-level only
+(sound goal/approach + ordered ## Phases, no phase cycle; FLAG over-split P1 — a phase beyond
+the first with no fan-out/staged-risk justification, a test/docs-only phase, or mere sequential
+dependency with no foundation needing its own verify; and under-split P2 — one phase bundling a
+must-verify-first foundation with its dependents; and FLAG P1 an over-band Size estimate
+(~150-500/>=500 production SLOC, comments+tests excluded) that neither split on a real seam nor
+carries an atomicity justification + heightened-review note, or an absent Size estimate). For 'phasedesign<P>': audit
+$RUN_DIR/design-phase<P>.md (buildable interfaces, testable criteria, sound Slices — no slice
+cycle, disjoint owns, no contract contradicting real prior-phase code; FLAG a slice beyond the
+first with no why:, a test-only slice, two slices sharing a new co-authored contract instead of
+being one, or a slice bundling a must-verify-first foundation with its dependents). For a slice:
+git diff <phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owned files. For
+a phase: git diff <diffBase>..phaseInt/<runId>/<P>, integration; AND reconcile size — actual
+production SLOC (excl tests/comments/blanks) crossing into a higher band than the plan's Size
+estimate claimed with no heightened-review note is P2. Flag BLOCKING/MAJOR/
+MINOR with file:line. Prioritized.
+PROMPT
+# --confirmation-class is a CONDITIONAL BRANCH, not an always-present flag: down-tier eligible ONLY
+# on a clean FIRST dispatch of THIS round; OMIT on a RE-DISPATCH ⇒ FULL effort (the step-0 snapshot
+# may be the CRASHED current attempt, not the prior COMPLETED round). "re-dispatch" ≔ a PRE-EXISTING
+# OPEN inflight-review-<scope>.marker (a prior crashed attempt of THIS round's leg). Do NOT key off
+# prior-round review-<scope>-N.md — a confirmation re-audit HAS those yet its FIRST dispatch IS
+# down-tier-eligible. (Coordinator prompt enrichment may reference PRIOR rounds only — never the
+# same-round Claude reviewer output.)
+REDISPATCH=0; [ -e "$RUN_DIR/inflight-review-<scope>.marker" ] && REDISPATCH=1
+if [ "$REDISPATCH" = 0 ]; then
+  CONF=(--confirmation-class --prior-codex "$RUN_DIR/tmp/codex-prior-<scope>.md")   # CLEAN FIRST dispatch: down-tier eligible; --prior-codex = the step-0 SNAPSHOT (never the quarantined live sibling)
+else
+  CONF=()                                                                            # RE-DISPATCH (open inflight marker) ⇒ NO --confirmation-class ⇒ FULL effort
+fi
+TMPDIR="$RUN_DIR/tmp" bin/drive-codex.sh --mode dispatch \
+  --scope <scope> --scope-class <design|slice|phase> [--security-diff] \
+  --raw-log "$RUN_DIR/codex-raw-<scope>.log" --marker "$RUN_DIR/codex-review-<scope>.md" \
+  --attempt-log "$RUN_DIR/codex-attempts-<runId>.jsonl" \
+  --prompt-file "$RUN_DIR/tmp/codex-prompt-<scope>.txt" \
+  "${CONF[@]}" \
+  > "$RUN_DIR/tmp/helper-<scope>.out" 2> "$RUN_DIR/tmp/helper-<scope>.err"   # token on STDOUT only; stderr SEPARATE
+```
+
+**`--scope-class` per scope:** `design` / `phasedesign<P>` → `design`; a slice → `slice`; a `phase
+<P>` (incl. the harden-regress guard) → `phase`. Pass `--security-diff` iff the scope's own diff
+touches the security path set (a sensitive slice; a phase diff is gate-enforced regardless). The
+`--confirmation-class`/`--prior-codex` flags (via `CONF`) ride ONLY a clean FIRST dispatch of a
+confirmation round; on a `phase <P>` re-audit after a clean prior, the snapshot source is
+`codex-review-phase<P>.md`.
+
+On a re-dispatch after a stranded `inflight-review-<scope>.marker`, first `mv` the existing
+`codex-raw-<scope>.log` aside (e.g. `codex-raw-<scope>.log.stranded`) — an orphaned background
+codex may still be appending to it.
+
+## Step 2 — Claude reviewer (passive, separation-preserving) — spawned WHILE codex runs
+
+WHILE the codex helper (Step 1) runs, spawn the passive Claude reviewer. CRITICAL BOUNDARY: do NOT
+include any implementer notes/rationale in the reviewer's prompt. Pass PATHS + git refs only.
+Spawn a generic reviewer subagent:
 
 ----- BEGIN SUBAGENT SCOPE -----
 Audit the <scope>:
@@ -169,58 +255,44 @@ commits). Bind it by scope:
   codex presence, no git tip to bind).)
 ----- END SUBAGENT SCOPE -----
 
-## Step 2 — Cross-model codex pass (direct CLI, per-scope log)
+## Step 3 — Combine & converge (post-process ONLY on `OK`)
 
-Run codex DIRECTLY from the main context — NEVER inside a subagent that waits on it.
-Use a **per-scope** log so parallel slice reviews don't collide. First, ONCE per run,
-`mkdir -p "$RUN_DIR/tmp"`; then export `TMPDIR=$RUN_DIR/tmp` around the `codex exec` call
-so codex's scratch tempfiles land in the run dir instead of the shared `/tmp` (D5 — the
-codex CLI honors `TMPDIR`):
+Wait for BOTH: the helper's completion notification — the outcome token = the LAST line of
+`$RUN_DIR/tmp/helper-<scope>.out` (stderr is in `.err`, never merged into the token) — AND the
+reviewer subagent's return. Then branch via the AUTHORITATIVE coordinator outcome state-machine
+(drive.md § Combined dual-voice round verdict) over (token, rc, marker presence), first-match:
+- **`OK` (rc 0) + non-empty raw log** → run the bounded post-process subagent: "Read
+  `$RUN_DIR/codex-raw-<scope>.log`, extract codex's final findings, write
+  `$RUN_DIR/codex-review-<scope>.md` (same severity tags, <150 words)." The post-process WRITES
+  ATOMICALLY — to `$RUN_DIR/tmp/codex-review-<scope>.md.tmp.$$` then `mv` into the `--marker` path
+  `codex-review-<scope>.md`, so a mid-write crash leaves NO torn/partial marker (the complete new
+  file, or none). THEN require a non-empty file at the passed `--marker` path (`codex_present`'s
+  `-s` genuinely suffices now the write is atomic): NO marker after post-process (crashed subagent /
+  unwritable) ⇒ **fail-closed non-decision STOP** (the codex voice was lost — never proceed).
+- **A degraded token (`CODEX_KILLED_TIMEOUT` / `CODEX_UNAVAILABLE`) WITH a present marker** → render
+  the degraded tier (the helper owns the marker); do NOT post-process.
+- **A degraded token with an ABSENT/empty marker** (marker-write failed), OR an empty/unrecognized
+  token with shell rc ∉ {126,127}, OR `OK`-with-empty-log ⇒ **fail-closed non-decision STOP**.
+- **`HELPER_ERROR` (exit 2) OR shell rc 126/127** ⇒ **broken-helper NON-DECISION STOP**: fix
+  `bin/drive-codex.sh` / `chmod +x` / reinstall, then resume — NO codex was launched, NO codex
+  marker written, and there is NO `codex exec` fallback. Append an attempt-log op `helper_error`
+  line, then surface the STOP.
 
-```
-TMPDIR="$RUN_DIR/tmp" codex exec "Review <scope>. For 'design': audit $RUN_DIR/design.md — high-level only
-(sound goal/approach + ordered ## Phases, no phase cycle; FLAG over-split P1 — a phase beyond
-the first with no fan-out/staged-risk justification, a test/docs-only phase, or mere sequential
-dependency with no foundation needing its own verify; and under-split P2 — one phase bundling a
-must-verify-first foundation with its dependents; and FLAG P1 an over-band Size estimate
-(~150-500/>=500 production SLOC, comments+tests excluded) that neither split on a real seam nor
-carries an atomicity justification + heightened-review note, or an absent Size estimate). For 'phasedesign<P>': audit
-$RUN_DIR/design-phase<P>.md (buildable interfaces, testable criteria, sound Slices — no slice
-cycle, disjoint owns, no contract contradicting real prior-phase code; FLAG a slice beyond the
-first with no why:, a test-only slice, two slices sharing a new co-authored contract instead of
-being one, or a slice bundling a must-verify-first foundation with its dependents). For a slice:
-git diff <phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owned files. For
-a phase: git diff <diffBase>..phaseInt/<runId>/<P>, integration; AND reconcile size — actual
-production SLOC (excl tests/comments/blanks) crossing into a higher band than the plan's Size
-estimate claimed with no heightened-review note is P2. Flag BLOCKING/MAJOR/
-MINOR with file:line. Prioritized." > $RUN_DIR/codex-raw-<scope>.log 2>&1
-```
+Degradation (do NOT hard-fail): the helper writes a non-empty `codex-review-<scope>.md` whose FIRST
+line is the conventional degradation marker `CODEX_UNAVAILABLE` (codex missing / probed outage) or
+`CODEX_KILLED_TIMEOUT` (watchdog stall/backstop kill), optionally a warning note on later lines;
+continue single-voice. The conformance codex check is satisfied by ANY non-empty
+`codex-review-<scope>.md` (real review OR degradation note); it does NOT parse the marker — the
+first-line `CODEX_UNAVAILABLE` / `CODEX_KILLED_TIMEOUT` are the human-readable convention, not gate
+tokens.
 
-On a re-dispatch after a stranded `inflight-review-<scope>.marker`, first `mv` the
-existing `codex-raw-<scope>.log` aside (e.g. `codex-raw-<scope>.log.stranded`) — an
-orphaned background codex may still be appending to it.
-
-run_in_background; wait for completion; then a bounded post-process subagent: "Read
-`$RUN_DIR/codex-raw-<scope>.log`, extract codex's final findings, write
-`$RUN_DIR/codex-review-<scope>.md` (same severity tags, <150 words)."
-
-Degradation (do NOT hard-fail): codex missing OR hangs/times out → write a non-empty
-`codex-review-<scope>.md` whose FIRST line is the conventional degradation marker
-`CODEX_UNAVAILABLE`, optionally followed by a warning note on later lines; continue.
-The conformance codex check is satisfied by ANY non-empty `codex-review-<scope>.md`
-(real review OR degradation note); it does NOT parse the marker — the first-line
-`CODEX_UNAVAILABLE` is the human-readable convention, not a gate token.
-
-## Step 3 — Combine & converge
-
-Compare: both-flagged = high confidence; **codex-only = scrutinize hardest** (bugs
-Claude missed); reviewer-only = claude-only. **Converged** when NEITHER voice has an
-open **P1** (BLOCKING/MAJOR); P2/P3 logged, not blocking. Record to
-`$RUN_DIR/state.json`: this scope's verdict + increment its counter — `state.designReview`
-for `design`, `state.slices[<id>].reviewCount` for a slice, `state.phaseReview[<P>].round`
-for a `phase <P>` review, `state.phaseDesign[<P>].round` for a `phase <P> design` review.
-**Exception — `harden-regress`:** increment nothing (the harden loop's 3-fix-round cap
-bounds it).
+Compare: both-flagged = high confidence; **codex-only = scrutinize hardest** (bugs Claude missed);
+reviewer-only = claude-only. **Converged** when NEITHER voice has an open **P1** (BLOCKING/MAJOR); a
+degraded token contributes zero P1; P2/P3 logged, not blocking. Record to `$RUN_DIR/state.json`:
+this scope's verdict + increment its counter — `state.designReview` for `design`,
+`state.slices[<id>].reviewCount` for a slice, `state.phaseReview[<P>].round` for a `phase <P>`
+review, `state.phaseDesign[<P>].round` for a `phase <P> design` review.
+**Exception — `harden-regress`:** increment nothing (the harden loop's 3-fix-round cap bounds it).
 
 After this stage:
 - **FINDINGS** → `/drive` loops `/drive-implement` on this scope (it owns the cap-8).

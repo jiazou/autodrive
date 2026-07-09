@@ -1,0 +1,534 @@
+#!/usr/bin/env bash
+# drive-codex.sh — the supervised codex-dispatch helper for /drive's dual-voice review leg.
+#
+# It runs the codex CLI over a review/harden/finalize scope, watchdogs a byte-silent call,
+# and reports the outcome as a CLOSED token on STDOUT so the coordinator can render an honest
+# degradation tier without ever parsing the codex output. It is deliberately named `drive-*`
+# so its own diffs self-classify as security-sensitive (full-effort codex review every round).
+#
+# Usage:
+#   drive-codex.sh --mode probe   --scope <tok> --attempt-log <path>
+#   drive-codex.sh --mode dispatch --scope <tok> --attempt-log <path> \
+#       --scope-class <design|slice|phase|finalize> \
+#       --raw-log <path> --marker <path> --prompt-file <path> \
+#       [--security-diff] [--confirmation-class] [--prior-codex <path>] \
+#       [--stall-secs <N>] [--backstop-secs <N>] [--poll-secs <N>] \
+#       [--probe-timeout-secs <N>] [--sandbox <rung>] [--no-watchdog] [--no-tiering] \
+#       [--max-attempts <N>]
+#
+# Modes (closed set):
+#   probe     — health query only (`<cmd> doctor --json`, bounded); prints OK|CODEX_UNAVAILABLE;
+#               writes NO marker (pure query).
+#   dispatch  — one supervised codex call (probes internally); prints exactly one closed token.
+#
+# Closed outcome-token set — the LAST line of STDOUT, and STDOUT carries NOTHING ELSE (channel
+# separation, not convention): all diagnostics + watchdog logging go to STDERR + the attempt
+# log. So stderr emitted at any time (incl. after the token) can never corrupt the token file.
+#   OK | CODEX_KILLED_TIMEOUT | CODEX_UNAVAILABLE | HELPER_ERROR
+# The two degraded tokens are BYTE-IDENTICAL to the first-line marker strings the helper writes.
+#
+# Exit codes (mirror drive-conformance.sh 0/1/2):
+#   0  OK                    — codex completed; the real review is in the raw log; NO marker
+#                             (the coordinator's post-process writes the real review to --marker).
+#   1  CODEX_KILLED_TIMEOUT  — watchdog kill (stall-after-retry, or backstop); marker written.
+#   1  CODEX_UNAVAILABLE     — cli absent OR confirmed probed outage OR exec-failed; marker written.
+#   2  HELPER_ERROR          — the helper's OWN PRE-LAUNCH usage/config error (bad flags,
+#                             charset-invalid --scope, missing/empty prompt or marker, unwritable
+#                             --marker parent, rung/effort resolution). NO marker → the coordinator
+#                             STOPs (broken helper). HELPER_ERROR is a PRE-LAUNCH-ONLY outcome:
+#                             from codex-spawn on, NO path emits it (post-launch faults map to
+#                             CODEX_UNAVAILABLE cause=internal, the stall/backstop path, or the
+#                             marker-write fail-closed path).
+# A marker-WRITE failure (writable parent but the tmp/mv itself fails — a --marker path that is a
+# directory, ENOSPC, a marker made read-only after the pre-check) is FAIL-CLOSED: NO fake marker,
+# a stderr diagnostic, exit 1 with the degraded token still on STDOUT (no 5th token) — the
+# coordinator honors a degraded token ONLY when the marker is present, so an absent marker fails
+# the scope's gate by construction.
+#
+# Env-var escape hatches (precedence: explicit --flag > env var > default):
+#   DRIVE_CODEX_STALL_MINS     stall_secs = mins*60      (default stall 900s = 15 min)
+#   DRIVE_CODEX_BACKSTOP_HOURS backstop_secs = hours*3600 (default backstop 10800s = 3h per attempt)
+#   DRIVE_CODEX_WATCHDOG=off   disable the STALL detector ONLY (the per-attempt backstop stays)
+#   DRIVE_CODEX_SANDBOX=<rung|off>  override the scope-class sandbox rung, or `off` = pass no flag
+#   DRIVE_CODEX_EFFORT_TIER=off     never down-tier codex effort (always full)
+#   DRIVE_CODEX_CMD            the codex binary (default `codex`) — the dep-independent TEST SEAM
+#                             (tests inject a simulated log-writer, cf. RETENTION_TRASH_CMD).
+#   DRIVE_CODEX_INJECT_INTERNAL_FAULT=1  TEST knob: force a POST-launch internal fault (proves it
+#                             maps to CODEX_UNAVAILABLE cause=internal, never HELPER_ERROR).
+#
+# Sandbox rungs (RESOLVED from sandbox-spike-evidence.md fail-branch, §D):
+#   design/phasedesign scope → read-only ;  slice/phase/finalize scope → workspace-write.
+#
+# Best-effort supervisor: deliberately NOT `set -euo pipefail`. rc is managed explicitly. No
+# `set -u` (also sidesteps the same-line `local a=$1 b=$a` expansion gotcha).
+
+# ----------------------------------------------------------------------------- #
+# Helper-internal constants (§A/§D/§F)
+# ----------------------------------------------------------------------------- #
+SANDBOX_RUNG_DESIGN="read-only"        # design/phasedesign scope   (spike fail-branch, §D)
+SANDBOX_RUNG_CODE="workspace-write"    # slice/phase/finalize scope (spike fail-branch, §D)
+EFFORT_TIER_LOW="medium"               # -c model_reasoning_effort=<low> on a clean confirmation (§F)
+PROBE_TIMEOUT_SECS_DEFAULT=10          # bounded health probe — the ONE un-watchdogged codex call
+POLL_SECS_DEFAULT=15                   # watchdog poll granularity (prod)
+GRACE_SECS=2                           # TERM→KILL grace on a group kill
+
+# ----------------------------------------------------------------------------- #
+# CLI parse — `--flag value` with a need_value guard + exit-2 usage (mirrors drive-retention.sh).
+# Every exit-2 path prints the HELPER_ERROR token to STDOUT (the token channel) + a diagnostic to
+# STDERR, so the coordinator's broken-helper STOP fires on the token.
+# ----------------------------------------------------------------------------- #
+DRIVE_CODEX_CMD="${DRIVE_CODEX_CMD:-codex}"
+
+usage() {
+  cat >&2 <<'EOF'
+usage: drive-codex.sh --mode probe|dispatch --scope <tok> --attempt-log <path>
+       [dispatch] --scope-class <design|slice|phase|finalize> --raw-log <path> \
+                  --marker <path> --prompt-file <path>
+       [--security-diff] [--confirmation-class] [--prior-codex <path>]
+       [--stall-secs <N>] [--backstop-secs <N>] [--poll-secs <N>]
+       [--probe-timeout-secs <N>] [--sandbox <rung>] [--no-watchdog] [--no-tiering]
+       [--max-attempts <N>]
+EOF
+}
+
+# HELPER_ERROR — a PRE-LAUNCH-ONLY fault. Diagnostic → STDERR; token → STDOUT; exit 2. The
+# coordinator (never the helper) appends the attempt-log `helper_error` op (the helper never
+# completed), so the JSONL op enum stays closed. NO marker is written on this lane.
+helper_error() {
+  echo "drive-codex.sh: HELPER_ERROR ($1)" >&2
+  printf '%s\n' "HELPER_ERROR"
+  exit 2
+}
+
+# need_value <flag> <remaining-argc> <next>: exit 2 (HELPER_ERROR) on a missing OR flag-shaped
+# value (mirrors drive-retention.sh — a trailing valued flag would otherwise spin/mis-scan).
+need_value() {
+  local flag="$1" argc="$2" next="$3"
+  [ "$argc" -ge 2 ] || { usage; helper_error "$flag needs a value"; }
+  case "$next" in
+    -*) usage; helper_error "$flag needs a value (got flag-shaped: $next)" ;;
+  esac
+}
+
+MODE=""; SCOPE=""; ATTEMPT_LOG=""
+SCOPE_CLASS=""; RAW_LOG=""; MARKER=""; PROMPT_FILE=""
+SECURITY_DIFF=0; CONFIRMATION_CLASS=0; PRIOR_CODEX=""
+STALL_SECS=""; BACKSTOP_SECS=""; POLL_SECS=""; PROBE_TIMEOUT_SECS=""
+SANDBOX_OVERRIDE=""; SANDBOX_OVERRIDE_SET=0
+NO_WATCHDOG=0; NO_TIERING=0; MAX_ATTEMPTS=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --mode)               need_value --mode "$#" "$2"; MODE="$2"; shift 2 ;;
+    --scope)              need_value --scope "$#" "$2"; SCOPE="$2"; shift 2 ;;
+    --attempt-log)        need_value --attempt-log "$#" "$2"; ATTEMPT_LOG="$2"; shift 2 ;;
+    --scope-class)        need_value --scope-class "$#" "$2"; SCOPE_CLASS="$2"; shift 2 ;;
+    --raw-log)            need_value --raw-log "$#" "$2"; RAW_LOG="$2"; shift 2 ;;
+    --marker)             need_value --marker "$#" "$2"; MARKER="$2"; shift 2 ;;
+    --prompt-file)        need_value --prompt-file "$#" "$2"; PROMPT_FILE="$2"; shift 2 ;;
+    --prior-codex)        need_value --prior-codex "$#" "$2"; PRIOR_CODEX="$2"; shift 2 ;;
+    --stall-secs)         need_value --stall-secs "$#" "$2"; STALL_SECS="$2"; shift 2 ;;
+    --backstop-secs)      need_value --backstop-secs "$#" "$2"; BACKSTOP_SECS="$2"; shift 2 ;;
+    --poll-secs)          need_value --poll-secs "$#" "$2"; POLL_SECS="$2"; shift 2 ;;
+    --probe-timeout-secs) need_value --probe-timeout-secs "$#" "$2"; PROBE_TIMEOUT_SECS="$2"; shift 2 ;;
+    --sandbox)            need_value --sandbox "$#" "$2"; SANDBOX_OVERRIDE="$2"; SANDBOX_OVERRIDE_SET=1; shift 2 ;;
+    --max-attempts)       need_value --max-attempts "$#" "$2"; MAX_ATTEMPTS="$2"; shift 2 ;;
+    --security-diff)      SECURITY_DIFF=1; shift ;;
+    --confirmation-class) CONFIRMATION_CLASS=1; shift ;;
+    --no-watchdog)        NO_WATCHDOG=1; shift ;;
+    --no-tiering)         NO_TIERING=1; shift ;;
+    *) usage; helper_error "unknown flag: $1" ;;
+  esac
+done
+
+# ---- required-flag validation (PRE-LAUNCH; all HELPER_ERROR) ----
+case "$MODE" in
+  probe|dispatch) ;;
+  *) usage; helper_error "invalid --mode (want probe|dispatch): '$MODE'" ;;
+esac
+[ -n "$SCOPE" ] || { usage; helper_error "--scope required"; }
+[ -n "$ATTEMPT_LOG" ] || { usage; helper_error "--attempt-log required"; }
+
+# --scope charset validation — done IMMEDIATELY, before the helper composes any <scope>-derived
+# path (killed-log stems, marker tmp names, the attempt-log scope field). This guards the
+# HELPER's OWN path composition; the coordinator's <scope> is already a trusted validated id.
+case "$SCOPE" in
+  *[!A-Za-z0-9._-]*) helper_error "invalid --scope charset (want ^[A-Za-z0-9._-]+$): '$SCOPE'" ;;
+esac
+
+# ----------------------------------------------------------------------------- #
+# Resolve defaults from env (precedence flag > env > default). awk multiplies (fractional-safe,
+# so tests can set sub-second stall/backstop via the MINS/HOURS env or the --*-secs flags).
+# ----------------------------------------------------------------------------- #
+if [ -z "$STALL_SECS" ]; then
+  if [ -n "$DRIVE_CODEX_STALL_MINS" ]; then STALL_SECS="$(awk "BEGIN{print $DRIVE_CODEX_STALL_MINS*60}")"; else STALL_SECS=900; fi
+fi
+if [ -z "$BACKSTOP_SECS" ]; then
+  if [ -n "$DRIVE_CODEX_BACKSTOP_HOURS" ]; then BACKSTOP_SECS="$(awk "BEGIN{print $DRIVE_CODEX_BACKSTOP_HOURS*3600}")"; else BACKSTOP_SECS=10800; fi
+fi
+[ -n "$POLL_SECS" ] || POLL_SECS="$POLL_SECS_DEFAULT"
+[ -n "$PROBE_TIMEOUT_SECS" ] || PROBE_TIMEOUT_SECS="$PROBE_TIMEOUT_SECS_DEFAULT"
+[ -n "$MAX_ATTEMPTS" ] || MAX_ATTEMPTS=2
+
+WATCHDOG_ON=1
+[ "$NO_WATCHDOG" = 1 ] && WATCHDOG_ON=0
+[ "${DRIVE_CODEX_WATCHDOG:-}" = off ] && WATCHDOG_ON=0
+
+TIERING_ON=1
+[ "$NO_TIERING" = 1 ] && TIERING_ON=0
+[ "${DRIVE_CODEX_EFFORT_TIER:-}" = off ] && TIERING_ON=0
+
+# ----------------------------------------------------------------------------- #
+# Small portable primitives.
+# ----------------------------------------------------------------------------- #
+
+# fstat-on-fd size (follows the inode across an mv-aside — a prior orphan appending to a
+# since-renamed log cannot fool the poll). BSD `stat -f %z` first, GNU `stat -c %s` fallback
+# (the proven drive-retention.sh idiom). $1 = fd number.
+_fd_size() {
+  local p
+  if [ -d /proc/self/fd ]; then p="/proc/self/fd/$1"; else p="/dev/fd/$1"; fi
+  stat -f %z "$p" 2>/dev/null || stat -c %s "$p" 2>/dev/null
+}
+
+# rc0 iff the file exists and has non-whitespace content. $1 = path.
+_log_nonempty() {
+  [ -s "$1" ] || return 1
+  grep -q '[^[:space:]]' "$1" 2>/dev/null
+}
+
+# TERM the group leader was sent; give a brief grace, then KILL the whole group. $1 = pgid.
+_grace_then_kill() {
+  local pgid="$1" i=0
+  while [ "$i" -lt 20 ] && kill -0 "$pgid" 2>/dev/null; do sleep 0.05; i=$((i + 1)); done
+  kill -KILL -"$pgid" 2>/dev/null
+}
+
+# A small jitter/backoff sleep, tied to the poll granularity (tiny under the test poll knob;
+# ~15s in prod). Used for the probe retry backoff and the stall-retry jitter.
+_jitter_sleep() { sleep "$POLL_SECS" 2>/dev/null; }
+
+# ---- attempt log (§A.10) — one JSON line per op; CLOSED op enum probe|dispatch|kill|retry|degrade
+#      (helper_error is coordinator-appended). Best-effort; never fatal. ----
+_runid_from_attempt_log() {
+  local b; b="$(basename "$ATTEMPT_LOG")"
+  case "$b" in
+    codex-attempts-*.jsonl) b="${b%.jsonl}"; printf '%s' "${b#codex-attempts-}" ;;
+    *) printf '' ;;
+  esac
+}
+_jstr() {   # JSON string, or `null` for empty. $1 = value.
+  if [ -z "$1" ]; then printf 'null'; return; fi
+  local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+  printf '"%s"' "$s"
+}
+_jnum() {   # JSON number, or `null` for empty. $1 = value.
+  if [ -z "$1" ]; then printf 'null'; else printf '%s' "$1"; fi
+}
+# log_attempt op attempt outcome cause effort sandbox max_gap killed_log probe_rc rc
+log_attempt() {
+  [ -n "$ATTEMPT_LOG" ] || return 0
+  local ts rid
+  ts="$(date +%s 2>/dev/null)"
+  rid="$(_runid_from_attempt_log)"
+  {
+    printf '{"ts":%s,"runId":%s,"scope":%s,"op":%s,"attempt":%s,"outcome":%s,"cause":%s,"effort":%s,"sandbox":%s,"max_gap_secs":%s,"stall_secs":%s,"backstop_secs":%s,"killed_log":%s,"probe_rc":%s,"rc":%s}\n' \
+      "$(_jnum "$ts")" "$(_jstr "$rid")" "$(_jstr "$SCOPE")" "$(_jstr "$1")" "$(_jnum "$2")" \
+      "$(_jstr "$3")" "$(_jstr "$4")" "$(_jstr "$5")" "$(_jstr "$6")" "$(_jnum "$7")" \
+      "$(_jnum "$STALL_SECS")" "$(_jnum "$BACKSTOP_SECS")" "$(_jstr "$8")" "$(_jnum "$9")" "$(_jnum "${10}")"
+  } >> "$ATTEMPT_LOG" 2>/dev/null
+  return 0
+}
+
+# ---- marker writes (§A.9) — tmp+mv atomic; first line = the outcome token (byte-identical to
+#      stdout); line 2 = the mandated warning. rc0 written, rc1 write FAILED (fail-closed). ----
+write_marker() {   # $1=token $2=warning-line
+  local tmp="$MARKER.tmp.$$"
+  # A --marker path that is already a directory can never hold a regular file — fail closed
+  # WITHOUT polluting it (an `mv file dir` would move the tmp INSIDE the dir, not replace it).
+  [ -d "$MARKER" ] && return 1
+  printf '%s\n%s\n' "$1" "$2" > "$tmp" 2>/dev/null || return 1
+  mv "$tmp" "$MARKER" 2>/dev/null || return 1
+  [ -f "$MARKER" ] && [ -s "$MARKER" ]
+}
+
+# Emit a degraded outcome: write the marker, print the token, exit 1. On a marker-WRITE FAILURE
+# (§A.9 fail-closed) print the SAME token + a stderr diagnostic + exit 1 with NO marker — the
+# coordinator honors a degraded token ONLY with a present marker, so this fails the scope closed.
+emit_degraded() {   # $1=token $2=warning-line
+  if write_marker "$1" "$2"; then
+    printf '%s\n' "$1"; exit 1
+  fi
+  echo "drive-codex.sh: marker write FAILED at $MARKER — fail-closed (NO marker written)" >&2
+  printf '%s\n' "$1"; exit 1
+}
+
+emit_ok() { printf '%s\n' "OK"; exit 0; }
+
+# ---- health probe (§A.4-1 / §A.5): bg `<cmd> doctor --json` in its OWN process group under
+#      monitor mode, bounded by PROBE_TIMEOUT_SECS with a timed GROUP kill (never a bare PID —
+#      a forking doctor shim must not leak a child). stdout is CAPTURED (never on the helper's
+#      fd 1). Sets PROBE_RC. rc0 = probe OK. ----
+PROBE_OUT=""
+run_probe() {
+  if [ -z "$PROBE_OUT" ]; then
+    if [ -n "$RAW_LOG" ]; then PROBE_OUT="${RAW_LOG%.log}.probe.log"; else PROBE_OUT="$(dirname "$ATTEMPT_LOG")/codex-probe-$SCOPE.log"; fi
+  fi
+  "$DRIVE_CODEX_CMD" doctor --json > "$PROBE_OUT" 2>&1 &
+  local dpid=$! dpgid; dpgid=$dpid
+  ( sleep "$PROBE_TIMEOUT_SECS"
+    kill -0 "$dpid" 2>/dev/null && { kill -TERM -"$dpgid" 2>/dev/null; sleep "$GRACE_SECS"; kill -KILL -"$dpgid" 2>/dev/null; }
+  ) &
+  local watcher=$!
+  wait "$dpid" 2>/dev/null; PROBE_RC=$?
+  kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+  kill -KILL -"$dpgid" 2>/dev/null   # reap any forked straggler in the probe's group
+  [ "$PROBE_RC" = 0 ]
+}
+
+# run_probe once, then retry-once-with-backoff. rc0 = probe OK; rc1 = confirmed outage.
+probe_with_retry() {
+  run_probe && return 0
+  _jitter_sleep
+  run_probe && return 0
+  return 1
+}
+
+# ----------------------------------------------------------------------------- #
+# ONE supervised attempt (§A.4 steps 2-6). Launches codex in its OWN process group, watchdogs
+# byte growth, classifies via `kill_confirmed`. Sets ATTEMPT_RESULT ∈
+#   ok | exec-failed | killed-exec-failed | stall-kill | backstop-kill | internal-fault
+# plus CODEX_RC, THIS_KILLED; grows the global round_was_killed / MAX_GAP / KILLED_LOGS.
+# $1 = attempt index.
+# ----------------------------------------------------------------------------- #
+WATCH_PGID=""
+run_attempt() {
+  local attempt="$1"
+  local -a cmd=("$DRIVE_CODEX_CMD" exec)
+  [ "$SANDBOX_FLAG_ON" = 1 ] && cmd+=(--sandbox "$RUNG")
+  [ "$EFFORT_LOW" = 1 ] && cmd+=(-c "model_reasoning_effort=$EFFORT_TIER_LOW")
+  local prompt; prompt="$(cat "$PROMPT_FILE" 2>/dev/null)"
+
+  "${cmd[@]}" "$prompt" > "$RAW_LOG" 2>&1 &
+  local child=$! pgid; pgid=$child          # under `set -m` the job leader pid == its pgid
+  # Reaping trap (round-6 codex MAJOR): a helper that is itself killed/exits REAPS its codex
+  # child group instead of orphaning it. (An uncatchable SIGKILL is the accepted §A.4-2 residual.)
+  WATCH_PGID="$pgid"
+  trap '[ -n "$WATCH_PGID" ] && { kill -TERM -"$WATCH_PGID" 2>/dev/null; kill -KILL -"$WATCH_PGID" 2>/dev/null; }' EXIT INT TERM HUP
+
+  # TEST knob: a post-launch internal fault maps to CODEX_UNAVAILABLE(internal), never HELPER_ERROR.
+  if [ "${DRIVE_CODEX_INJECT_INTERNAL_FAULT:-}" = 1 ]; then
+    kill -TERM -"$pgid" 2>/dev/null; _grace_then_kill "$pgid"; wait "$child" 2>/dev/null
+    trap - EXIT INT TERM HUP; WATCH_PGID=""
+    ATTEMPT_RESULT=internal-fault; return
+  fi
+
+  # Open ONE read fd on the raw log (retry briefly until the child's `>` redirect created it).
+  local opened=0 tries=0
+  while [ "$tries" -lt 100 ]; do
+    # Group-redirect so a FAILED `9<` (the child's `>` redirect not yet created the file) reports
+    # to the already-suppressed fd 2, not the real stderr (a bare `exec 9<f 2>/dev/null` applies the
+    # `2>` AFTER the failing `9<`, leaking the "No such file" to stderr and corrupting .err).
+    if { exec 9<"$RAW_LOG"; } 2>/dev/null; then opened=1; break; fi
+    tries=$((tries + 1)); sleep 0.02
+  done
+
+  local last=0 size zero_polls=0 total_polls=0 gap elapsed
+  local watchdog_initiated=0 kill_reason="" target_alive=0
+  while kill -0 "$child" 2>/dev/null; do
+    sleep "$POLL_SECS"
+    if [ "$opened" = 1 ]; then size="$(_fd_size 9)"; else size="$(stat -f %z "$RAW_LOG" 2>/dev/null || stat -c %s "$RAW_LOG" 2>/dev/null)"; fi
+    total_polls=$((total_polls + 1))
+    if [ -z "$size" ]; then
+      :   # poll ambiguity (fstat/stat error) → NO stall evidence; do not count, do not kill
+    elif [ "$size" -gt "$last" ]; then
+      gap="$(awk "BEGIN{print $zero_polls*$POLL_SECS}")"
+      awk "BEGIN{exit !($gap>$MAX_GAP)}" && MAX_GAP="$gap"
+      zero_polls=0; last="$size"
+    else
+      zero_polls=$((zero_polls + 1))
+    fi
+    if [ "$WATCHDOG_ON" = 1 ]; then
+      gap="$(awk "BEGIN{print $zero_polls*$POLL_SECS}")"
+      if awk "BEGIN{exit !($gap>=$STALL_SECS)}"; then watchdog_initiated=1; kill_reason=stall; break; fi
+    fi
+    elapsed="$(awk "BEGIN{print $total_polls*$POLL_SECS}")"
+    if awk "BEGIN{exit !($elapsed>=$BACKSTOP_SECS)}"; then watchdog_initiated=1; kill_reason=backstop; break; fi
+  done
+  [ "$opened" = 1 ] && exec 9<&-
+
+  local kill_confirmed=0 wstatus
+  if [ "$watchdog_initiated" = 1 ]; then
+    kill -0 "$child" 2>/dev/null && target_alive=1   # was the target still alive at signal time?
+    kill -TERM -"$pgid" 2>/dev/null
+    _grace_then_kill "$pgid"
+    wait "$child" 2>/dev/null; wstatus=$?
+    # kill_confirmed = the signal hit a STILL-ALIVE target AND the wait-status is death-by-OUR-signal
+    # (143=128+TERM, 137=128+KILL). A codex that self-exits in the kill window leaves kill_confirmed=0
+    # and is classified by step 4 (its own rc/log), never mislabeled a stall (round-8 codex MAJOR).
+    { [ "$target_alive" = 1 ] && { [ "$wstatus" = 143 ] || [ "$wstatus" = 137 ]; }; } && kill_confirmed=1
+  else
+    wait "$child" 2>/dev/null; wstatus=$?
+  fi
+  trap - EXIT INT TERM HUP; WATCH_PGID=""
+  CODEX_RC="$wstatus"
+
+  if [ "$kill_confirmed" = 1 ]; then
+    local killed="${RAW_LOG%.log}.killed-$attempt.log"
+    mv "$RAW_LOG" "$killed" 2>/dev/null
+    THIS_KILLED="$killed"
+    KILLED_LOGS="${KILLED_LOGS:+$KILLED_LOGS,}$killed"
+    round_was_killed=1
+    if [ "$kill_reason" = stall ]; then ATTEMPT_RESULT=stall-kill; else ATTEMPT_RESULT=backstop-kill; fi
+    return
+  fi
+
+  # kill_confirmed==0 → codex self-exited (step 4): OK iff rc==0 AND the log is non-empty.
+  if [ "$wstatus" = 0 ] && _log_nonempty "$RAW_LOG"; then ATTEMPT_RESULT=ok; return; fi
+  # Availability failure (nonzero rc OR empty log). The killed-latch is authoritative here too:
+  # a RETRY after an earlier stall-kill that exec-fails is terminal CODEX_KILLED_TIMEOUT, never
+  # CODEX_UNAVAILABLE (round-3 Claude MAJOR — closes the step-4 escape).
+  if [ "$round_was_killed" = 1 ]; then ATTEMPT_RESULT=killed-exec-failed; else ATTEMPT_RESULT=exec-failed; fi
+}
+
+# ----------------------------------------------------------------------------- #
+# --mode dispatch (§A.4).
+# ----------------------------------------------------------------------------- #
+do_dispatch() {
+  # ---- dispatch-required flags (PRE-LAUNCH; all HELPER_ERROR) ----
+  case "$SCOPE_CLASS" in
+    design|slice|phase|finalize) ;;
+    *) helper_error "invalid --scope-class (want design|slice|phase|finalize): '$SCOPE_CLASS'" ;;
+  esac
+  [ -n "$RAW_LOG" ] || helper_error "--raw-log required for dispatch"
+  [ -n "$MARKER" ] || helper_error "--marker required for dispatch"
+  [ -n "$PROMPT_FILE" ] || helper_error "--prompt-file required for dispatch"
+  # --prompt-file must name an EXISTING NON-EMPTY file (else a degenerate `codex exec ""`).
+  [ -s "$PROMPT_FILE" ] || helper_error "--prompt-file missing or empty: '$PROMPT_FILE'"
+  # --marker PARENT must be writable (early OK-path guard — a structurally-unwritable parent would
+  # otherwise doom the eventual marker/post-process write and silently drop the codex voice). This
+  # does NOT subsume the post-launch marker-WRITE fail-closed path (§A.9), which stays the authority
+  # for a writable parent whose write still fails.
+  local mparent; mparent="$(dirname "$MARKER")"
+  [ -w "$mparent" ] || helper_error "--marker parent dir not writable: '$mparent'"
+
+  # ---- policy resolution (§A.6): the coordinator passes FACTS; the helper applies policies ----
+  SANDBOX_FLAG_ON=1; RUNG=""
+  if [ "${DRIVE_CODEX_SANDBOX:-}" = off ]; then
+    SANDBOX_FLAG_ON=0
+  elif [ "$SANDBOX_OVERRIDE_SET" = 1 ]; then
+    RUNG="$SANDBOX_OVERRIDE"
+  elif [ -n "${DRIVE_CODEX_SANDBOX:-}" ]; then
+    RUNG="$DRIVE_CODEX_SANDBOX"
+  else
+    case "$SCOPE_CLASS" in
+      design) RUNG="$SANDBOX_RUNG_DESIGN" ;;
+      slice|phase|finalize) RUNG="$SANDBOX_RUNG_CODE" ;;
+    esac
+  fi
+
+  local gate_enforced=0
+  [ "$SECURITY_DIFF" = 1 ] && gate_enforced=1
+  case "$SCOPE_CLASS" in phase|finalize) gate_enforced=1 ;; esac
+
+  # effort carve-out (§F): down-tier IFF confirmation-class AND NOT security-diff AND the
+  # --prior-codex scan is clean (non-degraded first line AND zero severity tags) AND tiering on.
+  EFFORT_LOW=0
+  if [ "$TIERING_ON" = 1 ] && [ "$CONFIRMATION_CLASS" = 1 ] && [ "$SECURITY_DIFF" != 1 ] && [ -n "$PRIOR_CODEX" ] && [ -f "$PRIOR_CODEX" ]; then
+    local fl; fl="$(head -n1 "$PRIOR_CODEX" 2>/dev/null)"
+    case "$fl" in
+      CODEX_UNAVAILABLE*|CODEX_KILLED_TIMEOUT*) : ;;   # degraded prior → full effort
+      *) grep -Ewq 'BLOCKING|MAJOR|MINOR|NIT|P[123]' "$PRIOR_CODEX" 2>/dev/null || EFFORT_LOW=1 ;;
+    esac
+  fi
+  local effort_desc="full" sandbox_desc="off"
+  [ "$EFFORT_LOW" = 1 ] && effort_desc="$EFFORT_TIER_LOW"
+  [ "$SANDBOX_FLAG_ON" = 1 ] && sandbox_desc="$RUNG"
+
+  set -m   # monitor mode: backgrounded jobs (probe + codex) get their OWN process group.
+
+  round_was_killed=0; MAX_GAP=0; KILLED_LOGS=""; PROBE_RC=""
+
+  # ---- Step 1: internal health probe (round_was_killed==0 — probe-as-outcome-writer) ----
+  if ! command -v "$DRIVE_CODEX_CMD" >/dev/null 2>&1; then
+    log_attempt probe 0 CODEX_UNAVAILABLE cli-absent "$effort_desc" "$sandbox_desc" "" "" "" ""
+    emit_degraded CODEX_UNAVAILABLE "Codex unavailable (cli-absent): probe_rc=n/a live_attempt=skipped attempt_log=$ATTEMPT_LOG"
+  fi
+  local max_attempts="$MAX_ATTEMPTS"
+  if probe_with_retry; then
+    log_attempt probe 0 OK "" "$effort_desc" "$sandbox_desc" "" "" "$PROBE_RC" ""
+  else
+    log_attempt probe 0 outage probed-outage "$effort_desc" "$sandbox_desc" "" "" "$PROBE_RC" ""
+    if [ "$gate_enforced" = 0 ]; then
+      # non-gate-enforced (design/phasedesign, non-sensitive slice) → immediate CODEX_UNAVAILABLE
+      log_attempt degrade 0 CODEX_UNAVAILABLE probed-outage "$effort_desc" "$sandbox_desc" "" "" "$PROBE_RC" ""
+      emit_degraded CODEX_UNAVAILABLE "Codex unavailable (probed-outage): probe_rc=$PROBE_RC live_attempt=skipped attempt_log=$ATTEMPT_LOG"
+    fi
+    # gate-enforced (phase/finalize, sensitive slice) → ONE watchdog-bounded attempt (no stall-retry)
+    max_attempts=1
+  fi
+
+  # ---- Steps 2-6: the supervised attempt loop ----
+  local attempt=1
+  while :; do
+    run_attempt "$attempt"
+    case "$ATTEMPT_RESULT" in
+      ok)
+        log_attempt dispatch "$attempt" OK "" "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
+        emit_ok ;;
+      internal-fault)
+        log_attempt degrade "$attempt" CODEX_UNAVAILABLE internal "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
+        emit_degraded CODEX_UNAVAILABLE "Codex unavailable (internal): probe_rc=$PROBE_RC live_attempt=failed attempt_log=$ATTEMPT_LOG" ;;
+      exec-failed)
+        log_attempt degrade "$attempt" CODEX_UNAVAILABLE exec-failed "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
+        emit_degraded CODEX_UNAVAILABLE "Codex unavailable (exec-failed): probe_rc=$PROBE_RC live_attempt=failed attempt_log=$ATTEMPT_LOG" ;;
+      killed-exec-failed)
+        # a RETRY after an earlier stall-kill that exec-failed → terminal CODEX_KILLED_TIMEOUT
+        log_attempt degrade "$attempt" CODEX_KILLED_TIMEOUT stall "$effort_desc" "$sandbox_desc" "$MAX_GAP" "$KILLED_LOGS" "$PROBE_RC" "$CODEX_RC"
+        emit_degraded CODEX_KILLED_TIMEOUT "Codex killed (stall): threshold=${STALL_SECS}s attempts=$attempt max_gap=${MAX_GAP}s killed_logs=$KILLED_LOGS attempt_log=$ATTEMPT_LOG" ;;
+      backstop-kill)
+        log_attempt kill "$attempt" CODEX_KILLED_TIMEOUT backstop "$effort_desc" "$sandbox_desc" "$MAX_GAP" "$THIS_KILLED" "$PROBE_RC" "$CODEX_RC"
+        log_attempt degrade "$attempt" CODEX_KILLED_TIMEOUT backstop "$effort_desc" "$sandbox_desc" "$MAX_GAP" "$KILLED_LOGS" "$PROBE_RC" "$CODEX_RC"
+        emit_degraded CODEX_KILLED_TIMEOUT "Codex killed (backstop): threshold=${BACKSTOP_SECS}s attempts=$attempt max_gap=${MAX_GAP}s killed_logs=$KILLED_LOGS attempt_log=$ATTEMPT_LOG" ;;
+      stall-kill)
+        log_attempt kill "$attempt" CODEX_KILLED_TIMEOUT stall "$effort_desc" "$sandbox_desc" "$MAX_GAP" "$THIS_KILLED" "$PROBE_RC" "$CODEX_RC"
+        if [ "$attempt" -lt "$max_attempts" ]; then
+          # probe-before-retry as a LAUNCH-GATE ONLY: it may SUPPRESS the next attempt on outage
+          # but writes NO marker and NEVER switches the outcome family (round_was_killed stays 1).
+          if run_probe; then
+            log_attempt retry "$((attempt + 1))" "" stall "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" ""
+            _jitter_sleep
+            attempt=$((attempt + 1)); continue
+          fi
+        fi
+        # retry suppressed by the launch-gate, exhausted, or unavailable → terminal KILLED
+        log_attempt degrade "$attempt" CODEX_KILLED_TIMEOUT stall "$effort_desc" "$sandbox_desc" "$MAX_GAP" "$KILLED_LOGS" "$PROBE_RC" "$CODEX_RC"
+        emit_degraded CODEX_KILLED_TIMEOUT "Codex killed (stall): threshold=${STALL_SECS}s attempts=$attempt max_gap=${MAX_GAP}s killed_logs=$KILLED_LOGS attempt_log=$ATTEMPT_LOG" ;;
+      *)
+        # unreachable by construction; fail closed as an availability failure
+        emit_degraded CODEX_UNAVAILABLE "Codex unavailable (internal): probe_rc=$PROBE_RC live_attempt=failed attempt_log=$ATTEMPT_LOG" ;;
+    esac
+  done
+}
+
+# ----------------------------------------------------------------------------- #
+# --mode probe (§A.5): health query only; writes NO marker.
+# ----------------------------------------------------------------------------- #
+do_probe() {
+  set -m
+  if ! command -v "$DRIVE_CODEX_CMD" >/dev/null 2>&1; then
+    log_attempt probe 0 CODEX_UNAVAILABLE cli-absent full off "" "" "" ""
+    printf '%s\n' "CODEX_UNAVAILABLE"; exit 1
+  fi
+  if probe_with_retry; then
+    log_attempt probe 0 OK "" full off "" "" "$PROBE_RC" ""
+    printf '%s\n' "OK"; exit 0
+  fi
+  log_attempt probe 0 CODEX_UNAVAILABLE probed-outage full off "" "" "$PROBE_RC" ""
+  printf '%s\n' "CODEX_UNAVAILABLE"; exit 1
+}
+
+case "$MODE" in
+  probe)    do_probe ;;
+  dispatch) do_dispatch ;;
+esac

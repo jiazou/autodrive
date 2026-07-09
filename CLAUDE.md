@@ -177,9 +177,15 @@ state.json                   -- run model: runId, baseRef, featureBranch, repoRo
                                 read: sessionId, autoContinue, waiting
 event-log.jsonl              -- append-only dispatch/verdict/merge/gate timeline
 review-<scope>-N.md          -- per-scope (design/phasedesign<P>[-r<R>]/slice/phase/finalize) review outputs
-codex-review-<scope>.md      -- codex findings; codex-raw-<scope>.log raw
+codex-review-<scope>.md      -- codex findings (bin/drive-codex.sh supervisor); codex-raw-<scope>.log raw.
+                                A degraded leg's first line = CODEX_UNAVAILABLE | CODEX_KILLED_TIMEOUT
 harden-<P>-N.md              -- per-phase harden audit (2-lens) outputs
 codex-harden-<P>.md          -- codex harden findings; codex-harden-<P>.log raw
+codex-raw-<scope>.killed-N.log / codex-harden-<P>.killed-N.log -- watchdog-killed codex raw logs,
+                                quarantined on a CODEX_KILLED_TIMEOUT (Tier-L swept)
+codex-attempts-<runId>.jsonl -- per-op codex-supervisor attempt log (KEEP; op = probe|dispatch|
+                                kill|retry|degrade; effort tier + sandbox rung + max inter-append gap)
+sandbox-spike-evidence.md    -- codex sandbox-rung spike evidence (phase-design precondition; READ-ONLY)
 finalize-todo.md             -- finalize architectural follow-ups (durable; promoted to
                                 repo-root TODO.md at ship)
 redesign-<P>-r<R>.marker     -- append-only redesign epoch markers (highest R = the

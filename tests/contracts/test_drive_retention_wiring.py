@@ -24,6 +24,8 @@ CMDS = REPO_ROOT / ".claude" / "commands"
 DRIVE_MD = CMDS / "drive.md"
 SHIP_MD = CMDS / "drive-ship.md"
 REVIEW_MD = CMDS / "drive-review.md"
+HARDEN_MD = CMDS / "drive-harden.md"
+FINALIZE_MD = CMDS / "drive-finalize.md"
 
 
 def _section(text, start_marker, *, end_markers):
@@ -183,21 +185,32 @@ def test_drive_md_resume_worktrees_done_path_ordered_gated():
 
 
 # --------------------------------------------------------------------------- #
-# AC13 — drive-review.md TMPDIR export around codex exec, with a preceding mkdir.
+# AC5/AC13 (R2/R4) — the TMPDIR-namespaced codex dispatch is now the FIRST audit section
+# (`## Step 1`), the helper `bin/drive-codex.sh` replaces the bare `codex exec`, and the pin
+# is MIGRATED to drive-review's new codex-dispatch section AND EXTENDED to harden + finalize.
+# A PRECEDENCE pin over two distinctive anchors (mkdir index < the TMPDIR=... bin/drive-codex.sh
+# dispatch index) — non-vacuous by construction. Mutation-verify: move the `mkdir` AFTER the
+# dispatch (or delete it) → the precedence pin reds.
 # --------------------------------------------------------------------------- #
-def test_drive_review_exports_tmpdir_around_codex():
-    text = REVIEW_MD.read_text(encoding="utf-8")
-    span = _section(text, "## Step 2", end_markers=["## "])
-    assert "mkdir -p" in span and "$RUN_DIR/tmp" in span, (
-        "AC13: a one-time mkdir -p $RUN_DIR/tmp before the codex call"
-    )
-    exec_m = re.search(r'TMPDIR="?\$RUN_DIR/tmp"? codex exec', span)
-    assert exec_m, "AC13: TMPDIR=$RUN_DIR/tmp must wrap the codex exec call"
-    # The mkdir MUST precede the TMPDIR-wrapped codex exec — otherwise TMPDIR would
-    # point at a not-yet-created dir, defeating the scratch-namespacing goal. A
-    # presence-only check would still pass with the mkdir moved AFTER the exec.
+def _assert_tmpdir_precedes_dispatch(md_path, label):
+    text = md_path.read_text(encoding="utf-8")
+    span = _section(text, "## Step 1", end_markers=["## "])
+    disp_m = re.search(r'TMPDIR="?\$RUN_DIR/tmp"? bin/drive-codex\.sh', span)
+    assert disp_m, f"{label}: TMPDIR=$RUN_DIR/tmp must wrap the bin/drive-codex.sh dispatch"
     mkdir_m = re.search(r'mkdir -p "?\$RUN_DIR/tmp"?', span)
-    assert mkdir_m, "AC13: a one-time mkdir -p $RUN_DIR/tmp before the codex call"
-    assert mkdir_m.start() < exec_m.start(), (
-        "AC13: mkdir -p $RUN_DIR/tmp must PRECEDE the TMPDIR=$RUN_DIR/tmp codex exec call"
+    assert mkdir_m, f"{label}: a one-time mkdir -p $RUN_DIR/tmp before the dispatch"
+    assert mkdir_m.start() < disp_m.start(), (
+        f"{label}: mkdir -p $RUN_DIR/tmp must PRECEDE the TMPDIR=$RUN_DIR/tmp bin/drive-codex.sh dispatch"
     )
+
+
+def test_drive_review_exports_tmpdir_around_codex():
+    _assert_tmpdir_precedes_dispatch(REVIEW_MD, "AC5 drive-review")
+
+
+def test_drive_harden_exports_tmpdir_around_codex():
+    _assert_tmpdir_precedes_dispatch(HARDEN_MD, "AC5 drive-harden")
+
+
+def test_drive_finalize_exports_tmpdir_around_codex():
+    _assert_tmpdir_precedes_dispatch(FINALIZE_MD, "AC5 drive-finalize")

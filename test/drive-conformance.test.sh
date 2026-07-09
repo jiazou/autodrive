@@ -213,6 +213,11 @@ echo "=== AC3: codex_present rule — ANY non-empty codex file satisfies; empty 
 # non-empty -> clean.
 read -r repo rd < <(mk_plan codex_unavailable)
 run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC3 non-empty CODEX_UNAVAILABLE file satisfies codex" 0 "$RC"
+# AC-H11 (R2/R4): a first-line CODEX_KILLED_TIMEOUT degradation file (the supervisor's watchdog-kill
+# marker) is non-empty -> satisfies codex_present() byte-identically to CODEX_UNAVAILABLE. Proves the
+# gate LOGIC is byte-unchanged by the new tier (`[ -s "$f" ]`, content NOT inspected).
+read -r repo rd < <(mk_plan codex_killed)
+run_conf "$repo" "$rd" --mode plan-gate;            assert_rc "AC-H11 non-empty CODEX_KILLED_TIMEOUT file satisfies codex" 0 "$RC"
 # A real review whose body merely mentions the word is just a non-empty file -> clean
 # (identical to the degradation file: codex_present() inspects only non-emptiness).
 read -r repo rd < <(mk_plan codex_buried)

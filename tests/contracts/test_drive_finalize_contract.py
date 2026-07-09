@@ -329,11 +329,29 @@ def test_finalize_emits_shipgate_artifact_contract():
     # real artifact-SCHEMA listing / exec command block is deleted. Slice the two distinctive
     # sub-blocks WITHIN Step 1 and pin each token THERE:
     #   (a) the `Write $RUN_DIR/review-finalize-N.md:` schema enumeration (:197-203), and
-    #   (b) the codex `codex exec ... > $RUN_DIR/codex-raw-finalize.log` command + its post-
-    #       process target `codex-review-finalize.md` (:224-230).
+    #   (b) the `bin/drive-codex.sh --mode dispatch` line + its `--raw-log`/`--marker` args.
+    # R2/R4 RE-ANCHOR (§I / D-r2r4-55): the round-4 snapshot→quarantine put THREE pre-dispatch
+    # occurrences of `codex-review-finalize.md` (the `cp` snapshot + the sibling `mv` + the
+    # raw-log `mv`) AHEAD of the dispatch inside the same fence, so the OLD
+    # `_slice_between(step1, r"^```$", r"codex-review-finalize\.md", inclusive)` truncated at
+    # the snapshot `cp` and BOTH assertions passed VACUOUSLY (deleting the real `--raw-log`/
+    # `--marker` dispatch args would NOT red). Re-anchor to the DISPATCH: START on
+    # `bin/drive-codex\.sh.*--mode\s+dispatch` (the `--mode dispatch` qualifier binds the
+    # dispatch LINE uniquely — NOT a bare `bin/drive-codex\.sh`, which a prose mention of the
+    # helper name before the fence would re-capture), STOP on the dispatch's `--marker ...
+    # codex-review-finalize.md` (inclusive). `--raw-log ...codex-raw-finalize.log` shares that
+    # `--marker` continuation line, so both L367/L371 bind the REAL dispatch args.
+    # Mutation-verify: (1) delete `--raw-log "$RUN_DIR/codex-raw-finalize.log"` → L367 reds;
+    # (2) delete `--marker "$RUN_DIR/codex-review-finalize.md"` → the stop is not found →
+    # _slice_between's `assert end is not None` reds.
     schema = _norm(_slice_between(step1, r"Write\s+`?\$RUN_DIR/review-finalize-N\.md", r"^CONVERGED\b"))
     codex_block = _norm(
-        _slice_between(step1, r"^```\s*$", r"codex-review-finalize\.md", inclusive_stop=True)
+        _slice_between(
+            step1,
+            r"bin/drive-codex\.sh.*--mode\s+dispatch",
+            r"--marker.*codex-review-finalize\.md",
+            inclusive_stop=True,
+        )
     )
 
     assert "review-finalize-N.md" in schema, (

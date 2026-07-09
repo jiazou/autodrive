@@ -639,7 +639,8 @@ kinds it can re-dispatch by scope
 1. **Adopt** only if the unit's COMPLETE artifact set exists and parses — for a review
    unit BOTH the round's `review-<scope>-N.md` (verdict line) AND a non-empty
    `codex-review-<scope>.md` sibling (any non-empty content satisfies; the first-line
-   `CODEX_UNAVAILABLE` is the degradation convention, not a parsed gate token); for an
+   `CODEX_UNAVAILABLE`/`CODEX_KILLED_TIMEOUT` are degradation conventions, not parsed gate
+   tokens); for an
    implement unit, slice commits past `phaseBaseSha` with
    green slice tests. Then finish the recording (counters self-repair via the resume
    reconstruction rules), clear the marker, continue. A Claude review file WITHOUT its
@@ -887,8 +888,8 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
      taken from `state.task`, which always has a writer — never an unsourced node.)
    - `review-<scope>-N.md` (`## Verdict: CONVERGED|FINDINGS`; `### [SEVERITY]` where
      BLOCKING/MAJOR = P1) — the Claude reviewer file, **persisted per round** (the `-N`
-     suffix) — and its codex sibling `codex-review-<scope>.md` (same tags, or bare
-     first-line token `CODEX_UNAVAILABLE`).
+     suffix) — and its codex sibling `codex-review-<scope>.md` (same tags, or a bare
+     first-line degradation token (`CODEX_UNAVAILABLE` | `CODEX_KILLED_TIMEOUT`)).
    - `design-phase<P>.md` (the per-phase detailed design) and its CURRENT-epoch review
      family `review-phasedesign<P>[-r<R>]-N.md` (`## Verdict: CONVERGED|FINDINGS`) +
      `codex-review-phasedesign<P>[-r<R>].md`, `R` = highest `redesign-<P>-r*.marker` in
@@ -897,7 +898,8 @@ Every rendered node derives ONLY from durable, fixed-format artifacts:
    - `review-finalize-<N>.md` (`## Verdict: CONVERGED|FINDINGS`; `## AppliedEdits:
      yes|no`) and its codex sibling `codex-review-finalize.md` — the run-singleton
      Finalize node's source, same dual-voice rule as any review scope (CONVERGED only when
-     BOTH voices have zero P1; a bare first-line `CODEX_UNAVAILABLE` ⇒ `Codex n/a`).
+     BOTH voices have zero P1; a bare first-line `CODEX_UNAVAILABLE` ⇒ `Codex n/a`,
+     `CODEX_KILLED_TIMEOUT` ⇒ `Codex killed (stall/backstop)` — both contribute zero P1).
    - **The slice scope token is the BARE id** — `review-<id>-*.md` /
      `codex-review-<id>*.md` (e.g. `review-1.2-3.md`, `codex-review-1.2.md`), per
      drive-review.md. Glob by prefix to tolerate round suffixes (`-r2`). (Design scope =
@@ -995,9 +997,10 @@ structural independence, which `owns`/`deps` in `state.json` do prove. Slices wi
 ### Combined (dual-voice) round verdict
 
 A round is **CONVERGED only when BOTH voices have zero P1** — count BLOCKING/MAJOR in
-`review-<scope>-N.md` AND in `codex-review-<scope>.md` (a `CODEX_UNAVAILABLE` first-line
-token ⇒ `Codex n/a`, contributes zero P1). **Never key the glyph off the Claude file's
-`## Verdict:` alone.**
+`review-<scope>-N.md` AND in `codex-review-<scope>.md` (a `CODEX_UNAVAILABLE` OR
+`CODEX_KILLED_TIMEOUT` first-line token ⇒ contributes zero P1: `CODEX_UNAVAILABLE` renders
+`Codex n/a`, `CODEX_KILLED_TIMEOUT` renders `Codex killed`). **Never key the glyph off the
+Claude file's `## Verdict:` alone.**
 
 Per-round derivation handles codex's single-file persistence (above) **structurally**,
 so it never drifts and never fabricates:

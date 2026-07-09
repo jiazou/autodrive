@@ -309,7 +309,12 @@ def test_stats_sourced_and_best_effort():
     assert "gates + timestamps · dispatches by kind · wall-clock" in sec
     assert "earliest → latest parseable `at`/`ts`" in sec
     assert "NO STOP-cause stat is emitted" in sec
-    assert "whose FIRST LINE begins with `CODEX_UNAVAILABLE` (prefix match)" in sec
+    # AC9 (R2/R4): the degraded-scope stat names BOTH first-line degradation tokens the
+    # supervisor writes. Mutation-verify: drop CODEX_KILLED_TIMEOUT → reds.
+    assert (
+        "whose FIRST LINE begins with `CODEX_UNAVAILABLE` or `CODEX_KILLED_TIMEOUT` (prefix match)"
+        in sec
+    )
 
 
 # --------------------------------------------------------------------------- #
