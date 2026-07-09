@@ -39,20 +39,22 @@ new bugs live.
   runs as the ledger-promotion's FIRST action (forward-path only) so HANDOFF entries ride the
   same single commit; claim corrected; idempotent append closes the pre-commit-resume dup window
   (codex P2).
-- [ ] **[V] `mission-control/bin/done.py:41`** — `LOG_SECTION_RE = r"(^##\s+Log[ \t]*\r?\n?)…"`
+- [x] **[V] `mission-control/bin/done.py:41`** — `LOG_SECTION_RE = r"(^##\s+Log[ \t]*\r?\n?)…"`
   has a fully-optional terminator, so it prefix-matches `## Logistics` / `## Logs` / `## Logbook`
   (confirmed live: group1 → `## Log` for all three). `mc done` then splits the heading and
   mangles the user's note — silent corruption by the self-described "ONE writer into task
   notes". *Fix:* require a line boundary: `r"(^##[ \t]+Log[ \t]*(?:\r?\n|\Z))"`; add a
-  `## Logistics` regression test.
+  `## Logistics` regression test. — **DONE (already fixed by `2e032c5`, PR #75):** the exact
+  line-boundary regex landed + `tests/mc/test_done.py:123` `## Logistics` regression test.
 
 ### P2 — correctness / contract defects
-- [ ] **[V] `mission-control/bin/vault_tasks.py:145`** — `project = (fm.get("project") or "").strip("[]")`
+- [x] **[V] `mission-control/bin/vault_tasks.py:145`** — `project = (fm.get("project") or "").strip("[]")`
   crashes `AttributeError` when `_parse_scalar` returns a list (confirmed live for
   `project: [[Autodrive]]` → `['[Autodrive]']`, and `status: [todo]`). One bracketed scalar in
   any task note tracebacks `mc tasks/standup/today/weekly`, the SwiftBar plugin, and the 6:45am
   launchd job. *Fix:* coerce list→scalar for project/status/priority/area (mirror the
-  `depends_on` guard at :148-150).
+  `depends_on` guard at :148-150). — **DONE (already fixed by `2e032c5`, PR #75):** added the
+  `_scalar()` helper (:86) applied to project/status + `test_load_tasks_wikilink_project_coerced_to_scalar`.
 - [ ] **[V] `mission-control/bin/vault_tasks.py:94`** — `_parse_frontmatter` skips any line with
   no `:` , so block-style YAML lists (`depends_on:\n  - other-task`, Obsidian's Properties
   serialization) parse as `''` → `depends_on` silently dropped → `mc standup` lists a blocked
