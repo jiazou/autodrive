@@ -2,8 +2,9 @@
 
 Phase 1 added `drive-finalize.md` + narrowed `drive-harden.md`; Phase 2 wired the
 stage into drive.md, drive-ship.md, bin/drive-conformance.sh, bin/drive-merge-gate.sh,
-and CLAUDE.md. These are PURE SPEC-PROSE pins (the script BEHAVIOR is covered by the
-bash conformance suite, slice 3.1) so a later edit cannot silently drop the wiring.
+and CLAUDE.md. Most pins are SPEC-PROSE (a later edit cannot silently drop the wiring);
+the AC45 block additionally carries a COMPACT behavioral `--mode ship` RED→GREEN proof
+(the exhaustive behavioral matrix lives in the bash conformance suite).
 
 Two anti-vacuity disciplines run throughout (per design D-P3-7):
 
@@ -878,8 +879,9 @@ def test_finalize_token_consistency_across_files():
 # AC45 — behavioral: `--mode ship` enforces the finalize `## AppliedEdits: no` gate
 # =========================================================================== #
 # A COMPACT behavioral RED->GREEN proof over the CORE THREE cases (yes->BLOCK, no->SHIP,
-# body-quoted-no->BLOCK); the exhaustive 6-case matrix (pending / missing / no-Findings) lives
-# in the bash suite (test/drive-conformance.test.sh AC45) so pytest stays non-duplicative.
+# body-quoted-no->BLOCK); the exhaustive matrix (AC45.a–i: incl. pending / missing / no-Findings
+# / bare-no / highest-N / first-match-dup-header) lives in the bash suite
+# (test/drive-conformance.test.sh AC45) so pytest stays non-duplicative.
 # Mirrors test_checkpoint_contract's subprocess + repo/RUN_DIR builder (the pattern already in
 # the pytest tree). Each case is built OTHERWISE-ship-valid (valid b-i counting phase review +
 # a CONVERGED finalize whose reviewed-sha == the featureBranch tip + codex sibling) so the
