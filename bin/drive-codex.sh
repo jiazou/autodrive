@@ -70,7 +70,9 @@
 #       killed-log renames must not fail into a false CODEX_UNAVAILABLE degrade — round-4/5 FIX A)
 #     · --prompt-file (exists, non-empty, AND READABLE with non-empty content — read pre-launch, FIX B)
 #     · --stall-secs/--backstop-secs/--poll-secs/--probe-timeout-secs
-#     (strictly-positive number) · --max-attempts (positive integer) · --sandbox AND DRIVE_CODEX_SANDBOX
+#     (strictly-positive number; AND --poll-secs strictly < min(stall_secs,backstop_secs) — a poll
+#     coarser than the deadline it guards sleeps past it before checking ⇒ the kill never fires)
+#     · --max-attempts (positive integer) · --sandbox AND DRIVE_CODEX_SANDBOX
 #     (rung ∈ {read-only,workspace-write,danger-full-access,off}) · DRIVE_CODEX_STALL_MINS /
 #     DRIVE_CODEX_BACKSTOP_HOURS (strictly-positive number, THEN `awk -v`, NEVER interpolated — the
 #     former command-injection hole).
@@ -741,6 +743,15 @@ _is_positive_number "$BACKSTOP_SECS"      || helper_error "--backstop-secs must 
 _is_positive_number "$PROBE_TIMEOUT_SECS" || helper_error "--probe-timeout-secs must be a positive number: '$PROBE_TIMEOUT_SECS'"
 case "$MAX_ATTEMPTS" in ''|*[!0-9]*) helper_error "--max-attempts must be a positive integer: '$MAX_ATTEMPTS'" ;; esac
 [ "$MAX_ATTEMPTS" -ge 1 ] || helper_error "--max-attempts must be >= 1: '$MAX_ATTEMPTS'"
+
+# --poll-secs must be strictly LESS than BOTH the stall AND the backstop threshold it guards. The
+# watchdog SLEEPS `POLL_SECS` before each deadline check, so a poll >= a threshold sleeps PAST that
+# deadline before ever testing it — the stall/backstop kill can never fire (a per-attempt-backstop
+# bypass). All three are already validated strictly-positive numbers above, so `awk -v` (parameterized,
+# never program interpolation) is safe. A mis-scaled poll is a config error ⇒ HELPER_ERROR pre-launch
+# (codex un-spawned), same lane as a non-positive knob.
+_awk -v p="$POLL_SECS" -v s="$STALL_SECS" -v b="$BACKSTOP_SECS" 'BEGIN{exit !((p+0)<(s+0) && (p+0)<(b+0))}' \
+  || helper_error "--poll-secs ($POLL_SECS) must be strictly less than both --stall-secs ($STALL_SECS) and --backstop-secs ($BACKSTOP_SECS)"
 
 # --attempt-log must be a REGULAR writable file (or creatable as one). A FIFO/socket/device would
 # block the best-effort `>> "$ATTEMPT_LOG"` with no reader and WEDGE the helper before it emits any

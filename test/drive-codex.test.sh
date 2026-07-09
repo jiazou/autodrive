@@ -453,6 +453,27 @@ done
 disp fake_ok f1ok slice "$WORK/codex-review-f1ok.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100
 check "FIX1 valid float knobs still run ⇒ OK" "$OUT" "OK"
 
+echo "=== FIX3 (codex BLOCKING): --poll-secs coarser than its stall/backstop bound ⇒ HELPER_ERROR pre-launch ==="
+# A --poll-secs >= backstop_secs (or stall_secs) sleeps PAST the deadline before the watchdog checks
+# it ⇒ the stall/backstop kill NEVER fires (a per-attempt-backstop bypass). --poll-secs is now
+# validated strictly LESS than BOTH thresholds PRE-LAUNCH ⇒ HELPER_ERROR (exit 2, no marker, codex
+# never spawned). The equal case (poll == backstop) is ALSO rejected (strictly-less boundary).
+for badpoll in "--poll-secs 0.5 --backstop-secs 0.2 --stall-secs 100" \
+               "--poll-secs 0.5 --stall-secs 0.2 --backstop-secs 100" \
+               "--poll-secs 0.2 --backstop-secs 0.2 --stall-secs 100"; do
+  rm -f "$WORK/codex-raw-f3.log"
+  # shellcheck disable=SC2086
+  OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope f3 --scope-class slice --attempt-log "$ALOG" \
+      --raw-log "$WORK/codex-raw-f3.log" --marker "$WORK/codex-review-f3.md" --prompt-file "$PROMPT" $badpoll 2>/dev/null)"
+  RC=$?
+  check "FIX3 [$badpoll] ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+  check "FIX3 [$badpoll] exit 2" "$RC" "2"
+  if [ ! -f "$WORK/codex-raw-f3.log" ]; then pass "FIX3 [$badpoll] codex un-spawned"; else fail "FIX3 [$badpoll] codex spawned"; fi
+done
+# a normal small poll (poll < min(stall,backstop)) still runs (guards against over-rejection).
+disp fake_ok f3ok slice "$WORK/codex-review-f3ok.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100
+check "FIX3 small poll < min(stall,backstop) still runs ⇒ OK" "$OUT" "OK"
+
 echo "=== FIX2 (codex MAJOR): a FIFO --attempt-log ⇒ HELPER_ERROR pre-launch (never wedges) ==="
 # A FIFO with no reader would block the best-effort `>> "$ATTEMPT_LOG"` and wedge the helper before
 # it emits any token. --attempt-log is validated as a regular writable file PRE-LAUNCH. (If the

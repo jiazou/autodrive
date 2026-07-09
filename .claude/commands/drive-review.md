@@ -111,9 +111,10 @@ lands in the run dir, not the shared `/tmp`. The dispatch block (snapshot → qu
 # 0. belt-and-suspenders: assert <scope> matches the HELPER's OWN PERMISSIVE charset BEFORE
 #    composing any <scope>-derived temp/log filename — accepts design / phasedesign1 / phase1 /
 #    slice 1.2; rejects path-traversal/injection chars. NOT the bare phase/slice-id grammar.
-case "$scope" in *[!A-Za-z0-9._-]*) echo "non-decision STOP: invalid <scope> charset"; exit ;; esac
+case "$scope" in *[!A-Za-z0-9._-]*) echo "non-decision STOP: invalid <scope> charset"; exit 2 ;; esac
 # 1. codex FIRST (background), TMPDIR-namespaced.
 mkdir -p "$RUN_DIR/tmp"
+[ -f "$RUN_DIR/codex-raw-<scope>.log" ] && mv "$RUN_DIR/codex-raw-<scope>.log" "$RUN_DIR/codex-raw-<scope>.log.stranded"   # re-dispatch: mv the raw log aside BEFORE the dispatch (an orphaned codex may still be appending; matches harden/finalize ordering)
 [ -f "$RUN_DIR/codex-review-<scope>.md" ] && cp "$RUN_DIR/codex-review-<scope>.md" "$RUN_DIR/tmp/codex-prior-<scope>.md"   # SNAPSHOT the prior sibling for --prior-codex BEFORE the quarantine mv hides it (else effort-tiering is dead). Ordering: snapshot → quarantine → dispatch
 [ -f "$RUN_DIR/codex-review-<scope>.md" ] && mv "$RUN_DIR/codex-review-<scope>.md" "$RUN_DIR/codex-review-<scope>.md.stranded"   # QUARANTINE the STALE codex SIBLING so a crashed round leaves NO current sibling for stranded-adopt
 for x in out err; do [ -f "$RUN_DIR/tmp/helper-<scope>.$x" ] && mv "$RUN_DIR/tmp/helper-<scope>.$x" "$RUN_DIR/tmp/helper-<scope>.$x.stranded"; done   # stale token/err file aside
@@ -164,10 +165,6 @@ touches the security path set (a sensitive slice; a phase diff is gate-enforced 
 `--confirmation-class`/`--prior-codex` flags (via `CONF`) ride ONLY a clean FIRST dispatch of a
 confirmation round; on a `phase <P>` re-audit after a clean prior, the snapshot source is
 `codex-review-phase<P>.md`.
-
-On a re-dispatch after a stranded `inflight-review-<scope>.marker`, first `mv` the existing
-`codex-raw-<scope>.log` aside (e.g. `codex-raw-<scope>.log.stranded`) — an orphaned background
-codex may still be appending to it.
 
 ## Step 2 — Claude reviewer (passive, separation-preserving) — spawned WHILE codex runs
 

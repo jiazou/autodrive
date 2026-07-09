@@ -264,6 +264,59 @@ def test_snapshot_then_quarantine_then_dispatch_order():
 
 
 # =========================================================================== #
+# AC-P2b — the raw-log `.stranded` quarantine precedes the dispatch (re-dispatch mixing guard)
+# =========================================================================== #
+def _raw_log_stranded_dest(md):
+    """The per-spec `<raw-log>.log.stranded` destination composed by the inline raw-log mv-aside."""
+    if md is REVIEW:
+        return "codex-raw-<scope>.log.stranded"
+    elif md is HARDEN:
+        return "codex-harden-<P>.log.stranded"
+    else:
+        return "codex-raw-finalize.log.stranded"
+
+
+def test_raw_log_stranded_mv_precedes_dispatch():
+    """FIX1 (codex MAJOR): each dispatch block `mv`s the stale raw log aside to `<raw>.log.stranded`
+    INLINE, BEFORE it launches `bin/drive-codex.sh … --mode dispatch` — matching harden/finalize.
+    Otherwise a re-dispatch with an orphaned codex still appending shares the raw log with the fresh
+    helper (the stranded-log mixing R2/R4 close). drive-review previously left this as TRAILING prose
+    AFTER the dispatch. Mutation-verify: move the raw-log `mv` after the dispatch (or delete it) → the
+    index comparison / presence assert reds."""
+    for md in (REVIEW, HARDEN, FINALIZE):
+        lines = _lines(md)
+        raw_i = _idx_sub(lines, "mv ", _raw_log_stranded_dest(md))
+        disp_i = _idx(lines, DISPATCH_RE)
+        assert raw_i is not None, (
+            f"{md.name}: missing the INLINE raw-log quarantine `mv … {_raw_log_stranded_dest(md)}`"
+        )
+        assert disp_i is not None, f"{md.name}: missing the dispatch line"
+        assert raw_i < disp_i, (
+            f"{md.name}: the raw-log `.stranded` mv-aside must precede the "
+            "`bin/drive-codex.sh … --mode dispatch` line (re-dispatch mixing guard)"
+        )
+
+
+# =========================================================================== #
+# FIX2 — the belt-and-suspenders scope-charset guard STOPs with a NON-ZERO exit (fail-closed)
+# =========================================================================== #
+def test_scope_charset_guard_exits_nonzero():
+    """FIX2 (codex MINOR): the `case "$scope" … invalid <scope> charset` guard must STOP with a
+    NON-ZERO exit — a bare `exit` returns the preceding echo's rc 0, so a wrapper keying on rc treats
+    an invalid scope as CLEAN instead of failing closed. Mutation-verify: change `exit 2` back to a
+    bare `exit` → the digit-capture reds."""
+    for md in (REVIEW, HARDEN, FINALIZE):
+        lines = _lines(md)
+        gi = _idx_sub(lines, 'case "$scope"', "invalid <scope> charset")
+        assert gi is not None, f"{md.name}: missing the belt-and-suspenders scope-charset guard"
+        m = re.search(r'invalid <scope> charset";\s*exit\s+(\d+)\s*;;', lines[gi])
+        assert m is not None and int(m.group(1)) != 0, (
+            f"{md.name}: the scope-charset guard must `exit` NON-ZERO (fail-closed), "
+            "not a bare `exit` (rc 0)"
+        )
+
+
+# =========================================================================== #
 # AC-P3 — post-OK completion contract (require a non-empty marker or fail-closed STOP)
 # =========================================================================== #
 def test_post_ok_completion_contract_in_each_block():

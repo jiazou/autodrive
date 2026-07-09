@@ -162,7 +162,7 @@ NEVER inside a subagent that waits on it). First `mkdir -p "$RUN_DIR/tmp"` (TMPD
 dispatch block (snapshot → quarantine → dispatch):
 
 ```
-case "$scope" in *[!A-Za-z0-9._-]*) echo "non-decision STOP: invalid <scope> charset"; exit ;; esac   # belt-and-suspenders: HELPER's permissive charset BEFORE composing any <scope>-derived filename
+case "$scope" in *[!A-Za-z0-9._-]*) echo "non-decision STOP: invalid <scope> charset"; exit 2 ;; esac   # belt-and-suspenders: HELPER's permissive charset BEFORE composing any <scope>-derived filename
 mkdir -p "$RUN_DIR/tmp"
 [ -f "$RUN_DIR/codex-raw-finalize.log" ] && mv "$RUN_DIR/codex-raw-finalize.log" "$RUN_DIR/codex-raw-finalize.log.stranded"   # re-dispatch: mv the raw log aside (an orphaned codex may still be appending)
 [ -f "$RUN_DIR/codex-review-finalize.md" ] && cp "$RUN_DIR/codex-review-finalize.md" "$RUN_DIR/tmp/codex-prior-finalize.md"   # SNAPSHOT the prior sibling for --prior-codex BEFORE the quarantine hides it. Ordering: snapshot → quarantine → dispatch
