@@ -80,10 +80,11 @@
 #     Boolean env compared literally (`= off` / `= 1`): DRIVE_CODEX_WATCHDOG, DRIVE_CODEX_EFFORT_TIER,
 #     DRIVE_CODEX_INJECT_INTERNAL_FAULT.
 #   REQUIRED-FILE READS fail CLOSED on a read error (not just an existence/`-s` check): --prompt-file
-#     ⇒ HELPER_ERROR (required); --prior-codex is optional/best-effort so its `-r` guard fails toward
-#     FULL codex effort (never silently down-tiers on an unreadable prior).
-#   JSON OUTPUT ENCODING (round-5): `_jstr` escapes \, ", and ALL C0 control chars (\n/\r/\t + \uXXXX)
-#     so the attempt-log JSONL is valid for ANY field value (e.g. a control char in a runId / path).
+#     ⇒ HELPER_ERROR (required); --prior-codex is optional/best-effort so an unreadable OR
+#     empty/whitespace-only prior fails toward FULL codex effort (never silently down-tiers — round-6).
+#   JSON OUTPUT ENCODING: `_jstr` escapes \, ", and ALL C0 control chars (\n/\r/\t + \uXXXX) so the
+#     attempt-log JSONL is valid for ANY field value (round-5); and `_awk` fixes the numeric locale to
+#     C so emitted numbers use `.` (a comma-locale would otherwise emit `0,2` — invalid JSON — round-6).
 #   PROCESS SUPERVISION (no SAME-PROCESS-GROUP descendant survives helper return on ANY terminal
 #     path): every spawned child is group-supervised under monitor mode — the `codex exec` group is
 #     reaped via a post-`wait` `-<pgid>`-liveness check on EVERY path incl. clean OK (round-3 FIX A,
@@ -194,6 +195,13 @@ case "$SCOPE" in
   *[!A-Za-z0-9._-]*) helper_error "invalid --scope charset (want ^[A-Za-z0-9._-]+$): '$SCOPE'" ;;
 esac
 
+# awk under a FIXED C numeric locale so number FORMATTING (`print`) AND PARSING (`+0`) always use `.`
+# as the decimal separator (round-6 FIX B). A comma-locale (e.g. LC_NUMERIC=de_DE) would otherwise make
+# awk emit `0,2` — invalid JSON for max_gap_secs/stall_secs/backstop_secs — AND mis-parse a dot-decimal
+# knob like `0.05` as 0 in the comparisons/validator. Scoped to awk ONLY (a command-local assignment,
+# NOT exported) so the `codex exec` child keeps the inherited locale (its UTF-8 output is unaffected).
+_awk() { LC_ALL=C awk "$@"; }
+
 # rc0 iff $1 is a STRICTLY-POSITIVE decimal number (e.g. 15, 900, 0.05). Rejects empty, negatives,
 # `0`, and non-numeric garbage (any char outside [0-9.], or >1 dot). Defined HERE (before the env
 # resolution below) because the numeric-env conversion MUST validate the RAW env value BEFORE it can
@@ -206,7 +214,7 @@ _is_positive_number() {
     ''|*[!0-9.]*) return 1 ;;   # empty, or any char outside [0-9.] (rejects -, e, letters, ;, space, "(")
     *.*.*) return 1 ;;          # more than one dot
   esac
-  awk -v n="$1" 'BEGIN{exit !((n+0)>0)}' 2>/dev/null   # strictly > 0 (rejects 0, 0.0); n via -v, NOT interpolated
+  _awk -v n="$1" 'BEGIN{exit !((n+0)>0)}' 2>/dev/null   # strictly > 0 (rejects 0, 0.0); n via -v, NOT interpolated
 }
 
 # ----------------------------------------------------------------------------- #
@@ -218,13 +226,13 @@ _is_positive_number() {
 if [ -z "$STALL_SECS" ]; then
   if [ -n "$DRIVE_CODEX_STALL_MINS" ]; then
     _is_positive_number "$DRIVE_CODEX_STALL_MINS" || helper_error "DRIVE_CODEX_STALL_MINS must be a positive number: '$DRIVE_CODEX_STALL_MINS'"
-    STALL_SECS="$(awk -v m="$DRIVE_CODEX_STALL_MINS" 'BEGIN{print m*60}')"
+    STALL_SECS="$(_awk -v m="$DRIVE_CODEX_STALL_MINS" 'BEGIN{print m*60}')"
   else STALL_SECS=900; fi
 fi
 if [ -z "$BACKSTOP_SECS" ]; then
   if [ -n "$DRIVE_CODEX_BACKSTOP_HOURS" ]; then
     _is_positive_number "$DRIVE_CODEX_BACKSTOP_HOURS" || helper_error "DRIVE_CODEX_BACKSTOP_HOURS must be a positive number: '$DRIVE_CODEX_BACKSTOP_HOURS'"
-    BACKSTOP_SECS="$(awk -v h="$DRIVE_CODEX_BACKSTOP_HOURS" 'BEGIN{print h*3600}')"
+    BACKSTOP_SECS="$(_awk -v h="$DRIVE_CODEX_BACKSTOP_HOURS" 'BEGIN{print h*3600}')"
   else BACKSTOP_SECS=10800; fi
 fi
 [ -n "$POLL_SECS" ] || POLL_SECS="$POLL_SECS_DEFAULT"
@@ -473,18 +481,18 @@ run_attempt() {
     if [ -z "$size" ]; then
       :   # poll ambiguity (fstat/stat error) → NO stall evidence; do not count, do not kill
     elif [ "$size" -gt "$last" ]; then
-      gap="$(awk -v z="$zero_polls" -v p="$POLL_SECS" 'BEGIN{print z*p}')"
-      awk -v g="$gap" -v mx="$MAX_GAP" 'BEGIN{exit !((g+0)>(mx+0))}' && MAX_GAP="$gap"
+      gap="$(_awk -v z="$zero_polls" -v p="$POLL_SECS" 'BEGIN{print z*p}')"
+      _awk -v g="$gap" -v mx="$MAX_GAP" 'BEGIN{exit !((g+0)>(mx+0))}' && MAX_GAP="$gap"
       zero_polls=0; last="$size"
     else
       zero_polls=$((zero_polls + 1))
     fi
     if [ "$WATCHDOG_ON" = 1 ]; then
-      gap="$(awk -v z="$zero_polls" -v p="$POLL_SECS" 'BEGIN{print z*p}')"
-      if awk -v g="$gap" -v s="$STALL_SECS" 'BEGIN{exit !((g+0)>=(s+0))}'; then watchdog_initiated=1; kill_reason=stall; break; fi
+      gap="$(_awk -v z="$zero_polls" -v p="$POLL_SECS" 'BEGIN{print z*p}')"
+      if _awk -v g="$gap" -v s="$STALL_SECS" 'BEGIN{exit !((g+0)>=(s+0))}'; then watchdog_initiated=1; kill_reason=stall; break; fi
     fi
-    elapsed="$(awk -v t="$total_polls" -v p="$POLL_SECS" 'BEGIN{print t*p}')"
-    if awk -v e="$elapsed" -v b="$BACKSTOP_SECS" 'BEGIN{exit !((e+0)>=(b+0))}'; then watchdog_initiated=1; kill_reason=backstop; break; fi
+    elapsed="$(_awk -v t="$total_polls" -v p="$POLL_SECS" 'BEGIN{print t*p}')"
+    if _awk -v e="$elapsed" -v b="$BACKSTOP_SECS" 'BEGIN{exit !((e+0)>=(b+0))}'; then watchdog_initiated=1; kill_reason=backstop; break; fi
   done
   [ "$opened" = 1 ] && exec 9<&-
 
@@ -593,8 +601,11 @@ do_dispatch() {
   # down-tier), rather than the pre-fix behavior where an unreadable prior's failed `grep` fell
   # through to `|| EFFORT_LOW=1` and WRONGLY down-tiered. --prior-codex is optional/best-effort (not a
   # required input), so a read failure is NOT HELPER_ERROR — it just declines the down-tier.
+  # round-6 FIX A: `_log_nonempty` also requires the prior be NON-EMPTY / non-whitespace — an EMPTY or
+  # whitespace-only prior is NOT a real completed clean review, so it must fail toward FULL effort
+  # (D-16 conservative direction), NOT fall through the clean-first-line/zero-tag scan into a down-tier.
   EFFORT_LOW=0
-  if [ "$TIERING_ON" = 1 ] && [ "$CONFIRMATION_CLASS" = 1 ] && [ "$SECURITY_DIFF" != 1 ] && [ -n "$PRIOR_CODEX" ] && [ -f "$PRIOR_CODEX" ] && [ -r "$PRIOR_CODEX" ]; then
+  if [ "$TIERING_ON" = 1 ] && [ "$CONFIRMATION_CLASS" = 1 ] && [ "$SECURITY_DIFF" != 1 ] && [ -n "$PRIOR_CODEX" ] && [ -f "$PRIOR_CODEX" ] && [ -r "$PRIOR_CODEX" ] && _log_nonempty "$PRIOR_CODEX"; then
     local fl; fl="$(head -n1 "$PRIOR_CODEX" 2>/dev/null)"
     case "$fl" in
       CODEX_UNAVAILABLE*|CODEX_KILLED_TIMEOUT*) : ;;   # degraded prior → full effort

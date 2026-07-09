@@ -616,6 +616,50 @@ sys.exit(1 if (bad or n == 0) else 0)
 PY
 check "R5-B control char (newline in runId) ⇒ every attempt-log line is valid JSON" "$?" "0"
 
+echo "=== R6-A (codex MAJOR): an EMPTY/whitespace --prior-codex ⇒ FULL effort (not a wrong down-tier) ==="
+# The clean-prior gate excluded degraded first lines + severity tags, but an EMPTY (or whitespace-only)
+# --prior-codex fell through ⇒ EFFORT_LOW=1 (medium). An empty prior is NOT a completed clean review;
+# per D-16 it must fail toward FULL effort. `_log_nonempty` now gates the down-tier. Proven RED on round-5.
+: > "$WORK/prior-empty.md"
+printf '   \n\t\n' > "$WORK/prior-ws.md"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv r6ae slice "$WORK/codex-review-r6ae.md" --poll-secs 0.05 --confirmation-class --prior-codex "$WORK/prior-empty.md"
+check_absent "R6-A empty --prior-codex ⇒ FULL effort (no -c down-tier)" "$(cat "$WORK/argv.log")" "model_reasoning_effort"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv r6aw slice "$WORK/codex-review-r6aw.md" --poll-secs 0.05 --confirmation-class --prior-codex "$WORK/prior-ws.md"
+check_absent "R6-A whitespace-only --prior-codex ⇒ FULL effort (no -c)" "$(cat "$WORK/argv.log")" "model_reasoning_effort"
+mkclean "$WORK/prior-clean-r6.md"   # a real CLEAN non-empty prior STILL down-tiers (no over-correction)
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv r6ac slice "$WORK/codex-review-r6ac.md" --poll-secs 0.05 --confirmation-class --prior-codex "$WORK/prior-clean-r6.md"
+check_contains "R6-A clean non-empty prior still down-tiers (no over-correction)" "$(cat "$WORK/argv.log")" "model_reasoning_effort=medium"
+
+echo "=== R6-B (P3): max_gap_secs is valid JSON regardless of the inbound numeric locale ==="
+# awk number formatting is locale-sensitive; under a comma-locale a fractional max_gap prints `0,05` ⇒
+# invalid JSON. The helper runs its numeric awk under LC_ALL=C (_awk), so the field is dot-decimal in
+# ANY locale. Run under an installed comma-locale (a genuine regression — reds on the pre-_awk helper);
+# else fall back to C. The fake pauses 0.25s then keeps streaming ⇒ a reliably-FRACTIONAL observed gap.
+R6LOC="C"; _r6locs=" $(locale -a 2>/dev/null | tr '\n' ' ') "   # space-delimited; no early-closing pipe (pipefail-safe)
+for L in de_DE.UTF-8 fr_FR.UTF-8 nl_NL.UTF-8 es_ES.UTF-8 it_IT.UTF-8; do
+  case "$_r6locs" in *" $L "*) R6LOC="$L"; break ;; esac
+done
+mkfake fake_gap \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "start\n"; sleep 0.25; for i in 1 2 3 4 5 6; do printf "chunk%s\n" "$i"; sleep 0.05; done; exit 0'
+R6LOG="$WORK/codex-attempts-r6loc.jsonl"; rm -f "$R6LOG"
+LC_ALL="$R6LOC" DRIVE_CODEX_CMD="$BIN/fake_gap" "$HELPER" --mode dispatch --scope r6b --scope-class slice \
+  --attempt-log "$R6LOG" --raw-log "$WORK/codex-raw-r6b.log" --marker "$WORK/codex-review-r6b.md" \
+  --prompt-file "$PROMPT" --poll-secs 0.05 --stall-secs 5 --backstop-secs 100 >/dev/null 2>&1
+python3 - "$R6LOG" <<'PY'
+import json, sys
+n = bad = 0
+for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+    line = line.strip()
+    if not line: continue
+    n += 1
+    try: json.loads(line)
+    except Exception: bad += 1
+sys.exit(1 if (bad or n == 0) else 0)
+PY
+check "R6-B max_gap_secs valid JSON under LC_ALL=$R6LOC (locale-independent numeric awk)" "$?" "0"
+
 echo ""
 echo "===================================================================="
 printf 'drive-codex.test.sh: %d passed, %d failed\n' "$PASS" "$FAIL"
