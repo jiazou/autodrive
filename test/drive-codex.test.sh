@@ -4,7 +4,9 @@
 # Dep-INDEPENDENT of the real codex CLI: every case injects a fake `DRIVE_CODEX_CMD` (a
 # log-writing shim), so the closed contract is exercised without codex installed. Covers the
 # helper's acceptance criteria: AC-H1..AC-H23 (incl. AC-H12b/AC-H12c behavioral halves) and the
-# helper halves of AC-P1/AC-P4. Prints PASS/FAIL per case; exits nonzero if any fail.
+# helper halves of AC-P1/AC-P4, plus the `--mode probe` standalone health query (§A.5) and the
+# `--no-watchdog`/`DRIVE_CODEX_WATCHDOG=off` stall-detector kill switch (§A.7/D-32: the backstop
+# still bounds). Prints PASS/FAIL per case; exits nonzero if any fail.
 #
 # Determinism: sub-second --stall-secs/--backstop-secs + a small --poll-secs drive the watchdog by
 # poll count (awk float math), not wall clock. `set -m` group kills reap forked children. A fake
@@ -703,6 +705,45 @@ for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
 sys.exit(1 if (bad or n == 0) else 0)
 PY
 check "R6-B max_gap_secs valid JSON under LC_ALL=$R6LOC (locale-independent numeric awk)" "$?" "0"
+
+echo "=== PM (§A.5): --mode probe standalone health query — closed-set member, marker-free ==="
+# --mode probe runs the health probe in ISOLATION and prints OK|CODEX_UNAVAILABLE (no marker). It
+# requires NEITHER --marker NOR --raw-log NOR --scope-class (dispatch-only flags) — so an OK/exit-0
+# here also proves probe's required-flag set is distinct from dispatch (else it would HELPER_ERROR).
+OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode probe --scope pmok --attempt-log "$ALOG" \
+   --poll-secs 0.05 --probe-timeout-secs 1 2>/dev/null)"; RC=$?
+check "PM probe doctor-OK ⇒ OK" "$OUT" "OK"
+check "PM probe doctor-OK exit 0 (no --marker/--raw-log/--scope-class needed)" "$RC" "0"
+OUT="$(DRIVE_CODEX_CMD="$BIN/fake_probe_outage" "$HELPER" --mode probe --scope pmout --attempt-log "$ALOG" \
+   --poll-secs 0.05 --probe-timeout-secs 1 2>/dev/null)"; RC=$?
+check "PM probe outage (after retry-with-backoff) ⇒ CODEX_UNAVAILABLE" "$OUT" "CODEX_UNAVAILABLE"
+check "PM probe outage exit 1" "$RC" "1"
+OUT="$(DRIVE_CODEX_CMD=/nonexistent-codex-pm "$HELPER" --mode probe --scope pmabs --attempt-log "$ALOG" 2>/dev/null)"; RC=$?
+check "PM probe cli-absent ⇒ CODEX_UNAVAILABLE" "$OUT" "CODEX_UNAVAILABLE"
+check "PM probe cli-absent exit 1" "$RC" "1"
+
+echo "=== WD (§A.7 / D-32): --no-watchdog disables the STALL detector ONLY — the backstop still bounds ==="
+# CONTROL — SAME knobs, watchdog ON: a byte-silent fake is STALL-killed (stall 0.2 fires before
+# backstop 0.5). Isolates the flag as the ONLY variable in the --no-watchdog contrast below.
+wdcause() { sed -n '2p' "$1" 2>/dev/null; }
+disp fake_stall wdctl slice "$WORK/codex-review-wdctl.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 0.5
+check "WD control (watchdog on) ⇒ KILLED" "$OUT" "CODEX_KILLED_TIMEOUT"
+check_contains "WD control cause=stall (stall fires before backstop)" "$(wdcause "$WORK/codex-review-wdctl.md")" "Codex killed (stall)"
+# --no-watchdog: STALL detector OFF ⇒ the SAME silent fake is NOT stall-killed at 0.2s; the per-attempt
+# BACKSTOP still fires at 0.5s ⇒ KILLED cause=BACKSTOP. Proves BOTH halves of D-32: the stall detector
+# is off (cause flips stall→backstop) AND the backstop remains the unconditional bound (bounded-run
+# bypass guard). Mutation-verify: ignore --no-watchdog ⇒ cause reverts to stall ⇒ reds.
+disp fake_stall wdnw slice "$WORK/codex-review-wdnw.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 0.5 --no-watchdog
+check "WD --no-watchdog ⇒ still KILLED (backstop is unconditional)" "$OUT" "CODEX_KILLED_TIMEOUT"
+check_contains "WD --no-watchdog ⇒ cause=BACKSTOP (stall off, backstop bounds)" "$(wdcause "$WORK/codex-review-wdnw.md")" "Codex killed (backstop)"
+check_absent "WD --no-watchdog did NOT stall-kill" "$(wdcause "$WORK/codex-review-wdnw.md")" "Codex killed (stall)"
+# DRIVE_CODEX_WATCHDOG=off env hatch is equivalent to --no-watchdog.
+mwenv="$WORK/codex-review-wdenv.md"
+OUT="$(DRIVE_CODEX_WATCHDOG=off DRIVE_CODEX_CMD="$BIN/fake_stall" "$HELPER" --mode dispatch --scope wdenv --scope-class slice \
+   --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-wdenv.log" --marker "$mwenv" --prompt-file "$PROMPT" \
+   --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 0.5 2>/dev/null)"
+check "WD DRIVE_CODEX_WATCHDOG=off ⇒ KILLED (env hatch = --no-watchdog)" "$OUT" "CODEX_KILLED_TIMEOUT"
+check_contains "WD env-off ⇒ cause=BACKSTOP" "$(wdcause "$mwenv")" "Codex killed (backstop)"
 
 echo ""
 echo "===================================================================="
