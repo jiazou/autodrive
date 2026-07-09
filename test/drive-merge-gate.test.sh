@@ -308,6 +308,41 @@ test_ship_gh_pr_create() {
   fi
 }
 
+# Regression (audit gh/glab analog of W2): a separate-arg global flag (--repo/-R) placed BETWEEN
+# the subcommand and the action must not be misread AS the action — otherwise action_after returns
+# the flag's VALUE (e.g. owner/repo) instead of `create`, is_ship stays false, and the ship/
+# finalize-review gate goes INERT. `gh pr --repo o/r create` must DENY exactly like `gh pr create`.
+test_ship_repo_flag_before_action_deny() {
+  local runid info repo out cmd
+  for cmd in \
+    "gh pr --repo owner/repo create --title x --body y" \
+    "gh pr -R owner/repo create" \
+    "glab mr --repo owner/repo create"; do
+    runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+    run_gate "$cmd" "$repo"; out="$GATE_OUT"
+    if is_deny "$out" && printf '%s' "$out" | grep -q '/drive-finalize'; then
+      pass "ship denies '$cmd' (--repo before action not misread as the action)"
+    else
+      fail "ship should DENY '$cmd' (gate went inert); got rc=$GATE_RC out='$out'"
+    fi
+  done
+}
+
+# Twin walker (managed_cli_expansion_deny): a --repo before an EXPANSION-active action must still
+# fail closed. `gh pr --repo o/r cr{eate,}` — the action token is brace-tainted `create` → DENY;
+# with the naive second loop the flag value `owner/repo` is read as the action (not tainted, not
+# `create`) → inert.
+test_ship_repo_flag_before_tainted_action_deny() {
+  local runid info repo out
+  runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
+  run_gate 'gh pr --repo owner/repo cr{eate,}' "$repo"; out="$GATE_OUT"
+  if is_deny "$out"; then
+    pass "ship denies 'gh pr --repo o/r cr{eate,}' (twin walker consumes the --repo value)"
+  else
+    fail "ship should DENY a brace-tainted action past --repo; got rc=$GATE_RC out='$out'"
+  fi
+}
+
 test_ship_bare_push() {
   local runid info repo out
   runid="$(new_runid)"; info="$(mk_ship_repo "$runid")"; repo="${info%% *}"
@@ -2137,6 +2172,8 @@ main() {
   test_slicemerge_allow_silent
   test_phasemerge_deny
   test_ship_gh_pr_create
+  test_ship_repo_flag_before_action_deny
+  test_ship_repo_flag_before_tainted_action_deny
   test_ship_bare_push
   test_ship_push_u_origin_head
   test_ship_glab_mr_create

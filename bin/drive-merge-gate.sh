@@ -290,6 +290,12 @@ action_after() {
   shift                                     # drop the subcommand; find the action word
   while [ "$#" -gt 0 ]; do
     case "$1" in
+      # separate-arg options between the subcommand and the action consume the NEXT word as
+      # their VALUE (same list as THIS function's first loop above) — else e.g. `gh pr --repo
+      # owner/repo create` would return `owner/repo` as the action, is_ship stays false, and the
+      # ship gate goes INERT. (gh/glab expose only -R/--repo at this position; the git-only
+      # entries are harmless no-ops here, kept for symmetry with the first loop.)
+      -C|-c|-R|--repo|--git-dir|--work-tree) shift; [ "$#" -gt 0 ] && shift; continue ;;
       --*=*|--*) shift; continue ;;
       -?*) shift; continue ;;
       -|"") printf ''; return 0 ;;
@@ -667,6 +673,10 @@ managed_cli_expansion_deny() {
   while [ "$idx" -lt "$ntok" ]; do
     cur="${_TOKENS[$idx]}"
     case "$cur" in
+      # separate-arg options consume the next word as their VALUE (same list as the first
+      # loop above) so a `--repo owner/repo` between the subcommand and a create action is not
+      # misread as the action → the twin of the action_after fix (else the gate goes inert).
+      -C|-c|-R|--repo|--git-dir|--work-tree) idx=$((idx+2)); continue ;;
       --*=*|--*) idx=$((idx+1)); continue ;;
       -?*) idx=$((idx+1)); continue ;;
       *) action="$cur"; action_exp="${_TOK_EXP[$idx]}"; break ;;

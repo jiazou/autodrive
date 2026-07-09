@@ -59,12 +59,15 @@ new bugs live.
   non-dict `message`) raises through `harvest.build_summaries`' `ex.map`, crashing the whole
   unattended `harvest --summarize` job — violating the docstring's "on any failure prints {}"
   per-session degrade contract. *Fix:* wrap the `tail_text` read in try/except returning "".
-- [ ] **[V] `bin/drive-merge-gate.sh:293`** — `action_after`'s post-subcommand loop treats
+- [x] **[V] `bin/drive-merge-gate.sh:293`** — `action_after`'s post-subcommand loop treats
   `--repo` as valueless (`--*=*|--*) shift`), so `gh pr --repo owner/repo create` returns
   `owner/repo` as the action, `is_ship` stays false and the ship/finalize-review gate goes inert
   (empirically reproduced: this form is INERT while bare `gh pr create` DENYs). *Fix:* consume
   separate-arg flag values (`-C|-c|-R|--repo|--git-dir|--work-tree`) in that loop and in the twin
-  walker in `managed_cli_expansion_deny` (~:670), matching `detect_subcommand`.
+  walker in `managed_cli_expansion_deny` (~:670), matching `detect_subcommand`. — **DONE
+  (2026-07-10):** both action-loops now consume the separate-arg flag value; RED→GREEN tests
+  (`gh pr --repo o/r create`, `-R`, `glab mr`, brace-tainted twin) in test/drive-merge-gate.test.sh;
+  codex find-the-bypass: no residual fail-open / over-deny.
 - [ ] **[V] `bin/rebirth-thresholds.json:4` + `bin/statusline.sh:35`** — the 200k tokens
   `"Sonnet 4.0"/"sonnet-4-0"/"sonnet-4.0"` are phantom forms: the real Sonnet-4 display `Sonnet 4`
   and id `claude-sonnet-4-20250514` contain none of them (confirmed), so a Sonnet-4 session falls
