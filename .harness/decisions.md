@@ -4671,6 +4671,76 @@ terminal review artifact. This is the [[drive-ship-conformance-sha-binding]] pat
 - **D-fin1 (P1-a OVERRULE → ARCH, Mechanical):** codex flagged the heal/`base=`/`baseSha` recovery path as a P1 missing-test. Overruled as an in-run fix with evidence: grep proves these tokens exist only in drive.md/drive-review.md PROSE + substring-pin tests; bin/drive-conformance.sh has no executable consumer. An E2E test is a new harness-driver subsystem (out of blast radius). Routed to finalize-todo.md as ARCH (codex itself co-filed it ARCH).
 - **D-fin2 (P1-b ACCEPT, Mechanical):** codex flagged body-only-sha / missing-`## Findings` as untested for the slice-merge & audit consumers of the shared check_scope_counts→reviewed_sha_of gate. Accepted (adversarial voice on a security gate; cheap in-scope; mutation-verifiable). Adding slice-merge + audit body-only-sha tests that RED on the pre-fix whole-file reader.
 
+## /drive run finalize-verdict-integrity-20260709 — finalize Verdict/AppliedEdits gate integrity (2026-07-09T16:01:23Z)
+Fixed TODO whole-repo-audit P1 #1: a finalize codex-only-P1 fix round left review-finalize-N.md
+reading terminal (Verdict:CONVERGED + AppliedEdits:yes + reviewed-sha==tip), so a rebirth-resume /
+manual ship shipped an un-re-audited fix. Two-part fix + tests.
+
+## D1 — Right-size to ONE phase, ONE slice [Mechanical]
+Producer (drive-finalize.md) + 3 consumers (drive.md, drive-ship.md, drive-conformance.sh)
++ both test suites form ONE produced→consumed contract (the AppliedEdits terminal marker).
+OPERATING: keep shared-contract code in ONE review unit — splitting risks the contract
+silently failing to transfer. No fan-out / staged-risk justification for a seam.
+
+## D2 — Fix is two-part (producer honesty + consumer defense-in-depth) [Mechanical]
+Not producer-only. The RED→GREEN fixture is {Verdict:CONVERGED, AppliedEdits:yes}; only a
+consumer AppliedEdits check rejects it (producer honesty alone can't catch a forged/pre-fix
+CONVERGED artifact). Follows directly from the task's own RED→GREEN constraint.
+
+## D3 — Consumers require EXACTLY `AppliedEdits: no` (not merely "not yes") [Mechanical]
+Fail-closed: also rejects `pending` (mid-flight) and missing. Mirrors the free confirming
+round's terminal marker; a fix round writes `yes`, the terminal converged round writes `no`.
+
+## D4 — Do NOT force the deterministic fresh-session rebirth seams (Seam A/B) [Taste — surface at Gate A]
+Single-session, right-sized run with the user present. Seams A/B are context-management for
+long multi-session runs; forcing 2 paste-handoffs here is pure friction. Class-A
+context-pressure rebirth stays available via the installed Stop hook if the window fills.
+
+## D5 — Consumer AppliedEdits reader: shared first-match header-region-bound helper [Mechanical — design review MAJOR]
+`applied_edits_no()` in bin/drive-conformance.sh: extract the FIRST header-region
+(BOF→`## Findings`) `^(##[[:space:]]*)?AppliedEdits:` line, THEN compare value == `no`
+(extract-first-then-compare, like verdict_converged — NOT grep-for-`no`-in-header). Reused by
+ship b-ii; prose consumers (drive.md, drive-ship.md) say "the FIRST `## AppliedEdits:` line is
+exactly `no`". NOT the anywhere-grep the checkpoint yes-COUNTER uses. Defeats the body-quote
+attack (finalize audits this repo, whose docs contain the literal).
+
+## D6 — Producer rewrites the FIRST `## Verdict:` line IN PLACE on both branches [Mechanical — design review NIT]
+Fix round → replace the first `## Verdict:` line with FINDINGS; no-fix confirming round →
+replace it with CONVERGED (affirmative, symmetric). In-place replace, never append a second
+`## Verdict:` line (consumers read first-match).
+
+## D7 — RED/GREEN matrix covers {yes, no, body-quoted-no, pending, missing} [Mechanical — design review P2]
+Behavioral --mode ship fixtures: yes→BLOCK, no→SHIP, body-quoted-no(header yes)→BLOCK,
+pending→BLOCK, missing-AppliedEdits→BLOCK. Mutation-proves the exactly-`no` half.
+
+## D8 — Prose consumers include the literal `## AppliedEdits: no` [Mechanical — phasedesign P2]
+drive.md/drive-ship.md prose: "the FIRST `## AppliedEdits:` line is exactly `no` (i.e.
+`## AppliedEdits: no`)" so the `_REQUIRED_CARRIERS` carrier-token pin matches.
+
+## D9 — Test matrix adds a no-`## Findings` malformed case [Mechanical — phasedesign P2]
+6th --mode ship fixture: a finalize artifact lacking `## Findings` → BLOCK (pins the helper's
+fail-closed delimiter behavior).
+
+## D10 — Fold codex slice P1 (require `##` heading in applied_edits_no) despite Claude CONVERGED [Taste — surface at Gate B]
+Voices split: codex FINDINGS (optional-`##` accepts a bare `AppliedEdits: no`); Claude
+CONVERGED (drift-tolerance acceptable, bare-`no` out-of-threat-model NIT). Reproduction: a
+bare `AppliedEdits: no` is NOT producer-reachable (producer + seed_finalize emit the `##`
+heading; a crash leaves `pending`) → forgery-adjacent, outside the stated omission/crash
+threat model. FOLD anyway: the sibling gate verdict_converged requires `^## Verdict:`
+(mandatory `##`); a `no`-GATE must fail closed on malformed input, not accept it; the fix is
+trivial + zero happy-path cost (producer/seed_finalize emit the heading). Overruling would
+leave the gate looser than its sibling. Adversarial voice is load-bearing for gates.
+
+## D11 — Overrule codex slice round-2 P1s (zero-space header variants) WITH EVIDENCE [User-Challenge-adjacent → surface at Gate B]
+codex r2 NOT-CONVERGED on `## AppliedEdits:no` / `## Verdict:CONVERGED` (zero space after colon).
+Reproduced both. REFUTED-at-integration + OVERRULED: (1) not producer-reachable (producer emits
+colon-SPACE-value everywhere) → forgery, outside the omission/crash threat model; (2) `[[:space:]]*`
+is the universal file convention (reviewed_sha_of / verdict_converged / counter all use it) —
+applied_edits_no mirrors it; tightening diverges; (3) `no` is written only on genuinely-converged
+rounds, so spacing-tolerance is liveness-correct; (4) P1 #2 targets UNTOUCHED verdict_converged
+(scope creep, run-wide gate). Claude CONVERGED both rounds. Round-1 (no-heading) was the meaningful
+class fix; round-2 is the per-input treadmill (memory: drive-finalize-adversarial-class-fix).
+
 ## D-r2r4-1 — runId naming (Mechanical)
 Used descriptive runId `r2r4-codex-20260708-144534` (spec says `<branch>-<timestamp>`; repo precedent
 favors descriptive ids — e.g. c7-gate-bypass-*, regress-selfid-* — and safe-run-id memory prefers
@@ -5336,7 +5406,7 @@ sanctioned by an AC that requires a DETERMINISTIC test and each documented in th
     all three are inert when unset (default probe timeout 10s; no injection; a real codex TERM-kill
     yields 143 ⇒ kill_confirmed=1 ⇒ CODEX_KILLED_TIMEOUT).
 
-## D-r2r4-71 — finalize r2: probe-mode probe-log dir preflight (Mechanical; completes R5-A class)
+## D-r2r4-74 — finalize r2: probe-mode probe-log dir preflight (Mechanical; completes R5-A class)
 Finalize round-2 codex flagged a real (mutation-verified) misclassification: standalone `--mode
 probe` writes `codex-probe-<scope>.log` in `dirname --attempt-log`, whose writability was NOT
 preflighted (dispatch mode's is, via R5-A on the raw-log parent). A writable attempt-log inside a
@@ -5348,7 +5418,7 @@ needs a read-only $RUN_DIR (coordinator never produces one), so this is defense-
 the class, NOT a live-path bug. Claude reviewer had CONVERGED both rounds; the adversarial codex
 voice caught it — the load-bearing voice for this security-sensitive helper. Surface at Gate B.
 
-## D-r2r4-72 — finalize r3: OVERRULE codex exact-probe-log-node P1 + imprecision budget (Taste)
+## D-r2r4-75 — finalize r3: OVERRULE codex exact-probe-log-node P1 + imprecision budget (Taste)
 Finalize round-3 codex flagged the exact `.probe.log` NODE type as unchecked (vs the raw-log node,
 R4-A). OVERRULED at integration with evidence (not a live-path bug): the `.probe.log` is the
 HELPER's OWN derived scratch path — never coordinator-created (real dispatch passes only a clean

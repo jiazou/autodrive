@@ -831,6 +831,12 @@ test/install-drive-hooks.test.sh:420-423 — comment says three hooks/four entri
 - bin/drive-conformance.sh:210, test/fixtures/mkfixture.sh:38, tests/contracts/test_checkpoint_contract.py:412 — codex flagged the long rationale blocks as removable slop; RETAINED as load-bearing "why" (awk exit→END fall-through / header-region binding / fail-closed rationale) per the Claude voice + OPERATING's "comments keep the non-obvious why". Recorded as a considered-and-declined de-slop, not a pending fix. (codex P2 vs Claude split, round 2.)
 - .claude/commands/drive-review.md:139, .claude/commands/drive.md:281 — further prose trims are VETOED: the wording is exact-string-pinned by tests/contracts/test_checkpoint_contract.py:1481 and test_state_json_shape.py:102; trimming reds those pins. (codex P2, rounds 1+2 — the "unsafe de-slop" warning.)
 
+## /drive run finalize-verdict-integrity-20260709 — finalize Verdict/AppliedEdits gate (2026-07-09T16:01:23Z)
+- codex-unavailable terminal degradation (drive-finalize.md:232): a finalize no-fix confirming round whose codex times out (CODEX_UNAVAILABLE, accepted as present) degrades the terminal re-audit to single-voice. Pre-existing repo-wide codex-degradation policy; tightening finalize-terminal only is out of this fix's scope. Consider a stronger run-wide terminal codex condition separately.
+- bin/drive-conformance.sh header readers (verdict_converged, applied_edits_no, reviewed_sha_of, AppliedEdits counter) use `[[:space:]]*` spacing tolerance, not exact producer-literal match. Zero-space variants (`## AppliedEdits:no`) pass — harmless under the omission/crash threat model (not producer-reachable); a maximally-strict posture would pin ALL readers + producer output uniformly (run-wide decision). (codex slice/finalize r2/r3.)
+- AC44 `_REQUIRED_CARRIERS["## AppliedEdits: no"]` requires the literal in bin/drive-conformance.sh via a COMMENT (like the sibling `## AppliedEdits: yes` carrier). A future de-slop comment reflow must preserve the literal. Established convention — not changed (codex finalize P2, refuted).
+- tests/contracts/test_drive_finalize_contract.py producer spec-pin: further micro-anchoring beyond the per-branch mutation-verified form is within the stated spec-pin imprecision budget (P3, non-blocking; codex finalize r4).
+
 ## From high-level design (2026-07-08)
 - TODO C12 residual after R4 lands: the independent-Claude-reviewer degraded second-voice tier +
   per-role model/effort capability-class prose remain open (R4 lands only the distinct-marker
@@ -905,7 +911,7 @@ test/install-drive-hooks.test.sh:420-423 — comment says three hooks/four entri
   bare round tags risks the rationale. Not worth churn. (Claude finalize r1)
 
 ## From finalize round 3 (codex, 2026-07-09T22:15:57Z) — defense-in-depth residual (overruled, non-blocking)
-- [drive-codex helper — DEFENSE-IN-DEPTH, overruled D-r2r4-72] The exact probe-log NODE
+- [drive-codex helper — DEFENSE-IN-DEPTH, overruled D-r2r4-75] The exact probe-log NODE
   (`${raw-log%.log}.probe.log` dispatch / `codex-probe-<scope>.log` probe-mode) is not preflighted
   for its node TYPE the way R4-A preflights the raw-log node. If that exact path pre-existed as a
   dir/FIFO/socket/non-writable file, the `doctor` redirect would fail locally ⇒ a false
