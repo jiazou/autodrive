@@ -2,6 +2,225 @@
 
 Architectural follow-ups deferred by /drive finalize passes.
 
+## Whole-repo audit — bugs / logic / inconsistency / slop (2026-07-09)
+
+Multi-agent adversarial audit over the whole tree (10 lens auditors → per-finding
+refuter → completeness critic). ~40 unique issues survived dedup against this file and
+`.harness/followups.md`. The workflow's automated verifier pass completed only for the
+specs/gates/critic dimensions (session-limit killed the mission-control verifiers), so
+**every item below was subsequently confirmed by direct hand-trace this session** —
+the mission-control findings first, then all 18 specs/gates/critic findings independently
+re-traced against the real code (spec cross-references read, the P1 finalize-CONVERGED
+chain walked through all three consumers, regexes tested live, git history checked,
+substring matches run, live `~/.claude/commands` link set and file modes inspected).
+Zero refutations on hand-trace. All carry **[V]**. Two caveats found during that pass:
+`skills/decant/SKILL.md:140` is mitigated by the single-remote fallback rule, and
+`bin/install-drive-hooks.sh:209` bails gracefully (no corruption) via the sanity net at
+:285-290. Mission-control (Python + shell) had no prior TODO coverage and is where most
+new bugs live.
+
+### P1 — real defects with gate-integrity or corruption impact
+- [ ] **[V] `.claude/commands/drive-finalize.md:341`** — a codex-only-P1 fix round re-binds
+  `reviewed-sha` to the post-fix tip but never downgrades the Claude `## Verdict: CONVERGED`
+  line, so all three finalize-CONVERGED consumers (drive.md resume router, drive-ship
+  precondition #3, `drive-conformance.sh --mode ship`) read the artifact as terminal and a
+  rebirth-at-boundary → ship silently skips the mandated fresh dual-voice re-audit of a
+  logic-bearing fix (a TODO-named sole-catcher). *Fix:* on any `AppliedEdits: yes` round
+  rewrite `## Verdict:` to FINDINGS (a fix round can never be terminal-converged); mirror in
+  drive.md's resume criterion. Run the drive*.md pin suites.
+- [ ] **[V] `.claude/commands/drive-ship.md:86`** — line 79 runs the Design-doc handoff audit
+  *after* the single ledger commit, then line 86 claims the appended `HANDOFF:` entries "are
+  promoted into `.harness/followups.md` by the ledger commit already made above" —
+  chronologically impossible. The entries strand in `$RUN_DIR/followups.md` (GC-swept); a 2nd
+  commit to fix it trips the ≤1-commit ship allowlist. *Fix:* run the handoff audit BEFORE the
+  ledger-promotion commit; delete the "already made above" claim.
+- [ ] **[V] `mission-control/bin/done.py:41`** — `LOG_SECTION_RE = r"(^##\s+Log[ \t]*\r?\n?)…"`
+  has a fully-optional terminator, so it prefix-matches `## Logistics` / `## Logs` / `## Logbook`
+  (confirmed live: group1 → `## Log` for all three). `mc done` then splits the heading and
+  mangles the user's note — silent corruption by the self-described "ONE writer into task
+  notes". *Fix:* require a line boundary: `r"(^##[ \t]+Log[ \t]*(?:\r?\n|\Z))"`; add a
+  `## Logistics` regression test.
+
+### P2 — correctness / contract defects
+- [ ] **[V] `mission-control/bin/vault_tasks.py:145`** — `project = (fm.get("project") or "").strip("[]")`
+  crashes `AttributeError` when `_parse_scalar` returns a list (confirmed live for
+  `project: [[Autodrive]]` → `['[Autodrive]']`, and `status: [todo]`). One bracketed scalar in
+  any task note tracebacks `mc tasks/standup/today/weekly`, the SwiftBar plugin, and the 6:45am
+  launchd job. *Fix:* coerce list→scalar for project/status/priority/area (mirror the
+  `depends_on` guard at :148-150).
+- [ ] **[V] `mission-control/bin/vault_tasks.py:94`** — `_parse_frontmatter` skips any line with
+  no `:` , so block-style YAML lists (`depends_on:\n  - other-task`, Obsidian's Properties
+  serialization) parse as `''` → `depends_on` silently dropped → `mc standup` lists a blocked
+  task as "Ready to start now" and the parallel plan dispatches work whose dep is still open.
+  `tags` lists are lost the same way. *Fix:* accumulate subsequent `- item` lines under the
+  preceding key as a list.
+- [ ] **[V] `mission-control/bin/session_summary.py:47,63`** — `tail_text` opens `hits[0]` with
+  no guard and `summarize` calls it *outside* its try, so a removed/unreadable transcript (or a
+  non-dict `message`) raises through `harvest.build_summaries`' `ex.map`, crashing the whole
+  unattended `harvest --summarize` job — violating the docstring's "on any failure prints {}"
+  per-session degrade contract. *Fix:* wrap the `tail_text` read in try/except returning "".
+- [ ] **[V] `bin/drive-merge-gate.sh:293`** — `action_after`'s post-subcommand loop treats
+  `--repo` as valueless (`--*=*|--*) shift`), so `gh pr --repo owner/repo create` returns
+  `owner/repo` as the action, `is_ship` stays false and the ship/finalize-review gate goes inert
+  (empirically reproduced: this form is INERT while bare `gh pr create` DENYs). *Fix:* consume
+  separate-arg flag values (`-C|-c|-R|--repo|--git-dir|--work-tree`) in that loop and in the twin
+  walker in `managed_cli_expansion_deny` (~:670), matching `detect_subcommand`.
+- [ ] **[V] `bin/rebirth-thresholds.json:4` + `bin/statusline.sh:35`** — the 200k tokens
+  `"Sonnet 4.0"/"sonnet-4-0"/"sonnet-4.0"` are phantom forms: the real Sonnet-4 display `Sonnet 4`
+  and id `claude-sonnet-4-20250514` contain none of them (confirmed), so a Sonnet-4 session falls
+  through to the 1M default → the class-A rebirth hard-threshold (0.85×1M) is unreachable in a
+  200k window and statusline shows ~16% at real 80%. Working `"Sonnet 4"/"sonnet-4"` entries
+  shipped in `3bf4866` but the `60c4579` merge kept the broken table. Paired: **[V]
+  `bin/rebirth_thresholds.py:16`** docstring describes the discarded 1M-first ordered table, and
+  **[V] `tests/hooks/test_rebirth_thresholds.py:74`** never samples a real Sonnet-4 form, so the
+  clobber shipped green. *Fix:* restore `3bf4866`'s ordered table in both json and statusline
+  case; pin `Sonnet 4` + `claude-sonnet-4-20250514` in the five window test files (token-sweep).
+- [ ] **[V] `.claude/commands/drive-design.md:74` + `.claude/commands/drive.md:247,256`** —
+  REDESIGN re-queues a slice with `reviewCount:0`, but drive.md's counter reconstruction is
+  one-directional `max(state, count of review-<id>-N.md)` and slice review files aren't
+  epoch-qualified, so any resume resurrects the old count and shrinks the fresh cap-8 the reset
+  intended. *Fix:* pick one horn — REDESIGN keeps the cumulative cap, OR epoch-qualify slice
+  review filenames (like phasedesign `-r<R>`) and scope the count to the current epoch.
+- [ ] **[V] `.claude/commands/drive.md:247`** — `designReview` is a seventh cap-8 counter but
+  the "all six counters" reconstruction list (and the checkpoint `counters` JSON in
+  `drive-conformance.sh:913`) omit it, so a crash mid-plan lets the next design review overwrite
+  `review-design-N.md` and undercount the cap. *Fix:* add rule 7 `designReview = max(state,
+  count of pure-integer review-design-N.md)` and add it to the checkpoint counters output.
+- [ ] **[V] `.claude/commands/drive-review.md:77,82`** — no N-derivation rule for
+  `harden-regress`-marked `review-phase<P>-N.md` files: the general `N = counter+1` is explicitly
+  forbidden for regress but no alternative is given (round-2 harden overwrites round-1's marked
+  regress review), and the state-absent fallback counts ALL pure-integer files (incl. marked)
+  while claiming consistency with `drive-conformance.sh`, which counts unmarked only → false
+  "N>8 STOP". *Fix:* number a regress file as (highest existing pure-integer N in the family)+1;
+  exclude `harden-regress: yes` files in the phase-scope fallback.
+- [ ] **[V] `.claude/commands/drive.md:127`** — the resume "Current phase" rule
+  (`lowest phase in phaseList not yet an ancestor; all ancestors → PAST Execute`) is vacuously
+  "PAST Execute" when `phaseList` is `[]` (plan stage), so a class-A rebirth during planning
+  routes to Finalize over an empty diff → trivial converge → advance toward ship instead of
+  resuming planning. *Fix:* add an explicit route — empty phaseList / `lastGate != "A"` → resume
+  Stage 1; require a non-empty phaseList for the PAST-Execute derivation.
+- [ ] **[V] `.claude/commands/drive.md:1318` + `CLAUDE.md:127`** — both coordinator surfaces claim
+  harden "vetoes edits that would drop a criterion's coverage", but `drive-harden.md` defines no
+  veto (`rg -i veto` empty; removed with de-slop). The protection is one round weaker than
+  documented (only the after-the-fact harden-regress review catches it). *Fix:* reword both to
+  "the harden-regress regression guard catches …", OR add an explicit veto to drive-harden.md
+  Step 2/3. Pin suites apply.
+- [ ] **[V] `.claude/commands/drive.md:1384`** — Stage 4c/retro resolve
+  `~/.claude/commands/drive-finalize.md` (and `drive-retro.md`), but `install-operating-rules.sh`
+  links commands only on re-run with no freshness preflight; the live `~/.claude/commands` holds
+  a stale 7-link set missing both files, so a run driving an outside project wedges fail-closed at
+  finalize. *Fix:* add a drift preflight to `install-operating-rules.sh` (warn when repo commands
+  lack links), and/or fall back to the repo-checkout `.claude/commands` path in drive.md.
+- [ ] **[V] `.claude/commands/drive-finalize.md:316` + `drive-harden.md:236` + `drive-ship.md:90`** —
+  the "driven project's FULL test suite" is hardcoded to this repo's `bin/run-tests.sh`
+  (`python3 -m pytest tests/` AND `test/*.test.sh`), so `/drive` on any other project BLOCKs each
+  phase or improvises a subset — the exact under-run the canonical runner was built to prevent.
+  *Fix:* "the driven repo's `bin/run-tests.sh` if present, else its documented full-suite command
+  (all suites, no early-exit)" in all three specs.
+- [ ] **[V] `bin/install-operating-rules.sh:156`** — the Stop-hook registration early-exits on a
+  substring presence check, so re-running after a clone move (the remedy the installed `~/CLAUDE.md`
+  itself recommends) keeps the dead old-path `drive-stop-hook.py` entry and refuses the new one —
+  the sole context-pressure detector silently fails open. *Fix:* strip every Stop hook referencing
+  `drive-stop-hook.py`, then append the current path (mirror `install_hooks.py._strip_mc`).
+- [ ] **[V] `SECURITY.md:20`** — says the installer adds "four entries (three hooks)"; it actually
+  writes five entries / four hooks and SECURITY.md never mentions the `WorktreeCreate →
+  drive-worktree-gate.sh` hook that DENYs all native worktree creation during a run. *Fix:* update
+  to four hooks / five entries, add a WorktreeCreate bullet + fail-closed posture, add
+  `drive-worktree-gate.sh` to the canonicalized-basename list at :18.
+- [ ] **[V] `README.md:240`** — the Testing section still teaches the first-failure
+  `for f in test/*.test.sh; do bash "$f" || exit 1; done` loop that `bin/run-tests.sh` was created
+  to replace (the regress-selfid masking bug, commit 611e6a6) and never names the canonical runner.
+  *Fix:* replace with `./bin/run-tests.sh`; extend `test_full_suite_runner.py` to pin README.
+- [ ] **[V] `.gitignore:19`** — `.claude/settings.local.json` is excluded only by machine-local
+  ignores, not the committed `.gitignore`; on any other clone a subagent `git add -A` (the
+  documented 1497-file sweep) can commit personal permission allowlists to the public repo.
+  *Fix:* add `.claude/settings.local.json` + `.claude/scheduled_tasks.lock` to the committed
+  `.gitignore`.
+- [ ] **[V] `.harness/followups.md:262`** — the binding SHIP ACTION (D-coord-2) to append a
+  premise-stale annotation to the `defaultWindow=200_000` ledger entry was never executed, so the
+  inverted pre-C2 guidance ("falls back to 200_000 … add a `windows[].match` entry") still reads as
+  live and a future maintainer would reintroduce the exact stale claim C2 removed. *Fix:* append the
+  D-coord-2 annotation now (post-C2 default is 1_000_000 fail-open; add-an-entry direction inverted);
+  log the missed ship action in decisions.md.
+- [ ] **[V] `mission-control/README.md:30,42`** — documents an `iterm_session` binding field
+  "auto from `$ITERM_SESSION_ID`" that nothing writes/reads (`mc-bind.sh` records only
+  ts/event/session_id/project/task/tab_name). *Fix:* drop the field from the data model + identity
+  table, or capture it in mc-bind.sh.
+- [ ] **[V] `mission-control/README.md:178` + `mission-control/skills/mc/SKILL.md:54`** — both claim
+  "no existing task/doc is ever modified" / "only --draft/--log write", contradicted by `done.py`
+  ("the ONE writer into task notes") and the weekly skill editing frontmatter. Misleads a user
+  evaluating install safety and an in-session agent into running `mc done` as if read-only. *Fix:*
+  reword to name `mc done` as the one task-note writer (atomic, logged).
+
+### P3 — slop / doc-drift / minor inconsistency
+- [ ] **[V] `today.py:98`** SwiftBar rows hardcode `color=#000000` → illegible in dark mode; use a
+  `#000000,#ffffff` light,dark pair. **[V] `today.py:93`** the project name (free-text from
+  `mc bind --project`) isn't `|`-sanitized like the label, so `Ops | Infra` breaks the SwiftBar row.
+- [ ] **[V] `install_hooks.py:67`** builds `f"{sys.executable} {MC}/bin/mc-hook.py {status}"` unquoted
+  → a spaced deploy path breaks all three MC hooks silently (sibling installers quote). Use
+  `shlex.quote`.
+- [ ] **[V] `harvest.py:344` + `standup.py:68,206`** use `str.replace(HOME, "~")` — the exact
+  mangling `harvest.home_rel`'s own comment warns against ($HOME appearing twice, or as a
+  non-prefix substring). Route all three through `home_rel()`.
+- [ ] **[V] `vault_tasks.py:97`** indented/nested frontmatter keys shadow top-level ones (reader
+  strips indentation; `done.py` writes column-0 only) → reader/writer disagree. **[V]
+  `vault_tasks.py:157`** priority is never case-normalized, so ASCII sort ranks `P3` above `p1`.
+- [ ] **[V] `mc-bind.sh:43,62`** — short-id resolution globs dead session files (no `kill -0`
+  liveness like harvest) so "No live session matches" / false-ambiguous; and a 13+-char non-UUID
+  arg is stored verbatim, writing a binding that never joins any session. **[V]
+  `session_summary.py:43`** picks `hits[0]` (arbitrary glob order) instead of newest transcript.
+- [ ] **[V] `done.py:56`** `_resolve` opens the matched note unguarded (sibling `load_tasks` wraps
+  the read) → a non-UTF-8/unreadable note tracebacks instead of the clean not-found path.
+- [ ] **[V] `mission-control/README.md`** doc-count drift: "the three skills" but four are deployed
+  (`:80,143` omit `mc`); Commands table (`:132`) omits the shipped `mc done`; "auto-launches at
+  login" (`:94,141`) but `install.sh` never registers a login item.
+- [ ] **[V] `skills/harvest/SKILL.md:40,91`** — stale pre-rename codename "Orchard" (product is
+  Mission Control) and a wrong claim that the binding carries `color`; the vault-listing `ls` skips
+  the `~/mission-control/config` fallback the engine resolves, so a config-only vault reports zero
+  tasks.
+- [ ] **[V] `skills/decant/SKILL.md:41`** — Step 1 tells the agent to `git grep` the memory dir,
+  which is not a git repo (`fatal: not a git repository`) and can't select by mtime → the
+  subagent-entry inventory is silently skipped. Use `find … -newermt`/`ls -lt`. **[V] `:43`** the
+  "0 new entries → skip to step 5" jump skips Step 4's missing-lessons scan (the step that case
+  exists for) — retarget to step 4. **[V] `:140`** binds `UPSTREAM` as "(this project: `upstream`)"
+  but autodrive has only an `origin` remote.
+- [ ] **[V] `.claude/commands/drive-finalize.md:368` (+ `:24,349`)** — the "Phase-2 wiring
+  obligations — NOT built here" section describes long-shipped wiring (ship terminal-R, checkpoint
+  finalize classifier, `finalizeRound`, run-graph node, TODO promotion) as pending; an agent may
+  re-implement or distrust the live gate. Rewrite present-tense (token-sweep pin migration).
+- [ ] **[V] `.claude/commands/drive-ship.md:83`** — the Design-doc handoff audit references an
+  undefined "shared design doc" and emits a never-bound `<design-doc path>` placeholder → the agent
+  fabricates a path into the committed ledger or skips the step. Bind the doc (e.g. the one
+  CLAUDE.md/docs names; else `(no design doc — create one)`).
+- [ ] **[V] `.claude/commands/drive-harden.md:157` + `drive-finalize.md:225`** run bare `codex exec`
+  without the `mkdir -p "$RUN_DIR/tmp"` + `TMPDIR=…` export that `drive-review.md` mandates (D5), so
+  each round litters `/tmp` with un-swept codex scratch. Prefix both blocks (check the fenced-block
+  pin tests first).
+- [ ] **[V] `.claude/commands/drive.md:1259`** references "the declared gitignored config allowlist
+  (`.env`, …)" with no declaration site anywhere → the coordinator either skips the copy (slice
+  tests needing `.env` BLOCK) or guesses. Bind it (e.g. a `state.json`/design `configAllowlist`;
+  absent → copy nothing). **[V] `:648`** the stranded-marker `mv codex-raw-<scope>.log` aside rule
+  covers review units only; a stranded harden unit's `codex-harden-<P>.log` has the same orphan-
+  append hazard.
+- [ ] **[V] `CLAUDE.md:166`** the state.json run-model enumeration omits `task`, `baseSha`,
+  `phaseList`, `verify`, `ship` (drive.md's template has all five; `phaseList`/`baseSha` are
+  load-bearing for the resume router). Add them; extend `test_state_json_shape.py` if applicable.
+- [ ] **[V] `bin/install-operating-rules.sh:104`** the command/skill symlink loops never prune links
+  for files removed/renamed in the repo (the plan.md→drive-plan.md rename already happened), leaving
+  dangling `~/.claude/commands/<old>.md` symlinks that re-runs never heal. Prune repo-owned links
+  whose target no longer exists before linking.
+- [ ] **[V] `bin/install-drive-hooks.sh:209`** the comment claims hook containers are "normalised to
+  arrays" but jq `// []` only defaults null/missing — a wrong-typed shape (`{"hooks": []}`, or a
+  bare-dict Stop entry) aborts the install under `set -e` with a raw jq error and `.tmp.$$` litter.
+  Type-normalize like the sibling installer, or fix the comment.
+- [ ] **[V] `bin/rebirth_thresholds.py:4`** docstring says "**Both** `bin/drive-stop-hook.py` …
+  import this module" but names one consumer (the coordinator soft-check was removed) — leftover
+  dual-consumer phrasing. **[V] `test/drive-tool-gate.test.sh`** is the sole bash suite committed
+  `100644` (no exec bit) — `git update-index --chmod=+x`.
+- [ ] **[V] `TODO.md:379`** — the "Wire `/drive-retro` into the run-wrap sequence" directive is
+  already implemented in `drive.md:1454-1461`; mark done / delete with a pointer, and sweep the
+  matching stale HANDOFF at `followups.md:682`.
+
 ## /drive efficiency plan R1–R9 — from docs/efficiency-audit-2026-07-08.md (2026-07-08)
 
 **Problem:** a ~1000-line change takes a full day. The audit (19-agent workflow: 5 history
