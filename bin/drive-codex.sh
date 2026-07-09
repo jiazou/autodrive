@@ -763,6 +763,17 @@ else
   [ -w "$(dirname "$ATTEMPT_LOG")" ] || helper_error "--attempt-log parent dir not writable: '$ATTEMPT_LOG'"
 fi
 
+# --mode probe writes a sibling `codex-probe-<scope>.log` in the --attempt-log's dir (dispatch mode
+# instead uses the R5-A-preflighted raw-log sibling). A writable --attempt-log FILE inside a
+# READ-ONLY dir passes the check above, but the sibling create then fails at probe launch and a
+# LOCAL fs fault would misclassify as a remote CODEX_UNAVAILABLE. Require the probe-log dir writable
+# PRE-LAUNCH ⇒ HELPER_ERROR (broken-helper STOP lane) — the SAME class R5-A closed for dispatch's
+# raw-log, now uniform across modes (dispatch always has a raw-log; only probe-mode falls back here).
+if [ "$MODE" = probe ]; then
+  if [ -n "$RAW_LOG" ]; then probe_log_dir="$(dirname "$RAW_LOG")"; else probe_log_dir="$(dirname "$ATTEMPT_LOG")"; fi
+  [ -w "$probe_log_dir" ] || helper_error "--mode probe needs a writable dir for codex-probe-<scope>.log: '$probe_log_dir'"
+fi
+
 case "$MODE" in
   probe)    do_probe ;;
   dispatch) do_dispatch ;;

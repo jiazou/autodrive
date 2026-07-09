@@ -749,6 +749,20 @@ check "PM probe outage exit 1" "$RC" "1"
 OUT="$(DRIVE_CODEX_CMD=/nonexistent-codex-pm "$HELPER" --mode probe --scope pmabs --attempt-log "$ALOG" 2>/dev/null)"; RC=$?
 check "PM probe cli-absent ⇒ CODEX_UNAVAILABLE" "$OUT" "CODEX_UNAVAILABLE"
 check "PM probe cli-absent exit 1" "$RC" "1"
+echo "=== PM-RO (finalize r2 codex P1): --mode probe writable --attempt-log inside a READ-ONLY dir ⇒ HELPER_ERROR (no false CODEX_UNAVAILABLE) ==="
+# probe mode writes codex-probe-<scope>.log as a sibling of --attempt-log (dispatch mode uses the
+# R5-A-preflighted raw-log sibling). A writable attempt-log FILE inside a read-only (555) dir passes
+# the file check, but the sibling create would fail POST-launch ⇒ a false CODEX_UNAVAILABLE (a LOCAL
+# fs fault masquerading as a remote outage, silently dropping the voice). The probe-log DIR is now
+# required writable PRE-LAUNCH ⇒ HELPER_ERROR (broken-helper STOP lane). SAME structural class R5-A
+# closed for dispatch's raw-log. Proven RED against the pre-fix helper (returns CODEX_UNAVAILABLE/1).
+mkdir -p "$WORK/pmrodir"; : > "$WORK/pmrodir/attempts.jsonl"; chmod 555 "$WORK/pmrodir"
+OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode probe --scope pmro \
+   --attempt-log "$WORK/pmrodir/attempts.jsonl" --poll-secs 0.05 --probe-timeout-secs 1 2>/dev/null)"; RC=$?
+check "PM-RO read-only probe-log dir ⇒ HELPER_ERROR (not false CODEX_UNAVAILABLE)" "$OUT" "HELPER_ERROR"
+check "PM-RO HELPER_ERROR exit 2 PRE-LAUNCH" "$RC" "2"
+if [ ! -f "$WORK/pmrodir/codex-probe-pmro.log" ]; then pass "PM-RO ⇒ NO probe log spawned (un-spawned, STOP lane)"; else fail "PM-RO a probe log appeared (probe launched despite unwritable dir)"; fi
+chmod 755 "$WORK/pmrodir"
 
 echo "=== WD (§A.7 / D-32): --no-watchdog disables the STALL detector ONLY — the backstop still bounds ==="
 # CONTROL — SAME knobs, watchdog ON: a byte-silent fake is STALL-killed (stall 0.2 fires before
