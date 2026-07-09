@@ -20,34 +20,41 @@ Zero refutations on hand-trace. All carry **[V]**. Two caveats found during that
 new bugs live.
 
 ### P1 — real defects with gate-integrity or corruption impact
-- [ ] **[V] `.claude/commands/drive-finalize.md:341`** — a codex-only-P1 fix round re-binds
+- [x] **[V] `.claude/commands/drive-finalize.md:341`** — a codex-only-P1 fix round re-binds
   `reviewed-sha` to the post-fix tip but never downgrades the Claude `## Verdict: CONVERGED`
   line, so all three finalize-CONVERGED consumers (drive.md resume router, drive-ship
   precondition #3, `drive-conformance.sh --mode ship`) read the artifact as terminal and a
   rebirth-at-boundary → ship silently skips the mandated fresh dual-voice re-audit of a
   logic-bearing fix (a TODO-named sole-catcher). *Fix:* on any `AppliedEdits: yes` round
   rewrite `## Verdict:` to FINDINGS (a fix round can never be terminal-converged); mirror in
-  drive.md's resume criterion. Run the drive*.md pin suites.
-- [ ] **[V] `.claude/commands/drive-ship.md:86`** — line 79 runs the Design-doc handoff audit
+  drive.md's resume criterion. Run the drive*.md pin suites. — **DONE (PR #76, 2026-07-09):**
+  producer rewrites the FIRST `## Verdict:` line in place on both branches + all 3 consumers
+  require the first `## AppliedEdits:` header == `no` via a shared first-match `applied_edits_no()`.
+- [x] **[V] `.claude/commands/drive-ship.md:86`** — line 79 runs the Design-doc handoff audit
   *after* the single ledger commit, then line 86 claims the appended `HANDOFF:` entries "are
   promoted into `.harness/followups.md` by the ledger commit already made above" —
   chronologically impossible. The entries strand in `$RUN_DIR/followups.md` (GC-swept); a 2nd
   commit to fix it trips the ≤1-commit ship allowlist. *Fix:* run the handoff audit BEFORE the
-  ledger-promotion commit; delete the "already made above" claim.
-- [ ] **[V] `mission-control/bin/done.py:41`** — `LOG_SECTION_RE = r"(^##\s+Log[ \t]*\r?\n?)…"`
+  ledger-promotion commit; delete the "already made above" claim. — **DONE (2026-07-10):** audit
+  runs as the ledger-promotion's FIRST action (forward-path only) so HANDOFF entries ride the
+  same single commit; claim corrected; idempotent append closes the pre-commit-resume dup window
+  (codex P2).
+- [x] **[V] `mission-control/bin/done.py:41`** — `LOG_SECTION_RE = r"(^##\s+Log[ \t]*\r?\n?)…"`
   has a fully-optional terminator, so it prefix-matches `## Logistics` / `## Logs` / `## Logbook`
   (confirmed live: group1 → `## Log` for all three). `mc done` then splits the heading and
   mangles the user's note — silent corruption by the self-described "ONE writer into task
   notes". *Fix:* require a line boundary: `r"(^##[ \t]+Log[ \t]*(?:\r?\n|\Z))"`; add a
-  `## Logistics` regression test.
+  `## Logistics` regression test. — **DONE (already fixed by `2e032c5`, PR #75):** the exact
+  line-boundary regex landed + `tests/mc/test_done.py:123` `## Logistics` regression test.
 
 ### P2 — correctness / contract defects
-- [ ] **[V] `mission-control/bin/vault_tasks.py:145`** — `project = (fm.get("project") or "").strip("[]")`
+- [x] **[V] `mission-control/bin/vault_tasks.py:145`** — `project = (fm.get("project") or "").strip("[]")`
   crashes `AttributeError` when `_parse_scalar` returns a list (confirmed live for
   `project: [[Autodrive]]` → `['[Autodrive]']`, and `status: [todo]`). One bracketed scalar in
   any task note tracebacks `mc tasks/standup/today/weekly`, the SwiftBar plugin, and the 6:45am
   launchd job. *Fix:* coerce list→scalar for project/status/priority/area (mirror the
-  `depends_on` guard at :148-150).
+  `depends_on` guard at :148-150). — **DONE (already fixed by `2e032c5`, PR #75):** added the
+  `_scalar()` helper (:86) applied to project/status + `test_load_tasks_wikilink_project_coerced_to_scalar`.
 - [ ] **[V] `mission-control/bin/vault_tasks.py:94`** — `_parse_frontmatter` skips any line with
   no `:` , so block-style YAML lists (`depends_on:\n  - other-task`, Obsidian's Properties
   serialization) parse as `''` → `depends_on` silently dropped → `mc standup` lists a blocked
