@@ -331,6 +331,28 @@ def test_post_ok_completion_contract_in_each_block():
 
 
 # =========================================================================== #
+# AC-P3b — degraded token + ABSENT/empty marker ⇒ fail-closed STOP (the third STOP branch)
+# =========================================================================== #
+def test_degraded_marker_absent_stop_pinned():
+    """The AUTHORITATIVE coordinator outcome state-machine (drive-review.md Step 3, which harden +
+    finalize inherit BY REFERENCE) carries a fail-closed branch for a DEGRADED token whose marker is
+    ABSENT/empty (the helper's marker-write failed) — distinct from AC-P1's broken-helper STOP and
+    AC-P3's OK-path require-marker STOP. Target REVIEW only (the clause is not duplicated into
+    harden/finalize). The regex is SPECIFIC to this branch — anchored on 'ABSENT/empty marker' (which
+    occurs exactly once) — so the OK-path clause ('require a non-empty …') and the broken-helper clause
+    (HELPER_ERROR) cannot satisfy it. Mutation-verify: delete the drive-review.md degraded-token /
+    ABSENT-marker STOP clause → reds."""
+    blob = re.sub(r"\s+", " ", _text(REVIEW))
+    assert re.search(
+        r"degraded token.{0,60}ABSENT/empty marker.{0,180}fail-closed non-decision STOP",
+        blob,
+    ), (
+        "drive-review.md Step 3 must route a degraded token with an ABSENT/empty marker "
+        "to a fail-closed non-decision STOP"
+    )
+
+
+# =========================================================================== #
 # AC-P4 — the post-process writes the marker ATOMICALLY (tmp+mv)
 # =========================================================================== #
 def test_atomic_post_process_write_in_each_block():

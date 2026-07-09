@@ -362,6 +362,34 @@ check "AC-H18c transient launch-gate probe recovers ⇒ OK (retrying probe)" "$O
 check "AC-H18c exec ran TWICE (attempt-2 launched after the probe retry recovered)" "$(cat "$XCNT")" "2"
 if [ ! -f "$WORK/codex-review-h18c.md" ]; then pass "AC-H18c recovered OK ⇒ NO killed marker"; else fail "AC-H18c a killed marker appeared (round falsely killed)"; fi
 
+echo "=== AC-H18d: gate-enforced probe-outage forces ONE bounded attempt; that attempt STALLS ⇒ terminal KILLED, no retry ==="
+# STEP-1 probe reports outage AND the scope is GATE-ENFORCED (phase/finalize/sensitive) ⇒ the helper
+# forces max_attempts=1 (one bounded attempt, NO stall-retry). AC-H8 covers only the sub-case where
+# that single forced attempt STREAMS OK; THIS covers the KILL sub-case — the forced single attempt
+# goes byte-silent and is stall-killed. With attempt==max_attempts==1 the `attempt < max_attempts`
+# launch-gate guard is FALSE, so there is NO retry probe and the terminal outcome is
+# CODEX_KILLED_TIMEOUT — the marker family, NOT CODEX_UNAVAILABLE (a killed round must NEVER
+# masquerade as an availability failure).
+mkfake fake_probe_outage_then_stall \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) exit 1 ;; esac' \
+  'printf "start\n"; sleep 60'
+disp fake_probe_outage_then_stall h18d phase "$WORK/codex-review-h18d.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100 --probe-timeout-secs 1
+check "AC-H18d gate-enforced probe-outage + forced single attempt STALLS ⇒ KILLED (NOT UNAVAILABLE)" "$OUT" "CODEX_KILLED_TIMEOUT"
+check "AC-H18d KILLED exit 1" "$RC" "1"
+check "AC-H18d marker 1st line == token" "$(head -1 "$WORK/codex-review-h18d.md")" "CODEX_KILLED_TIMEOUT"
+check_contains "AC-H18d marker attempts=1 (single forced attempt, no retry)" "$(cat "$WORK/codex-review-h18d.md")" "attempts=1"
+# NO stall-RETRY happened after the forced single attempt: the attempt log carries NO op=retry line for
+# this scope ("scope":"h18d" is emitted immediately before "op":<op> on every log_attempt line).
+h18d_retries=$(grep -F '"scope":"h18d","op":"retry"' "$ALOG" 2>/dev/null | wc -l | tr -d ' ')
+check "AC-H18d forced single attempt ⇒ NO retry op logged" "$h18d_retries" "0"
+# exactly ONE killed log (${raw%.log}.killed-1.log, N=1) — no killed-2.log, because no retry launched.
+if [ -f "$WORK/codex-raw-h18d.killed-1.log" ] && [ ! -f "$WORK/codex-raw-h18d.killed-2.log" ]; then
+  pass "AC-H18d exactly one killed log (killed-1.log, N=1) — no retry attempt launched"
+else fail "AC-H18d expected exactly one killed-1.log (a retry must NOT have launched)"; fi
+# and the STEP-1 probe DID log the outage that forced the single-attempt (max_attempts=1) path.
+check_contains "AC-H18d step-1 probe logged the outage (probed-outage)" "$(grep -F '"scope":"h18d","op":"probe"' "$ALOG")" "outage"
+
 echo "=== AC-H19: marker-WRITE fail-closed (writable parent, --marker is a DIRECTORY) ==="
 mkdir -p "$WORK/marker-is-a-dir"
 disp fake_stall h19 slice "$WORK/marker-is-a-dir" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100
