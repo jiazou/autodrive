@@ -183,6 +183,29 @@ def test_load_tasks_depends_on_list_preserved(mc_env, vault):
     assert task["depends_on"] == ["a", "b"]
 
 
+def test_load_tasks_wikilink_project_coerced_to_scalar(mc_env, vault):
+    """Regression: a `project: [[Autodrive]]` wikilink parses (via _parse_scalar) as a
+    LIST, so `(fm.get('project') or '').strip('[]')` used to raise AttributeError and
+    traceback every mc command + the 6:45am launchd job. load_tasks must coerce the
+    list back to a scalar (the wikilink brackets stripped) instead of crashing."""
+    vt = mc_env.vault_tasks
+    vault.add_raw(
+        "01 Projects/Autodrive/Tasks/wl-proj.md",
+        "---\n"
+        "type: task\n"
+        "project: [[Autodrive]]\n"
+        "status: [doing]\n"      # also a bracketed scalar -> list; must coerce too
+        "priority: [p1]\n"
+        "---\n"
+        "# Wikilink project\n",
+    )
+    (task,) = vt.load_tasks()  # must NOT raise AttributeError
+    assert task["project"] == "Autodrive"   # list->scalar, wikilink brackets stripped
+    assert task["status"] == "doing"        # bracketed scalar coerced, not a list
+    assert task["priority"] == "p1"
+    assert isinstance(task["project"], str)
+
+
 def test_load_tasks_parses_definition_of_done_checkboxes(mc_env, vault):
     vt = mc_env.vault_tasks
     path = vault.add_task("with-dod", project="P1", dod=["step one", "step two"])

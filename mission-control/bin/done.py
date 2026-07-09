@@ -36,9 +36,12 @@ import vault_tasks
 # as "no frontmatter".
 FM_RE = re.compile(r"^(\ufeff?---\r?\n)(.*?)(\r?\n---\r?\n?)", re.DOTALL)
 # Bounded '## Log' section: heading line + body up to the next '## ' heading or EOF.
-# The trailing newline is OPTIONAL so a `## Log` heading on the file's FINAL line (no
-# trailing newline — common for editor-saved notes) is still matched, not duplicated.
-LOG_SECTION_RE = re.compile(r"(^##\s+Log[ \t]*\r?\n?)(.*?)(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
+# The heading requires a LINE BOUNDARY after `Log` (a newline or EOF, allowing only
+# horizontal whitespace before it) so it can't prefix-match a longer heading like
+# `## Logistics` / `## Logs` / `## Logbook` and corrupt those notes. The boundary is
+# `(?:\r?\n|\Z)` — matching a `## Log` heading on the file's FINAL line with no
+# trailing newline (common for editor-saved notes) as well as CRLF/LF-terminated ones.
+LOG_SECTION_RE = re.compile(r"(^##[ \t]+Log[ \t]*(?:\r?\n|\Z))(.*?)(?=^##\s|\Z)", re.DOTALL | re.MULTILINE)
 
 
 def _resolve(slug):
