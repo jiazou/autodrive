@@ -119,6 +119,34 @@ def test_mark_appends_to_existing_log_section(mc_env, vault):
     assert residue == []
 
 
+def test_mark_does_not_corrupt_log_prefixed_heading(mc_env, vault):
+    """Regression: LOG_SECTION_RE used to prefix-match `## Logistics` (also `## Logs`,
+    `## Logbook`) as the `## Log` section, so `mc done` corrupted those notes. With the
+    line-boundary fix the `## Logistics` section is preserved byte-for-byte and a SEPARATE
+    `## Log` section is created for the dated bullet — it is NOT injected into Logistics."""
+    path = vault.add_task(
+        "logistics-note", status="todo", needs_review=False,
+        body="## Logistics\n- flight at 9am\n- hotel booked\n",
+    )
+    rc = mc_env.done.mark("logistics-note")
+    assert rc == 0
+    text = path.read_text(encoding="utf-8")
+
+    # the Logistics section survives intact — heading and both bullets, un-mangled
+    assert "## Logistics\n- flight at 9am\n- hotel booked\n" in text
+    assert "## Logistic" in text  # heading not chewed into "## Log" + "istics"
+
+    # a real, SEPARATE `## Log` section was created for the dated bullet
+    assert "## Log\n" in text
+    new_bullet = f"- {date.today().isoformat()} —"
+    assert new_bullet in text
+    # the dated bullet lives under `## Log`, NOT under `## Logistics`
+    log_body = text.split("## Log\n", 1)[1]
+    assert new_bullet in log_body
+    logistics_body = text.split("## Logistics\n", 1)[1].split("## Log", 1)[0]
+    assert new_bullet not in logistics_body
+
+
 # --------------------------------------------------------------------------- #
 # AC 19 — exit codes (design D9, followup F1)
 # --------------------------------------------------------------------------- #

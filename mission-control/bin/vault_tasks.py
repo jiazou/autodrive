@@ -83,6 +83,17 @@ def _parse_scalar(v):
     return v.strip('"').strip("'")
 
 
+def _scalar(v, default=""):
+    """Coerce a frontmatter value that may have parsed as a LIST back to a scalar.
+    `_parse_scalar` turns any bracketed value into a list, so a wikilink like
+    `project: [[Autodrive]]` (or `status: [doing]`) arrives here as a one-element
+    list; the standup/harvest readers want a single string. Mirrors the depends_on
+    str->list guard in the opposite direction. Empty/absent -> default."""
+    if isinstance(v, list):
+        v = v[0] if v else ""
+    return v if v else default
+
+
 def _parse_frontmatter(text):
     m = FRONTMATTER_RE.match(text)
     if not m:
@@ -142,7 +153,7 @@ def load_tasks():
         if fm.get("type") != "task":
             continue
         slug = os.path.splitext(os.path.basename(path))[0]
-        project = (fm.get("project") or "").strip("[]")
+        project = _scalar(fm.get("project")).strip("[]")
         due = fm.get("due") or ""
         sched = fm.get("scheduled") or ""
         deps = fm.get("depends_on") or []
@@ -152,9 +163,9 @@ def load_tasks():
             "slug": slug,
             "title": _title(text, slug),
             "project": project,
-            "area": fm.get("area", ""),
-            "status": fm.get("status", "todo"),
-            "priority": fm.get("priority", "p3"),
+            "area": _scalar(fm.get("area")),
+            "status": _scalar(fm.get("status"), "todo"),
+            "priority": _scalar(fm.get("priority"), "p3"),
             "due": due,
             "scheduled": sched,
             "needs_review": str(fm.get("needs_review", "")).lower() == "true",
