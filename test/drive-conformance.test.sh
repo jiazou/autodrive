@@ -145,6 +145,28 @@ seed_finalize_no_findings() {
   { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
 }
 
+# A malformed finalize artifact with TWO header-region `## AppliedEdits:` lines: FIRST `yes`,
+# later `no` (both above `## Findings`). Pins the FIRST-match contract: applied_edits_no uses
+# `grep -m1`, so it must read the FIRST (`yes`) and BLOCK — a regression to "last header wins" or
+# "any header `no`" would ship. Everything else is ship-valid so the block isolates to the reader.
+seed_finalize_dup_header() {
+  local rd="$1" n="$2" sha="$3"
+  mkdir -p "$rd"
+  {
+    echo "# Review finalize round $n"
+    echo
+    echo "## Verdict: CONVERGED"
+    echo "## AppliedEdits: yes"
+    echo "## AppliedEdits: no"
+    echo
+    echo "reviewed-sha: $sha"
+    echo "## Findings"
+    echo
+    echo "No open P1."
+  } > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
+}
+
 # A malformed finalize artifact whose AppliedEdits line is BARE `AppliedEdits: no` (no `## `
 # heading). The producer ALWAYS emits `## AppliedEdits: no` (heading), so a `no`-gate must
 # fail closed on the bare form (it must be at least as strict as verdict_converged's mandatory
@@ -511,6 +533,14 @@ seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')" no
 seed_finalize "$rd" 2 "$(git -C "$repo" rev-parse 'HEAD^')" yes
 run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.h ship blocks on highest-N finalize (round2 yes over round1 no)" 1 "$RC"
                                                     assert_out "AC45.h reason is no-review (highest-N, not stale lower-N)" '"reason":"no-review"'
+
+# AC45.i — FIRST-match contract: two header `## AppliedEdits:` lines (first `yes`, later `no`).
+# applied_edits_no uses `grep -m1`, so the FIRST (`yes`) wins -> BLOCK. A regression to "last
+# header wins" / "any header `no`" would ship. Pre-fix: ships (b-ii ignored AppliedEdits).
+read -r repo rd < <(mk_ship clean ac45i-ship)
+seed_finalize_dup_header "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.i ship blocks on FIRST header AppliedEdits (yes before no)" 1 "$RC"
+                                                    assert_out "AC45.i reason is no-review (grep -m1 first-match)" '"reason":"no-review"'
 
 echo "=== AC4c: HARDEN->advance consumes post-harden review ==="
 read -r repo rd < <(mk_phase_harden post_harden_ok 1)

@@ -450,8 +450,12 @@ def test_finalize_verdict_applied_edits_terminal_contract():
     # CONVERGED` instead of replacing it, `verdict_converged` (first-match) would read the
     # stale CONVERGED first line and the ORIGINAL hole reopens. Pin the never-append discipline
     # so a spec edit that drops it reds (harden: codex append-vs-replace gap).
-    assert re.search(r"in place\b", step4, re.IGNORECASE), (
-        "Step 4 must require the `## Verdict:` rewrite be IN PLACE (replace the first line)"
+    # Bind IN PLACE to the `## Verdict:` line specifically (NOT a bare `in place`, which
+    # false-passes: pre-fix Step 4 already said the `reviewed-sha:` update was IN PLACE).
+    assert re.search(r"`?## Verdict:`?\s+line\s+in place\b", step4, re.IGNORECASE), (
+        "Step 4 must require the `## Verdict:` LINE rewrite be IN PLACE (replace the first "
+        "line) — bound to the Verdict line, not a bare `in place` that the pre-fix reviewed-sha "
+        "clause already satisfied"
     )
     assert re.search(r"never append a second\s+`?## Verdict:", step4, re.IGNORECASE), (
         "Step 4 must forbid APPENDING a second `## Verdict:` line (verdict_converged is "
