@@ -687,11 +687,17 @@ do_dispatch() {
         if [ "$attempt" -lt "$max_attempts" ]; then
           # probe-before-retry as a LAUNCH-GATE ONLY: it may SUPPRESS the next attempt on outage
           # but writes NO marker and NEVER switches the outcome family (round_was_killed stays 1).
-          if run_probe; then
+          # Use the RETRYING `probe_with_retry` (NOT single-shot `run_probe`) so a transient probe blip
+          # in the retry window does not falsely kill a recoverable round — §A.4-1 "the probe retries
+          # once with backoff before an outage is confirmed" (round-7 FIX A). Log the launch-gate probe
+          # outcome as an op=probe line, exactly like the initial probe path.
+          if probe_with_retry; then
+            log_attempt probe "$((attempt + 1))" OK "" "$effort_desc" "$sandbox_desc" "" "" "$PROBE_RC" ""
             log_attempt retry "$((attempt + 1))" "" stall "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" ""
             _jitter_sleep
             attempt=$((attempt + 1)); continue
           fi
+          log_attempt probe "$((attempt + 1))" outage probed-outage "$effort_desc" "$sandbox_desc" "" "" "$PROBE_RC" ""
         fi
         # retry suppressed by the launch-gate, exhausted, or unavailable → terminal KILLED
         log_attempt degrade "$attempt" CODEX_KILLED_TIMEOUT stall "$effort_desc" "$sandbox_desc" "$MAX_GAP" "$KILLED_LOGS" "$PROBE_RC" "$CODEX_RC"

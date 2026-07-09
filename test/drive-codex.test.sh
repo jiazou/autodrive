@@ -145,6 +145,16 @@ mkfake fake_stall_then_probeoutage \
   'if [ "$1" = doctor ]; then n=$(cat "$DCNT" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$DCNT"; [ "$n" = 1 ] && exit 0 || exit 1; fi' \
   'printf "start\n"; sleep 60'
 
+# TRANSIENT launch-gate blip: doctor OK(1)/FAIL(2)/OK(3), exec STALL(1)/OK(2). The post-stall launch
+# gate must RETRY the probe (§A.4-1): call-2 FAILs, call-3 OKs ⇒ the retry proceeds ⇒ attempt-2 streams
+# OK. A single-shot probe would confirm outage on call-2 and falsely KILL a recoverable round. exec runs
+# are counted in $XCNT (⇒ 2).
+mkfake fake_stall_then_transient_probe \
+  '#!/usr/bin/env bash' \
+  'if [ "$1" = doctor ]; then n=$(cat "$DCNT" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$DCNT"; [ "$n" = 2 ] && exit 1 || exit 0; fi' \
+  'n=$(cat "$XCNT" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$XCNT"' \
+  'if [ "$n" = 1 ]; then printf "start\n"; sleep 60; else printf "recovered\nok\n"; exit 0; fi'
+
 PROMPT="$WORK/prompt.txt"; printf 'Review the scope.' > "$PROMPT"
 ALOG="$WORK/codex-attempts-testrun.jsonl"
 
@@ -341,13 +351,26 @@ check "AC-H18a stall then probe-outage-on-retry ⇒ KILLED" "$OUT" "CODEX_KILLED
 CNT="$WORK/cnt_h18b"; : > "$CNT"
 CNT="$CNT" disp fake_stall_then_execfail h18b slice "$WORK/codex-review-h18b.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100
 check "AC-H18b stall then retry-exec-fail ⇒ KILLED (killed-latch)" "$OUT" "CODEX_KILLED_TIMEOUT"
+# (c) round-7 FIX A: stall-kill then a TRANSIENT launch-gate probe blip (FAIL then OK on retry) must
+# RECOVER — the retrying probe proceeds and attempt-2 streams OK ⇒ final OK, exec_calls=2, NO killed
+# marker. Proven RED against the pre-FIX-A single-shot-probe helper (returns KILLED, exec_calls=1).
+DCNT="$WORK/dcnt_h18c"; : > "$DCNT"; XCNT="$WORK/xcnt_h18c"; : > "$XCNT"
+DCNT="$DCNT" XCNT="$XCNT" disp fake_stall_then_transient_probe h18c slice "$WORK/codex-review-h18c.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100 --probe-timeout-secs 1
+check "AC-H18c transient launch-gate probe recovers ⇒ OK (retrying probe)" "$OUT" "OK"
+check "AC-H18c exec ran TWICE (attempt-2 launched after the probe retry recovered)" "$(cat "$XCNT")" "2"
+if [ ! -f "$WORK/codex-review-h18c.md" ]; then pass "AC-H18c recovered OK ⇒ NO killed marker"; else fail "AC-H18c a killed marker appeared (round falsely killed)"; fi
 
 echo "=== AC-H19: marker-WRITE fail-closed (writable parent, --marker is a DIRECTORY) ==="
 mkdir -p "$WORK/marker-is-a-dir"
 disp fake_stall h19 slice "$WORK/marker-is-a-dir" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100
 check "AC-H19 fail-closed exit 1" "$RC" "1"
 check_contains "AC-H19 stdout still a closed degraded token (no 5th token)" "OK CODEX_KILLED_TIMEOUT CODEX_UNAVAILABLE HELPER_ERROR" "$OUT"
-if [ ! -f "$WORK/marker-is-a-dir" ]; then pass "AC-H19 NO marker file written (path stays a dir)"; else fail "AC-H19 a marker file appeared"; fi
+# NON-VACUOUS (round-7 FIX C): the path stays a dir, so `-f` is trivially false even if a regressed
+# helper did `mv "$tmp" "$MARKER"` (which puts `$tmp` INSIDE the dir). Assert the dir stays EMPTY — no
+# marker/tmp entry was written into it — so a dropped `[ -d "$MARKER" ]` guard would RED here.
+if [ -d "$WORK/marker-is-a-dir" ] && [ -z "$(ls -A "$WORK/marker-is-a-dir" 2>/dev/null)" ]; then
+  pass "AC-H19 marker path stays an EMPTY dir (no marker/tmp written into it)"
+else fail "AC-H19 the marker dir gained an entry (a marker/tmp was written)"; fi
 check_contains "AC-H19 stderr fail-closed diagnostic" "$ERR" "fail-closed"
 
 echo "=== AC-H20: prompt-file pre-launch validation (empty prompt ⇒ HELPER_ERROR, un-spawned) ==="
