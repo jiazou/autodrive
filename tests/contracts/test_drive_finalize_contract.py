@@ -445,6 +445,18 @@ def test_finalize_verdict_applied_edits_terminal_contract():
         "Step 4's no-fix branch must set the terminal marker `## AppliedEdits: no` (the "
         "ship gate's finalize-terminal requirement)"
     )
+    # LOAD-BEARING: the rewrite must be IN PLACE and MUST NOT append a second `## Verdict:`
+    # line. If a fix branch APPENDED `## Verdict: FINDINGS` after the Step-1 `## Verdict:
+    # CONVERGED` instead of replacing it, `verdict_converged` (first-match) would read the
+    # stale CONVERGED first line and the ORIGINAL hole reopens. Pin the never-append discipline
+    # so a spec edit that drops it reds (harden: codex append-vs-replace gap).
+    assert re.search(r"in place\b", step4, re.IGNORECASE), (
+        "Step 4 must require the `## Verdict:` rewrite be IN PLACE (replace the first line)"
+    )
+    assert re.search(r"never append a second\s+`?## Verdict:", step4, re.IGNORECASE), (
+        "Step 4 must forbid APPENDING a second `## Verdict:` line (verdict_converged is "
+        "first-match, so an appended FINDINGS after a stale CONVERGED would reopen the hole)"
+    )
 
     # ---- (b) prose consumers require the FIRST `## AppliedEdits:` line be exactly `no`. -- #
     # drive.md resume criterion — SUB-BLOCK-bounded to the finalize-CONVERGED clause (from

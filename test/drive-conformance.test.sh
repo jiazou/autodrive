@@ -501,6 +501,17 @@ seed_finalize_bare_no "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
 run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.g ship finalize bare AppliedEdits:no (no ## heading) blocked" 1 "$RC"
                                                     assert_out "AC45.g reason is no-review (mandatory ## heading)" '"reason":"no-review"'
 
+# AC45.h — MULTI-ROUND highest-N selection (the real rebirth-resume scenario): round 1 is a
+# clean confirming artifact (CONVERGED + `## AppliedEdits: no`) but round 2 is a non-terminal
+# fix (CONVERGED + `## AppliedEdits: yes`). ship binds via `highest_review_file finalize`, so it
+# MUST evaluate the HIGHEST-N (round 2, yes) and BLOCK — it must NOT bind the stale lower-N clean
+# round 1. Pre-fix: ships (b-ii ignored AppliedEdits, so the CONVERGED round-2 bound and shipped).
+read -r repo rd < <(mk_ship clean ac45h-ship)
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')" no
+seed_finalize "$rd" 2 "$(git -C "$repo" rev-parse 'HEAD^')" yes
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.h ship blocks on highest-N finalize (round2 yes over round1 no)" 1 "$RC"
+                                                    assert_out "AC45.h reason is no-review (highest-N, not stale lower-N)" '"reason":"no-review"'
+
 echo "=== AC4c: HARDEN->advance consumes post-harden review ==="
 read -r repo rd < <(mk_phase_harden post_harden_ok 1)
 run_conf "$repo" "$rd" --mode phase-merge:1;        assert_rc "AC4c phase-merge post-harden review matches tip" 0 "$RC"
