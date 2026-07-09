@@ -65,6 +65,8 @@
 #   VALIDATED pre-launch (a bad value ⇒ HELPER_ERROR exit 2, codex un-spawned):
 #     --mode {probe,dispatch} · --scope ^[A-Za-z0-9._-]+$ · --scope-class {design,slice,phase,finalize}
 #     · --attempt-log (regular writable file, not FIFO/socket) · --marker parent (writable)
+#     · --raw-log (regular writable-or-creatable file, not dir/FIFO/socket/device — so the exec-path
+#       `> "$RAW_LOG"` redirect cannot fail into a false CODEX_UNAVAILABLE degrade — round-4 FIX A)
 #     · --prompt-file (exists, non-empty, AND READABLE with non-empty content — read pre-launch, FIX B)
 #     · --stall-secs/--backstop-secs/--poll-secs/--probe-timeout-secs
 #     (strictly-positive number) · --max-attempts (positive integer) · --sandbox AND DRIVE_CODEX_SANDBOX
@@ -79,11 +81,18 @@
 #   REQUIRED-FILE READS fail CLOSED on a read error (not just an existence/`-s` check): --prompt-file
 #     ⇒ HELPER_ERROR (required); --prior-codex is optional/best-effort so its `-r` guard fails toward
 #     FULL codex effort (never silently down-tiers on an unreadable prior).
-#   PROCESS SUPERVISION (no descendant survives helper return on ANY terminal path): every spawned
-#     child is group-supervised under monitor mode — the `codex exec` group is reaped via a post-`wait`
-#     `-<pgid>`-liveness check on EVERY path incl. clean OK (FIX A, `_reap_pgid`); the `doctor` probe
-#     group is group-killed after the probe; the probe timeout-watcher is group-killed (its `sleep`
-#     child never orphaned); and one installed reaper trap group-reaps all of them on TERM/INT/HUP/EXIT.
+#   PROCESS SUPERVISION (no SAME-PROCESS-GROUP descendant survives helper return on ANY terminal
+#     path): every spawned child is group-supervised under monitor mode — the `codex exec` group is
+#     reaped via a post-`wait` `-<pgid>`-liveness check on EVERY path incl. clean OK (round-3 FIX A,
+#     `_reap_pgid`); the `doctor` probe group is group-killed after the probe; the probe
+#     timeout-watcher is group-killed (its `sleep` child never orphaned); and one installed reaper trap
+#     group-reaps all of them on TERM/INT/HUP/EXIT.
+#     ACCEPTED RESIDUAL (round-4 honesty narrowing): supervision is PGID-based, so a child that
+#     DETACHES via `setsid()` / a new session ESCAPES the group and can survive helper return (or
+#     append to raw.log after OK). This is OUT OF SCOPE — full descendant-tree reaping is non-portable
+#     over-engineering, and the REAL codex CLI never setsid-detaches children to outlive itself
+#     (refuted-at-integration); a hostile/misbehaving codex that detaches is beyond this PGID
+#     supervisor. The contract is therefore "no SAME-PGID descendant survives", NOT "no child survives".
 #
 # Best-effort supervisor: deliberately NOT `set -euo pipefail`. rc is managed explicitly. No
 # `set -u` (also sidesteps the same-line `local a=$1 b=$a` expansion gotcha).
@@ -257,10 +266,12 @@ _grace_then_kill() {
 
 # Reap a whole process GROUP if ANY member is still alive (keyed on GROUP liveness `kill -0 -pgid`,
 # NOT the leader): TERM, brief grace, KILL. This is what supervises a codex that FORKS a background
-# child and then self-exits — the leader `wait` reaps only the leader, leaving the child alive in the
-# PGID. Called on EVERY terminal path (incl. clean OK) so no descendant survives helper return (and
-# none can append to raw.log after OK). No-op (returns fast) when the group is already empty, so it is
-# idempotent with the watchdog kill paths that already group-killed. $1 = pgid.
+# child in the SAME PGID and then self-exits — the leader `wait` reaps only the leader, leaving the
+# child alive in the PGID. Called on EVERY terminal path (incl. clean OK) so no SAME-PGID descendant
+# survives helper return (and none can append to raw.log after OK). A child that `setsid()`-detaches
+# into a NEW session escapes this PGID reap — an ACCEPTED, out-of-scope residual (see the header
+# CLASS-AUDIT note; the real codex CLI does not detach). No-op (returns fast) when the group is already
+# empty, so it is idempotent with the watchdog kill paths that already group-killed. $1 = pgid.
 _reap_pgid() {
   local pgid="$1" i=0
   kill -0 -"$pgid" 2>/dev/null || return 0     # group already empty — nothing to reap
@@ -473,10 +484,11 @@ run_attempt() {
     wait "$child" 2>/dev/null; wstatus=$?
   fi
   # FIX A (round-3, BLOCKING): supervise the whole PROCESS GROUP, not just the leader. A codex that
-  # forks a background child then self-exits leaves that child alive in the PGID — the `wait`/watchdog
-  # track the LEADER only. Reap any surviving group member on EVERY terminal path (incl. clean OK)
-  # BEFORE clearing WATCH_PGID / classifying, so no descendant survives helper return and none can
-  # append to raw.log after OK (which would corrupt the post-process read). Idempotent with the kill
+  # forks a background child in the SAME PGID then self-exits leaves that child alive — the
+  # `wait`/watchdog track the LEADER only. Reap any surviving group member on EVERY terminal path
+  # (incl. clean OK) BEFORE clearing WATCH_PGID / classifying, so no SAME-PGID descendant survives
+  # helper return and none can append to raw.log after OK (which would corrupt the post-process read;
+  # a `setsid()`-detached child escapes — accepted residual, header CLASS-AUDIT). Idempotent with the kill
   # paths (already group-killed ⇒ this no-ops).
   _reap_pgid "$pgid"
   WATCH_PGID=""   # codex + any descendant reaped — clear so the reaper trap is a no-op on exit
@@ -574,6 +586,21 @@ do_dispatch() {
   local effort_desc="full" sandbox_desc="off"
   [ "$EFFORT_LOW" = 1 ] && effort_desc="$EFFORT_TIER_LOW"
   [ "$SANDBOX_FLAG_ON" = 1 ] && sandbox_desc="$RUNG"
+
+  # FIX A (round-4, MAJOR): preflight --raw-log PRE-LAUNCH exactly like --marker/--attempt-log. A
+  # directory / FIFO / socket / device --raw-log fails the exec-path `> "$RAW_LOG"` redirect at launch
+  # (codex never starts) yet would be mis-classified `exec-failed` ⇒ CODEX_UNAVAILABLE + a non-empty
+  # degraded marker `codex_present` accepts — silently dropping the codex voice as ordinary degradation
+  # instead of the broken-helper STOP lane. Require a REGULAR file that is writable (existing) or has a
+  # writable parent (creatable): the `-f` test rejects a dir/FIFO/socket/device and `-w` rejects a
+  # read-only file / read-only-FS regular file, so the exec-path redirect cannot fail into a false
+  # degrade. (Deliberately do NOT pre-`:>`-truncate here — run_attempt's own `> "$RAW_LOG"` creates it,
+  # and a pre-truncated inode perturbs the AC-H10 mv-aside fd-poll timing.) ⇒ HELPER_ERROR, un-spawned.
+  if [ -e "$RAW_LOG" ]; then
+    { [ -f "$RAW_LOG" ] && [ -w "$RAW_LOG" ]; } || helper_error "--raw-log must be a writable regular file (not a dir/FIFO/socket/device): '$RAW_LOG'"
+  else
+    [ -w "$(dirname "$RAW_LOG")" ] || helper_error "--raw-log parent dir not writable (or not creatable): '$RAW_LOG'"
+  fi
 
   set -m   # monitor mode: backgrounded jobs (probe + codex) get their OWN process group.
   _install_reaper   # FIX C: ONE trap for the whole dispatch — reaps the probe's doctor group AND the

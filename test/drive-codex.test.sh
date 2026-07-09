@@ -9,6 +9,12 @@
 # Determinism: sub-second --stall-secs/--backstop-secs + a small --poll-secs drive the watchdog by
 # poll count (awk float math), not wall clock. `set -m` group kills reap forked children. A fake
 # that TRAPS SIGTERM and exits 0 models a codex self-exit in the kill window (kill_confirmed=0).
+#
+# Supervision-contract scope: the reaping cases (AC-H21/H23, FIX-C, R3-A) assert the honest contract
+# "no SAME-PROCESS-GROUP descendant survives helper return" — the fakes fork children in the helper's
+# PGID (no `setsid`). A `setsid()`-detached child ESCAPES PGID reaping and is an ACCEPTED, out-of-scope
+# residual (real codex never detaches; see bin/drive-codex.sh header CLASS-AUDIT) — deliberately NOT
+# asserted here.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -68,7 +74,8 @@ mkfake fake_probe_outage \
   'case "$1" in doctor) exit 1 ;; esac' \
   'printf "reviewed\nok\n"; exit 0'
 
-# doctor HANGS + FORKS a child that would touch $SURVIVOR after 30s (⇒ hung-probe; no child survives).
+# doctor HANGS + FORKS a same-PGID child that would touch $SURVIVOR after 30s (⇒ hung-probe; the
+# same-PGID child is reaped by the group-kill).
 mkfake fake_probe_hang \
   '#!/usr/bin/env bash' \
   'case "$1" in doctor) ( sleep 30; touch "$SURVIVOR" ) & sleep 30; exit 0 ;; esac' \
@@ -89,9 +96,9 @@ mkfake fake_forking_stream \
   '( sleep 2; touch "$SURVIVOR" ) &' \
   'printf "streaming\n"; sleep 60'
 
-# exec FORKS a bg child that (after 2s) APPENDS to raw.log AND touches $SURVIVOR, then the LEADER
-# exits 0 (⇒ clean OK). The child inherits the exec's fd1 (raw.log). Proves FIX A supervises the
-# whole PGID on the OK path: the descendant is reaped (no survivor, no post-OK raw.log append).
+# exec FORKS a SAME-PGID bg child that (after 2s) APPENDS to raw.log AND touches $SURVIVOR, then the
+# LEADER exits 0 (⇒ clean OK). The child inherits the exec's fd1 (raw.log). Proves FIX A supervises the
+# whole PGID on the OK path: the same-PGID descendant is reaped (no survivor, no post-OK raw.log append).
 mkfake fake_fork_then_ok \
   '#!/usr/bin/env bash' \
   'case "$1" in doctor) echo ok; exit 0 ;; esac' \
@@ -351,7 +358,7 @@ check "AC-H20 empty prompt ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
 check "AC-H20 empty prompt exit 2" "$RC" "2"
 if [ ! -f "$WORK/codex-raw-h20.log" ]; then pass "AC-H20 codex un-spawned (no raw log)"; else fail "AC-H20 codex spawned"; fi
 
-echo "=== AC-H21: hung-probe bound + no forked child survives ==="
+echo "=== AC-H21: hung-probe bound + no SAME-PGID forked probe child survives ==="
 SURV="$WORK/survivor_h21"; rm -f "$SURV"
 t0=$(date +%s)
 OUT="$(SURVIVOR="$SURV" DRIVE_CODEX_CMD="$BIN/fake_probe_hang" "$HELPER" --mode dispatch --scope h21 --scope-class slice \
@@ -361,7 +368,7 @@ t1=$(date +%s)
 check "AC-H21 hung probe ⇒ CODEX_UNAVAILABLE (fail-toward-degrade)" "$OUT" "CODEX_UNAVAILABLE"
 if [ $((t1 - t0)) -le 10 ]; then pass "AC-H21 dispatch returned BOUNDED (<=10s, no wedge)"; else fail "AC-H21 wedged ($((t1-t0))s)"; fi
 sleep 0.5
-if [ ! -f "$SURV" ]; then pass "AC-H21 NO forked probe child survived the group-kill"; else fail "AC-H21 forked child survived"; fi
+if [ ! -f "$SURV" ]; then pass "AC-H21 NO same-PGID forked probe child survived the group-kill"; else fail "AC-H21 same-PGID forked child survived"; fi
 
 echo "=== AC-H22: marker-parent pre-launch guard (structurally-unwritable parent) ==="
 mkdir -p "$WORK/rodir"; chmod 555 "$WORK/rodir"
@@ -507,17 +514,18 @@ check_contains "FIX-D valid --sandbox danger-full-access composes" "$(cat "$WORK
 : > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv fd4 slice "$WORK/codex-review-fd4.md" --poll-secs 0.05 --sandbox off
 check_absent "FIX-D --sandbox off (explicit kill switch) ⇒ no --sandbox flag" "$(cat "$WORK/argv.log")" "--sandbox"
 
-echo "=== R3-A (codex BLOCKING): descendant leak on the clean-OK path — supervise the whole PGID ==="
-# codex forks a bg child then exits 0. The watchdog/wait track the LEADER only, so pre-fix the child
-# survived PAST the backstop and could append to raw.log AFTER OK (corrupting the post-process read).
-# FIX A reaps any surviving PGID member on EVERY terminal path (incl. OK) before classifying.
-# NON-VACUOUS: the child touches + appends after 2s; we observe past that. Proven RED on round-2.
+echo "=== R3-A (codex BLOCKING): SAME-PGID descendant leak on the clean-OK path — supervise the PGID ==="
+# codex forks a SAME-PGID bg child then exits 0. The watchdog/wait track the LEADER only, so pre-fix
+# the child survived PAST the backstop and could append to raw.log AFTER OK (corrupting the
+# post-process read). FIX A reaps any surviving PGID member on EVERY terminal path (incl. OK) before
+# classifying. NON-VACUOUS: the child touches + appends after 2s; we observe past that. Proven RED on
+# round-2. (A `setsid`-detached child would ESCAPE — accepted residual, NOT asserted here.)
 SURV_A="$WORK/survivor_okfork"; rm -f "$SURV_A"
 SURVIVOR="$SURV_A" disp fake_fork_then_ok r3a slice "$WORK/codex-review-r3a.md" --poll-secs 0.05 --stall-secs 100 --backstop-secs 100
 check "R3-A forked-child-then-exit-0 still classifies OK" "$OUT" "OK"
 sleep 2.6
-if [ ! -f "$SURV_A" ]; then pass "R3-A OK-path forked descendant REAPED (no survivor)"; else fail "R3-A descendant survived the clean-OK path"; fi
-check_absent "R3-A no POST-OK append reached raw.log (post-process read uncorrupted)" "$(cat "$WORK/codex-raw-r3a.log" 2>/dev/null)" "LATE-APPEND-AFTER-OK"
+if [ ! -f "$SURV_A" ]; then pass "R3-A OK-path SAME-PGID forked descendant REAPED (no survivor)"; else fail "R3-A same-PGID descendant survived the clean-OK path"; fi
+check_absent "R3-A no post-OK SAME-PGID append reached raw.log (post-process read uncorrupted)" "$(cat "$WORK/codex-raw-r3a.log" 2>/dev/null)" "LATE-APPEND-AFTER-OK"
 
 echo "=== R3-A(probe): clean-probe forked doctor descendant is reaped too (process-supervision class) ==="
 SURV_AP="$WORK/survivor_probefork"; rm -f "$SURV_AP"
@@ -549,6 +557,30 @@ check_absent "R3-C unreadable clean prior ⇒ FULL effort (no -c down-tier)" "$(
 chmod 644 "$PRIOR_UNR"   # readable clean prior STILL down-tiers (no over-correction)
 : > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv r3cok slice "$WORK/codex-review-r3cok.md" --poll-secs 0.05 --confirmation-class --prior-codex "$PRIOR_UNR"
 check_contains "R3-C readable clean prior still down-tiers" "$(cat "$WORK/argv.log")" "model_reasoning_effort=medium"
+
+echo "=== R4-A (codex MAJOR): --raw-log preflight — a dir/FIFO ⇒ HELPER_ERROR pre-launch (un-spawned) ==="
+# --raw-log was NOT pre-validated: a directory --raw-log fails the exec `> "$RAW_LOG"` redirect at
+# launch (codex never starts) yet classified exec-failed ⇒ CODEX_UNAVAILABLE + a degraded marker the
+# coordinator accepts — silently dropping the codex voice instead of the broken-helper STOP lane. Now
+# --raw-log is preflighted (regular writable/creatable; reject dir/FIFO/socket) ⇒ HELPER_ERROR.
+mkdir -p "$WORK/rawlog-is-a-dir"
+OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope r4a --scope-class slice --attempt-log "$ALOG" \
+   --raw-log "$WORK/rawlog-is-a-dir" --marker "$WORK/codex-review-r4a.md" --prompt-file "$PROMPT" --poll-secs 0.05 2>/dev/null)"; RC=$?
+check "R4-A directory --raw-log ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+check "R4-A directory --raw-log exit 2 PRE-LAUNCH" "$RC" "2"
+if [ ! -f "$WORK/codex-review-r4a.md" ]; then pass "R4-A directory --raw-log ⇒ NO degraded marker (broken-helper STOP lane, not CODEX_UNAVAILABLE)"; else fail "R4-A a degraded marker appeared (voice silently dropped)"; fi
+# a FIFO --raw-log must ALSO be rejected pre-launch and must NOT wedge (the `-f` guard rejects it
+# BEFORE the `:>` truncate that would block on a reader-less FIFO — if it regressed this would hang).
+RAWFIFO="$WORK/rawlog.fifo"; rm -f "$RAWFIFO"; mkfifo "$RAWFIFO"
+OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope r4af --scope-class slice --attempt-log "$ALOG" \
+   --raw-log "$RAWFIFO" --marker "$WORK/codex-review-r4af.md" --prompt-file "$PROMPT" --poll-secs 0.05 2>/dev/null)"; RC=$?
+check "R4-A FIFO --raw-log ⇒ HELPER_ERROR (no wedge)" "$OUT" "HELPER_ERROR"
+check "R4-A FIFO --raw-log exit 2" "$RC" "2"
+rm -f "$RAWFIFO"
+# a normal creatable --raw-log still runs (no over-rejection) — the OK cases above already exercise this,
+# but assert once more against a FRESH path to guard the new create+truncate preflight.
+disp fake_ok r4aok slice "$WORK/codex-review-r4aok.md" --poll-secs 0.05
+check "R4-A fresh regular --raw-log still runs ⇒ OK" "$OUT" "OK"
 
 echo ""
 echo "===================================================================="
