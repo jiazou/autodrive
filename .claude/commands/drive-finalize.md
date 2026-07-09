@@ -151,12 +151,46 @@ dual-voice round APPLIED edits)`.
 
 ## Step 1 — Audit (dual-voice, 3-lens)
 
-Run the **same dual-voice mechanics as `/drive-review`** (a passive Claude reviewer
-subagent + a direct codex pass over the same scope), with the finalize 3-lens prompt
-below. CRITICAL BOUNDARY: pass PATHS + git refs only — never any implementer's or
-finalizer's notes/rationale (preserves the reviewer's independent judgment).
+Run the **same dual-voice mechanics as `/drive-review`** (codex FIRST as a background helper + a
+passive Claude reviewer spawned WHILE it runs), **including its outcome tier TABLE** (`/drive-review`
+Step 1 — the `OK` / `CODEX_KILLED_TIMEOUT` / `CODEX_UNAVAILABLE` / `HELPER_ERROR` tier), with the
+finalize 3-lens prompt below. CRITICAL BOUNDARY: pass PATHS + git refs only — never any
+implementer's or finalizer's notes/rationale (preserves the reviewer's independent judgment).
 
-Spawn a generic reviewer subagent:
+Codex FIRST (run `bin/drive-codex.sh` from the MAIN context via `Bash(run_in_background:true)`,
+NEVER inside a subagent that waits on it). First `mkdir -p "$RUN_DIR/tmp"` (TMPDIR-namespaced). The
+dispatch block (snapshot → quarantine → dispatch):
+
+```
+case "$scope" in *[!A-Za-z0-9._-]*) echo "non-decision STOP: invalid <scope> charset"; exit 2 ;; esac   # belt-and-suspenders: HELPER's permissive charset BEFORE composing any <scope>-derived filename
+mkdir -p "$RUN_DIR/tmp"
+[ -f "$RUN_DIR/codex-raw-finalize.log" ] && mv "$RUN_DIR/codex-raw-finalize.log" "$RUN_DIR/codex-raw-finalize.log.stranded"   # re-dispatch: mv the raw log aside (an orphaned codex may still be appending)
+[ -f "$RUN_DIR/codex-review-finalize.md" ] && cp "$RUN_DIR/codex-review-finalize.md" "$RUN_DIR/tmp/codex-prior-finalize.md"   # SNAPSHOT the prior sibling for --prior-codex BEFORE the quarantine hides it. Ordering: snapshot → quarantine → dispatch
+[ -f "$RUN_DIR/codex-review-finalize.md" ] && mv "$RUN_DIR/codex-review-finalize.md" "$RUN_DIR/codex-review-finalize.md.stranded"   # QUARANTINE the STALE codex SIBLING so a crashed round leaves NO current sibling for stranded-adopt
+for x in out err; do [ -f "$RUN_DIR/tmp/helper-finalize.$x" ] && mv "$RUN_DIR/tmp/helper-finalize.$x" "$RUN_DIR/tmp/helper-finalize.$x.stranded"; done   # stale token/err file aside
+cat > "$RUN_DIR/tmp/codex-prompt-finalize.txt" <<'PROMPT'
+Finalize (aggregate harden) the run: review git diff <baseRef>..<featureBranch> for (1) AI slop to REMOVE across the whole run diff (de-slop, behavior-preserving), (2) aggregate missing tests (cross-phase / end-to-end criteria), (3) aggregate logic bugs (cross-phase contract/integration). Flag P1 (real bug / missing criterion test) vs P2 (slop / non-criterion test) with file:line. List any MAJOR architectural problem separately as ARCH (do not propose fixing it in-run). Note any de-slop edit that would red a test or drop a criterion (do not propose it). Prioritized.
+PROMPT
+REDISPATCH=0; [ -e "$RUN_DIR/inflight-review-finalize.marker" ] && REDISPATCH=1   # re-dispatch = a PRE-EXISTING OPEN inflight marker (a prior crashed attempt of THIS round)
+if [ "$REDISPATCH" = 0 ]; then
+  CONF=(--confirmation-class --prior-codex "$RUN_DIR/tmp/codex-prior-finalize.md")   # CLEAN FIRST dispatch (incl. a confirming re-audit): --prior-codex = the step-0 SNAPSHOT of codex-review-finalize.md
+else
+  CONF=()                                                                            # RE-DISPATCH ⇒ NO --confirmation-class ⇒ FULL effort
+fi
+TMPDIR="$RUN_DIR/tmp" bin/drive-codex.sh --mode dispatch \
+  --scope finalize --scope-class finalize [--security-diff] \
+  --raw-log "$RUN_DIR/codex-raw-finalize.log" --marker "$RUN_DIR/codex-review-finalize.md" \
+  --attempt-log "$RUN_DIR/codex-attempts-<runId>.jsonl" \
+  --prompt-file "$RUN_DIR/tmp/codex-prompt-finalize.txt" \
+  "${CONF[@]}" \
+  > "$RUN_DIR/tmp/helper-finalize.out" 2> "$RUN_DIR/tmp/helper-finalize.err"   # token on STDOUT only; stderr SEPARATE
+```
+
+(`--scope-class finalize` is gate-enforced regardless; `--security-diff` iff the run diff is
+sensitive. The `--prior-codex` snapshot source is `codex-review-finalize.md`. Coordinator prompt
+enrichment may reference PRIOR rounds only — never the same-round Claude reviewer output.)
+
+Spawn a generic reviewer subagent WHILE the codex helper runs:
 
 ----- BEGIN SUBAGENT SCOPE -----
 Audit `git diff <baseRef>..<featureBranch>` (the whole run's added logic) against the
@@ -218,23 +252,24 @@ needs (R == tip, so `R..tip` is empty ⊆ the ledger allowlist). This is the SAM
 as harden-regress's "re-emit reviewed-sha at the post-fix tip" rule (drive-review.md
 § phase). Emit **lowercase 40-hex** (conformance lowercases, but emit lowercase).
 
-Codex pass (run DIRECTLY from main, background, per-scope log — NEVER inside a subagent
-that waits on it):
+Wait for BOTH the helper's completion notification (the outcome token = the LAST line of
+`$RUN_DIR/tmp/helper-finalize.out`; stderr is in `.err`, never merged) AND the reviewer's return,
+then Combine — post-process the codex raw log ONLY on `OK`, branching via drive-review.md's outcome
+tier TABLE + coordinator state-machine. `OK` + non-empty raw log → run a bounded post-process
+subagent: "Read `$RUN_DIR/codex-raw-finalize.log`, extract codex's final findings, write
+`$RUN_DIR/codex-review-finalize.md` (same severity/lens tags, <150 words)." The post-process WRITES
+ATOMICALLY — to `$RUN_DIR/tmp/codex-review-finalize.md.tmp.$$` then `mv` into the `--marker` path — so
+a mid-write crash leaves NO torn/partial marker (the complete file, or none); THEN require a
+non-empty `codex-review-finalize.md` at that path (crashed subagent / unwritable ⇒ **fail-closed
+non-decision STOP**). `HELPER_ERROR` (exit 2) OR shell rc 126/127 ⇒ **broken-helper NON-DECISION
+STOP** (fix `bin/drive-codex.sh` / `chmod +x` / reinstall, then resume — NO codex launched, NO marker
+written, NO `codex exec` fallback).
 
-```
-codex exec "Finalize (aggregate harden) the run: review git diff <baseRef>..<featureBranch> for (1) AI slop to REMOVE across the whole run diff (de-slop, behavior-preserving), (2) aggregate missing tests (cross-phase / end-to-end criteria), (3) aggregate logic bugs (cross-phase contract/integration). Flag P1 (real bug / missing criterion test) vs P2 (slop / non-criterion test) with file:line. List any MAJOR architectural problem separately as ARCH (do not propose fixing it in-run). Note any de-slop edit that would red a test or drop a criterion (do not propose it). Prioritized." > $RUN_DIR/codex-raw-finalize.log 2>&1
-```
-
-run_in_background; wait for completion; then a bounded post-process subagent: "Read
-`$RUN_DIR/codex-raw-finalize.log`, extract codex's final findings, write
-`$RUN_DIR/codex-review-finalize.md` (same severity/lens tags, <150 words)."
-
-Degradation (do NOT hard-fail): codex missing OR hangs/times out → write
-`codex-review-finalize.md` whose FIRST line is the bare token `CODEX_UNAVAILABLE` (the
-same convention as drive-review.md / drive-harden.md, so the run-graph's codex-n/a
-detection is uniform), optionally a note on later lines; continue. The conformance
-`codex_present` check inspects existence + non-emptiness only — any non-empty file
-satisfies it.
+Degradation (do NOT hard-fail): the helper writes `codex-review-finalize.md` whose FIRST line is the
+bare token `CODEX_UNAVAILABLE` (codex missing / probed outage) or `CODEX_KILLED_TIMEOUT` (watchdog
+stall/backstop kill) — the same convention as drive-review.md / drive-harden.md, so the run-graph's
+codex-n/a detection is uniform, optionally a note on later lines; continue. The conformance
+`codex_present` check inspects existence + non-emptiness only — any non-empty file satisfies it.
 
 ## Step 2 — Triage
 

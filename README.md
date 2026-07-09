@@ -107,7 +107,7 @@ The scripts are `bash` + `python3`; there is no native Windows support — use W
 | [Claude Code](https://docs.claude.com/en/docs/claude-code) | **Required** | Runs the slash commands | Per Anthropic docs |
 | `git` + `bash` (3.2+) | **Required** | Clone + the installer script | Preinstalled on macOS/Linux |
 | [gstack](https://github.com/garrytan/gstack) | **Required to run `/drive`** | Provides the planning/review brain: `autoplan`, `plan-*-review`, `qa-only`, `browse` | Step 3 below |
-| [codex CLI](https://github.com/openai/codex) | *Optional* | Cross-model second opinion in the review stage. **Degrades gracefully if absent** — the pipeline still completes | Per OpenAI docs |
+| [codex CLI](https://github.com/openai/codex) | *Optional* | Cross-model second opinion in the review stage (supervised by `bin/drive-codex.sh`). **Degrades gracefully if absent, down, or stalled** — the pipeline still completes (an honest `CODEX_UNAVAILABLE` / `CODEX_KILLED_TIMEOUT` tier) | Per OpenAI docs |
 
 No third-party libraries are bundled or required for the core pipeline beyond the above.
 
@@ -197,6 +197,7 @@ Full details, the expected vault layout, and `MC_VAULT_NAME` are in
 - `bin/install-operating-rules.sh` -- link global ~/CLAUDE.md at OPERATING.md + bundled skills + /drive commands; register the autonomous-continuation Stop hook
 - `bin/install-drive-hooks.sh` -- wire the /drive review-enforcement hooks into ~/.claude/settings.json
 - `bin/{drive-conformance,drive-hook-lib,drive-merge-gate,drive-stop-guard}.sh` -- review-enforcement checker, ref→run lib, PreToolUse gate, Stop backstop
+- `bin/drive-codex.sh` -- supervised codex-dispatch helper for the dual-voice review leg (watchdog + honest `CODEX_UNAVAILABLE`/`CODEX_KILLED_TIMEOUT` degradation)
 - `bin/drive-stop-hook.py` -- /drive autonomous-continuation Stop hook (keeps a run driving across turns; registered by install-operating-rules.sh)
 - `docs/drive-enforcement.md` -- review-enforcement reference (git-truth mechanism, gate chain, limitations)
 - `skills/decant/` -- bundled `/decant` skill (symlinked into ~/.claude/skills by the installer)

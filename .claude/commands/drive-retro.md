@@ -96,7 +96,7 @@ count is surfaced in the output header. Missing/empty log → degrade, don't abo
 - NO STOP-cause stat is emitted (not durable on a completed run); the durable residuals stand in:
   final non-null `waiting`, stranded `inflight-*.marker`, `redesign-*.marker` epochs.
 - Codex-degraded scopes: `codex-review-<scope>.md`/`codex-harden-<P>.md` whose FIRST LINE begins
-  with `CODEX_UNAVAILABLE` (prefix match) — a degraded scope, mined for nothing (files are
+  with `CODEX_UNAVAILABLE` or `CODEX_KILLED_TIMEOUT` (prefix match) — a degraded scope, mined for nothing (files are
   overwritten per round: the stat is "scopes degraded at their last round"; claim nothing about
   earlier rounds).
 
@@ -141,7 +141,7 @@ findings count). Uniform guards, applied to every candidate in every file:
 Per-line dedup: a candidate whose nearest preceding `###`–`######` heading is itself a Rule-U
 finding is not separately counted (the heading counts once for its section); a bare `P1:` label
 line counts once, its untagged child bullets never — a stated best-effort undercount. E7
-`CODEX_UNAVAILABLE` stubs are mined by nothing. Imprecision budget: ≤2% residual misgrades over
+`CODEX_UNAVAILABLE` / `CODEX_KILLED_TIMEOUT` stubs are mined by nothing. Imprecision budget: ≤2% residual misgrades over
 graded findings — a stray line is a calibration-note entry plus a guard-list addition, never
 grounds to re-architect the rule.
 

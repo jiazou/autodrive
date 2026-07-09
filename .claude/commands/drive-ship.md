@@ -143,6 +143,12 @@ it (if unreachable, emit `(run graph unavailable: drive.md not found)` and conti
 paraphrase); (3) surface the diff summary + proposed PR text and WAIT for approval. Do
 NOT push or open the PR until approved.
 
+**Degraded codex this run** (surface at Gate B alongside the diff summary): `Degraded codex this
+run: <k> killed-timeout, <u> unavailable across scopes {…}` — the scopes whose codex degraded at
+their FINAL round, computed from the final-round `codex-*` files + `$RUN_DIR/codex-attempts-<runId>.jsonl`.
+Codex artifacts are single-file-per-scope, so no per-round history is claimed (the count is scopes
+degraded at their final round). Advisory — it does NOT block Gate B.
+
 End commit messages with this trailer, substituting <model> = the shipping session's own
 model name as reported by its environment (e.g. `Claude Fable 5`); if unavailable, use
 `Claude`:

@@ -128,6 +128,15 @@ _write_codex_unavailable() {
   { echo "CODEX_UNAVAILABLE"; echo "codex CLI not installed"; } > "$rd/codex-review-$scope.md"
 }
 
+# Write a watchdog-kill degradation codex file: first-line CODEX_KILLED_TIMEOUT marker (the
+# supervisor's stall/backstop-kill convention). Non-empty, so it satisfies codex_present()
+# byte-identically to CODEX_UNAVAILABLE (the gate never parses the marker). $1=rd $2=scope
+_write_codex_killed() {
+  local rd="$1" scope="$2"
+  mkdir -p "$rd"
+  { echo "CODEX_KILLED_TIMEOUT"; echo "Codex killed (stall): threshold=900s attempts=2"; } > "$rd/codex-review-$scope.md"
+}
+
 # Write a real codex review that merely mentions the word in its body. Non-empty, so it
 # satisfies codex_present() exactly like any review (the gate does not parse the marker).
 # $1=rd $2=scope
@@ -278,8 +287,8 @@ mk_slice_body_only_sha() {
 }
 
 # plan-gate fixtures. RUN_DIR holds review-design-N.md + codex-review-design.md.
-# variant: clean | findings | nodesign | nocodex | codex_unavailable | codex_buried |
-#          codex_empty | dangling_highest
+# variant: clean | findings | nodesign | nocodex | codex_unavailable | codex_killed |
+#          codex_buried | codex_empty | dangling_highest
 #   dangling_highest -- a CONVERGED review-design-1.md + a DANGLING review-design-2.md
 #                       symlink (broken) + codex. highest_review_file's `-e`-only guard
 #                       skips the broken higher-N link and drops to the N=1 CONVERGED
@@ -306,6 +315,11 @@ mk_plan() {
     codex_unavailable)
       _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
       _write_codex_unavailable "$rd" design ;;
+    codex_killed)
+      # for AC-H11 (R4): a first-line CODEX_KILLED_TIMEOUT degradation file satisfies codex_present
+      # byte-identically to CODEX_UNAVAILABLE (non-empty; content not inspected).
+      _write_review "$rd" design 1 "$(printf '0%.0s' {1..40})"
+      _write_codex_killed "$rd" design ;;
     codex_buried)
       # for AC3: a normal-review codex whose body buries the word — still counts as a
       # present, non-empty review file (it is not falsely treated as a degraded marker,

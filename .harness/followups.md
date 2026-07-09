@@ -836,3 +836,88 @@ test/install-drive-hooks.test.sh:420-423 — comment says three hooks/four entri
 - bin/drive-conformance.sh header readers (verdict_converged, applied_edits_no, reviewed_sha_of, AppliedEdits counter) use `[[:space:]]*` spacing tolerance, not exact producer-literal match. Zero-space variants (`## AppliedEdits:no`) pass — harmless under the omission/crash threat model (not producer-reachable); a maximally-strict posture would pin ALL readers + producer output uniformly (run-wide decision). (codex slice/finalize r2/r3.)
 - AC44 `_REQUIRED_CARRIERS["## AppliedEdits: no"]` requires the literal in bin/drive-conformance.sh via a COMMENT (like the sibling `## AppliedEdits: yes` carrier). A future de-slop comment reflow must preserve the literal. Established convention — not changed (codex finalize P2, refuted).
 - tests/contracts/test_drive_finalize_contract.py producer spec-pin: further micro-anchoring beyond the per-branch mutation-verified form is within the stated spec-pin imprecision budget (P3, non-blocking; codex finalize r4).
+
+## From high-level design (2026-07-08)
+- TODO C12 residual after R4 lands: the independent-Claude-reviewer degraded second-voice tier +
+  per-role model/effort capability-class prose remain open (R4 lands only the distinct-marker
+  tier of C12's mechanism). Update C12's x-ref when promoting ledgers at ship.
+- [retention] Tier-L heavy-log glob (drive-retention.sh heavy_logs: codex-raw-*.log,
+  codex-harden-*.log) misses the `.stranded` mv-aside FAMILIES — pre-existing blind spot, kept in
+  this run because the R2 premise pins stranded-log mechanics byte-identical; fix in a retention
+  follow-up together with any new family audit. The stranded-quarantine now creates FOUR unswept
+  families (round-5 Claude NIT — breadth extension of the original `.log.stranded`-only note):
+  `<raw>.log.stranded` (raw-log rename), `helper-<scope>.out.stranded` / `helper-<scope>.err.stranded`
+  (token-file rename, §A.8), and `codex-review-<scope>.md.stranded` / `codex-harden-<P>.md.stranded`
+  (the §B / AC-P2 stale-sibling quarantine). None match the Tier-L globs and none are KEEP names, so
+  none are swept; the retention audit must cover all four. Bounded (one per scope, mv overwrites),
+  non-blocking. (r2r4 DX phase, 2026-07-09; families broadened round-5, 2026-07-09)
+- [drive-codex helper] Out-of-process codex-reaper / PGID-persist-for-resume-kill for the SIGKILL
+  residual — the helper installs an EXIT/INT/TERM/HUP trap that group-kills its codex PGID (§A.4-2),
+  but an uncatchable `kill -9` of the helper orphans the codex child, and that orphan is NOT reaped by
+  the trap, OS reaping, stranded-log recovery, or the fresh watchdog (round-7 codex BLOCKING corrected
+  the earlier false "bounded in practice" claim) — it runs to its OWN codex completion (from-/drive's-
+  view UNBOUNDED). Candidate fix: persist the codex PGID to $RUN_DIR so a resume can `kill -<pgid>` a
+  known orphan. DEFERRED as over-engineering for a rare chaos case (SIGKILL-during-dispatch). Revisit
+  only if attempt-log data shows real orphaned-codex incidents. (r2r4 phasedesign round-6/7, 2026-07-09)
+- [drive-codex helper — DEFERRED per human decision D-r2r4-70; SECURITY-RELEVANT] Attempt-scoped /
+  freshness-token markers to close the CROSS-SESSION orphan-marker race at the TERMINAL ship gate for
+  gate-enforced scopes (§G.0 edge-12; round-8 codex BLOCKING). THE RESIDUAL: a helper orphaned by a
+  session crash (its bash process still alive) can, after a resume re-dispatches the SAME scope, write
+  a fresh DEGRADED marker to the shared `--marker` path (path-based `mv`, unlike the fd/inode-based
+  token file which is immune) that the new session honors. For NON-terminal scopes it is superseded by
+  the downstream re-review; **for the FINALIZE / terminal scope it is NOT bounded downstream** —
+  finalize IS terminal, nothing re-reviews it, so an orphan can repopulate `codex-review-finalize.md`
+  and the `-s`-only ship gate (`codex_present`, content NOT parsed) HONORS a foreign/degraded codex
+  voice at the ship gate. **R4 introduces this vector** (pre-R4 the marker writer was a session-bound
+  subagent that dies with the crash; R4's surviving bash helper can outlive its session). CANDIDATE
+  FIX: the coordinator passes an attempt/freshness token, the helper stamps the marker with it, and the
+  ship GATE parses + honors ONLY the current attempt's token. WHY DEFERRED (not a quick add): the fix
+  requires the ship gate to PARSE the marker, which BREAKS the design's load-bearing "gate untouched /
+  byte-compatible" premise and is a HARNESS-WIDE change out of scope for R2/R4. Evaluate as a
+  standalone task. (r2r4 phasedesign round-8 / human decision D-r2r4-70, 2026-07-09)
+
+## From slice 1.1 review (2026-07-10) — setsid-detached descendant residual (deferred)
+- `bin/drive-codex.sh` reaps codex/probe descendants by PROCESS GROUP (`kill -…-<pgid>`). A child that
+  calls `setsid()` / opens a NEW session escapes PGID-based reaping and can survive helper return
+  (round-4 codex BLOCKING: a setsid exec-child appended to raw.log ~2.5s after `OK`). ACCEPTED,
+  out-of-scope residual: the real codex CLI does not detach children to outlive itself; full
+  descendant-tree reaping is non-portable (Linux cgroups only) over-engineering. The "no child
+  survives" contract was NARROWED to "no SAME-PROCESS-GROUP child survives" (AC-H21/H23). Revisit only
+  if a codex CLI version starts detaching workers, or as a harness-wide process-supervision hardening.
+
+## From finalize round 1 (codex + Claude audit, 2026-07-09T21:06:33Z) — non-blocking P2/P3
+- [drive-codex helper — P2, LATENT/unreachable] Leading-dash pathname option-injection: `grep`
+  (`bin/drive-codex.sh:268`), marker/raw-log `mv` (:381, :527), prompt/prior reads (:561, :611,
+  :614), attempt-log parent (:763) do not use `--` end-of-options guards, so a `-`-prefixed path
+  would be parsed as a flag. NOT currently reachable: in normal `/drive` use the coordinator passes
+  absolute `$RUN_DIR/...` paths (leading `/`). Hardening (`-- "$path"` guards) is cheap but
+  the failure does not occur on any real path — deferred as edge-hardening without evidence of the
+  failure. (codex finalize r1)
+- [drive-codex — P2, non-criterion test gap] The coordinator-side channel branch ("outcome token =
+  the LAST line of `helper-<scope>.out`; `.err` never merged") is helper-tested (AC-H15 proves
+  `.out` is not corrupted by trailing stderr) but not coordinator-contract-pinned. Non-criterion;
+  the helper-side guarantee already covers the load-bearing risk. (codex finalize r1)
+- [drive specs — P2, VETOED de-dup] The snapshot→quarantine→dispatch blocks and the combine prose are
+  near-verbatim across drive-review/harden/finalize.md. De-duping is NOT behavior-preserving w.r.t.
+  the tests: the order-anchored contract pins (test_drive_codex_contract.py:248/279/358) assert the
+  inline ordered snippets per-file, so extraction would red them. The duplication is intentional
+  (each spec runner is self-contained + independently pinned). (codex finalize r1)
+- [drive-codex — P3, cosmetic] Attempt-log `killed_log` schema field (`bin/drive-codex.sh:355`)
+  holds a comma-joined multi-log list in the degraded emit paths (:681, :685, :705). Cosmetic naming
+  inconsistency; renaming would ripple to the AC-H14 schema pin. (codex finalize r1)
+- [drive-codex — P3, cosmetic; do NOT apply] Round-N archaeology tokens in security-guard comments
+  (`bin/drive-codex.sh` ~:455/:514/:621/:665, e.g. "round-4 codex MAJOR"). Each is co-located with
+  the load-bearing security rationale that stops a future editor from deleting the guard; trimming the
+  bare round tags risks the rationale. Not worth churn. (Claude finalize r1)
+
+## From finalize round 3 (codex, 2026-07-09T22:15:57Z) — defense-in-depth residual (overruled, non-blocking)
+- [drive-codex helper — DEFENSE-IN-DEPTH, overruled D-r2r4-75] The exact probe-log NODE
+  (`${raw-log%.log}.probe.log` dispatch / `codex-probe-<scope>.log` probe-mode) is not preflighted
+  for its node TYPE the way R4-A preflights the raw-log node. If that exact path pre-existed as a
+  dir/FIFO/socket/non-writable file, the `doctor` redirect would fail locally ⇒ a false
+  CODEX_UNAVAILABLE degrade instead of HELPER_ERROR. NOT reachable in the real pipeline: it is the
+  helper's own derived scratch path (never coordinator-created; written fresh each run), the actual
+  raw-log input + both probe-log PARENTS are preflighted, and `--mode probe` is test-only. Safe
+  failure mode (single-voice degrade). If ever wiring `--mode probe` into the pipeline or hardening
+  against $RUN_DIR tampering, add a node-type preflight of the derived probe-log (mirror R4-A). (codex
+  finalize r3; overruled with evidence, imprecision budget stated.)

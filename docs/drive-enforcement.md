@@ -53,9 +53,20 @@ A review artifact **counts** iff: the highest-N `review-<scope>-N.md` has
 checks (the `ship` gate is the one exception — see the ship-mode paragraph below),
 **and** `codex-review-<scope>.md` exists and is **non-empty**. The codex file's
 content is **not** inspected — *any* non-empty `codex-review-<scope>.md` satisfies the
-codex requirement, whether it is a real codex review OR a `CODEX_UNAVAILABLE`
-degradation note (the explicit token written when the codex CLI is absent). Only a
-missing file or an empty one (a bare `touch`) fails. Output is JSON on stdout
+codex requirement, whether it is a real codex review OR a `CODEX_UNAVAILABLE` /
+`CODEX_KILLED_TIMEOUT` degradation note (the explicit first-line tokens the supervisor
+`bin/drive-codex.sh` writes). Only a missing file or an empty one (a bare `touch`) fails.
+
+> **Operator note — codex degradation tiers.** The dual-voice review's codex leg runs under
+> `bin/drive-codex.sh`, which watchdogs a byte-silent call and records an HONEST degradation as the
+> marker's first line: `CODEX_UNAVAILABLE` (the codex CLI is absent, or a health probe confirmed an
+> outage) or `CODEX_KILLED_TIMEOUT` (the watchdog killed a stalled/over-long call). Both contribute
+> **zero P1** and let the run continue single-voice. **The gate never parses the marker** — it only
+> checks existence + non-emptiness (byte-compatible with a real review), so a degradation NEVER
+> silently satisfies more than a present-codex requirement. To investigate a degraded scope, read the
+> attempt log `$RUN_DIR/codex-attempts-<runId>.jsonl` (one JSON line per op: probe/dispatch/kill/
+> retry/degrade, with the effort tier + sandbox rung + max inter-append gap) and the quarantined
+> `codex-raw-<scope>.killed-N.log` / `codex-harden-<P>.killed-N.log` raw logs. Output is JSON on stdout
 (`{"clean":bool,"mode":...,"tip":...,"violations":[...]}`). **Exit codes:** `0` clean,
 `1` violations, `2` usage/IO/git error. The fail-open vs fail-closed policy for exit 2
 lives in the **hooks**, not the checker.

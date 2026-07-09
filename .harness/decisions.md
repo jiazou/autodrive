@@ -4740,3 +4740,696 @@ applied_edits_no mirrors it; tightening diverges; (3) `no` is written only on ge
 rounds, so spacing-tolerance is liveness-correct; (4) P1 #2 targets UNTOUCHED verdict_converged
 (scope creep, run-wide gate). Claude CONVERGED both rounds. Round-1 (no-heading) was the meaningful
 class fix; round-2 is the per-input treadmill (memory: drive-finalize-adversarial-class-fix).
+
+## D-r2r4-1 — runId naming (Mechanical)
+Used descriptive runId `r2r4-codex-20260708-144534` (spec says `<branch>-<timestamp>`; repo precedent
+favors descriptive ids — e.g. c7-gate-bypass-*, regress-selfid-* — and safe-run-id memory prefers
+identifiable names). featureBranch drive/r2r4-codex-20260708-144534.
+
+## D-r2r4-2 — scope order (User-directed)
+User picked R2 + R4 now, deferring R1+R3 despite TODO's R2 -> R1+R3 -> R4 order. Premise, not a
+coordinator decision. R5-R9 batch untouched.
+
+## D-r2r4-3 — one phase, not an R2/R4 staged split (Taste)
+Classification: Taste (surfaced at Gate A via design.md).
+Grounded: the codex wait loop is pure coordinator prose in all three review specs (no bin/ helper
+exists), so R4's watchdog call-sites are the very fenced blocks R2 reorders — a writer/reader
+shared contract. One unit = blocks edited once + a SINGLE pin-suite migration (same rationale as
+TODO's R5–R9 one-batch rule); a staged split would double both and add a full phasedesign+harden
+loop for a mid-band (~250–400 surface) change.
+
+## D-r2r4-4 — watchdog + health probe as ONE new bin/ helper (Mechanical)
+Classification: Mechanical.
+Never a prose "poll the mtime" coordinator step (dont-make-the-model-the-meter). Fail direction:
+kill only on a positively-observed 15-min zero-byte stall; ambiguity (stat errors) → do not kill;
+3h backstop is the only unconditional bound. Dep-independent tests simulate streaming / silent /
+stall-after-stream / long-but-streaming logs.
+
+## D-r2r4-5 — killed-call salvage + marker writer (Mechanical)
+Classification: Mechanical.
+After kill+retry-fail the coordinator writes codex-review-<scope>.md with FIRST line
+CODEX_KILLED_TIMEOUT (same write path as CODEX_UNAVAILABLE today), and the post-process subagent
+still extracts pre-stall findings from the partial raw log. Gates unchanged (codex_present =
+existence+non-empty); bin/drive-conformance.sh untouched; drive.md combined-verdict/run-graph
+prose gains the distinct tier.
+
+## D-r2r4-6 — probed outage on gate-enforced scopes: one bounded attempt (Taste)
+Classification: Taste (surfaced at Gate A).
+Premise fixes non-gate-enforced scopes → immediate degraded single-voice on a probed outage. For
+gate-enforced scopes, still make ONE watchdog-bounded dispatch attempt before degrading: ≤~35
+bounded minutes buys keeping the sole-catcher adversarial voice on the highest-stakes scopes.
+
+## D-r2r4-7 — TMPDIR namespacing carried into harden/finalize codex blocks (Mechanical)
+Classification: Mechanical.
+Only drive-review.md wraps codex exec in mkdir/TMPDIR today (D5); harden/finalize blocks lack it.
+They are being rewritten anyway (sandbox flag + watchdog wiring) — carry the wrapper uniformly.
+In blast radius, cheap, no pin reds (AC13 pins only drive-review.md).
+## D-r2r4-8 — autoplan housekeeping prompts deferred (Mechanical)
+gstack upgrade 1.55.1->1.58.5 available: NOT upgraded mid-run (would swap load-bearing review
+skill semantics under an active run; run standalone after ship). CLAUDE.md skill-routing AUQ:
+skipped (its flow commits to main — forbidden during a run; user can opt in standalone).
+## D-r2r4-9 — autoplan execution shape (Mechanical)
+Full-depth phase execution delegated to primary-reviewer subagents (each reads its
+plan-*-review SKILL.md from disk, writes $RUN_DIR/autoplan-<phase>-report.md); independent
+Claude voices = autoplan's verbatim subagent prompts; codex voices run from MAIN context
+(background+log, OPERATING.md rule). Reason: three ~2300-line skill files would consume the
+coordinator window before review begins; analysis depth is preserved, decisions return to the
+coordinator (6 principles + audit trail). Premise gate = Stage-0 user directive (R2+R4);
+premise challenges surface at Gate A, not a mid-autoplan pause. Phases sequential: CEO -> Eng
+-> DX; Design skipped (no UI surface in repo — grep hits are substring false positives).
+## D-r2r4-10 — watchdog threshold: parameterized 15-min default + gap-logging (Mechanical, evidence-forced)
+Preserved codex raw logs have NO per-line timestamps -> the "calibrate from 262 logs" fix is
+not statically derivable. Resolution: premise's 15-min no-byte threshold stays the DEFAULT but
+is a helper parameter (spec pins the mechanism + flag presence, not the constant); the helper
+logs each call's observed max inter-append gap (live calibration corpus for later tightening);
+retry-once bounds false-kill cost. Margin context: audit §1C in-codex suite runs are 6-10 min
+byte-silent windows today.
+
+## D-r2r4-11 — effort tiering mechanism is a -c config override (Mechanical, evidence-forced)
+codex CLI has no first-class effort flag; global ~/.codex/config.toml pins
+model_reasoning_effort="xhigh". Tiering = `-c model_reasoning_effort="<tier>"` on the dispatch
+line for confirmation-class calls only. Verified vs codex exec --help (0.142.5).
+## D-r2r4-12 — CEO-phase consensus dispositions (see autoplan-ceo-consensus.md)
+Salvage DROPPED v1 (Taste, codex over primary; premise-faithful; raw log kept). Sandbox ladder
+pre-decided w/ hard spike precondition (Taste). Effort-tier degraded-prior exclusion
+(Mechanical). Gate-enforced scopes enumerated; bounded-attempt kept, codex dissent logged
+(Taste). Honest bounds restated (Mechanical). Expansions E2-E5 + Gate-B degraded-count line
+INCLUDED; E6/C5 excluded (unanimous). One-phase fusion KEPT (P+S endorse, C dissents; OPERATING
+shared-contract rule + atomic run shipping). All Taste items surface at Gate A.
+
+## D-r2r4-13 — killed-call v1 = NO automated salvage (Taste; SUPERSEDES the salvage half of D-r2r4-5)
+Classification: Taste (flagged for Gate A).
+CEO-consensus item B (C-P2e over P-T1/AD6): codex-review-<scope>.md = first line
+CODEX_KILLED_TIMEOUT + one warning line; contributes zero P1 like CODEX_UNAVAILABLE but renders
+as a DISTINCT tier (never folded); raw + .killed-N attempt logs kept on disk; v2 salvage gated on
+the helper attempt-log showing degraded rounds are frequent. D-r2r4-5's marker-writer path and
+gates-unchanged clause stand; its "post-process salvages pre-stall findings" clause is retired.
+
+## D-r2r4-14 — sandbox ladder pre-decided (Taste)
+Classification: Taste (flagged for Gate A).
+Consensus item D: phase-design spike = HARD precondition (fixture-WRITING repro under read-only);
+pass => --sandbox read-only on all three call sites; fail => workspace-write for code scopes +
+read-only for design/phasedesign scopes. One-line spec value per call site = kill switch. Today's
+trust_level="trusted" means any rung is a behavior change. Replaces design.md open question 1.
+
+## D-r2r4-15 — watchdog threshold parameterized + per-attempt backstop (Mechanical)
+Classification: Mechanical.
+Consensus item E: 15-min stall threshold is the helper-parameter DEFAULT (sub-second-settable for
+tests); helper logs each call's max inter-append gap (live calibration); the 3h backstop is per
+ATTEMPT, stated explicitly.
+
+## D-r2r4-16 — effort-tier predicate excludes degraded priors (Mechanical)
+Classification: Mechanical.
+Consensus item C (S#3/P-F3): the confirmation-class downgrade requires a genuinely-completed,
+non-degraded prior codex round with zero findings; ANY first-line degradation marker in the prior
+round's file => full effort.
+
+## D-r2r4-17 — gate-enforced scopes enumerated concretely (Taste; REFINES D-r2r4-6)
+Classification: Taste (flagged for Gate A; codex dissent — degrade everywhere — noted).
+Consensus item F: one-bounded-attempt-on-probed-outage applies to security-sensitive-diff scopes
+(bin/drive-*.sh, gate hooks, matchers/parsers/conformance) + phase-integration + finalize; ALL
+other scopes degrade immediately.
+## D-r2r4-18 — codex-Eng finding dispositions (Mechanical unless noted)
+(1) Helper OUTCOME CONTRACT stated at design level: helper emits a machine-readable outcome
+(success/degraded-killed/degraded-outage/error); success -> existing post-process subagent;
+degraded -> existing coordinator marker-write path; the helper NEVER writes codex-review-*.md
+(preserves today's two-writer structure, no race). (2) Sandbox rung is a scope-conditional
+dispatch parameter in drive-review.md's shared block (design/phasedesign => read-only; else
+ladder rung) — size note updated. (3) Effort-tier "zero findings" = machine-checkable: prior
+codex file has NO severity tags per the existing tag grammar AND a non-degraded first line
+(count-tags rule reused; no new metadata contract). (4) Killed-attempt logs named
+codex-raw-<scope>.killed-N.log / codex-harden-<P>.killed-N.log — inside the Tier-L swept
+family (drive-retention.sh:493 globs verified), zero retention edits; attempt-outcome log is
+.jsonl (KEEP family). (5) E4 probe TTL cache DROPPED — probe expected <5s (E4's own skip
+rule) and the cache contradicted instance-scoped state (Taste; kills codex finding 5).
+## D-r2r4-19 — health-probe candidates verified (Mechanical, evidence)
+codex exec has NO native idle/stall/timeout flag (0.142.5) — the helper remains necessary.
+`codex doctor --json` exists: redacted machine-readable report incl. auth + HTTP reachability,
+~7s wall — primary probe candidate (with its own timeout, fail-toward-degrade); alternative: a
+tiny bounded `codex exec` round-trip. Choice = phase-design detail; both named in the design's
+Phase-design inputs. Probe cost ~7s/round is negligible vs 5.4-min median calls (E4 cache
+stays dropped).
+## D-r2r4-20 — independent-Eng finding dispositions (13 findings, 2 HIGH)
+ACCEPT: (1) probe caches NOTHING (E4 already dropped) + failed probe retries once w/ backoff
+before declaring outage (fail-toward-degrade only after retry); (2) Gate-B clause reworded to
+the artifact-honest stat "scopes degraded at their FINAL round" (retro semantics) + optional
+attempt-log kill/retry counts with stated coverage — never a per-round history the artifacts
+cannot prove; (4) retry ONLY on stall-kills — a 3h-backstop kill goes straight to
+CODEX_KILLED_TIMEOUT (bounds tail at ~3h; honest-bounds text updated); (3,7,10,11,13)
+phase-design inputs: exact prior-file naming per call site for the effort tier + tag-count
+test (prose-clean-but-MAJOR-tag => full effort); helper owns child PID + fstat on open fd
+(never path-stat, survives mv-aside), marker writes tmp+mv, single-writer-per-outcome,
+helper-crash-between-kill-and-marker test, re-dispatch-while-orphan test; retry jitter +
+probe-before-retry; scope-charset validation before path composition; helper deliberately
+named bin/drive-* (self-classifies as security-sensitive diff => full-effort codex on this
+run's own reviews); (8) docs/drive-enforcement.md joins the token-sweep set, swept via
+pathlib not rg; (12) spike checklist: prove flag-overrides-trust_level, TMPDIR-write test,
+fixture = gate-script-execution class, verify codex flush behavior.
+PARTIAL (5): 15-min default STAYS (premise-pinned) — mitigations: gap-logging, spike verifies
+flush behavior, probe-before-retry; log-only-first-run mode REJECTED for this run (defers R4's
+value; revisit from attempt-log data). (9) already resolved: killed logs named
+codex-raw-<scope>.killed-N.log (inside swept family); (6) moot (cache dropped).
+## D-r2r4-21 — Eng-phase consensus + primary-reviewer dispositions
+Eng consensus (3 voices): architecture/one-phase/gate-compat CONFIRMED; all amendments
+additive. NEW bindings: (F-A1, Taste, SUPERSEDES the writer half of D-r2r4-18(1)) helper owns
+ALL non-success marker writes (KILLED_TIMEOUT after failed stall-retry; UNAVAILABLE on probed
+outage), tmp+mv atomic, single-writer-per-outcome; coordinator prose keeps ONLY the
+helper-itself-missing fallback (rc126/127 -> coordinator writes UNAVAILABLE as today, F-A3);
+post-process subagent runs ONLY on helper success outcome (closes the
+killed-round-masquerades-as-real-voice race). (F-T1, Mechanical) codex-first ORDERING gets
+AC13-style position pins in all three specs. (F-T2..T6/Q1/C1, Mechanical) riders: enrichment
+clause named in pin list; sandbox-flag PRESENCE pinned per call site (mechanism not rung);
+TMPDIR pin extended to harden/finalize; 4 missing helper-test branches added
+(retry-success=>no-marker, backstop-fires, stat-ambiguity=>no-kill, probe-outage per scope
+class); retro has TWO marker sites (:99 stats + :144 Rule-U E7) both enumerated; ship-pin
+suite named for the Gate-B line; token sweep is REPO-WIDE incl. docs/drive-enforcement.md:56
+(pathlib, not rg). Q2 moot (cache dropped). Layer-3 check: timeout(1) IS the refuted
+wall-clock variant — custom progress-signature supervisor justified.
+## D-r2r4-22 — codex-DX dispositions (5 findings)
+(1) Helper contract RAISED to plan level: closed mode set (probe|dispatch) + closed outcome
+enum (ok | killed-timeout | outage | error) + machine-readable stdout/exit-code contract,
+matching bin/ conventions (drive-conformance --mode / drive-retention report-apply); exact
+flag spellings stay phase-design. (2) Marker warning lines carry CAUSE + NEXT STEP
+(probe-outage states whether a live attempt was skipped and what to inspect). (3) Attempt-log
+FILENAME + schema pinned in design (codex-attempts-<runId>.jsonl in $RUN_DIR; one JSON line
+per probe/dispatch/kill/retry with scope, outcome, max-gap); killed-log naming spelled
+EXACTLY codex-raw-<scope>.killed-N.log / codex-harden-<P>.killed-N.log in design text
+(supersedes the :116 shorthand). (4) Fenced blocks stay SHORT: blocks = invoke helper ->
+inspect closed status -> post-process ONLY on ok; branchy logic (sandbox rung by scope class,
+effort-tier predicate incl. prior-file tag scan, stall-vs-backstop retry) lives INSIDE the
+helper behind flags. (5) docs/drive-enforcement.md gains a short operator paragraph (tier
+meaning, gate semantics, investigation path) — already in the token sweep; now also a named
+touch-point.
+## D-r2r4-23 — helper-missing = STOP, not degrade (Taste; OVERRIDES Eng F-A3 direction)
+rc126/127 on the helper = OUR shipped code broken (vs codex absent = accepted external
+degradation): silent degrade would drop the adversarial voice fleet-wide unnoticed (the exact
+silent-quality-erosion failure class); a STOP is loud, human-fixable in minutes, and matches
+the file-recreate-drops-exec-bit precedent (gates fail closed on rc126). Coordinator surfaces
+a non-decision STOP; no marker file is written for the scope. Flagged for Gate A (conflicts
+with Eng F-A3 fail-open recommendation — overridden with rationale).
+## D-r2r4-24 — independent-DX dispositions (2 HIGH + 7 MED); REVISES D-r2r4-23
+(H1, Taste — SUPERSEDES D-r2r4-23's STOP and Eng F-A3's degrade) helper rc126/127 => NOT an
+outage: fall back to the pre-R4 DIRECT codex exec dispatch (dual voice preserved; only the
+watchdog is lost for that round), log distinct HELPER_FAILED in the attempt log, surface at
+the next human pause; NEVER write CODEX_UNAVAILABLE for a helper failure. (H2) env-var
+escape hatches per repo seam convention: DRIVE_CODEX_STALL_MINS, DRIVE_CODEX_BACKSTOP_HOURS,
+DRIVE_CODEX_WATCHDOG=off, DRIVE_CODEX_SANDBOX=<rung>, DRIVE_CODEX_EFFORT_TIER=off — spec pins
+defaults, env overrides; helper header documents them. (M1) marker set stays TWO tiers:
+CODEX_UNAVAILABLE = absent/outage (warning line MUST carry cause: probe rc, live-attempt
+skipped/failed, attempt-log pointer); CODEX_KILLED_TIMEOUT = watchdog kill ONLY (incl. a
+gate-enforced bounded attempt that stalls out). (M2) warning-line fields mandated (threshold,
+attempts, max observed gap, killed-log paths, attempt-log pointer); attempt-log records
+effort tier + sandbox rung per attempt (weak confirmation rounds traceable). (M3) touch list
++= CLAUDE.md $RUN_DIR inventory, README.md (:110 graceful-degrade wording + bin listing);
+.harness/decisions.md EXCLUDED from the token sweep (append-only history). (M4) killed-log
+naming already codex-raw-<scope>.killed-N.log; SAME-SHAPE rider: rename the .log.stranded
+mv-aside to .stranded.log form in the same block rewrite (retention Tier-L coverage). (M5)
+sandbox spike MUST emit a durable $RUN_DIR evidence artifact (command, output, rung selected)
+that the phase-design review verifies — no prose self-report. (M6) helper CLI pins repo bin/
+norms: drive-*.sh name, --flag value + exit-2 usage guard, Usage header, exit codes 0/1/2,
+stdout outcome tokens byte-identical to marker strings. (M7) Gate-B clause shape pinned:
+per-tier counts + affected scopes, computed from final-round files + attempt log (honest).
+## D-r2r4-25 — DX-phase consensus; REVISES the .stranded rider in D-r2r4-24(M4)
+Primary DX APPROVE 8/10 (no P1; TTHW ~0 — zero-config rollout). ACCEPTED: warning-line
+content contract (cause: stall|backstop|probe, attempts, max gap, killed-log + attempt-log
+paths; rc-126 note names "chmod +x" at point of failure); ONE outcome->marker->post-process->
+verdict->rendering TABLE lives in drive-review.md, harden/finalize reference it (existing
+"same mechanics" pattern) under the E5 consistency pin; CLAUDE.md $RUN_DIR inventory +
+README.md:110 wording ("absent, down, or stalled") + bin listing are NAMED touch-points
+(token-sweep-unreachable, grep-verified); Gate-B line splits killed-timeout vs unavailable;
+run-graph tier renders cause-honest ("Codex killed (stall)") — never "(partial)"; portable
+BSD/GNU size-poll vehicle pinned at phase design; v2 salvage gate names "the next audit" as
+its consumer; env-override escape hatch CONFIRMED (exact var names = phase design; defaults
+in spec pins unchanged). REVERSAL: .log.stranded rename DROPPED — R2 premise pins
+"stranded-log mechanics byte-identical"; pre-existing Tier-L blind spot for stranded logs
+routed to followups instead (rare, crash-only).
+## D-r2r4-26 — design converged r2; P2 depth-notes carried to phase design (Mechanical)
+Design review CONVERGED round 2 (Claude 0 P1/0 P2/1 P3; codex 0 P1/1 MINOR). Carried P2s for
+/drive-design: (a) drive-retro.md's declared mining-input families (~:45,:105) omit finalize
+codex artifacts — covering finalize degraded markers needs family-list edits beyond the two
+cited marker sites; (b) docs/drive-enforcement.md:51 hardcodes CODEX_UNAVAILABLE inside the
+conformance explanation — the edit is a wording update there PLUS the new operator paragraph;
+(c) Claude P3: when authoring the tier TABLE, scope the two absolutes ("post-process ONLY on
+OK", "helper owns ALL non-success marker writes") to the helper-mediated flow — the
+HELPER_ERROR direct-dispatch fallback is the explicit exception.
+
+## D-r2r4-27 — helper name bin/drive-codex.sh (Mechanical)
+The `drive-*` prefix matches the repo bin/ family AND self-classifies the helper's own diffs as
+security-sensitive (full-effort codex on our reviews); `-codex` names what it supervises. Modes
+say the rest. (design-phase1.md §A.0.)
+
+## D-r2r4-28 — exit/token mapping + stdout discipline (Mechanical)
+Exit 0=OK · 1=degraded (CODEX_KILLED_TIMEOUT|CODEX_UNAVAILABLE) · 2=HELPER_ERROR (mirrors
+drive-conformance.sh 0/1/2). Stdout carries ONLY the outcome token as its LAST line; all
+watchdog/diagnostic output goes to stderr + the attempt log. The coordinator branches on the
+token ("inspect closed status"); shell rc 126/127 (helper unrunnable) is mapped by the
+coordinator to the HELPER_ERROR lane.
+
+## D-r2r4-29 — ONE dispatch call; probe internal (Mechanical; refines D-r2r4-22)
+The coordinator makes ONE `--mode dispatch` call per codex leg; dispatch runs the health probe
+INTERNALLY (same routine `--mode probe` exposes), so the fenced block stays SHORT and all branchy
+logic (probe→outage→retry, sandbox rung, effort) lives in the helper. `--mode probe` stays as a
+standalone, marker-free health query (closed mode set + tests + diagnostics), not called
+separately in the pipeline.
+
+## D-r2r4-30 — coordinator passes FACTS; helper applies policy (Mechanical)
+Flags: `--scope-class` ∈ {design,slice,phase,finalize}, `--security-diff` (bool),
+`--confirmation-class` (bool), `--prior-codex <path>`. Helper computes: sandbox rung
+(design→read-only; else spike rung); outage gate-enforcement = `--security-diff` OR
+scope-class∈{phase,finalize}; effort carve-out (keep full) = `--security-diff` (diff-CONTENT
+only, NOT scope type — so a non-sensitive phase/finalize re-audit CAN downgrade). Helper does NO
+git; the coordinator (which owns git context) computes `--security-diff` from
+`git diff --name-only` vs the security path set.
+
+## D-r2r4-31 — dispatch owns all non-success markers; probe owns none (Mechanical; per D-26(c))
+`--mode dispatch` writes every CODEX_KILLED_TIMEOUT / CODEX_UNAVAILABLE marker (tmp+mv atomic,
+single-writer-per-outcome); post-process runs ONLY on OK. Standalone `--mode probe` writes NO
+marker. The two absolutes are scoped to the helper-mediated flow; the HELPER_ERROR
+direct-dispatch fallback is the explicit exception (no helper marker there).
+
+## D-r2r4-32 — watchdog-off keeps the backstop (Taste)
+`DRIVE_CODEX_WATCHDOG=off` disables the progress-signature STALL detector only; the per-attempt
+3h backstop remains the unconditional bound. Rationale: never allow a truly unbounded codex call;
+a fully-unbounded escape hatch is a foot-gun the plan's tail-bounding goal exists to remove.
+
+## D-r2r4-33 — prompt via --prompt-file; text retained in spec (Mechanical)
+The codex prompt is delivered to the helper via `--prompt-file`; the spec's fenced block still
+CONTAINS the byte-identical prompt text (written to the prompt file) so prompt-substring pins
+(e.g. finalize's codex_block slice) do not red. R2 does NOT narrow the prompt (refuted variant).
+
+## D-r2r4-34 — TMPDIR wrapper in each SHORT block, uniform across three (Mechanical; impl. D-7)
+`mkdir -p "$RUN_DIR/tmp"; TMPDIR="$RUN_DIR/tmp" bin/drive-codex.sh …` stays in each spec's block
+(the helper inherits TMPDIR for codex). The AC13 TMPDIR pin is MIGRATED to drive-review's new
+codex-dispatch section and EXTENDED to drive-harden.md + drive-finalize.md.
+
+## D-r2r4-35 — DRIVE_CODEX_CMD test seam (Mechanical)
+Env seam `DRIVE_CODEX_CMD` (default `codex`) lets the helper's bash tests inject a simulated
+log-writer (streaming/silent/stall/sawtooth), so the suite is dep-independent (cf.
+RETENTION_TRASH_CMD).
+
+## D-r2r4-36 — sandbox spike is a REVIEW precondition, not a self-report (Mechanical; impl. D-14/M5)
+The coordinator runs the spike (main context) and emits durable
+`$RUN_DIR/sandbox-spike-evidence.md` (each command, raw output, trust_level proof, TMPDIR proof,
+flush cadence, RUNG SELECTED). The phase-design REVIEW verifies this artifact exists and is
+complete (P1 if missing); the implementer sets the helper's rung constants from the recorded
+rung. Pass ⇒ read-only everywhere; any fail ⇒ workspace-write for code scopes + read-only for
+design/phasedesign.
+
+## D-r2r4-37 — outcome token = stdout-only, channel-separated (Mechanical; round-1 BLOCKING#1)
+The helper prints the outcome token to STDOUT ONLY (nothing else on stdout); ALL diagnostics +
+watchdog logging go to STDERR + the attempt log. The coordinator captures `> helper-<scope>.out
+2> helper-<scope>.err` (never merged `2>&1`) and reads the token from `.out`'s last line; on a
+stranded re-dispatch it mv's the stale `.out`/`.err` aside first (same hygiene as the raw log), so
+an orphaned prior helper's late append can't be read as this round's token. AC-H15 tests it.
+
+## D-r2r4-38 — HELPER_ERROR is pre-launch-only; post-launch faults → CODEX_UNAVAILABLE(internal) (Mechanical; round-1 BLOCKING#2)
+`HELPER_ERROR` (exit 2, no marker) is emitted ONLY for faults strictly BEFORE codex is spawned
+(arg parse, `--scope` charset, missing flag, config/rung/effort resolution). From the codex-spawn
+step on, NO path emits `HELPER_ERROR`: a post-launch internal fault maps to `CODEX_UNAVAILABLE`
+(new cause `internal`), and stall/backstop map to `CODEX_KILLED_TIMEOUT`. This guarantees the
+direct-dispatch fallback (rc126/127 or HELPER_ERROR) can never double-dispatch a second codex
+against the same scope/logs (codex was never spawned); the coordinator re-validates `--scope`
+before the fallback reuses it. AC-H16 tests it.
+
+## D-r2r4-39 — --prior-codex is the site's OWN prior sibling (Mechanical; round-1 MAJOR)
+The effort-tier scan reads the call site's OWN immediately-prior codex artifact: drive-harden
+Step-1 audit → `codex-harden-<P>.md` (NOT the generic `codex-review-<scope>.md` — that read the
+wrong file and silently defaulted to full effort); drive-review phase (incl. harden-regress
+guard) → `codex-review-phase<P>.md`; drive-review slice → `codex-review-<id>.md`; drive-finalize →
+`codex-review-finalize.md`. Each per-site path is pinned (AC-H12b / §F).
+
+## D-r2r4-40 — pin methodology: bounded slices + section-bound + mutation-verify (Mechanical; round-1 MAJOR + MINOR#1)
+Finalize's migration KEEPS the bounded `schema`/`codex_block` slices — never a whole-`## Step 1`
+grep (the finalize test's own :319/:325 comments prove the tokens recur in Step 1 ⇒ a widened
+assertion goes vacuous). The codex-first position pins (AC1) and the tier-consumer pins (AC8) are
+`_section`-scoped to their own subsection (each spec has TWO `BEGIN SUBAGENT SCOPE` markers; the
+`CODEX_KILLED_TIMEOUT` token recurs across all four drive.md sites) with a mutation-verify on the
+load-bearing ones. Applies spec-pin-mutation-verify / two-conformance-test-suites.
+
+## D-r2r4-41 — ONE authoritative coordinator outcome state-machine (Mechanical; round-2 class-fix)
+The whole degradation/fallback surface is ONE class (design §G.0), not per-edge patches. After the
+helper returns, the coordinator acts by a single table over (stdout token, exit rc,
+`codex_present(marker)`): OK+non-empty-log → post-process; degraded token + marker present →
+render tier; degraded token + marker ABSENT → fail-closed STOP (D-43); empty/unrecognized token +
+non-zero rc → fail-closed STOP; HELPER_ERROR / shell rc126,127 → BOUNDED direct-dispatch fallback
+(D-44). Every §G edge is an instance of one row.
+
+## D-r2r4-42 — killed-latch: a watchdog-killed round stays CODEX_KILLED_TIMEOUT (Mechanical; round-2 BLOCKING#2)
+Per-round `round_was_killed` latch set on the FIRST watchdog kill. Once set, the terminal degraded
+outcome is `CODEX_KILLED_TIMEOUT` PERIOD — a killed round can NEVER collapse to `CODEX_UNAVAILABLE`.
+The probe has two split roles: probe-as-outcome-writer (latch==0, may write the UNAVAILABLE marker
+for a genuine never-launched outage) vs probe-as-launch-gate (the §A.4-5 probe-before-retry, latch
+==1 — may only SUPPRESS the next attempt; writes NO marker, never switches the outcome family).
+Closes the kill→failed-probe→UNAVAILABLE relabel. AC-H18.
+
+## D-r2r4-43 — marker-WRITE failure is FAIL-CLOSED, not a degraded outcome (Mechanical; round-2 MAJOR#2; refines D-38)
+If the marker tmp-write/mv ITSELF fails (unwritable path / /dev/full), the helper cannot persist
+the marker its token names, so it writes NO fake marker, emits stderr, exits non-zero. The
+coordinator honors a degraded token ONLY when `codex_present(marker)` is TRUE; a degraded token +
+absent marker ⇒ fail-closed non-decision STOP (the absent marker also blocks the gate by
+construction). Carves marker-write OUT of D-38's "internal → CODEX_UNAVAILABLE" (that path assumes
+the marker CAN be written). Keeps the closed 4-token stdout set — NO 5th token. AC-H19.
+
+## D-r2r4-44 — BOUNDED direct-dispatch fallback (Taste; round-2 BLOCKING#1) — SUPERSEDED by D-r2r4-45
+The round-2 bounded fallback (bg-codex + timed-kill) still spawned a new P1 class in round-3
+(kill-mislabel, wrong harden artifact family, missing-input routing, dropped sandbox rung,
+single-PID kill). REVERTED wholesale by D-r2r4-45 — there is no direct-dispatch fallback.
+
+## D-r2r4-45 — broken helper ⇒ STOP, not a direct-dispatch fallback (Taste; REVERTS D-r2r4-24-H1 toward D-r2r4-23; round-3 restructure)
+A broken `bin/drive-codex.sh` (shell rc 126 not-executable / rc 127 not-found / any HELPER_ERROR
+pre-launch usage/charset/missing-flag/missing-prompt/missing-marker/config-resolution fault) is a
+DEV/INSTALL error in OUR OWN committed code — NOT an external degradation. codex-the-CLI being
+absent or down is the SEPARATE, UNCHANGED accepted degradation the helper's OWN probe handles (→
+CODEX_UNAVAILABLE, proceed single-voice). A *correct* direct-dispatch fallback would have to
+replicate the entire helper (its own backstop, kill-honesty split, per-call-site raw-log/marker
+paths, sandbox rung) — a DRY sink that spawned codex BLOCKING#1/#2/#3 this round. STOP-on-broken-
+helper is consistent with how /drive already treats gstack/jq/tool preconditions, is honest, and
+closes the whole class. CONCRETELY: deleted §G-1's bounded-fallback machinery + §G-2's fallback
+lane (rc126/127 OR any HELPER_ERROR ⇒ coordinator surfaces a NON-DECISION STOP: "bin/drive-codex.sh
+broken/misinvoked — <cause>; fix / chmod +x / reinstall, then resume", writes NO codex marker, does
+NOT post-process, launches NO codex — codex was never spawned on any of these paths, so no
+double-dispatch / no stranded codex); §G.0 rows for rc126/127 + HELPER_ERROR → STOP (first-match-
+ordered; row 7 qualified rc∉{126,127}; added an OK-with-empty-log → fail-closed STOP row); §C.1
+HELPER_ERROR/rc126,127 row → "coordinator STOP (broken helper); no codex tier rendered"; AC-P1
+repurposed to the broken-helper-STOP pin (each of the three specs + a helper test that
+HELPER_ERROR/rc126/127 yields no codex marker). RESOLVED BY this restructure: codex BLOCKING#1
+(fallback kill-mislabel), #2 (fallback wrong harden artifact family), #3 (HELPER_ERROR routing
+missing-input into fallback), Claude MINOR-2 (fallback dropped sandbox rung), Claude NIT-2 (fallback
+single-PID vs group kill).
+
+## D-r2r4-46 — killed-latch authoritative in step 4; probe has no exec fallback (Mechanical; round-3 Claude MAJOR + NIT-1; completes D-42)
+(a) The `round_was_killed` latch is authoritative in §A.4 STEP 4 too: once a round was watchdog-
+killed, a RETRY that self-exits nonzero/empty terminates CODEX_KILLED_TIMEOUT (cause stall), never
+CODEX_UNAVAILABLE — closes the step-4 escape D-42 left open (probe route was closed round-2; exec-
+fail route now closed). A successful retry ⇒ OK stays the intended latch-override. AC-H18 case (b)
+added. (b) The probe is `codex doctor --json` ONLY (self-terminating ~7s); the "bounded codex exec
+fallback if doctor absent" is DROPPED (another timed-kill sink — same anti-DRY reason as D-45); a
+doctor error → the probe's retry-then-fail-toward-degrade (→ CODEX_UNAVAILABLE, never STOP).
+NOTE: D-48 later re-adds a bounded timeout for the doctor probe ITSELF (its own timed-kill, per
+D-19) — that is the probe's own bound, NOT a codex-exec fallback (which stays dropped).
+
+## D-r2r4-47 — quarantine the stale codex sibling in the R2 block (Mechanical; round-4 codex BLOCKING#1)
+The codex sibling `codex-review-<scope>.md` (harden: `codex-harden-<P>.md`; finalize:
+`codex-review-finalize.md`) is one-file-per-scope, overwritten each round, so a prior round's sibling
+survives a crash. Without a fix, resume's stranded-adopt (drive.md:641 "any non-empty sibling") pairs
+a current crashed round's Claude review with the STALE prior sibling → masquerade / false-CONVERGE.
+FIX: each of the three specs' SHORT R2 blocks `mv`s the stale `--marker` sibling aside (`.stranded`)
+BEFORE the fresh dispatch, alongside the existing raw-log + helper-.out/.err quarantine, so a crashed
+round leaves NO current sibling ⇒ stranded-adopt correctly RE-DISPATCHES. The mv-in-block alone closes
+it (no drive.md:641 freshness-note change needed). §G edge-12's "no false adopt" claim corrected;
+AC-P2 added.
+
+## D-r2r4-48 — the probe carries its OWN bounded timeout (Mechanical; round-4 codex BLOCKING#2; restores D-19)
+Binding design.md:172 / D-19 require the probe carry "its own short timeout"; the round-3 detailed
+design dropped it, assuming `codex doctor --json` self-terminates. A hung `doctor` (wedged on the
+HTTP-reachability check) would block `--mode dispatch` in step 1 BEFORE codex spawns — neither the
+stall detector nor the backstop can fire pre-launch, breaking the tail-bound. FIX: bound the probe
+with `PROBE_TIMEOUT_SECS` (helper constant ~10s; bg-`doctor` + timed-`kill`, NOT `timeout(1)` —
+absent on macOS) + the existing retry/backoff; a timed-out/errored/absent doctor → fail-toward-degrade
+(→ CODEX_UNAVAILABLE, never HELPER_ERROR/STOP). This is the ONE un-watchdogged codex call, so it must
+be bounded. AC-H21 pins a hung-probe test.
+
+## D-r2r4-49 — DROP the drive-retro.md mining-family additions (Mechanical; round-4 codex BLOCKING#4; REFUTES D-r2r4-26(a))
+Verified against the REAL drive-retro.md: the mining-input list (:48) and the Rule-U carriers (:106)
+use the GENERIC `codex-review-<scope>.md` pattern, which ALREADY covers `<scope>=finalize` (→
+`codex-review-finalize.md`). So NO family-list extension is needed — D-r2r4-26(a)'s "declared
+mining-input families omit finalize codex artifacts" premise was a design-review depth-note never
+checked against the file, and is REFUTED. The ONLY drive-retro.md edits are the two TOKEN-sensitive
+ones: :99 (first-line degraded count) and :144 (Rule-U E7 stub) add CODEX_KILLED_TIMEOUT. §0
+divergence #3, §C.2, and AC9 corrected.
+
+## D-r2r4-50 — doc-coherence corrections (Mechanical; round-4 codex MAJOR + BLOCKING#3 + Claude P2s/P3)
+(a) §C.1's tier-table OUTCOME column is TOKEN-ONLY — exactly the 4 stdout tokens; rc126/127 (out-of-
+band coordinator state) moved to §G.0, AC3 reconciled (codex MAJOR). (b) Generic contract text
+(§A.1 OK row, §G.0 row 3, AC-P1) says "the passed `--marker` path", never the review-family name —
+harden's marker is codex-harden-<P>.md, finalize's is codex-review-finalize.md (codex BLOCKING#3).
+(c) AC8's :891/:900 pins are per-BULLET anchors (both share the `### Data sources` subsection, so a
+subsection-scoped mutation-verify was vacuous — Claude P2). (d) high-level design.md's fallback
+references (:8-9, :92-99, :227, :254-256, :323-325) reconciled to the STOP model, citing D-45
+superseding D-24-H1 (Claude P2 — OPERATING propagate-everywhere + update-doc-before-implementer).
+(e) §G.0 row 7 is a true else/catch-all + the stdout TOKEN is the PRIMARY discriminant, rc columns
+descriptive (Claude P3).
+
+## D-r2r4-51 — OK-path completeness: pre-launch marker-parent guard + post-OK completion check (Mechanical; round-5 codex BLOCKING)
+Post-quarantine, an unwritable `--marker` or a crashed post-process subagent yields OK + non-empty
+raw log + NO current codex artifact — undefined in §G.0, so the round could silently lose the codex
+voice. FIX (two halves): (a) the HELPER prevalidates the `--marker` PARENT-dir writability PRE-LAUNCH
+(`[ -w "$(dirname "$marker")" ]`) → `HELPER_ERROR` → broken-helper STOP (§A.2, §A.1, AC-H22) — a
+best-effort EARLY guard, per the existing pre-launch-only invariant (D-38); it does NOT subsume the
+post-launch marker-WRITE fail-closed path (D-43/AC-H19, now narrowed to a writable-parent write-time
+failure so AC-H22 does not shadow it). (b) §G.0 row 3 gains a POST-OK completion contract: after OK +
+post-process the coordinator REQUIRES a non-empty file at the passed `--marker` path (`codex_present`),
+else a fail-closed non-decision STOP (AC-P3). Together they close the OK+non-empty-log+NO-artifact hole.
+
+## D-r2r4-52 — "--scope validated before ANY use" corrected (refuted-as-exploit) (Mechanical; round-5 codex BLOCKING)
+§A.2's "validated before ANY use" was overstated: the COORDINATOR composes `helper-<scope>.out`/`.err`,
+`codex-prompt-<scope>.txt`, and review-path names from `<scope>` BEFORE the helper's charset check.
+NOT reachable on the real path — the coordinator's `<scope>` is a TRUSTED, already-validated phase/
+slice id (`docs/drive-enforcement.md:378-383` `--mode state-lint` constrains phase ids to
+`^[0-9]+[a-z]?$`, slice ids to `^[0-9]+[a-z]?\.[0-9]+$`), so the exploit is refuted-at-integration —
+but the CLAIM was false. FIX: §A.2 reworded to "the HELPER validates its OWN use of `--scope` before
+the HELPER composes any `--scope`-derived path; the coordinator's `--scope` is a trusted, already-
+validated id"; PLUS a one-line coordinator-side scope-charset belt-and-suspenders check in the §B
+block before it composes those temp/log filenames. Light, no over-fix.
+
+## D-r2r4-53 — hung-probe timeout GROUP-kills its own PGID (Mechanical; round-5 codex MAJOR)
+The D-48 probe timeout killed only `$dpid`; a forking `doctor --json` shim leaks a child. FIX §A.4-1:
+launch the probe in its OWN process group under bash monitor mode (`set -m`) and timeout GROUP-kill
+`-$dpgid` (`kill -TERM -$dpgid` grace `kill -KILL -$dpgid`), MIRRORING the dispatch group-kill
+(§A.4-5/§A.7); AC-H21 extended to assert NO forked child survives a timed-out probe (a forking shim +
+a survivor check).
+
+## D-r2r4-54 — bin/drive-conformance.sh COMMENT honesty; "LOGIC untouched" not "file untouched" (Mechanical; round-5 codex MINOR)
+The gate's own COMMENTS (`:26`–`:28` truth-model, `:94`–`:103` `codex_present`) describe the accepted
+degraded content as "a real review OR `CODEX_UNAVAILABLE`"; post-change the marker can ALSO be
+`CODEX_KILLED_TIMEOUT`, so the prose is stale. FIX: a DOC-ONLY comment update naming BOTH tokens; the
+gate LOGIC (`[ -s "$f" ]`, content not inspected) is byte-unchanged (AC-H11 holds). The design claim
+narrows from "file UNTOUCHED" to "gate LOGIC untouched"; `bin/drive-conformance.sh` joins slice 1.1's
+`owns:` for this comment-only touch (§0 div #4, §C.2, §I, Slices).
+
+## D-r2r4-55 — UNIFORM pin-hardening: close the pin-vacuity CLASS in ONE pass (Mechanical; round-5 Claude MAJOR + codex MAJOR; extends D-40)
+The recurring failure: a pin scoped to a whole `## Step`/`###` SECTION passes VACUOUSLY when its token
+recurs elsewhere in that section (a tier-table row, an mv-aside quarantine line, a Step-3 marker).
+Closed as ONE class, not per-pin: (a) the finalize `codex_block` went vacuous when the round-4
+quarantine put both `codex-raw-finalize.log` and `codex-review-finalize.md` mv-lines AHEAD of the
+dispatch inside the same fence (§I's "NO test edit needed" was FALSE) — RE-ANCHOR `codex_block` to the
+DISPATCH (`_slice_between(step1, r"bin/drive-codex\.sh", r"--marker.*codex-review-finalize\.md",
+inclusive)`) + explicit mutation-verify (delete `--raw-log`/`--marker` → reds). (b) the three specs'
+inline degradation pins (drive-review `:207`–`:209`, drive-harden `:169`, drive-finalize `:233`)
+become BOUNDED SLICES on the `Degradation (do NOT hard-fail):` paragraph — NOT section-scoped (their
+sections host/reference the tier table §C.1, whose row carries `CODEX_KILLED_TIMEOUT`). (c) AC3
+(tier-table outcome column — bounded to the table rows), AC5 (TMPDIR mkdir→dispatch precedence), AC1
+(codex-first position) each restated as a bounded/precedence pin with an explicit mutation-verify.
+Binding acceptance stays the token-sweep + green `bin/run-tests.sh` (AC12), never per-line enumeration.
+
+## D-r2r4-56 — stranded-family retention followup breadth (Mechanical; round-5 Claude NIT — followup, not an in-run fix)
+The stranded-quarantine mvs now create FOUR `.stranded` families the Tier-L globs do not sweep:
+`<raw>.log.stranded`, `helper-<scope>.out.stranded` / `helper-<scope>.err.stranded`, and the AC-P2
+`codex-review-<scope>.md.stranded` / `codex-harden-<P>.md.stranded`. EXTEND the existing
+`.log.stranded`-only retention followup (`$RUN_DIR/followups.md`, §A.8) to name all four so the
+eventual retention audit covers them. A FOLLOWUP, not an in-run fix (broadens the D-25-routed
+pre-existing blind spot).
+
+## D-r2r4-57 — §B coordinator scope-check uses the HELPER's permissive charset, not the bare-id grammar (Mechanical; round-6 Claude MAJOR — happy-path regression)
+The D-52 belt-and-suspenders check asserted `<scope>` against the BARE phase/slice-id grammar
+(`^[0-9]+[a-z]?$` / `^[0-9]+[a-z]?\.[0-9]+$`), but the real `<scope>` tokens are `design`,
+`phasedesign1`, `phase1`, `finalize`, and slice `1.2` (drive-review.md:64) — FOUR of five FAIL that
+grammar, so as literal bash it would fail-close the codex dispatch for every design/phasedesign/phase/
+finalize review (design is the most common leg). FIX: mirror the HELPER's OWN permissive charset
+`case "$scope" in *[!A-Za-z0-9._-]*) …STOP… ;; esac` — accepts all five, still rejects
+path-traversal/injection chars. The bare-id grammar stays ONLY as the citation for WHY the
+coordinator's `<scope>` is already a trusted validated id (drive-enforcement:378-383), not the check
+itself. Optional tiny spec pin so the grammar can't silently regress.
+
+## D-r2r4-58 — snapshot the prior codex sibling BEFORE the quarantine (restores effort-tiering) (Mechanical; round-6 codex MAJOR)
+The AC-P2 stale-sibling quarantine `mv`s the LIVE per-site codex sibling aside BEFORE dispatch, and
+`--prior-codex` named that SAME live sibling — so a confirmation round always saw an ABSENT prior ⇒
+silent full-effort ⇒ effort-tiering DEAD in the integrated flow (the failure was SAFE — full-effort
+default — but the optimization never fired). FIX: §B step 0 `cp`s the prior sibling to a STABLE
+snapshot `$RUN_DIR/tmp/codex-prior-<scope>.md` BEFORE the quarantine `mv`; `--prior-codex` is ALWAYS
+the snapshot. Ordering invariant: SNAPSHOT (`cp`) → QUARANTINE (`mv`) → DISPATCH. §B table + §F
+updated; AC-P2 gains the ordering + effort-tiering integration guard.
+
+## D-r2r4-59 — helper installs a reaping trap so its death kills the codex PGID (Mechanical + right-sizing Taste deferral; round-6 codex MAJOR)
+Only the LIVE helper enforced the backstop; a killed helper orphaned the codex PGID (recovery only
+mv-asides logs, never reaps), so the "unconditional backstop" claim was false for a dying helper. FIX:
+§A.4-2 installs an `EXIT INT TERM HUP` trap → `kill -TERM/-KILL -$pgid` so a dying helper REAPS its
+codex child group; the §A.7 / D-32 "unconditional" claim narrowed to "while the helper lives". HONEST
+residual: `kill -9` is uncatchable, so a `-9`'d helper STILL orphans the child — bounded by OS reaping
++ stranded-log recovery + the fresh dispatch's fstat watchdog on the fresh inode; a separate
+detached-killer process is DEFERRED to followups (over-engineering for a rare chaos case — right-sizing,
+do NOT build now). AC-H23 chaos test: helper `SIGTERM`'d mid-watch ⇒ codex child dies too.
+
+## D-r2r4-60 — AC-P2 is a BOUNDED ordering pin, not `_section`-scoped (Mechanical; round-6 codex MINOR)
+AC-P2 was `_section`-scoped and thus vacuous — the section also holds the raw-log/helper `.stranded`
+mvs and the marker path in the dispatch + post-process, so deleting ONLY the marker-sibling `mv`
+stayed green (the same vacuity class §I eliminates). FIX: bind AC-P2 to the EXACT
+snapshot→quarantine→dispatch line ORDER (`cp` index < `mv` index < `bin/drive-codex.sh … --mode
+dispatch` index) with mutation-verify; the integration stale-sibling + prior-snapshot test is the
+load-bearing guard. Applies the uniform §I discipline to AC-P2.
+
+## D-r2r4-61 — ONE attempt-log op spelling: `helper_error`, not `HELPER_FAILED` (Mechanical; round-6 codex MINOR)
+§A.10 enumerated op `helper_error` but the coordinator appended `HELPER_FAILED` (§G-1) ⇒ a non-closed
+JSONL enum. FIX: use op `helper_error` EVERYWHERE (the closed enum member); §A.10, §G.0 edge 1, and
+AC-H14 reconciled; AC-H14 pins the closed op enum spelling.
+
+## D-r2r4-62 — finalize codex_block start anchor tightened + §D proof-4 poller aligned to evidence (Mechanical; round-6 Claude P2)
+(a) §I's `codex_block` start regex was a bare `r"bin/drive-codex\.sh"` — a FIRST-match anchor a future
+prose mention of the helper name before the fenced dispatch would re-capture, re-pulling the quarantine
+mv lines into the slice and re-vacuating it. TIGHTEN to `r"bin/drive-codex\.sh.*--mode\s+dispatch"` so
+it binds the DISPATCH line uniquely regardless of authoring. (b) The coordinator made
+`sandbox-spike-evidence.md` proof #4's poller EXACT (a `kill -0 "$CODEX_PID"` pid-loop + `wc -c` +
+`sleep 0.5`, cap 480 iters); §D proof #4 is aligned to that exact command so §D and the evidence stay
+byte-identical (the evidence artifact is coordinator-owned — NOT modified here).
+
+## D-r2r4-63 — AC8 harden/finalize degradation slices use CLAUSE-level stop anchors (Mechanical; round-6 Claude P3)
+drive-review's degradation slice stops on the unique clause `does NOT parse the marker`; harden `:169`
+/ finalize `:233` stopped on "the next `##` header" (coarser — future content between the paragraph and
+the next header could widen the slice). FIX: clause-level stop anchors for PARITY — harden
+`uniform across review and harden`, finalize `inspects existence + non-emptiness only` (each
+implementer RETAINS the named clause). Cheap; folds into the uniform §I bounded-slice discipline.
+
+## D-r2r4-64 — post-process writes the marker ATOMICALLY (tmp+mv), no torn file (Mechanical; round-7 codex MAJOR)
+Row 3 / AC-P3 required only a NON-empty marker, but a post-process crash mid-write leaves a non-empty
+PARTIAL file that `codex_present` (`-s`) accepts → corrupted/lost codex voice. FIX: the post-process
+step writes `codex-review-<scope>.md` ATOMICALLY — to `$RUN_DIR/tmp/codex-review-<scope>.md.tmp.$$`
+then `mv` into place — so the marker is NEVER torn (the complete new file, or none). `-s` then
+genuinely suffices (byte-compat preserved, NO gate change). §B step 4, §G.0 row 3, AC-P3 updated; new
+AC-P4 pins the atomic tmp+mv post-process write (bounded-slice pin + a crash-after-tmp-before-mv test).
+
+## D-r2r4-65 — re-dispatch ⇒ FULL effort (conservative) (Mechanical; round-7 codex MAJOR)
+On a stranded re-dispatch / fix-round / re-run of the SAME round, the §B step-0 snapshot may capture
+the CRASHED CURRENT round's codex file (one file per scope, overwritten each round), not the prior
+COMPLETED round (D-16 wants the prior completed round) → a wrong low-effort downgrade. FIX (conservative,
+no correctness regression — full effort is the safe default): the coordinator, which already knows it
+is re-dispatching (~~a prior `review-<scope>-N.md` for the current round exists, or~~ an open
+`inflight-review-<scope>.marker`), OMITS `--confirmation-class` on that path ⇒ FULL effort;
+down-tiering fires ONLY on a clean FIRST dispatch whose prior-COMPLETED-round file is unambiguous. §F +
+§B updated; new AC-H12c pins "re-dispatch ⇒ full effort". **[REFINED round-8 / D-r2r4-72: the
+re-dispatch signal is the PRE-EXISTING OPEN inflight marker ALONE — NOT the existence of prior-round
+`review-<scope>-N.md`, which a confirmation re-audit legitimately has; the original phrasing would
+have wrongly force-fulled every confirmation round.]**
+
+## D-r2r4-66 — SIGKILL residual is ACCEPTED and EXPLICITLY UNBOUNDED (claim correction) (Mechanical + right-sizing; round-7 codex BLOCKING)
+The round-6 "bounded in practice by OS reaping + stranded recovery + fresh watchdog" residual claim
+was FALSE: a `kill -9`'d helper cannot run its EXIT/INT/TERM/HUP trap, so it orphans the codex child
+PGID, and that orphan is reaped by NONE of those mechanisms (none signal it) — it self-terminates ONLY
+when its OWN codex review completes (bounded by codex's run, NOT by the helper backstop). CORRECT the
+claim to an ACCEPTED, from-/drive's-view UNBOUNDED residual for the SIGKILL-during-dispatch chaos case;
+narrow "the per-attempt backstop is the sole unconditional bound" to "while the helper PROCESS lives".
+§A.4-2, §A.7, §G.0 edge 9 corrected. Out-of-process reaper / PGID-persist-for-resume-kill DEFERRED to
+followups.md — NOT built (right-sizing for a rare chaos case).
+
+## D-r2r4-67 — masquerade "race closed" NARROWED to single-session; cross-session orphan-marker residual documented (Mechanical + right-sizing; round-7 codex BLOCKING)
+Every "race closed" claim (§G.0 edge 10/12, §A.9 single-writer-per-outcome) NARROWED: the
+SINGLE-SESSION killed-round / stale-sibling masquerade is closed (helper owns the marker; post-process
+ONLY on OK; quarantine-before-dispatch). A CROSS-SESSION orphan-marker race REMAINS — a helper orphaned
+by a session crash can, after resume re-dispatches the same scope, write a fresh marker to the shared
+`--marker` PATH (path-based `mv`, unlike the fd/inode-based token file, which IS immune) that the new
+session may honor. Stated as an ACCEPTED residual bounded by (a) rarity (crash + resume + orphan-alive
++ orphan-degrades + timing align) and (b) ~~the TERMINAL re-review~~. **[CORRECTED round-8 / D-r2r4-70:
+bound (b) is FALSE for the FINALIZE/terminal scope — finalize IS terminal, nothing re-reviews it, so
+an orphan CAN repopulate `codex-review-finalize.md` and the `-s`-only ship gate honors it. Only
+NON-terminal scopes are superseded downstream. See D-r2r4-70 for the honest statement + human decision
+to accept/defer.]** Attempt-scoped-marker hardening DEFERRED to followups.md — NOT built now.
+
+## D-r2r4-68 — §I finalize codex_block rationale names the round-6 cp as a third pre-dispatch occurrence (Mechanical; round-7 Claude P3)
+§I's re-anchor rationale enumerated only the two round-4 quarantine mv lines as pre-dispatch
+occurrences of `codex-review-finalize.md`; add the round-6 `cp …codex-review-finalize.md …codex-prior-
+finalize.md` snapshot line as a THIRD pre-dispatch occurrence the START-at-`--mode dispatch` anchor
+already excludes. Cosmetic — the anchor was already robust.
+
+## D-r2r4-69 — HONESTY SWEEP: no completeness claim overstates its guarantee (Mechanical; round-7 class-fix — ends the adversarial treadmill)
+Swept the whole design for completeness superlatives (`race closed`, `unconditional`, `sole`,
+`single-writer`, `never`, `cannot`, `bounded`). NARROWED every chaos/orphan/backstop OVERCLAIM to
+exactly what the integrated path guarantees, documenting each rare-chaos edge as an ACCEPTED, BOUNDED,
+DEFERRED residual: race-closed → single-session; unconditional backstop → "while the helper process
+lives"; single-writer-per-outcome → within one session; the SIGKILL orphan and the cross-session
+orphan-marker as accepted unbounded/bounded residuals with their real bounds. KEPT the proven-structural
+claims (killed-latch `PERIOD`, bounded-slice "cannot widen", fstat-on-fd "cannot fool the poll",
+fd/inode token immunity) — each proven against the real mechanism. The class-fix: an honest design with
+documented residuals has NO overclaim left for the adversarial voice to refute.
+
+## D-r2r4-70 — terminal-gate cross-session orphan-marker residual: accept + document + defer (User-Challenge; human decision)
+Classification: User-Challenge (resolved by the HUMAN at the round-8 cap-8 non-convergence STOP).
+The round-8 codex BLOCKING is REAL, REACHABLE, and SECURITY-RELEVANT: the cross-session orphan-marker
+race is NOT bounded by the terminal re-review for the FINALIZE scope (the round-7/8 "bounded by the
+terminal re-review" claim was FALSE — finalize IS terminal, nothing downstream re-reviews it). A
+session-A orphaned bash helper can overwrite the shared `codex-review-finalize.md` with a DEGRADED
+marker AFTER session B re-dispatches, and the terminal ship gate (`codex_present` = `-s`-only, content
+NOT parsed) HONORS it — a foreign/degraded codex voice reaching the ship gate. R4 INTRODUCES this
+vector (pre-R4 the marker writer was a session-bound subagent that dies with the crash; R4's surviving
+bash helper can outlive its session). The honest FIX (attempt-scoped / freshness-token markers, gate-
+verified) requires the ship GATE to PARSE the marker, which BREAKS the design's load-bearing "gate
+untouched / byte-compatible" premise and is a HARNESS-WIDE change out of scope for R2/R4. **HUMAN
+DECISION:** SHIP R2/R4 with this residual DOCUMENTED HONESTLY (no false bound anywhere) and the fix
+DEFERRED to a follow-up (followups.md). The design is corrected to state the honest residual (§G.0
+edge-12, §A.9, §A.4-2, edge-10); the two round-8 codex MAJORs are fixed IN-DESIGN (D-r2r4-71 watchdog
+`kill_confirmed`; D-r2r4-72 re-dispatch⇒full-effort branch-specific pin) and enforced at implement.
+
+## D-r2r4-71 — watchdog killed-classification keys on `kill_confirmed`, not `watchdog_initiated` (Mechanical; round-8 codex MAJOR)
+The `watchdog_initiated` flag means "the watchdog DECIDED to fire", not "the signal killed a live
+codex" — a codex that self-exits after the watchdog arms but BEFORE the signal lands was mislabeled a
+stall-kill. FIX (§A.4-3/5, §A.7): record a SEPARATE `kill_confirmed` bit = the signal actually hit a
+STILL-ALIVE target (PGID alive at signal time AND the child's terminal `wait`-status reflects
+death-by-OUR-signal 143/137, not a self-exit). Step-5 CODEX_KILLED_TIMEOUT classification branches on
+`kill_confirmed`, NOT `watchdog_initiated`; a `kill_confirmed=0` self-exit-race falls through to step-4
+(classified by codex's real rc/log). AC-H17 updated to assert a self-exit-just-as-the-watchdog-fires ⇒
+`OK`, NOT `CODEX_KILLED_TIMEOUT`.
+
+## D-r2r4-72 — re-dispatch⇒full-effort is a CONDITIONAL BRANCH + branch-specific pin, not prose-only (Mechanical; round-8 codex MAJOR)
+The re-dispatch⇒full-effort behavior was pinned only by a section-scoped prose pin while the live §B
+dispatch example still showed `[--confirmation-class …]`. FIX (§B, AC-H12c): §B builds
+`--confirmation-class`/`--prior-codex` in an explicit CONDITIONAL branch (`CONF=(…)` on a clean first
+dispatch guarded ONLY by "no PRE-EXISTING open `inflight-review-<scope>.marker`" — the re-dispatch
+signal is the open inflight marker, NOT the existence of prior-round `review-<scope>-N.md`, which a
+confirmation re-audit legitimately has [corrects the round-6/7 D-65 imprecision that would have
+force-fulled every confirmation round]; `CONF=()` on the re-dispatch else-branch) and the invocation
+expands `"${CONF[@]}"`. AC-H12c becomes
+TWO branch-specific bounded-slice pins: the re-dispatch branch LACKS `--confirmation-class`; the
+clean-first-dispatch branch INCLUDES it. Mutation-verify: make it unconditional → the re-dispatch pin
+reds.
+
+## D-r2r4-73 — implement drift: two sanctioned test knobs + probe-timeout flag (Mechanical; slice 1.1 implement)
+The helper `bin/drive-codex.sh` adds THREE test-only affordances not enumerated in §A.2/§A.3, each
+sanctioned by an AC that requires a DETERMINISTIC test and each documented in the Usage header
+(precedent: `--poll-secs` "test knob", `DRIVE_CODEX_CMD` test seam):
+(1) `--probe-timeout-secs <N>` — optional flag mirroring `--poll-secs`, so AC-H21's hung-probe test
+    bounds the probe in ~0.3s instead of the 10s prod default (PROBE_TIMEOUT_SECS_DEFAULT unchanged);
+(2) `DRIVE_CODEX_INJECT_INTERNAL_FAULT=1` — env that forces a POST-launch internal fault, exactly the
+    "injected stat-flavor probe failure" AC-H16 calls for, proving it maps to CODEX_UNAVAILABLE
+    (cause=internal), never HELPER_ERROR;
+(3) AC-H17 (kill_confirmed, D-71) is tested WITHOUT a new knob — the fake TRAPS SIGTERM and exits 0,
+    so the watchdog fires (watchdog_initiated=1) but the child's wait-status is 0 (self-exit), giving
+    kill_confirmed=0 ⇒ classified OK by step 4. Faithful to D-71 (classification keys on the
+    death-by-our-signal wait-status 143/137, not on the watchdog decision). No prod behavior changes;
+    all three are inert when unset (default probe timeout 10s; no injection; a real codex TERM-kill
+    yields 143 ⇒ kill_confirmed=1 ⇒ CODEX_KILLED_TIMEOUT).
+
+## D-r2r4-74 — finalize r2: probe-mode probe-log dir preflight (Mechanical; completes R5-A class)
+Finalize round-2 codex flagged a real (mutation-verified) misclassification: standalone `--mode
+probe` writes `codex-probe-<scope>.log` in `dirname --attempt-log`, whose writability was NOT
+preflighted (dispatch mode's is, via R5-A on the raw-log parent). A writable attempt-log inside a
+read-only dir ⇒ false CODEX_UNAVAILABLE (exit 1) instead of HELPER_ERROR (exit 2). FIXED (commit
+8955fe3): probe-mode pre-launch guard on the probe-log dir ⇒ HELPER_ERROR; test PM-RO. Classified
+Mechanical (completeness + DRY: R5-A's local-fault→HELPER_ERROR class applied uniformly across
+modes). Bounded honestly: `--mode probe` is TEST-ONLY (zero pipeline invocations) and the trigger
+needs a read-only $RUN_DIR (coordinator never produces one), so this is defense-in-depth completing
+the class, NOT a live-path bug. Claude reviewer had CONVERGED both rounds; the adversarial codex
+voice caught it — the load-bearing voice for this security-sensitive helper. Surface at Gate B.
+
+## D-r2r4-75 — finalize r3: OVERRULE codex exact-probe-log-node P1 + imprecision budget (Taste)
+Finalize round-3 codex flagged the exact `.probe.log` NODE type as unchecked (vs the raw-log node,
+R4-A). OVERRULED at integration with evidence (not a live-path bug): the `.probe.log` is the
+HELPER's OWN derived scratch path — never coordinator-created (real dispatch passes only a clean
+`$RUN_DIR/codex-raw-<scope>.log`; the sibling is written fresh as a regular file each run); a
+pre-existing dir/FIFO there = filesystem tampering, out of threat model. `--mode probe` is test-only
+(zero pipeline invocations). The actual coordinator input (raw-log node + parents, both modes) IS
+preflighted. Failure mode is safe (degrade to single-voice). Both Claude finalize reviewers CONVERGED
+independently. Per OPERATING (gate edge-hardening on evidence the failure occurs; overrule an
+adversarial blocking refuted-at-integration WITH evidence). IMPRECISION BUDGET (stated to end the
+adversarial per-variant treadmill — rounds r2/r3 each surfaced a more-obscure pathological-fs-node
+variant): the "pathological pre-existing node at a helper-owned scratch path" meta-class is
+defense-in-depth vs fs tampering, NOT reachable; load-bearing correctness = the reachable behavioral
+paths + mutation-verified tests. Further same-class findings pre-overruled → followups. Kept the r2
+parent-dir fix (committed, green, harmless class-completion; reverting = churn). Surface at Gate B.

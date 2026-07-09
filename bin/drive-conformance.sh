@@ -24,8 +24,8 @@
 #   A review "counts" iff the highest-N review-<scope>-N.md has `## Verdict: CONVERGED`
 #   AND a `reviewed-sha: <40hex>` line equal to the git tip the mode checks, AND a
 #   sibling codex-review-<scope>.md exists and is non-empty (any non-empty content
-#   satisfies — a real codex review OR a CODEX_UNAVAILABLE degradation note; the file's
-#   content is NOT inspected).
+#   satisfies — a real codex review OR a CODEX_UNAVAILABLE / CODEX_KILLED_TIMEOUT
+#   degradation note; the file's content is NOT inspected).
 #
 # Output (stdout JSON): {"clean":bool,"mode":"...","tip":"<sha>","violations":[...]}
 # Exit: 0 clean · 1 violations · 2 usage/IO/git error.
@@ -93,14 +93,14 @@ highest_review_file() {
 
 # Is the codex side satisfied for scope? codex-review-<scope>.md must exist AND be
 # non-empty. ANY existing non-empty codex-review-<scope>.md satisfies — the content is
-# NOT inspected: it may be a real codex review OR a CODEX_UNAVAILABLE degradation note
-# (the codex-down case). Only an EMPTY file (a bare `touch`) or a missing file fails.
-# rc0 satisfied, rc1 missing/empty. $1=scope
+# NOT inspected: it may be a real codex review OR a CODEX_UNAVAILABLE / CODEX_KILLED_TIMEOUT
+# degradation note (codex absent/down, or a watchdog stall/backstop kill). Only an EMPTY
+# file (a bare `touch`) or a missing file fails. rc0 satisfied, rc1 missing/empty. $1=scope
 codex_present() {
   local scope="$1"
   local f="$RUN_DIR/codex-review-$scope.md"
-  # Must exist and be non-empty; content is not inspected (real review OR a CODEX_UNAVAILABLE
-  # note both satisfy). `-s` already implies existence, so no separate `-f` test is needed.
+  # Must exist and be non-empty; content is not inspected (real review OR a CODEX_UNAVAILABLE /
+  # CODEX_KILLED_TIMEOUT note all satisfy). `-s` already implies existence, so no separate `-f` test.
   [ -s "$f" ] || return 1
   return 0
 }
