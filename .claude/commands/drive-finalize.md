@@ -331,14 +331,21 @@ Return STATUS as the FIRST line, then the changed-file list:
 ## Step 4 — Regression guard & converge
 
 One round per invocation; `/drive` owns the loop. Decide the return per the cap rules in
-**Loop counter & cap**, then finalize the round's `AppliedEdits` marker and update the
-single `reviewed-sha:` line **IN PLACE** (REPLACE it — never append a second one; see the
-`reviewed-sha:` binding note for why a second line would shadow the post-fix tip):
+**Loop counter & cap**, then finalize the round's `AppliedEdits` marker, rewrite the FIRST
+`## Verdict:` line IN PLACE, and update the single `reviewed-sha:` line **IN PLACE**
+(REPLACE it — never append a second one; see the `reviewed-sha:` binding note for why a
+second line would shadow the post-fix tip). A fix round is never terminal-converged — the
+ship gate's `## AppliedEdits: no` requirement + this Verdict rewrite are the
+finalize-terminal contract:
 
 - **No fix applied this invocation** (Step-2 fix set was empty — the free confirming
-  audit) → set `review-finalize-N.md` `AppliedEdits: no`, leave the single `reviewed-sha:`
-  line at the unchanged `git rev-parse <featureBranch>` tip → return `CONVERGED`.
-- **A fix was applied** → `finalizeRound += 1`; set `AppliedEdits: yes`; REPLACE the single
+  audit) → set `review-finalize-N.md` `## AppliedEdits: no`, **replace the FIRST
+  `## Verdict:` line IN PLACE with `## Verdict: CONVERGED`** (affirmative — never append a
+  second `## Verdict:` line), leave the single `reviewed-sha:` line at the unchanged `git
+  rev-parse <featureBranch>` tip → return `CONVERGED`.
+- **A fix was applied** → `finalizeRound += 1`; set `## AppliedEdits: yes`; **replace the
+  FIRST `## Verdict:` line IN PLACE with `## Verdict: FINDINGS`** (a fix round is never
+  terminal-converged — never append a second `## Verdict:` line); REPLACE the single
   `reviewed-sha:` line with the POST-fix tip (Step-1 binding). Run the **driven project's FULL
   suite** (`bin/run-tests.sh` — pytest + every `test/*.test.sh`) as the regression guard: **a reddened test from a de-slop edit is a REAL
   REGRESSION → REVERT the offending edit (do NOT reconcile by editing the test)**, re-run,

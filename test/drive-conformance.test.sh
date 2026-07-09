@@ -84,6 +84,67 @@ seed_finalize_no_sha() {
   { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
 }
 
+# Seed a CONVERGED finalize artifact whose HEADER `## AppliedEdits:` is `yes` but whose BODY
+# (below `## Findings`) quotes the literal `## AppliedEdits: no` — the first-match/header-bound
+# regression fixture (finalize audits THIS repo, whose spec docs contain the literal). An
+# anywhere-grep would read the body `no` and ship an un-re-audited fix; the header-bound reader
+# reads `yes` and blocks. $1=run_dir $2=N $3=reviewed-sha.
+seed_finalize_bodyquote() {
+  local rd="$1" n="$2" sha="$3"
+  mkdir -p "$rd"
+  {
+    echo "# Review finalize round $n"
+    echo
+    echo "## Verdict: CONVERGED"
+    echo "## AppliedEdits: yes"
+    echo
+    echo "reviewed-sha: $sha"
+    echo "## Findings"
+    echo
+    echo "The spec doc contains the literal on its own line:"
+    echo "## AppliedEdits: no"
+  } > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
+}
+
+# Seed a CONVERGED finalize artifact with NO `## AppliedEdits:` line at all (valid reviewed-sha
+# + codex sibling) — applied_edits_no's first-match finds nothing -> rc1 -> block (missing ≠ no).
+# $1=run_dir $2=N $3=reviewed-sha.
+seed_finalize_no_applied() {
+  local rd="$1" n="$2" sha="$3"
+  mkdir -p "$rd"
+  {
+    echo "# Review finalize round $n"
+    echo
+    echo "## Verdict: CONVERGED"
+    echo
+    echo "reviewed-sha: $sha"
+    echo "## Findings"
+    echo
+    echo "No open P1."
+  } > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
+}
+
+# Seed a CONVERGED finalize artifact carrying `## AppliedEdits: no` but LACKING the `## Findings`
+# delimiter -> the header-region readers (reviewed_sha_of, then applied_edits_no) fail closed on
+# the malformed file -> block. $1=run_dir $2=N $3=reviewed-sha.
+seed_finalize_no_findings() {
+  local rd="$1" n="$2" sha="$3"
+  mkdir -p "$rd"
+  {
+    echo "# Review finalize round $n"
+    echo
+    echo "## Verdict: CONVERGED"
+    echo "## AppliedEdits: no"
+    echo
+    echo "reviewed-sha: $sha"
+    echo
+    echo "No open P1 (but NO ## Findings delimiter -> malformed)."
+  } > "$rd/review-finalize-$n.md"
+  { echo "codex review for finalize"; echo "looks fine"; } > "$rd/codex-review-finalize.md"
+}
+
 # Assert exit code. $1=desc $2=expected-rc $3=actual-rc
 assert_rc() {
   if [ "$2" = "$3" ]; then
@@ -358,6 +419,58 @@ rm -f "$rd/codex-review-phase1.md"                                            # 
 seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')" yes              # valid CONVERGED finalize
 run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC35 ship CONVERGED finalize + phase review missing codex blocked" 1 "$RC"
                                                     assert_out "AC35 reason is no-phase-review (missing phase codex)" '"reason":"no-phase-review"'
+
+echo "=== AC45: ship b-ii requires the finalize artifact's first ## AppliedEdits: line be exactly no ==="
+# The finalize gate-integrity fix: a fix-round (or forged/legacy) finalize artifact reading
+# {Verdict:CONVERGED, reviewed-sha==tip, codex present} but whose HEADER `## AppliedEdits:` is
+# NOT `no` must NOT tip-bind the terminal candidate-R -> ship blocks. Each case is built on an
+# OTHERWISE-ship-valid artifact (valid Verdict/reviewed-sha/codex + the b-i counting phase
+# review from mk_ship clean), so the block ISOLATES to applied_edits_no. Pre-fix drive-conformance
+# ships regardless of AppliedEdits -> the yes / body-quote / pending / missing cases RED pre-fix.
+
+# AC45.a — HEADER `## AppliedEdits: yes` (the core regression): an un-re-audited fix round MUST
+# NOT ship. Bind R = HEAD^ (phase code, parent of the ledger tip) so R..tip = the lone ledger
+# commit ⊆ allowlist and the ONLY blocking cause is applied_edits_no. Pre-fix: ships (rc 0).
+read -r repo rd < <(mk_ship clean ac45a-ship)
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')" yes
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.a ship finalize AppliedEdits:yes blocked" 1 "$RC"
+                                                    assert_out "AC45.a reason is no-review (b-ii applied_edits_no)" '"reason":"no-review"'
+
+# AC45.b — HEADER `## AppliedEdits: no` (happy path, liveness): a genuinely-finalized run ships.
+read -r repo rd < <(mk_ship clean ac45b-ship)
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')" no
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.b ship finalize AppliedEdits:no clean" 0 "$RC"
+
+# AC45.c — HEADER `## AppliedEdits: yes` + BODY (under `## Findings`) `## AppliedEdits: no`: the
+# first-match/header-bound regression guard. An anywhere-grep would read the body `no` and ship;
+# the header-bound reader reads the header `yes` and blocks. Pre-fix: ships (rc 0).
+read -r repo rd < <(mk_ship clean ac45c-ship)
+seed_finalize_bodyquote "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.c ship finalize body-quoted no (header yes) blocked" 1 "$RC"
+                                                    assert_out "AC45.c reason is no-review (header-bound, not anywhere-grep)" '"reason":"no-review"'
+
+# AC45.d — HEADER `## AppliedEdits: pending` (mid-flight): exactly-`no` (not "not yes") fails
+# closed on pending. Pre-fix: ships (rc 0).
+read -r repo rd < <(mk_ship clean ac45d-ship)
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')" pending
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.d ship finalize AppliedEdits:pending blocked" 1 "$RC"
+                                                    assert_out "AC45.d reason is no-review (pending != no)" '"reason":"no-review"'
+
+# AC45.e — NO `## AppliedEdits:` line at all (missing): missing != no -> fail closed. Pre-fix:
+# ships (rc 0).
+read -r repo rd < <(mk_ship clean ac45e-ship)
+seed_finalize_no_applied "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.e ship finalize missing AppliedEdits blocked" 1 "$RC"
+                                                    assert_out "AC45.e reason is no-review (missing != no)" '"reason":"no-review"'
+
+# AC45.f — CONVERGED finalize LACKING `## Findings` (malformed): the header-region readers fail
+# closed on the missing delimiter. reviewed_sha_of fires first in the AND-chain (applied_edits_no
+# shares the same delimiter contract) -> block. GREEN in both (delimiter fail-close is not new);
+# guards that the added applied_edits_no conjunct does not FLIP a malformed artifact to clean.
+read -r repo rd < <(mk_ship clean ac45f-ship)
+seed_finalize_no_findings "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC45.f ship finalize missing ## Findings blocked" 1 "$RC"
+                                                    assert_out "AC45.f reason is no-review (malformed, no ## Findings)" '"reason":"no-review"'
 
 echo "=== AC4c: HARDEN->advance consumes post-harden review ==="
 read -r repo rd < <(mk_phase_harden post_harden_ok 1)

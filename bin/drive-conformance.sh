@@ -294,6 +294,24 @@ verdict_converged() {
   printf '%s\n' "$line" | grep -qE '^## Verdict:[[:space:]]*CONVERGED[[:space:]]*$'
 }
 
+# Does the FIRST header-region `## AppliedEdits:` line say exactly `no`? rc0 yes. $1=file
+# Header-region-bound (BOF..first `## Findings`) + first-match, mirroring reviewed_sha_of/
+# verdict_converged: a `## AppliedEdits: no` quoted in the review BODY (below `## Findings`)
+# must NOT satisfy this gate (finalize audits this repo, whose docs contain the literal).
+# EXTRACT-first-then-COMPARE (like reviewed_sha_of) — NOT the checkpoint counter's anywhere
+# `grep -q`. A finalize fix round writes `## AppliedEdits: yes`; only the free confirming
+# round writes `## AppliedEdits: no`, so exactly-`no` (not "not yes") also fails closed on a
+# mid-flight `pending` or a missing line. A malformed file lacking `## Findings` → awk
+# `seen==0` → empty buf → rc1 (fail-closed, blocks), the same delimiter contract as
+# reviewed_sha_of.
+applied_edits_no() {
+  local line
+  line="$(awk '/^## Findings/ { seen=1; exit } { buf = buf $0 "\n" } END { if (seen) printf "%s", buf }' "$1" 2>/dev/null \
+    | grep -m1 -E '^(##[[:space:]]*)?AppliedEdits:' || true)"
+  [ -n "$line" ] || return 1
+  printf '%s\n' "$line" | grep -qE '^(##[[:space:]]*)?AppliedEdits:[[:space:]]*no[[:space:]]*$'
+}
+
 # Evaluate whether scope <id> has a COUNTING review for tip <sha>.
 # Echoes a violation object (or nothing) and returns rc0 if counts, rc1 if not.
 # $1=scope-label (for violation) $2=review-scope $3=expected-tip-sha
@@ -565,7 +583,8 @@ EOF
     # No converged finalize artifact → candidate_R="" → ship blocks below (no-review).
     fin_rf="$(highest_review_file finalize)" || true
     if [ -n "$fin_rf" ] && verdict_converged "$fin_rf" \
-         && fin_rsha="$(reviewed_sha_of "$fin_rf")" && codex_present finalize; then
+         && fin_rsha="$(reviewed_sha_of "$fin_rf")" && codex_present finalize \
+         && applied_edits_no "$fin_rf"; then
       candidate_R="$fin_rsha "
     else
       candidate_R=""
