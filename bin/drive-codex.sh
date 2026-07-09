@@ -197,6 +197,18 @@ _log_nonempty() {
   grep -q '[^[:space:]]' "$1" 2>/dev/null
 }
 
+# rc0 iff $1 is a STRICTLY-POSITIVE decimal number (e.g. 15, 900, 0.05). Rejects empty,
+# negatives, `0`, and non-numeric garbage (any char outside [0-9.], or >1 dot). A zero or
+# non-numeric timing knob would zero the awk poll math and disable BOTH the stall and backstop
+# kills — a bounded-run bypass — so every timing knob is validated with this pre-launch. $1=value.
+_is_positive_number() {
+  case "$1" in
+    ''|*[!0-9.]*) return 1 ;;   # empty, or any char outside [0-9.] (rejects -, e, letters, space)
+    *.*.*) return 1 ;;          # more than one dot
+  esac
+  awk "BEGIN{exit !(($1)>0)}" 2>/dev/null   # strictly > 0 (rejects 0, 0.0)
+}
+
 # TERM the group leader was sent; give a brief grace, then KILL the whole group. $1 = pgid.
 _grace_then_kill() {
   local pgid="$1" i=0
@@ -247,8 +259,11 @@ write_marker() {   # $1=token $2=warning-line
   # A --marker path that is already a directory can never hold a regular file — fail closed
   # WITHOUT polluting it (an `mv file dir` would move the tmp INSIDE the dir, not replace it).
   [ -d "$MARKER" ] && return 1
-  printf '%s\n%s\n' "$1" "$2" > "$tmp" 2>/dev/null || return 1
-  mv "$tmp" "$MARKER" 2>/dev/null || return 1
+  printf '%s\n%s\n' "$1" "$2" > "$tmp" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
+  # On a runtime mv failure (writable parent but ENOSPC / a marker made read-only after the
+  # pre-check) UNLINK the orphan tmp before failing closed — no lingering `.tmp.<pid>` on the
+  # STOP path (it could never false-satisfy codex_present, whose exact name differs, but is tidy).
+  mv "$tmp" "$MARKER" 2>/dev/null || { rm -f "$tmp" 2>/dev/null; return 1; }
   [ -f "$MARKER" ] && [ -s "$MARKER" ]
 }
 
@@ -527,6 +542,31 @@ do_probe() {
   log_attempt probe 0 CODEX_UNAVAILABLE probed-outage full off "" "" "$PROBE_RC" ""
   printf '%s\n' "CODEX_UNAVAILABLE"; exit 1
 }
+
+# ----------------------------------------------------------------------------- #
+# PRE-LAUNCH validation of the resolved knobs (HELPER_ERROR-eligible zone — before probe/launch,
+# before `set -m`; a failure exits 2 with NO marker and codex un-spawned).
+# ----------------------------------------------------------------------------- #
+# Every timing knob MUST be a strictly-positive number: `--poll-secs 0` (or a non-numeric value)
+# would make `gap = zero_polls*POLL_SECS` and `elapsed = total_polls*POLL_SECS` stay 0 forever,
+# disabling BOTH the stall kill AND the per-attempt backstop (a bounded-run bypass) and spinning
+# `sleep 0`. Reject non-positive/non-numeric pre-launch.
+_is_positive_number "$POLL_SECS"          || helper_error "--poll-secs must be a positive number: '$POLL_SECS'"
+_is_positive_number "$STALL_SECS"         || helper_error "--stall-secs must be a positive number: '$STALL_SECS'"
+_is_positive_number "$BACKSTOP_SECS"      || helper_error "--backstop-secs must be a positive number: '$BACKSTOP_SECS'"
+_is_positive_number "$PROBE_TIMEOUT_SECS" || helper_error "--probe-timeout-secs must be a positive number: '$PROBE_TIMEOUT_SECS'"
+case "$MAX_ATTEMPTS" in ''|*[!0-9]*) helper_error "--max-attempts must be a positive integer: '$MAX_ATTEMPTS'" ;; esac
+[ "$MAX_ATTEMPTS" -ge 1 ] || helper_error "--max-attempts must be >= 1: '$MAX_ATTEMPTS'"
+
+# --attempt-log must be a REGULAR writable file (or creatable as one). A FIFO/socket/device would
+# block the best-effort `>> "$ATTEMPT_LOG"` with no reader and WEDGE the helper before it emits any
+# closed token. This pre-launch guard preserves the "best-effort, never fatal" contract for a
+# regular file that later fails mid-run (that write still just no-ops).
+if [ -e "$ATTEMPT_LOG" ]; then
+  { [ -f "$ATTEMPT_LOG" ] && [ -w "$ATTEMPT_LOG" ]; } || helper_error "--attempt-log must be a writable regular file (not a FIFO/socket/device): '$ATTEMPT_LOG'"
+else
+  [ -w "$(dirname "$ATTEMPT_LOG")" ] || helper_error "--attempt-log parent dir not writable: '$ATTEMPT_LOG'"
+fi
 
 case "$MODE" in
   probe)    do_probe ;;

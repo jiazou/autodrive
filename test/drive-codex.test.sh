@@ -193,7 +193,9 @@ km="$WORK/codex-review-h3kill.md"
 check_contains "AC-H9 warning threshold=" "$(cat "$km")" "threshold="
 check_contains "AC-H9 warning killed_logs=" "$(cat "$km")" "killed_logs="
 check_contains "AC-H9 warning attempt_log=" "$(cat "$km")" "attempt_log="
-if [ ! -e "$km.tmp."* ] 2>/dev/null; then pass "AC-H9 atomic write (no lingering .tmp)"; else pass "AC-H9 atomic write"; fi
+# NON-vacuous: assert EXACTLY zero lingering `.tmp.<pid>` files after the atomic tmp+mv write.
+km_lingering=$(ls "$km".tmp.* 2>/dev/null | wc -l | tr -d ' ')
+check "AC-H9 atomic write leaves NO lingering .tmp" "$km_lingering" "0"
 check "AC-H9 marker exactly 2 lines" "$(wc -l < "$km" | tr -d ' ')" "2"
 
 echo "=== AC-H10: fd-poll survives a mid-flight rename (then back) ⇒ still OK, no spurious kill ==="
@@ -374,6 +376,41 @@ echo "=== AC-P4 (helper half): the helper's marker write is atomic (tmp+mv, neve
 # A killed marker is written tmp+mv; on success no .tmp.$$ lingers and the marker is complete (2 lines).
 lingering=$(ls "$WORK"/codex-review-h3kill.md.tmp.* 2>/dev/null | wc -l | tr -d ' ')
 check "AC-P4 no lingering .tmp after a successful marker write" "$lingering" "0"
+
+echo "=== FIX1 (codex BLOCKING): non-positive/non-numeric timing knobs ⇒ HELPER_ERROR, codex un-spawned ==="
+# --poll-secs 0 (or any non-positive/non-numeric timing knob) would zero the awk poll math and
+# disable BOTH the stall AND the backstop kill — a bounded-run bypass. Every timing knob is
+# validated strictly-positive PRE-LAUNCH ⇒ HELPER_ERROR (exit 2, no marker, codex never spawned).
+for badknob in "--poll-secs 0" "--poll-secs -1" "--poll-secs abc" "--stall-secs 0" \
+               "--backstop-secs 0" "--backstop-secs xyz" "--probe-timeout-secs 0" "--max-attempts 0"; do
+  rm -f "$WORK/codex-raw-f1.log"
+  # shellcheck disable=SC2086
+  OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope f1 --scope-class slice --attempt-log "$ALOG" \
+      --raw-log "$WORK/codex-raw-f1.log" --marker "$WORK/codex-review-f1.md" --prompt-file "$PROMPT" $badknob 2>/dev/null)"
+  RC=$?
+  check "FIX1 [$badknob] ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+  check "FIX1 [$badknob] exit 2" "$RC" "2"
+  if [ ! -f "$WORK/codex-raw-f1.log" ]; then pass "FIX1 [$badknob] codex un-spawned"; else fail "FIX1 [$badknob] codex spawned"; fi
+done
+# valid sub-second floats still pass validation and run (guards against over-rejection).
+disp fake_ok f1ok slice "$WORK/codex-review-f1ok.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100
+check "FIX1 valid float knobs still run ⇒ OK" "$OUT" "OK"
+
+echo "=== FIX2 (codex MAJOR): a FIFO --attempt-log ⇒ HELPER_ERROR pre-launch (never wedges) ==="
+# A FIFO with no reader would block the best-effort `>> "$ATTEMPT_LOG"` and wedge the helper before
+# it emits any token. --attempt-log is validated as a regular writable file PRE-LAUNCH. (If the
+# validation regressed the helper would WEDGE here — the test would hang — which is itself the alarm.)
+FIFO="$WORK/attempt.fifo"; rm -f "$FIFO"; mkfifo "$FIFO"
+rm -f "$WORK/codex-raw-f2.log"
+OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope f2 --scope-class slice --attempt-log "$FIFO" \
+    --raw-log "$WORK/codex-raw-f2.log" --marker "$WORK/codex-review-f2.md" --prompt-file "$PROMPT" --poll-secs 0.05 2>/dev/null)"
+RC=$?
+check "FIX2 FIFO --attempt-log ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+check "FIX2 FIFO --attempt-log exit 2" "$RC" "2"
+if [ ! -f "$WORK/codex-raw-f2.log" ]; then pass "FIX2 FIFO ⇒ codex un-spawned (no wedge)"; else fail "FIX2 codex spawned"; fi
+rm -f "$FIFO"
+# a REGULAR attempt-log that fails a write mid-run stays best-effort (no wedge) — covered by the
+# normal OK/degrade cases above, which all append to the regular $ALOG without ever blocking.
 
 echo ""
 echo "===================================================================="
