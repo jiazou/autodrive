@@ -74,11 +74,19 @@ mkfake fake_probe_hang \
   'case "$1" in doctor) ( sleep 30; touch "$SURVIVOR" ) & sleep 30; exit 0 ;; esac' \
   'printf "x\n"; exit 0'
 
-# exec streams, FORKS a child that would touch $SURVIVOR after 30s, then sleeps (⇒ helper-death reaps it).
+# doctor HANGS + FORKS a child that touches $SURVIVOR after a SHORT 2s (⇒ a TERM-during-the-PROBE
+# window must reap the doctor group FAST, before the child touches — non-vacuous FIX-C repro).
+mkfake fake_probe_hang_fast \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) ( sleep 2; touch "$SURVIVOR" ) & sleep 30; exit 0 ;; esac' \
+  'printf "x\n"; exit 0'
+
+# exec streams, FORKS a child that touches $SURVIVOR after a SHORT 2s, then sleeps (⇒ helper-death
+# must reap it before the child touches — non-vacuous: a leaked child WOULD touch within the wait).
 mkfake fake_forking_stream \
   '#!/usr/bin/env bash' \
   'case "$1" in doctor) echo ok; exit 0 ;; esac' \
-  '( sleep 30; touch "$SURVIVOR" ) &' \
+  '( sleep 2; touch "$SURVIVOR" ) &' \
   'printf "streaming\n"; sleep 60'
 
 # logs its exec argv to $ARGVLOG (for sandbox/effort composition assertions); exec exits OK.
@@ -349,6 +357,9 @@ if [ ! -f "$WORK/codex-raw-h22.log" ]; then pass "AC-H22 codex un-spawned"; else
 chmod 755 "$WORK/rodir"
 
 echo "=== AC-H23: helper-death reaping — SIGTERM mid-watch reaps the codex child PGID ==="
+# NON-VACUOUS: the survivor child touches after 2s; TERM lands at 0.6s and we observe past the 2s
+# touch, so a LEAKED (un-reaped) child WOULD create the survivor within the window (proven RED
+# against a helper without the reaper). Reaping kills the child group before its 2s touch.
 SURV23="$WORK/survivor_h23"; rm -f "$SURV23"
 SURVIVOR="$SURV23" DRIVE_CODEX_CMD="$BIN/fake_forking_stream" "$HELPER" --mode dispatch --scope h23 --scope-class slice \
   --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-h23.log" --marker "$WORK/codex-review-h23.md" \
@@ -357,7 +368,7 @@ hpid=$!
 sleep 0.6
 kill -TERM "$hpid" 2>/dev/null
 wait "$hpid" 2>/dev/null
-sleep 0.5
+sleep 2.5
 if [ ! -f "$SURV23" ]; then pass "AC-H23 SIGTERM'd helper reaped its codex child PGID"; else fail "AC-H23 codex child orphaned after helper SIGTERM"; fi
 
 echo "=== AC-P1 (helper half): HELPER_ERROR writes NO marker at --marker; rc-126/127 spawn no codex ==="
@@ -411,6 +422,74 @@ if [ ! -f "$WORK/codex-raw-f2.log" ]; then pass "FIX2 FIFO ⇒ codex un-spawned 
 rm -f "$FIFO"
 # a REGULAR attempt-log that fails a write mid-run stays best-effort (no wedge) — covered by the
 # normal OK/degrade cases above, which all append to the regular $ALOG without ever blocking.
+
+echo "=== FIX-A (codex MAJOR/SECURITY): numeric env vars are NOT command-injection surfaces ==="
+# DRIVE_CODEX_STALL_MINS / _BACKSTOP_HOURS were interpolated into an awk PROGRAM before validation ⇒
+# RCE (a `1; system("touch X"); 1` payload executed). Now each is validated as a plain positive
+# number BEFORE use and multiplied via `awk -v` (parameterized). An injection payload does NOT
+# execute (no side-effect file) and yields HELPER_ERROR (config-resolution, pre-launch, un-spawned).
+INJ="$WORK/injected_stall"; rm -f "$INJ" "$WORK/codex-raw-fa1.log"
+OUT="$(DRIVE_CODEX_STALL_MINS="1; system(\"touch $INJ\"); 1" DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch \
+   --scope fa1 --scope-class slice --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-fa1.log" \
+   --marker "$WORK/codex-review-fa1.md" --prompt-file "$PROMPT" --poll-secs 0.05 2>/dev/null)"; RC=$?
+check "FIX-A STALL_MINS injection ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+check "FIX-A STALL_MINS injection exit 2" "$RC" "2"
+if [ ! -f "$INJ" ]; then pass "FIX-A STALL_MINS injection did NOT execute (no side-effect file)"; else fail "FIX-A STALL_MINS injection EXECUTED (RCE)"; fi
+if [ ! -f "$WORK/codex-raw-fa1.log" ]; then pass "FIX-A STALL_MINS injection ⇒ codex un-spawned"; else fail "FIX-A codex spawned"; fi
+INJ2="$WORK/injected_backstop"; rm -f "$INJ2" "$WORK/codex-raw-fa2.log"
+OUT="$(DRIVE_CODEX_BACKSTOP_HOURS="2; system(\"touch $INJ2\"); 2" DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch \
+   --scope fa2 --scope-class slice --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-fa2.log" \
+   --marker "$WORK/codex-review-fa2.md" --prompt-file "$PROMPT" --poll-secs 0.05 2>/dev/null)"; RC=$?
+check "FIX-A BACKSTOP_HOURS injection ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+if [ ! -f "$INJ2" ]; then pass "FIX-A BACKSTOP_HOURS injection did NOT execute"; else fail "FIX-A BACKSTOP_HOURS injection EXECUTED (RCE)"; fi
+# a garbage (non-numeric) env is ALSO rejected pre-launch (not silently defaulted).
+OUT="$(DRIVE_CODEX_STALL_MINS="abc" DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope fa2b --scope-class slice \
+   --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-fa2b.log" --marker "$WORK/codex-review-fa2b.md" --prompt-file "$PROMPT" --poll-secs 0.05 2>/dev/null)"
+check "FIX-A non-numeric STALL_MINS ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+# a VALID numeric env still resolves + runs (sub-second, so it stays fast) — guards over-rejection.
+DRIVE_CODEX_STALL_MINS=0.004 disp fake_ok fa3 slice "$WORK/codex-review-fa3.md" --poll-secs 0.05 --backstop-secs 100
+check "FIX-A valid DRIVE_CODEX_STALL_MINS still runs ⇒ OK" "$OUT" "OK"
+
+echo "=== FIX-B (codex BLOCKING): explicit --sandbox beats DRIVE_CODEX_SANDBOX=off (precedence) ==="
+# §A.3 precedence is explicit --flag > env > default; env-off must NOT drop an explicit --sandbox.
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" DRIVE_CODEX_SANDBOX=off disp fake_argv fb1 slice "$WORK/codex-review-fb1.md" --poll-secs 0.05 --sandbox read-only
+check_contains "FIX-B explicit --sandbox read-only + env off ⇒ exec STILL carries --sandbox read-only" "$(cat "$WORK/argv.log")" "--sandbox read-only"
+
+echo "=== FIX-C (codex BLOCKING): TERM during the PROBE window reaps the probe child (no survivor) ==="
+# The reaping trap used to be installed only AFTER codex exec launched; during the doctor probe an
+# external TERM leaked a forking-doctor child. Now the reaper trap covers the probe window too.
+# NON-VACUOUS: the forked doctor child touches after 2s; TERM lands at 0.6s and we observe past 2s.
+SURV_P="$WORK/survivor_probe"; rm -f "$SURV_P"
+SURVIVOR="$SURV_P" DRIVE_CODEX_CMD="$BIN/fake_probe_hang_fast" "$HELPER" --mode dispatch --scope fc3 --scope-class slice \
+  --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-fc3.log" --marker "$WORK/codex-review-fc3.md" \
+  --prompt-file "$PROMPT" --poll-secs 0.05 --probe-timeout-secs 30 >/dev/null 2>&1 &
+hp3=$!
+sleep 0.6
+kill -TERM "$hp3" 2>/dev/null
+wait "$hp3" 2>/dev/null
+sleep 2.5
+if [ ! -f "$SURV_P" ]; then pass "FIX-C TERM during probe reaped the doctor child group (no survivor)"; else fail "FIX-C probe child survived an external TERM"; fi
+
+echo "=== FIX-D (codex MAJOR): invalid sandbox rung ⇒ HELPER_ERROR pre-launch (codex un-spawned) ==="
+# --sandbox / DRIVE_CODEX_SANDBOX are validated against {read-only,workspace-write,danger-full-access,
+# off} PRE-LAUNCH. A garbage rung used to be passed to codex and fail POST-launch (CODEX_UNAVAILABLE
+# + codex spawned); config-resolution failures are pre-launch HELPER_ERROR, codex un-spawned.
+rm -f "$WORK/codex-raw-fd1.log"
+OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope fd1 --scope-class slice --attempt-log "$ALOG" \
+   --raw-log "$WORK/codex-raw-fd1.log" --marker "$WORK/codex-review-fd1.md" --prompt-file "$PROMPT" --poll-secs 0.05 --sandbox garbage 2>/dev/null)"; RC=$?
+check "FIX-D --sandbox garbage ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+check "FIX-D --sandbox garbage exit 2" "$RC" "2"
+if [ ! -f "$WORK/codex-raw-fd1.log" ]; then pass "FIX-D --sandbox garbage ⇒ codex un-spawned"; else fail "FIX-D codex spawned on invalid rung"; fi
+rm -f "$WORK/codex-raw-fd2.log"
+OUT="$(DRIVE_CODEX_SANDBOX=garbage DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope fd2 --scope-class slice --attempt-log "$ALOG" \
+   --raw-log "$WORK/codex-raw-fd2.log" --marker "$WORK/codex-review-fd2.md" --prompt-file "$PROMPT" --poll-secs 0.05 2>/dev/null)"; RC=$?
+check "FIX-D DRIVE_CODEX_SANDBOX=garbage ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+if [ ! -f "$WORK/codex-raw-fd2.log" ]; then pass "FIX-D env garbage rung ⇒ codex un-spawned"; else fail "FIX-D codex spawned on invalid env rung"; fi
+# a VALID explicit rung still composes on the exec argv; explicit `--sandbox off` = no flag.
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv fd3 slice "$WORK/codex-review-fd3.md" --poll-secs 0.05 --sandbox danger-full-access
+check_contains "FIX-D valid --sandbox danger-full-access composes" "$(cat "$WORK/argv.log")" "--sandbox danger-full-access"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv fd4 slice "$WORK/codex-review-fd4.md" --poll-secs 0.05 --sandbox off
+check_absent "FIX-D --sandbox off (explicit kill switch) ⇒ no --sandbox flag" "$(cat "$WORK/argv.log")" "--sandbox"
 
 echo ""
 echo "===================================================================="

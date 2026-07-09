@@ -138,13 +138,19 @@ def test_codex_first_position_harden_and_finalize():
 # AC2 — each spec invokes the helper in dispatch mode and post-processes ONLY on OK
 # =========================================================================== #
 def test_each_spec_invokes_dispatch_and_post_process_on_ok():
-    """AC2: each block invokes `bin/drive-codex.sh --mode dispatch` and post-processes ONLY on
-    `OK`. Mutation-verify: drop the ONLY-on-OK clause → reds."""
+    """AC2: each block invokes `bin/drive-codex.sh --mode dispatch` and its Step-3 COMBINE block
+    scopes post-processing to `OK` — `OK` + non-empty raw log ⇒ run the post-process. BOUNDED to
+    the combine block (`Wait for BOTH` … up to the `Degradation` paragraph), NOT a file-wide grep:
+    the incidental 'ONLY on `OK`' in drive-review's Step-1 intro must NOT rescue a deleted Step-3
+    combine contract (the prior vacuity). Mutation-verify: delete the `OK`⇒post-process rule (the
+    'non-empty raw log → run the post-process' clause) from the combine block → reds."""
     for md in (REVIEW, HARDEN, FINALIZE):
         lines = _lines(md)
         assert _idx(lines, DISPATCH_RE) is not None, f"{md.name}: must invoke --mode dispatch"
-        assert re.search(r"post-process.*ONLY on `OK`|ONLY on `OK`", _text(md)), (
-            f"{md.name}: must post-process ONLY on OK"
+        block = _slice(lines, r"Wait for BOTH", r"Degradation \(do NOT hard-fail\)", inclusive=False)
+        assert re.search(r"non-empty raw log.{0,40}post-process", block, re.S), (
+            f"{md.name}: the Step-3 combine block must post-process ONLY on `OK` "
+            "(`OK` + non-empty raw log ⇒ run the post-process)"
         )
 
 

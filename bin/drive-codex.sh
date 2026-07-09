@@ -59,6 +59,23 @@
 # Sandbox rungs (RESOLVED from sandbox-spike-evidence.md fail-branch, §D):
 #   design/phasedesign scope → read-only ;  slice/phase/finalize scope → workspace-write.
 #
+# Untrusted-input validation (CLASS AUDIT — EVERY `--flag value` + EVERY DRIVE_CODEX_* env is either
+# validated before use OR only ever reaches a quoted / array context; NONE reaches an awk/eval/sh -c
+# program by source-interpolation):
+#   VALIDATED pre-launch (a bad value ⇒ HELPER_ERROR exit 2, codex un-spawned):
+#     --mode {probe,dispatch} · --scope ^[A-Za-z0-9._-]+$ · --scope-class {design,slice,phase,finalize}
+#     · --attempt-log (regular writable file, not FIFO/socket) · --marker parent (writable)
+#     · --prompt-file (exists, non-empty) · --stall-secs/--backstop-secs/--poll-secs/--probe-timeout-secs
+#     (strictly-positive number) · --max-attempts (positive integer) · --sandbox AND DRIVE_CODEX_SANDBOX
+#     (rung ∈ {read-only,workspace-write,danger-full-access,off}) · DRIVE_CODEX_STALL_MINS /
+#     DRIVE_CODEX_BACKSTOP_HOURS (strictly-positive number, THEN `awk -v`, NEVER interpolated — the
+#     former command-injection hole).
+#   Numeric values reach awk ONLY via `awk -v var=value` (parameterized), never program interpolation.
+#   Trusted-by-contract, NOT eval'd by the helper: --raw-log/--marker/--prior-codex (quoted paths),
+#     the prompt CONTENT (a quoted argv handed to codex), DRIVE_CODEX_CMD (the binary to exec — a test
+#     seam). Boolean env compared literally (`= off` / `= 1`): DRIVE_CODEX_WATCHDOG,
+#     DRIVE_CODEX_EFFORT_TIER, DRIVE_CODEX_INJECT_INTERNAL_FAULT.
+#
 # Best-effort supervisor: deliberately NOT `set -euo pipefail`. rc is managed explicitly. No
 # `set -u` (also sidesteps the same-line `local a=$1 b=$a` expansion gotcha).
 
@@ -156,15 +173,38 @@ case "$SCOPE" in
   *[!A-Za-z0-9._-]*) helper_error "invalid --scope charset (want ^[A-Za-z0-9._-]+$): '$SCOPE'" ;;
 esac
 
+# rc0 iff $1 is a STRICTLY-POSITIVE decimal number (e.g. 15, 900, 0.05). Rejects empty, negatives,
+# `0`, and non-numeric garbage (any char outside [0-9.], or >1 dot). Defined HERE (before the env
+# resolution below) because the numeric-env conversion MUST validate the RAW env value BEFORE it can
+# reach awk — an unvalidated env interpolated into an awk PROGRAM is a command-injection surface (a
+# value like `1; system("…"); 1` would execute). The `case` guard rejects every char outside [0-9.]
+# FIRST, so awk only ever sees digits+one dot; the awk test is ALSO parameterized via `-v` (never
+# program interpolation) for belt-and-suspenders. $1 = value.
+_is_positive_number() {
+  case "$1" in
+    ''|*[!0-9.]*) return 1 ;;   # empty, or any char outside [0-9.] (rejects -, e, letters, ;, space, "(")
+    *.*.*) return 1 ;;          # more than one dot
+  esac
+  awk -v n="$1" 'BEGIN{exit !((n+0)>0)}' 2>/dev/null   # strictly > 0 (rejects 0, 0.0); n via -v, NOT interpolated
+}
+
 # ----------------------------------------------------------------------------- #
-# Resolve defaults from env (precedence flag > env > default). awk multiplies (fractional-safe,
-# so tests can set sub-second stall/backstop via the MINS/HOURS env or the --*-secs flags).
+# Resolve numeric knobs from env (precedence flag > env > default). SECURITY: every numeric env is
+# VALIDATED as a strictly-positive number BEFORE use and multiplied via `awk -v` (parameterized) —
+# NEVER source-interpolated into an awk program (that was the command-injection hole). A bad numeric
+# env is a pre-launch config-resolution failure ⇒ HELPER_ERROR (same lane as a bad numeric --flag).
 # ----------------------------------------------------------------------------- #
 if [ -z "$STALL_SECS" ]; then
-  if [ -n "$DRIVE_CODEX_STALL_MINS" ]; then STALL_SECS="$(awk "BEGIN{print $DRIVE_CODEX_STALL_MINS*60}")"; else STALL_SECS=900; fi
+  if [ -n "$DRIVE_CODEX_STALL_MINS" ]; then
+    _is_positive_number "$DRIVE_CODEX_STALL_MINS" || helper_error "DRIVE_CODEX_STALL_MINS must be a positive number: '$DRIVE_CODEX_STALL_MINS'"
+    STALL_SECS="$(awk -v m="$DRIVE_CODEX_STALL_MINS" 'BEGIN{print m*60}')"
+  else STALL_SECS=900; fi
 fi
 if [ -z "$BACKSTOP_SECS" ]; then
-  if [ -n "$DRIVE_CODEX_BACKSTOP_HOURS" ]; then BACKSTOP_SECS="$(awk "BEGIN{print $DRIVE_CODEX_BACKSTOP_HOURS*3600}")"; else BACKSTOP_SECS=10800; fi
+  if [ -n "$DRIVE_CODEX_BACKSTOP_HOURS" ]; then
+    _is_positive_number "$DRIVE_CODEX_BACKSTOP_HOURS" || helper_error "DRIVE_CODEX_BACKSTOP_HOURS must be a positive number: '$DRIVE_CODEX_BACKSTOP_HOURS'"
+    BACKSTOP_SECS="$(awk -v h="$DRIVE_CODEX_BACKSTOP_HOURS" 'BEGIN{print h*3600}')"
+  else BACKSTOP_SECS=10800; fi
 fi
 [ -n "$POLL_SECS" ] || POLL_SECS="$POLL_SECS_DEFAULT"
 [ -n "$PROBE_TIMEOUT_SECS" ] || PROBE_TIMEOUT_SECS="$PROBE_TIMEOUT_SECS_DEFAULT"
@@ -197,17 +237,7 @@ _log_nonempty() {
   grep -q '[^[:space:]]' "$1" 2>/dev/null
 }
 
-# rc0 iff $1 is a STRICTLY-POSITIVE decimal number (e.g. 15, 900, 0.05). Rejects empty,
-# negatives, `0`, and non-numeric garbage (any char outside [0-9.], or >1 dot). A zero or
-# non-numeric timing knob would zero the awk poll math and disable BOTH the stall and backstop
-# kills — a bounded-run bypass — so every timing knob is validated with this pre-launch. $1=value.
-_is_positive_number() {
-  case "$1" in
-    ''|*[!0-9.]*) return 1 ;;   # empty, or any char outside [0-9.] (rejects -, e, letters, space)
-    *.*.*) return 1 ;;          # more than one dot
-  esac
-  awk "BEGIN{exit !(($1)>0)}" 2>/dev/null   # strictly > 0 (rejects 0, 0.0)
-}
+# (`_is_positive_number` is defined ABOVE, before the numeric-env resolution it guards.)
 
 # TERM the group leader was sent; give a brief grace, then KILL the whole group. $1 = pgid.
 _grace_then_kill() {
@@ -219,6 +249,29 @@ _grace_then_kill() {
 # A small jitter/backoff sleep, tied to the poll granularity (tiny under the test poll knob;
 # ~15s in prod). Used for the probe retry backoff and the stall-retry jitter.
 _jitter_sleep() { sleep "$POLL_SECS" 2>/dev/null; }
+
+# ---- reaper (FIX C / round-6 MAJOR — AC-H21/H23 extended to the PROBE window) — a helper that is
+#      itself killed or exits REAPS every codex process group it launched: the probe's `doctor`
+#      group (PROBE_PGID) AND the dispatch's `codex exec` group (WATCH_PGID), plus the probe's
+#      timeout-watcher. ONE trap is installed once (do_dispatch / do_probe, right after monitor
+#      mode) and covers BOTH windows — so an external TERM DURING the doctor probe no longer leaks a
+#      forking-doctor child (the pre-fix hole). The handler reaps whatever groups are currently
+#      tracked, then (on TERM/INT/HUP) exits 128+signal so the supervisor dies cleanly. An
+#      uncatchable SIGKILL is the accepted §A.4-2 residual — the trap cannot run. ----
+PROBE_PGID=""; PROBE_WATCHER_PID=""; WATCH_PGID=""
+_reap_groups() {
+  # GROUP-kill each tracked group (the `-<pgid>` form) so a watcher's `sleep` child is reaped too,
+  # never orphaned holding a pipe.
+  [ -n "$PROBE_WATCHER_PID" ] && kill -KILL -"$PROBE_WATCHER_PID" 2>/dev/null
+  [ -n "$PROBE_PGID" ] && { kill -TERM -"$PROBE_PGID" 2>/dev/null; kill -KILL -"$PROBE_PGID" 2>/dev/null; }
+  [ -n "$WATCH_PGID" ] && { kill -TERM -"$WATCH_PGID" 2>/dev/null; kill -KILL -"$WATCH_PGID" 2>/dev/null; }
+}
+_install_reaper() {
+  trap '_reap_groups' EXIT
+  trap '_reap_groups; exit 130' INT
+  trap '_reap_groups; exit 143' TERM
+  trap '_reap_groups; exit 129' HUP
+}
 
 # ---- attempt log (§A.10) — one JSON line per op; CLOSED op enum probe|dispatch|kill|retry|degrade
 #      (helper_error is coordinator-appended). Best-effort; never fatal. ----
@@ -291,13 +344,20 @@ run_probe() {
   fi
   "$DRIVE_CODEX_CMD" doctor --json > "$PROBE_OUT" 2>&1 &
   local dpid=$! dpgid; dpgid=$dpid
+  PROBE_PGID="$dpgid"   # FIX C: track the doctor group so the reaper trap covers the PROBE window —
+                        # an external TERM during the probe must reap a forking doctor's child.
   ( sleep "$PROBE_TIMEOUT_SECS"
     kill -0 "$dpid" 2>/dev/null && { kill -TERM -"$dpgid" 2>/dev/null; sleep "$GRACE_SECS"; kill -KILL -"$dpgid" 2>/dev/null; }
   ) &
-  local watcher=$!
+  PROBE_WATCHER_PID=$!   # its OWN pgid under monitor mode (== its pid)
   wait "$dpid" 2>/dev/null; PROBE_RC=$?
-  kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+  # GROUP-kill the watcher (not a bare PID): a bare `kill $watcher` reaps only the subshell and
+  # ORPHANS its `sleep $PROBE_TIMEOUT_SECS` child, which — having inherited the caller's stdout —
+  # holds a command-substitution pipe open for the FULL timeout (a ~10s stall on every probe, and a
+  # surviving probe child). Killing the group reaps the sleep too.
+  kill -KILL -"$PROBE_WATCHER_PID" 2>/dev/null; wait "$PROBE_WATCHER_PID" 2>/dev/null
   kill -KILL -"$dpgid" 2>/dev/null   # reap any forked straggler in the probe's group
+  PROBE_PGID=""; PROBE_WATCHER_PID=""   # FIX C: probe group fully reaped — clear so the reaper is a no-op
   [ "$PROBE_RC" = 0 ]
 }
 
@@ -316,7 +376,6 @@ probe_with_retry() {
 # plus CODEX_RC, THIS_KILLED; grows the global round_was_killed / MAX_GAP / KILLED_LOGS.
 # $1 = attempt index.
 # ----------------------------------------------------------------------------- #
-WATCH_PGID=""
 run_attempt() {
   local attempt="$1"
   local -a cmd=("$DRIVE_CODEX_CMD" exec)
@@ -325,16 +384,16 @@ run_attempt() {
   local prompt; prompt="$(cat "$PROMPT_FILE" 2>/dev/null)"
 
   "${cmd[@]}" "$prompt" > "$RAW_LOG" 2>&1 &
-  local child=$! pgid; pgid=$child          # under `set -m` the job leader pid == its pgid
-  # Reaping trap (round-6 codex MAJOR): a helper that is itself killed/exits REAPS its codex
-  # child group instead of orphaning it. (An uncatchable SIGKILL is the accepted §A.4-2 residual.)
+  local child=$! pgid; pgid=$child          # under monitor mode the job leader pid == its pgid
+  # FIX C / round-6 MAJOR: track the codex group for the ONE installed reaper trap (do_dispatch),
+  # so a helper that is itself killed/exits REAPS its codex child group instead of orphaning it.
+  # (An uncatchable SIGKILL is the accepted §A.4-2 residual.)
   WATCH_PGID="$pgid"
-  trap '[ -n "$WATCH_PGID" ] && { kill -TERM -"$WATCH_PGID" 2>/dev/null; kill -KILL -"$WATCH_PGID" 2>/dev/null; }' EXIT INT TERM HUP
 
   # TEST knob: a post-launch internal fault maps to CODEX_UNAVAILABLE(internal), never HELPER_ERROR.
   if [ "${DRIVE_CODEX_INJECT_INTERNAL_FAULT:-}" = 1 ]; then
     kill -TERM -"$pgid" 2>/dev/null; _grace_then_kill "$pgid"; wait "$child" 2>/dev/null
-    trap - EXIT INT TERM HUP; WATCH_PGID=""
+    WATCH_PGID=""
     ATTEMPT_RESULT=internal-fault; return
   fi
 
@@ -354,21 +413,25 @@ run_attempt() {
     sleep "$POLL_SECS"
     if [ "$opened" = 1 ]; then size="$(_fd_size 9)"; else size="$(stat -f %z "$RAW_LOG" 2>/dev/null || stat -c %s "$RAW_LOG" 2>/dev/null)"; fi
     total_polls=$((total_polls + 1))
+    # awk float math — ALL values passed via `-v` (parameterized), never source-interpolated into the
+    # program string (zero_polls/total_polls are internal integers; POLL/STALL/BACKSTOP_SECS are
+    # pre-validated positive numbers — parameterizing is defense-in-depth so a future edit can't
+    # reintroduce the env→awk injection class).
     if [ -z "$size" ]; then
       :   # poll ambiguity (fstat/stat error) → NO stall evidence; do not count, do not kill
     elif [ "$size" -gt "$last" ]; then
-      gap="$(awk "BEGIN{print $zero_polls*$POLL_SECS}")"
-      awk "BEGIN{exit !($gap>$MAX_GAP)}" && MAX_GAP="$gap"
+      gap="$(awk -v z="$zero_polls" -v p="$POLL_SECS" 'BEGIN{print z*p}')"
+      awk -v g="$gap" -v mx="$MAX_GAP" 'BEGIN{exit !((g+0)>(mx+0))}' && MAX_GAP="$gap"
       zero_polls=0; last="$size"
     else
       zero_polls=$((zero_polls + 1))
     fi
     if [ "$WATCHDOG_ON" = 1 ]; then
-      gap="$(awk "BEGIN{print $zero_polls*$POLL_SECS}")"
-      if awk "BEGIN{exit !($gap>=$STALL_SECS)}"; then watchdog_initiated=1; kill_reason=stall; break; fi
+      gap="$(awk -v z="$zero_polls" -v p="$POLL_SECS" 'BEGIN{print z*p}')"
+      if awk -v g="$gap" -v s="$STALL_SECS" 'BEGIN{exit !((g+0)>=(s+0))}'; then watchdog_initiated=1; kill_reason=stall; break; fi
     fi
-    elapsed="$(awk "BEGIN{print $total_polls*$POLL_SECS}")"
-    if awk "BEGIN{exit !($elapsed>=$BACKSTOP_SECS)}"; then watchdog_initiated=1; kill_reason=backstop; break; fi
+    elapsed="$(awk -v t="$total_polls" -v p="$POLL_SECS" 'BEGIN{print t*p}')"
+    if awk -v e="$elapsed" -v b="$BACKSTOP_SECS" 'BEGIN{exit !((e+0)>=(b+0))}'; then watchdog_initiated=1; kill_reason=backstop; break; fi
   done
   [ "$opened" = 1 ] && exec 9<&-
 
@@ -385,7 +448,7 @@ run_attempt() {
   else
     wait "$child" 2>/dev/null; wstatus=$?
   fi
-  trap - EXIT INT TERM HUP; WATCH_PGID=""
+  WATCH_PGID=""   # codex reaped by our own wait — clear so the reaper trap is a no-op on exit
   CODEX_RC="$wstatus"
 
   if [ "$kill_confirmed" = 1 ]; then
@@ -428,19 +491,29 @@ do_dispatch() {
   [ -w "$mparent" ] || helper_error "--marker parent dir not writable: '$mparent'"
 
   # ---- policy resolution (§A.6): the coordinator passes FACTS; the helper applies policies ----
-  SANDBOX_FLAG_ON=1; RUNG=""
-  if [ "${DRIVE_CODEX_SANDBOX:-}" = off ]; then
-    SANDBOX_FLAG_ON=0
-  elif [ "$SANDBOX_OVERRIDE_SET" = 1 ]; then
-    RUNG="$SANDBOX_OVERRIDE"
+  # Sandbox rung resolution + PRE-LAUNCH validation. Precedence (§A.3): explicit --sandbox > env
+  # DRIVE_CODEX_SANDBOX > scope-class default. The literal rung `off` (from EITHER the flag or the
+  # env) is the kill switch ⇒ pass NO --sandbox flag. Any other resolved rung MUST be a member of
+  # the closed set; a garbage rung (flag OR env) is a pre-launch config-resolution failure ⇒
+  # HELPER_ERROR, codex un-spawned. (FIX B: explicit --sandbox beats env-off — resolve the override
+  # FIRST. FIX D: validate the resolved rung, never pass garbage to codex.)
+  local rung=""
+  if [ "$SANDBOX_OVERRIDE_SET" = 1 ]; then
+    rung="$SANDBOX_OVERRIDE"                       # explicit --sandbox wins over env (incl. env=off)
   elif [ -n "${DRIVE_CODEX_SANDBOX:-}" ]; then
-    RUNG="$DRIVE_CODEX_SANDBOX"
+    rung="$DRIVE_CODEX_SANDBOX"                     # env override (a rung, or `off`)
   else
     case "$SCOPE_CLASS" in
-      design) RUNG="$SANDBOX_RUNG_DESIGN" ;;
-      slice|phase|finalize) RUNG="$SANDBOX_RUNG_CODE" ;;
+      design) rung="$SANDBOX_RUNG_DESIGN" ;;
+      slice|phase|finalize) rung="$SANDBOX_RUNG_CODE" ;;
     esac
   fi
+  case "$rung" in
+    read-only|workspace-write|danger-full-access|off) ;;
+    *) helper_error "invalid sandbox rung (want read-only|workspace-write|danger-full-access|off): '$rung'" ;;
+  esac
+  SANDBOX_FLAG_ON=1; RUNG=""
+  if [ "$rung" = off ]; then SANDBOX_FLAG_ON=0; else RUNG="$rung"; fi
 
   local gate_enforced=0
   [ "$SECURITY_DIFF" = 1 ] && gate_enforced=1
@@ -461,6 +534,8 @@ do_dispatch() {
   [ "$SANDBOX_FLAG_ON" = 1 ] && sandbox_desc="$RUNG"
 
   set -m   # monitor mode: backgrounded jobs (probe + codex) get their OWN process group.
+  _install_reaper   # FIX C: ONE trap for the whole dispatch — reaps the probe's doctor group AND the
+                    # codex group on an external TERM/INT/HUP (or any exit), covering the PROBE window.
 
   round_was_killed=0; MAX_GAP=0; KILLED_LOGS=""; PROBE_RC=""
 
@@ -531,6 +606,7 @@ do_dispatch() {
 # ----------------------------------------------------------------------------- #
 do_probe() {
   set -m
+  _install_reaper   # FIX C: reap the probe's doctor group on an external TERM during the probe window
   if ! command -v "$DRIVE_CODEX_CMD" >/dev/null 2>&1; then
     log_attempt probe 0 CODEX_UNAVAILABLE cli-absent full off "" "" "" ""
     printf '%s\n' "CODEX_UNAVAILABLE"; exit 1
