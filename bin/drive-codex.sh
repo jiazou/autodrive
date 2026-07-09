@@ -65,8 +65,9 @@
 #   VALIDATED pre-launch (a bad value ⇒ HELPER_ERROR exit 2, codex un-spawned):
 #     --mode {probe,dispatch} · --scope ^[A-Za-z0-9._-]+$ · --scope-class {design,slice,phase,finalize}
 #     · --attempt-log (regular writable file, not FIFO/socket) · --marker parent (writable)
-#     · --raw-log (regular writable-or-creatable file, not dir/FIFO/socket/device — so the exec-path
-#       `> "$RAW_LOG"` redirect cannot fail into a false CODEX_UNAVAILABLE degrade — round-4 FIX A)
+#     · --raw-log (regular writable-or-creatable file, not dir/FIFO/socket/device, AND its PARENT DIR
+#       writable — the exec `> "$RAW_LOG"` redirect, the probe sibling `${raw%.log}.probe.log`, and the
+#       killed-log renames must not fail into a false CODEX_UNAVAILABLE degrade — round-4/5 FIX A)
 #     · --prompt-file (exists, non-empty, AND READABLE with non-empty content — read pre-launch, FIX B)
 #     · --stall-secs/--backstop-secs/--poll-secs/--probe-timeout-secs
 #     (strictly-positive number) · --max-attempts (positive integer) · --sandbox AND DRIVE_CODEX_SANDBOX
@@ -81,6 +82,8 @@
 #   REQUIRED-FILE READS fail CLOSED on a read error (not just an existence/`-s` check): --prompt-file
 #     ⇒ HELPER_ERROR (required); --prior-codex is optional/best-effort so its `-r` guard fails toward
 #     FULL codex effort (never silently down-tiers on an unreadable prior).
+#   JSON OUTPUT ENCODING (round-5): `_jstr` escapes \, ", and ALL C0 control chars (\n/\r/\t + \uXXXX)
+#     so the attempt-log JSONL is valid for ANY field value (e.g. a control char in a runId / path).
 #   PROCESS SUPERVISION (no SAME-PROCESS-GROUP descendant survives helper return on ANY terminal
 #     path): every spawned child is group-supervised under monitor mode — the `codex exec` group is
 #     reaped via a post-`wait` `-<pgid>`-liveness check on EVERY path incl. clean OK (round-3 FIX A,
@@ -316,9 +319,24 @@ _runid_from_attempt_log() {
     *) printf '' ;;
   esac
 }
-_jstr() {   # JSON string, or `null` for empty. $1 = value.
+_jstr() {   # JSON string (valid for ANY input), or `null` for empty. Escapes \ and " then ALL C0
+            # control chars (\n/\r/\t readably, other 0x01-0x1F as \uXXXX) so every attempt-log field
+            # is valid JSON regardless of input — a control char in a basename-derived runId or a
+            # killed-log path would otherwise emit INVALID JSONL (round-5 MINOR). $1 = value.
   if [ -z "$1" ]; then printf 'null'; return; fi
-  local s="$1"; s="${s//\\/\\\\}"; s="${s//\"/\\\"}"
+  local s="$1"
+  s="${s//\\/\\\\}"        # backslash FIRST (so the escapes we add below are not re-escaped)
+  s="${s//\"/\\\"}"        # quote
+  s="${s//$'\n'/\\n}"      # newline
+  s="${s//$'\r'/\\r}"      # carriage return
+  s="${s//$'\t'/\\t}"      # tab
+  local i ch hex           # remaining C0 controls 0x01-0x1F (except \t \n \r) → \uXXXX (NUL can't be in a var)
+  for i in {1..31}; do
+    case $i in 9|10|13) continue ;; esac
+    printf -v ch '%b' "\\$(printf '%03o' "$i")"
+    printf -v hex '\\u%04x' "$i"
+    s="${s//"$ch"/$hex}"
+  done
   printf '"%s"' "$s"
 }
 _jnum() {   # JSON number, or `null` for empty. $1 = value.
@@ -591,15 +609,19 @@ do_dispatch() {
   # directory / FIFO / socket / device --raw-log fails the exec-path `> "$RAW_LOG"` redirect at launch
   # (codex never starts) yet would be mis-classified `exec-failed` ⇒ CODEX_UNAVAILABLE + a non-empty
   # degraded marker `codex_present` accepts — silently dropping the codex voice as ordinary degradation
-  # instead of the broken-helper STOP lane. Require a REGULAR file that is writable (existing) or has a
-  # writable parent (creatable): the `-f` test rejects a dir/FIFO/socket/device and `-w` rejects a
-  # read-only file / read-only-FS regular file, so the exec-path redirect cannot fail into a false
+  # instead of the broken-helper STOP lane. The `-f` test rejects a dir/FIFO/socket/device and `-w`
+  # rejects a read-only / read-only-FS regular file, so the exec-path redirect cannot fail into a false
   # degrade. (Deliberately do NOT pre-`:>`-truncate here — run_attempt's own `> "$RAW_LOG"` creates it,
-  # and a pre-truncated inode perturbs the AC-H10 mv-aside fd-poll timing.) ⇒ HELPER_ERROR, un-spawned.
+  # and a pre-truncated inode perturbs the AC-H10 mv-aside fd-poll timing.)
+  # round-5 MAJOR: ALSO require the raw-log's PARENT DIR writable — the probe writes a sibling
+  # `${raw%.log}.probe.log` and killed-log renames (`${raw%.log}.killed-N.log`) land in that SAME dir,
+  # so a writable raw.log inside a READ-ONLY dir would fail those POST-launch ⇒ the same false
+  # CODEX_UNAVAILABLE degrade. Check the parent PRE-LAUNCH (mirrors the --marker parent guard) for BOTH
+  # an existing and a to-be-created raw.log. Any failure ⇒ HELPER_ERROR, codex un-spawned.
+  local rlparent; rlparent="$(dirname "$RAW_LOG")"
+  [ -w "$rlparent" ] || helper_error "--raw-log parent dir not writable (probe sibling + killed-log renames need it): '$rlparent'"
   if [ -e "$RAW_LOG" ]; then
     { [ -f "$RAW_LOG" ] && [ -w "$RAW_LOG" ]; } || helper_error "--raw-log must be a writable regular file (not a dir/FIFO/socket/device): '$RAW_LOG'"
-  else
-    [ -w "$(dirname "$RAW_LOG")" ] || helper_error "--raw-log parent dir not writable (or not creatable): '$RAW_LOG'"
   fi
 
   set -m   # monitor mode: backgrounded jobs (probe + codex) get their OWN process group.

@@ -582,6 +582,40 @@ rm -f "$RAWFIFO"
 disp fake_ok r4aok slice "$WORK/codex-review-r4aok.md" --poll-secs 0.05
 check "R4-A fresh regular --raw-log still runs ⇒ OK" "$OUT" "OK"
 
+echo "=== R5-A (codex MAJOR): a writable --raw-log inside a READ-ONLY dir ⇒ HELPER_ERROR pre-launch ==="
+# --raw-log validated the FILE but not its DIR. The probe writes a sibling ${raw%.log}.probe.log (and
+# killed-log renames land) in that dir, so a writable raw.log inside a read-only (555) dir failed those
+# POST-launch ⇒ a false CODEX_UNAVAILABLE degrade + a marker the coordinator accepts. Now the raw-log
+# PARENT dir is required writable PRE-LAUNCH ⇒ HELPER_ERROR (broken-helper STOP lane, no degraded marker).
+mkdir -p "$WORK/r5rodir"; : > "$WORK/r5rodir/raw.log"; chmod 555 "$WORK/r5rodir"
+OUT="$(DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope r5a --scope-class slice --attempt-log "$ALOG" \
+   --raw-log "$WORK/r5rodir/raw.log" --marker "$WORK/codex-review-r5a.md" --prompt-file "$PROMPT" --poll-secs 0.05 --probe-timeout-secs 1 2>/dev/null)"; RC=$?
+check "R5-A read-only raw-log dir ⇒ HELPER_ERROR" "$OUT" "HELPER_ERROR"
+check "R5-A read-only raw-log dir exit 2 PRE-LAUNCH" "$RC" "2"
+if [ ! -f "$WORK/codex-review-r5a.md" ]; then pass "R5-A read-only raw-log dir ⇒ NO degraded marker (STOP lane, not CODEX_UNAVAILABLE)"; else fail "R5-A a degraded marker appeared (voice silently dropped)"; fi
+chmod 755 "$WORK/r5rodir"
+
+echo "=== R5-B (codex MINOR): a control char in a logged field ⇒ still VALID JSONL ==="
+# _jstr escaped only \ and " ⇒ a control char (a newline in the basename-derived runId here) produced
+# INVALID JSONL (the raw newline split the record across physical lines). _jstr now escapes all C0
+# control chars ⇒ every line parses. (Uses a DEDICATED attempt-log whose basename carries a newline.)
+R5NLALOG="$WORK/codex-attempts-run"$'\n'"id.jsonl"; rm -f "$R5NLALOG"
+DRIVE_CODEX_CMD="$BIN/fake_ok" "$HELPER" --mode dispatch --scope r5b --scope-class slice \
+  --attempt-log "$R5NLALOG" --raw-log "$WORK/codex-raw-r5b.log" --marker "$WORK/codex-review-r5b.md" \
+  --prompt-file "$PROMPT" --poll-secs 0.05 >/dev/null 2>&1
+python3 - "$R5NLALOG" <<'PY'
+import json, sys
+n = bad = 0
+for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+    line = line.strip()
+    if not line: continue
+    n += 1
+    try: json.loads(line)
+    except Exception: bad += 1
+sys.exit(1 if (bad or n == 0) else 0)
+PY
+check "R5-B control char (newline in runId) ⇒ every attempt-log line is valid JSON" "$?" "0"
+
 echo ""
 echo "===================================================================="
 printf 'drive-codex.test.sh: %d passed, %d failed\n' "$PASS" "$FAIL"
