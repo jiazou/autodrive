@@ -61,11 +61,14 @@ new bugs live.
   task as "Ready to start now" and the parallel plan dispatches work whose dep is still open.
   `tags` lists are lost the same way. *Fix:* accumulate subsequent `- item` lines under the
   preceding key as a list.
-- [ ] **[V] `mission-control/bin/session_summary.py:47,63`** — `tail_text` opens `hits[0]` with
+- [x] **[V] `mission-control/bin/session_summary.py:47,63`** — `tail_text` opens `hits[0]` with
   no guard and `summarize` calls it *outside* its try, so a removed/unreadable transcript (or a
   non-dict `message`) raises through `harvest.build_summaries`' `ex.map`, crashing the whole
   unattended `harvest --summarize` job — violating the docstring's "on any failure prints {}"
-  per-session degrade contract. *Fix:* wrap the `tail_text` read in try/except returning "".
+  per-session degrade contract. *Fix:* wrap the `tail_text` read in try/except returning "". —
+  **DONE (2026-07-10):** `tail_text` read wrapped (returns "" on any read failure) + non-dict
+  `message`/entry guarded with `isinstance`; RED→GREEN tests (non-dict message, unreadable file,
+  summarize degrade) in tests/mc/test_session_summary.py.
 - [x] **[V] `bin/drive-merge-gate.sh:293`** — `action_after`'s post-subcommand loop treats
   `--repo` as valueless (`--*=*|--*) shift`), so `gh pr --repo owner/repo create` returns
   `owner/repo` as the action, `is_ship` stays false and the ship/finalize-review gate goes inert
