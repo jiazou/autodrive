@@ -481,6 +481,37 @@ def test_window_uses_model_of_latest_usage_line_not_a_later_usageless_line(fake_
     assert "200000-token window" not in d["reason"]
 
 
+# --- Sonnet-4 id-collision END-TO-END: the hook path this whole run fixes ---- #
+@pytest.mark.parametrize(
+    "model, steers",
+    [("claude-sonnet-4-20250514", True), ("claude-sonnet-4-6", False)],
+    ids=["sonnet-4-200k-steers", "sonnet-4-6-1M-no-steer"],
+)
+def test_sonnet4_id_collision_steers_at_200k_window(fake_home, model, steers):
+    """The id-level collision the entire run guards, exercised on the REAL consumer path
+    (the rebirth Stop-hook), not just the resolver: the same 300_000-token transcript
+    steers for a real Sonnet-4 session (`claude-sonnet-4-20250514`, a 200_000 window —
+    200_000*0.85 = 170_000 <= 300_000) but does NOT steer for Sonnet 4.6
+    (`claude-sonnet-4-6`, a 1M window — 1_000_000*0.85 = 850_000 > 300_000). The two ids
+    collide on the `sonnet-4` substring yet must resolve to OPPOSITE steer decisions at the
+    same token count; pre-fix, `claude-sonnet-4-20250514` fell to the 1M default and never
+    steered. Built inline like test_hard_water_boundary_is_inclusive (no fixture file)."""
+    trans = fake_home / f"sonnet4-{model}.jsonl"
+    trans.write_text(
+        '{"type": "assistant", "message": {"model": "' + model + '", '
+        '"usage": {"input_tokens": 300000, "cache_creation_input_tokens": 0, '
+        '"cache_read_input_tokens": 0}}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert (CONTEXT_PRESSURE_ANCHOR in d["reason"]) is steers
+
+
 # --- AC5: post-flag over-water -> ESCALATION steer (not the set-flag steer) -- #
 def test_already_pending_over_water_emits_escalation_steer(fake_home):
     """A run with rebirth_pending == true and a transcript OVER water -> the block reason

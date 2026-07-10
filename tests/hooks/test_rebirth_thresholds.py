@@ -239,12 +239,11 @@ def test_json_window_matches_statusline_case(thresholds, model):
     # *"sonnet-4-6"* must beat the 200k arm's *"Sonnet 4"* — drop `sonnet-4-6` from the 1M arm
     # and it falls to 200k -> this REDS.
     ("Sonnet 4", "claude-sonnet-4-6", 1_000_000),
-    # Generic display + real 200k id -> 200k (id load-bearing in the 200k arm).
-    ("Brand X", "claude-sonnet-4-20250514", 200_000),
 ])
 def test_statusline_case_id_forms_load_bearing(model, model_id, expected):
     """AC4 statusline surface: exercising `case "$MODEL $MODEL_ID"`, an id-form resolves the
-    window even against a colliding/generic display name."""
+    window even against a colliding display name. (The generic-display 200k-id case is pinned
+    exactly by test_statusline_200k_id_forms_pinned for claude-sonnet-4-20250514.)"""
     assert _statusline_case_window(model, model_id) == expected
 
 

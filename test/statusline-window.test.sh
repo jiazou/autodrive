@@ -111,6 +111,21 @@ assert_eq "AC6 mutating defaultWindow changes the rendered PCT (no hardcode)" \
   "909" "$mut_pct"
 rm -rf "$MUT_DIR"
 
+# Matched-rule drift guard: mutating the 200k rule's window (windows[1]) changes the
+# rendered PCT for a MATCHED 200k model — proving the matched-rule number is read from the
+# JSON on the statusline's primary jq path, not hardcoded and not the default. The
+# defaultWindow guard above only proves the DEFAULT is data-driven; this proves the matched
+# arm is too. Use a DISTINCTIVE window (123456) so the PCT can only come from the mutated file.
+MRW_DIR="$(mktemp -d)"
+cp -R "$REPO/bin" "$MRW_DIR/bin"
+jq '.windows[1].window = 123456' "$THRESHOLDS" > "$MRW_DIR/bin/rebirth-thresholds.json"
+# Sonnet 4.5 matches the 200k rule (windows[1]); tokens 909200 / 123456 -> PCT 736.
+mrw_pct="$(printf '%s' "$(payload "Sonnet 4.5" "$TRANS")" | bash "$MRW_DIR/bin/statusline.sh" \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "matched-rule window read from data file: mutating windows[1].window changes matched PCT" \
+  "$(( TOKENS * 100 / 123456 ))" "$mrw_pct"
+rm -rf "$MRW_DIR"
+
 # --- [1m] beta marker is AUTHORITATIVE: forces the 1M window over the table ---
 # CC marks the active 1M-context beta as `[1m]` in the model name/id; the statusline
 # honors it (a per-session beta the table can't know). Use a DENYLIST (200k) model so the

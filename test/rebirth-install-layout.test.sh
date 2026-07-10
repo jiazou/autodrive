@@ -165,12 +165,17 @@ rm -rf "$LINK_DIR" "$TRANS_IL"
 #     200k families in windows[1]; everything unlisted resolves to the 1M default. Pin all THREE
 #     numbers, each anchored on its SPECIFIC arm so the two 1M-valued lines (the explicit 1M
 #     arm and the `*)` default) can't mask a drift: the default arm (the `*)` line), the inline
-#     1M arm (a 1M-arm token, `"Fable 5"`) == json windows[0].window, and the inline 200k arm
-#     (a 200k-arm token, `"Sonnet 4.5"`) == the json's Sonnet 4.5 window.
+#     1M arm (the FIRST quoted-glob match arm) == json windows[0].window, and the inline 200k
+#     arm (a 200k-arm token, `"Sonnet 4.5"`) == the json's Sonnet 4.5 window.
 inline_default_window="$(grep -E '^[[:space:]]*\*\)' "$STATUSLINE" | grep -oE 'WINDOW=[0-9]+' | head -1 | sed 's/WINDOW=//')"
 json_default_window="$(jq -r '.defaultWindow' "$DATA")"
 check "AC6 anti-drift: inline default arm (*)) window == json defaultWindow (1M, fallback matches)" "${inline_default_window:-X}" "${json_default_window:-Y}"
-inline_1m_window="$(grep -E '"Fable 5"' "$STATUSLINE" | grep -oE 'WINDOW=[0-9]+' | head -1 | sed 's/WINDOW=//')"
+# STRUCTURAL anchor (not a literal token like "Fable 5", which reds on harmless churn): the 1M
+# MATCH arm is the FIRST quoted-glob arm line (`^[[:space:]]*\*"…`), distinct from the `*)`
+# default (which also carries WINDOW=1000000 but begins `*)`, so it is excluded here) — the two
+# 1M-valued lines therefore cannot mask each other. The 1M arm precedes the 200k arm by the
+# documented first-match-wins invariant, so head -1 of the quoted-glob arms IS the 1M arm.
+inline_1m_window="$(grep -E '^[[:space:]]*\*"' "$STATUSLINE" | grep -oE 'WINDOW=[0-9]+' | head -1 | sed 's/WINDOW=//')"
 json_1m_window="$(jq -r '.windows[0].window' "$DATA")"
 check "AC5 anti-drift: inline 1M arm window == json windows[0].window (1M rule)" "${inline_1m_window:-X}" "${json_1m_window:-Y}"
 inline_sonnet_window="$(grep -E '"Sonnet 4.5"' "$STATUSLINE" | grep -oE 'WINDOW=[0-9]+' | head -1 | sed 's/WINDOW=//')"
