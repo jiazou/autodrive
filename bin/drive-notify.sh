@@ -49,12 +49,17 @@ RUN_DIR="${RUN_DIR_ARG:-${RUN_DIR:-}}"
 #    value (e.g. `stop:a b` vs `stop:a/b`) get DISTINCT markers. shasum absent → no reliable
 #    dedup key → BIAS-TO-SEND (skip the dedup gate; a duplicate ping is benign, a miss is worse).
 sane="$(printf '%s' "$WAITING" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-40)"
+# --tip is a git SHA in the real caller, but a HOSTILE `--tip 'a/../../escaped'` would otherwise
+# escape $RUN_DIR via the marker path (path-traversal). Sanitize it the SAME way as the slug
+# ([^A-Za-z0-9._-] → '_', truncated) so no `/` can enter the filename — the marker ALWAYS stays
+# directly inside $RUN_DIR. A normal 40-hex SHA passes through unchanged.
+stip="$(printf '%s' "$TIP" | tr -c 'A-Za-z0-9._-' '_' | cut -c1-64)"
 hash=""
 if command -v shasum >/dev/null 2>&1; then
   hash="$(printf '%s' "$WAITING" | shasum -a 256 2>/dev/null | cut -c1-12)"
 fi
 if [ -n "$hash" ]; then
-  MARKER="$RUN_DIR/notified-${sane}-${hash}-${TIP}.marker"
+  MARKER="$RUN_DIR/notified-${sane}-${hash}-${stip}.marker"
   # Already notified this (waiting,tip) → exit 0, NO send.
   [ -e "$MARKER" ] && exit 0
   # Create the marker (tmp + mv) BEFORE the send, so a concurrent re-fire dedups.

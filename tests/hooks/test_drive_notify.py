@@ -7,6 +7,7 @@ AC8 (dedup slug): a filesystem-safe marker for a hostile `waiting` (`stop:merge 
 two distinct strings that SANITIZE to the same value get DISTINCT markers (the hash is over the RAW
 waiting); and a repeat (waiting, tip) is deduped (no second send).
 """
+import hashlib
 import os
 import shutil
 import subprocess
@@ -150,3 +151,46 @@ def test_hostile_waiting_marker_is_filesystem_safe(tmp_path):
     # no path separators or spaces leak into the filename (sanitized to `_`).
     assert "/" not in name and " " not in name and "!" not in name
     assert name.endswith("-beef.marker")
+
+
+# --------------------------------------------------------------------------- #
+# P1 (BLOCKING, codex-review-1.1) — a hostile --tip must NOT escape $RUN_DIR via the marker path
+# (path-traversal). --tip is sanitized the same way as the slug ([^A-Za-z0-9._-] → '_'), so the
+# marker ALWAYS stays directly inside $RUN_DIR.
+# --------------------------------------------------------------------------- #
+def test_hostile_tip_traversal_repro_no_escape(tmp_path):
+    """FAITHFUL repro of the codex BLOCKING: `--tip 'a/../../escaped'` WITH the intermediate dir
+    pre-created (the repro condition that made the unsanitized `mv` land OUTSIDE $RUN_DIR) must NOT
+    write `escaped.marker` in $RUN_DIR's parent. Reds against the pre-fix (unsanitized) script."""
+    parent = tmp_path / "run"
+    rd = parent / "rd"
+    rd.mkdir(parents=True)
+    waiting = "gateB"
+    h = hashlib.sha256(waiting.encode()).hexdigest()[:12]
+    # the intermediate path component the traversal would write THROUGH (the repro precondition).
+    (rd / f"notified-{waiting}-{h}-a").mkdir()
+    before_parent = {p.name for p in parent.iterdir()}
+    cp = run_notify(["--run-dir", str(rd), "--waiting", waiting, "--tip", "a/../../escaped",
+                     "--message", "m"], env_extra={"DRIVE_NOTIFY_CMD": "cat >/dev/null"})
+    assert cp.returncode == 0
+    assert not (parent / "escaped.marker").exists(), \
+        "a hostile --tip ESCAPED $RUN_DIR (path traversal) — the marker must stay inside $RUN_DIR"
+    assert {p.name for p in parent.iterdir()} == before_parent, \
+        "nothing new may appear in $RUN_DIR's parent"
+
+
+@pytest.mark.parametrize("hostile_tip", ["a/../../escaped", "x/y", "..", "/etc/passwd", "../../.."])
+def test_hostile_tip_marker_stays_inside_run_dir(tmp_path, hostile_tip):
+    """For ANY hostile --tip: exit 0, NO file created outside $RUN_DIR, and every marker written
+    stays DIRECTLY inside $RUN_DIR (sanitized name, no path separator, no subdir)."""
+    parent = tmp_path / "run"
+    rd = parent / "rd"
+    rd.mkdir(parents=True)
+    cp = run_notify(["--run-dir", str(rd), "--waiting", "gateB", "--tip", hostile_tip, "--message", "m"],
+                    env_extra={"DRIVE_NOTIFY_CMD": "cat >/dev/null"})
+    assert cp.returncode == 0
+    assert {p.name for p in parent.iterdir()} == {"rd"}, \
+        f"a hostile --tip must not create files outside $RUN_DIR; parent={list(parent.iterdir())}"
+    for p in rd.iterdir():
+        if p.name.endswith(".marker"):
+            assert p.parent == rd and "/" not in p.name, f"marker escaped $RUN_DIR: {p}"
