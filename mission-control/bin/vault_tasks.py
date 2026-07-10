@@ -68,6 +68,10 @@ def obsidian_href(slug):
 
 
 OPEN_STATUSES = {"todo", "doing", "waiting"}
+# The only frontmatter keys that are list-valued; block-style `- item` accumulation
+# arms ONLY for these. A `- ` line under any scalar key stays a skipped colon-less line,
+# so a malformed `status:` / `due:` block can never corrupt a scalar value or crash bucket().
+_LIST_KEYS = frozenset(("depends_on", "tags"))
 # Tolerate an optional UTF-8 BOM and CRLF line endings so notes saved by editors
 # other than Obsidian still parse (otherwise the task is silently invisible).
 FRONTMATTER_RE = re.compile(r"^\ufeff?---\r?\n(.*?)\r?\n---", re.DOTALL)
@@ -99,13 +103,31 @@ def _parse_frontmatter(text):
     if not m:
         return {}
     fm = {}
+    active = None  # a depends_on/tags key currently absorbing block-list `- item` lines
     for line in m.group(1).splitlines():
-        if not line.strip() or line.lstrip().startswith("#"):
+        stripped = line.lstrip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("- "):
+            # Block-list continuation item. This branch MUST precede the ":" branch
+            # so an item that itself contains a colon (`- "a:b"`, `- k:v`) is kept
+            # whole. It appends ONLY when `active` is a list key (depends_on/tags);
+            # an orphan `- ` (active is None) is skipped, like a colon-less line.
+            if active is not None:
+                item = stripped[2:].strip().strip('"').strip("'")
+                if item:
+                    if not isinstance(fm.get(active), list):
+                        fm[active] = []
+                    fm[active].append(item)
             continue
         if ":" not in line:
             continue
         key, _, val = line.partition(":")
-        fm[key.strip()] = _parse_scalar(val)
+        key = key.strip()
+        parsed = _parse_scalar(val)
+        fm[key] = parsed
+        # Arm block accumulation ONLY for an empty-valued LIST key; anything else disarms.
+        active = key if (parsed == "" and key in _LIST_KEYS) else None
     return fm
 
 
@@ -169,7 +191,7 @@ def load_tasks():
             "due": due,
             "scheduled": sched,
             "needs_review": str(fm.get("needs_review", "")).lower() == "true",
-            "tags": fm.get("tags", []),
+            "tags": fm.get("tags") or [],
             "depends_on": deps,
             "dod": _dod(text),
         })

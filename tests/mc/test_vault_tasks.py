@@ -279,3 +279,198 @@ def test_load_tasks_excludes_note_with_no_frontmatter(mc_env, vault):
     )
     slugs = {t["slug"] for t in vt.load_tasks()}
     assert slugs == {"good"}
+
+
+# =========================================================================== #
+# Block-style YAML list parsing (Phase 1, AC 1-9)
+# The `add_task` builder emits INLINE `[...]` lists, so every block-style fixture
+# below uses `add_raw` to write the `key:` header + indented `  - item` lines.
+# =========================================================================== #
+
+# --------------------------------------------------------------------------- #
+# AC 1 — block-style depends_on -> list
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_block_depends_on_to_list(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\n"
+        "type: task\n"
+        "depends_on:\n"
+        "  - a\n"
+        "  - b\n"
+        "---\n"
+        "# body\n"
+    )
+    fm = vt._parse_frontmatter(text)
+    assert fm["depends_on"] == ["a", "b"]
+
+
+def test_load_tasks_block_depends_on_to_list(mc_env, vault):
+    vt = mc_env.vault_tasks
+    vault.add_raw(
+        "01 Projects/P1/Tasks/block-dep.md",
+        "---\n"
+        "type: task\n"
+        "project: P1\n"
+        "status: todo\n"
+        "depends_on:\n"
+        "  - a\n"
+        "  - b\n"
+        "---\n"
+        "# Block dep\n",
+    )
+    (task,) = vt.load_tasks()
+    assert task["depends_on"] == ["a", "b"]
+
+
+# --------------------------------------------------------------------------- #
+# AC 2 — block-style tags -> list
+# --------------------------------------------------------------------------- #
+def test_load_tasks_block_tags_to_list(mc_env, vault):
+    vt = mc_env.vault_tasks
+    vault.add_raw(
+        "01 Projects/P1/Tasks/block-tags.md",
+        "---\n"
+        "type: task\n"
+        "project: P1\n"
+        "status: todo\n"
+        "tags:\n"
+        "  - x\n"
+        "  - y\n"
+        "---\n"
+        "# Block tags\n",
+    )
+    (task,) = vt.load_tasks()
+    assert task["tags"] == ["x", "y"]
+
+
+# --------------------------------------------------------------------------- #
+# AC 3 — an orphan `- item` line (no active list key) is skipped, no crash
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_orphan_list_item_skipped_no_crash(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\n"
+        "type: task\n"
+        "  - orphan\n"       # list marker with no active list key -> skipped
+        "status: todo\n"
+        "---\n"
+    )
+    fm = vt._parse_frontmatter(text)  # must NOT raise
+    assert fm == {"type": "task", "status": "todo"}
+
+
+# --------------------------------------------------------------------------- #
+# AC 4 — a block item containing a colon is kept whole
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_block_item_with_colon_kept_whole(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\n"
+        "type: task\n"
+        "tags:\n"
+        '  - "a:b"\n'
+        "  - k:v\n"
+        "---\n"
+    )
+    fm = vt._parse_frontmatter(text)
+    assert fm["tags"] == ["a:b", "k:v"]
+
+
+# --------------------------------------------------------------------------- #
+# AC 5 — empty tags: -> [] AND empty depends_on: -> []
+# --------------------------------------------------------------------------- #
+def test_load_tasks_empty_block_headers_become_empty_lists(mc_env, vault):
+    vt = mc_env.vault_tasks
+    vault.add_raw(
+        "01 Projects/P1/Tasks/empty-headers.md",
+        "---\n"
+        "type: task\n"
+        "project: P1\n"
+        "status: todo\n"
+        "tags:\n"
+        "depends_on:\n"
+        "---\n"
+        "# Empty headers\n",
+    )
+    (task,) = vt.load_tasks()
+    assert task["tags"] == []
+    assert task["depends_on"] == []
+
+
+# --------------------------------------------------------------------------- #
+# AC 6 — quoted block items match inline `[ "a", 'b' ]`
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_block_quoted_items_match_inline(mc_env):
+    vt = mc_env.vault_tasks
+    block = vt._parse_frontmatter(
+        "---\ntype: task\ntags:\n  - \"a\"\n  - 'b'\n---\n"
+    )
+    inline = vt._parse_frontmatter(
+        "---\ntype: task\ntags: [ \"a\", 'b' ]\n---\n"
+    )
+    assert block["tags"] == ["a", "b"]
+    assert block["tags"] == inline["tags"]
+
+
+# --------------------------------------------------------------------------- #
+# AC 7 — standup-level regression: block-`depends_on` with an open dep -> BLOCKED
+#        (RED against pre-fix code, which drops the block list -> [] -> READY)
+# --------------------------------------------------------------------------- #
+def test_standup_classifies_block_depends_on_as_blocked(mc_env, vault):
+    vt = mc_env.vault_tasks
+    # An open dependency task (its slug is what the blocked task depends on).
+    vault.add_task("dep-open", project="P1", status="todo")
+    # The dependent task writes depends_on block-style (only add_raw can).
+    vault.add_raw(
+        "01 Projects/P1/Tasks/needs-dep.md",
+        "---\n"
+        "type: task\n"
+        "project: P1\n"
+        "status: todo\n"
+        "depends_on:\n"
+        "  - dep-open\n"
+        "---\n"
+        "# Needs dep\n",
+    )
+    ready, blocked = mc_env.standup.classify_ready(vt.load_tasks())
+    blocked_slugs = {t["slug"] for t in blocked}
+    ready_slugs = {t["slug"] for t in ready}
+    assert "needs-dep" in blocked_slugs   # RED pre-fix: block list dropped -> ready
+    assert "needs-dep" not in ready_slugs
+
+
+# --------------------------------------------------------------------------- #
+# AC 8 — scalar-key safety guard: a block list under a SCALAR key does not
+#        corrupt the value and does not crash (RED against arm-on-any-key).
+# --------------------------------------------------------------------------- #
+def test_load_tasks_block_under_scalar_keys_no_corruption(mc_env, vault):
+    vt = mc_env.vault_tasks
+    vault.add_raw(
+        "01 Projects/P1/Tasks/scalar-block.md",
+        "---\n"
+        "type: task\n"
+        "project: P1\n"
+        "status:\n"
+        "  - done\n"          # arm-on-any-key would set status -> "done"
+        "due:\n"
+        "  - 2026-01-01\n"     # arm-on-any-key would make `due` a LIST -> bucket() crash
+        "---\n"
+        "# Scalar block\n",
+    )
+    tasks = vt.load_tasks()          # must NOT raise
+    (task,) = tasks
+    assert task["status"] == "todo"  # orphan `- done` skipped -> default, not "done"
+    assert task["due"] == ""         # scalar, not a list
+    assert not isinstance(task["due"], list)
+    vt.bucket(tasks)                 # prio-sort over a scalar `due` -> no TypeError
+
+
+def test_parse_frontmatter_block_under_scalar_key_disarms(mc_env):
+    vt = mc_env.vault_tasks
+    fm = vt._parse_frontmatter(
+        "---\ntype: task\nstatus:\n  - done\n---\n"
+    )
+    # status is not a list key -> never armed -> `- done` orphaned -> status stays "".
+    assert fm["status"] == ""
+    assert not isinstance(fm["status"], list)
