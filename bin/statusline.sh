@@ -27,12 +27,16 @@ WINDOW=$(jq -r --arg model "$MODEL" --arg modelid "$MODEL_ID" '
 ' "$THRESHOLDS_FILE" 2>/dev/null | head -1)
 if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
 # Inline fallback (kept at column 0 so it mirrors rebirth-thresholds.json's window
-# groups): the SAME 200k match set as the json — display-name AND id-forms — matched
-# against "$MODEL $MODEL_ID" like the primary jq path, so a generic display_name with a
-# specific model.id still resolves. Used only when the data file is unreadable. AC6 pins
-# this `case` and the json to identical numbers.
+# groups): the SAME entries in the SAME order as the json's two rules — display-name AND
+# id-forms in BOTH arms — matched against "$MODEL $MODEL_ID" like the primary jq path, so a
+# generic display_name with a specific model.id still resolves. An EXPLICIT leading 1M arm
+# then the 200k arm then the `*)` default. The 1M arm MUST precede the 200k arm because
+# `Sonnet 4.6` contains `Sonnet 4` (first-match wins, mirroring the json's array order).
+# Used only when the data file is unreadable. AC5 pins this `case` and the json to identical
+# token sets + numbers.
 case "$MODEL $MODEL_ID" in
-    *"Haiku"*|*"haiku"*|*"Sonnet 4.5"*|*"sonnet-4-5"*|*"sonnet-4.5"*|*"Sonnet 4.0"*|*"sonnet-4-0"*|*"sonnet-4.0"*|*"Opus 4.5"*|*"opus-4-5"*|*"opus-4.5"*|*"Opus 4.1"*|*"opus-4-1"*|*"opus-4.1"*)   WINDOW=200000 ;;
+    *"Fable 5"*|*"fable-5"*|*"Sonnet 5"*|*"sonnet-5"*|*"Sonnet 4.6"*|*"sonnet-4-6"*|*"sonnet-4.6"*|*"Opus 4.8"*|*"opus-4-8"*|*"opus-4.8"*|*"Opus 4.7"*|*"opus-4-7"*|*"opus-4.7"*|*"Opus 4.6"*|*"opus-4-6"*|*"opus-4.6"*)   WINDOW=1000000 ;;
+    *"Sonnet 4.5"*|*"sonnet-4-5"*|*"sonnet-4.5"*|*"Sonnet 4"*|*"sonnet-4"*|*"Haiku"*|*"haiku"*|*"Opus 4.5"*|*"opus-4-5"*|*"opus-4.5"*|*"Opus 4.1"*|*"opus-4-1"*|*"opus-4.1"*)   WINDOW=200000 ;;
     *)                                                                   WINDOW=1000000 ;;
 esac
 fi
