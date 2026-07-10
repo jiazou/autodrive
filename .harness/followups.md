@@ -622,9 +622,10 @@ docs/drive-enforcement.md:242 — verbose repeated AC/residual discharge prose (
   the mixed shape. /drive-retro v1 absorbs it with a tolerant raw_decode stream parser
   (DP2-2); fixing the writer is out of Phase 2's boundary.
 
-- [ ] **Follow-on (named in docs/trellis-analysis.md TR-3 + design-phase2.md, not built):**
-  automatic run-wrap wiring for /drive-retro — a drive.md Completion-step edit invoking it
-  in the sequence where /decant already runs. v2 candidate: cross-run aggregation.
+- [ ] **Follow-on (run-wrap wiring DONE; v2 aggregation still open):** the automatic run-wrap
+  wiring for /drive-retro — a drive.md Completion-step edit invoking it in the sequence where
+  /decant already runs — is **DONE (2026-07-10, live in `main`: drive.md § Completion runs
+  /drive-retro before the wrap-/decant)**. STILL OPEN: v2 candidate: cross-run aggregation.
   DP2-5 names bin/drive-retro-stats.py if the inline parse snippet grows a second consumer.
 
 - [ ] **Follow-on (from phase-2 design r1, DP2-8 — not built):** /drive-retro in-flight
