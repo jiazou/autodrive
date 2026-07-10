@@ -54,6 +54,7 @@ GE="$(printf '\033')"  # ESC
 golden_for() {  # <model> — the exact line statusline.sh must print (no trailing \n)
   case "$1" in
     "Opus 4.8")           printf '%s[36m%s%s[0m [Opus 4.8] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
+    "Fable 5")            printf '%s[36m%s%s[0m [Fable 5] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
     "Opus 4.7")           printf '%s[36m%s%s[0m [Opus 4.7] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
     "Sonnet 4.5")         printf '%s[36m%s%s[0m [Sonnet 4.5] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
     "Haiku 4")            printf '%s[36m%s%s[0m [Haiku 4] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
@@ -65,7 +66,7 @@ golden_payload() {  # <display_name> <transcript> — uses the FIXED non-git dir
     '{model:{display_name:$m}, workspace:{current_dir:$d}, transcript_path:$t}'
 }
 GOLDEN_HOME="$(mktemp -d)"  # empty HOME -> no $HOME/.bun/bin/ccusage -> empty cost seg
-for M in "Opus 4.8" "Opus 4.7" "Sonnet 4.5" "Haiku 4" "Some Unknown Model"; do
+for M in "Opus 4.8" "Fable 5" "Opus 4.7" "Sonnet 4.5" "Haiku 4" "Some Unknown Model"; do
   P="$(golden_payload "$M" "$TRANS")"
   # Strip ccusage from PATH so the cost segment is empty in any environment.
   got="$(printf '%s' "$P" | HOME="$GOLDEN_HOME" PATH=/usr/bin:/bin bash "$STATUSLINE")"

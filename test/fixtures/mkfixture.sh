@@ -1512,6 +1512,26 @@ JSON
 }
 JSON
       ;;
+    pendingcid)
+      # AC14: a clean `clean`-shape state.json that ALSO carries the tolerated-EXTRA
+      # `pendingCID` field (a resume-routing hint set by I1 with waiting="rebirth"). state-lint
+      # validates only the load-bearing routing fields and TOLERATES extras, so this must be
+      # `clean` (rc 0) — proving pendingCID is a tolerated-extra, not a CORE/state-lint-required key.
+      cat > "$sj" <<'JSON'
+{
+  "stage": "execute",
+  "phaseList": ["1", "2"],
+  "slices": {
+    "1.1": {"step": "converged", "owns": ["bin/x.sh"], "deps": []},
+    "1.2": {"step": "implementing", "owns": ["bin/y.sh", "test/y.test.sh"], "deps": ["1.1"]}
+  },
+  "waiting": "rebirth",
+  "pendingCID": "a1b2c3d4e5f6",
+  "verify": {"attempts": []},
+  "ship": {"suite": null, "conformance": null, "prUrl": null}
+}
+JSON
+      ;;
   esac
   echo "$repo $rd"
 }

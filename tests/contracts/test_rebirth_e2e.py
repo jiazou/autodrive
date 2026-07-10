@@ -14,6 +14,7 @@ the handoff-block presentation) is coordinator prose pinned by `test_checkpoint_
 acts in Python, then proves the result with the SHIPPED executables. It asserts ONLY what is
 executable/checkable.
 """
+import hashlib
 import json
 import os
 import shutil
@@ -84,6 +85,48 @@ def _canonical_state(run_id, *, session_id=SID_OUT, **overrides):
     return st
 
 
+DEFAULT_NONCE = "00112233445566778899aabbccddeeff"  # a fixed 32-hex nonce for the handoff fixtures
+
+
+def _cid(marker_path):
+    """CID = `shasum -a 256` of the marker CONTENT, first 12 hex (drive.md § Durable checkpoint
+    contract). Mirrors `shasum -a 256 <marker> | cut -c1-12` over the exact file bytes in Python,
+    so a different nonce yields a different CID (the per-handoff identity)."""
+    return hashlib.sha256(marker_path.read_bytes()).hexdigest()[:12]
+
+
+def _cid_of_text(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
+
+
+def _resume_claim(rd, claimer_sid, pending_cid, tip):
+    """Mirror the drive.md rebirth-gated atomic CLAIM + loser-disambiguation (§ Run setup &
+    resume, sessionId-rebind bullet). The CALLER gates this on `waiting == "rebirth"` (a
+    non-rebirth resume never claims). Returns one of:
+      ("winner", claim_target)  — this racer won the atomic `os.replace`.
+      ("loser",  winner_target) — a real winner of the CURRENT checkpoint exists (a content-valid
+                                  `checkpoint-claimed-*-<pending_cid>.marker`, proof.tip==tip);
+                                  the caller writes NOTHING and exits.
+      ("fail-closed", None)     — ENOENT on the source AND no current-CID winner (or no
+                                  pendingCID = a forged rebirth) → the caller falls through to
+                                  the rebirth-continue fail-closed re-prove (stop:checkpoint-unprovable).
+    Detection is glob-by-CID + content (NOT the tip, NOT a name rebuilt from state.sessionId); a
+    stale same-tip leftover of an OLDER CID is ignored. No liveness, no wall-clock (D9/D18)."""
+    marker = rd / "checkpoint-complete.marker"
+    claim_target = rd / f"checkpoint-claimed-{claimer_sid}-{pending_cid}.marker"
+    try:
+        os.replace(marker, claim_target)  # atomic; FileNotFoundError iff the source is absent
+        return "winner", claim_target
+    except FileNotFoundError:
+        if not pending_cid:
+            return "fail-closed", None  # forged rebirth: I1 sets pendingCID with waiting=rebirth
+        for t in sorted(rd.glob(f"checkpoint-claimed-*-{pending_cid}.marker")):
+            content = json.loads(t.read_text(encoding="utf-8"))
+            if content.get("proof", {}).get("tip") == tip:
+                return "loser", t
+        return "fail-closed", None
+
+
 def _atomic_write_json(path, obj):
     """The tmp-file + atomic-rename discipline the coordinator uses for every state.json /
     marker write (drive.md I2a) — write `<path>.tmp.$$` then `os.replace` over `path`, so a
@@ -95,16 +138,18 @@ def _atomic_write_json(path, obj):
     os.replace(tmp, path)
 
 
-def _perform_handoff(repo, rd, *, session_id=SID_OUT):
-    """The INTEGRATED both-modes handoff gate (drive.md § I1 step 3/4), exactly as the real
+def _perform_handoff(repo, rd, *, session_id=SID_OUT, nonce=DEFAULT_NONCE):
+    """The INTEGRATED both-modes handoff gate (drive.md § I1 step 3/4/5), exactly as the real
     coordinator runs it: prove BOTH `--mode checkpoint` AND `--mode state-lint`, and ONLY
-    when BOTH are clean write `checkpoint-complete.marker` (carrying the checkpoint proof)
-    and set `state.waiting="rebirth"`. If EITHER mode is non-clean the handoff fails closed
-    — NO marker, NO waiting set — proving state-lint genuinely gates the handoff in the
-    integrated chain (not just in a separate side assertion).
+    when BOTH are clean write `checkpoint-complete.marker` (carrying the checkpoint proof + an
+    additive per-handoff `nonce`, step 4) and set `state.waiting="rebirth"` AND
+    `state.pendingCID = CID` in ONE write (step 5). If EITHER mode is non-clean the handoff
+    fails closed — NO marker, NO waiting/pendingCID set — proving state-lint genuinely gates
+    the handoff in the integrated chain (not just in a separate side assertion).
 
     Returns (handed_off: bool, checkpoint_proof: dict). `handed_off` is False when the
-    both-modes gate refused; the caller asserts the on-disk consequence either way."""
+    both-modes gate refused; the caller asserts the on-disk consequence either way. The written
+    `state.pendingCID` equals `_cid(marker)` — the per-handoff identity the resume claim keys on."""
     rc_c, proof_c = run_conformance(repo, rd, "checkpoint")
     rc_l, _proof_l = run_conformance(repo, rd, "state-lint")
     both_clean = (rc_c == 0 and proof_c.get("clean") is True
@@ -112,12 +157,16 @@ def _perform_handoff(repo, rd, *, session_id=SID_OUT):
     if not both_clean:
         return False, proof_c  # fail closed: neither write happens
 
-    # Write #1: the durable, tip-bound proof RECORD (tmp+mv).
+    # Write #1 (step 4): the durable, tip-bound proof RECORD + the per-handoff nonce (tmp+mv).
     marker = rd / "checkpoint-complete.marker"
-    _atomic_write_json(marker, {"at": "now", "sessionId": session_id, "proof": proof_c})
-    # Write #2: the pause, set AFTER the marker is durable (fail-closed ordering).
+    _atomic_write_json(marker, {"at": "now", "sessionId": session_id, "nonce": nonce,
+                                "proof": proof_c})
+    cid = _cid(marker)
+    # Write #2 (step 5): the pause + pendingCID, set AFTER the marker is durable (fail-closed
+    # ordering). A real rebirth resume ALWAYS carries pendingCID set together with waiting=rebirth.
     st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
     st["waiting"] = "rebirth"
+    st["pendingCID"] = cid
     _atomic_write_json(rd / "state.json", st)
     return True, proof_c
 
@@ -342,11 +391,14 @@ def test_step4_fresh_process_reconstructs_and_continues(fake_home):
     st["rebirth_pending"] = False
     _atomic_write_json(rd / "state.json", st)
 
-    # (3) validate + DELETE the single-use marker (D17, tip-match).
+    # (3) `waiting` was cleared to None above (this test isolates the REBIND, not the
+    #     rebirth-continue), so this is the NON-rebirth path: the claim is SKIPPED (D26 — a
+    #     non-rebirth resume never claims), the marker is inert. The successor removes the inert
+    #     leftover; validate its tip first (D17, tip-match).
     recorded = json.loads(marker.read_text(encoding="utf-8"))
     marker_valid = recorded.get("proof", {}).get("tip") == tip
     assert marker_valid, "the marker must validate (tip-match) before consumption"
-    marker.unlink()  # single-use consumption — the resume's first act after rebind
+    marker.unlink()  # remove the inert leftover (no claim happened on the non-rebirth path)
 
     # (4) RE-PROVE both modes (the resume re-prove gate). `waiting` was already cleared in the
     # pre-rebind control above; the re-prove confirms BOTH modes stay clean on the
@@ -438,14 +490,20 @@ def test_step4b_waiting_rebirth_is_a_continue_not_a_human_pause(fake_home):
     assert hook_decision(cp_out) is None, \
         "waiting==rebirth is truthy -> the hook lets the OUTGOING turn END (the handoff stop)"
 
-    # (b) The successor takes the CONTINUE branch. Rebind (D7) + consume the single-use marker,
-    #     with `waiting` STILL "rebirth" (the resume re-proves BEFORE clearing — L84-87).
+    # (b) The successor takes the CONTINUE branch. Rebind (D7) + CLAIM the single-use marker
+    #     (the rebirth-gated atomic os.replace, D26/D18), with `waiting` STILL "rebirth" (the
+    #     resume re-proves BEFORE clearing). markerValid is re-sourced FROM THE CLAIM-TARGET the
+    #     winner renamed to (D18), NOT the now-moved checkpoint-complete.marker.
+    pending_cid = st["pendingCID"]  # I1 set this together with waiting=rebirth (step 5)
     st["sessionId"] = SID_IN
     st["rebirth_pending"] = False
     _atomic_write_json(rd / "state.json", st)
-    recorded = json.loads(marker.read_text(encoding="utf-8"))
-    assert recorded.get("proof", {}).get("tip") == tip, "marker must validate (tip-match)"
-    marker.unlink()
+    outcome, claim_target = _resume_claim(rd, SID_IN, pending_cid, tip)
+    assert outcome == "winner", "the sole rebirth resumer must WIN the atomic claim"
+    recorded = json.loads(claim_target.read_text(encoding="utf-8"))
+    assert recorded.get("proof", {}).get("tip") == tip, \
+        "markerValid (re-sourced from the claim-target) must tip-match"
+    assert not marker.exists(), "the claim moved checkpoint-complete.marker away (single-use)"
 
     # The re-prove gate runs while waiting is STILL "rebirth" — proving resumability needs NO
     # human answer (the rebirth-continue distinction). state-lint must ALSO accept rebirth as
@@ -458,10 +516,14 @@ def test_step4b_waiting_rebirth_is_a_continue_not_a_human_pause(fake_home):
     assert rc_l == 0 and obj_l["clean"] is True, \
         "re-prove state-lint must pass: rebirth is a VALID waiting value (no over-reject)"
 
-    # The re-proven CONTINUE branch clears waiting=null (auto-clear on a passing proof — the
-    # mark of a continue, not a human-answer wait).
+    # The re-proven CONTINUE branch clears waiting=null AND pendingCID=null (auto-clear on a
+    # passing proof — the mark of a continue), and as its FINAL act removes the claim-target
+    # (single-use, D18).
     st_reprove["waiting"] = None
+    st_reprove["pendingCID"] = None
     _atomic_write_json(rd / "state.json", st_reprove)
+    claim_target.unlink()
+    assert not claim_target.exists(), "the winner removes the claim-target on completion (single-use)"
 
     # The successor now blocks-to-continue: the pipeline AUTO-RESUMES (no human answer was
     # ever required — that is the rebirth-continue semantics).
@@ -722,3 +784,173 @@ def test_chainbreak_resume_severed_unrebound_session_does_not_block(fake_home):
     d2 = hook_decision(cp2)
     assert d2 is not None and d2["decision"] == "block", \
         "control: with the rebind, the successor owns the run and the hook blocks-to-continue"
+
+
+# =========================================================================== #
+# AC4 — the rebirth-gated CID-keyed CLAIM + loser write-discipline (EXECUTABLE, NO
+# liveness/wall-clock). Each scenario drives the real `_resume_claim` mirror of the drive.md
+# claim + loser-disambiguation over the real handoff artifacts.
+# =========================================================================== #
+def test_ac4_loser_writes_nothing_cid_keyed(fake_home):
+    """AC4(a): the WINNER claims (os.replace → `checkpoint-claimed-<winnerSid>-<CID>.marker`);
+    a concurrent LOSER globs `checkpoint-claimed-*-<state.pendingCID>.marker` + content
+    (`proof.tip==tip`) → finds the winner's target → writes NO state.json (state.sessionId
+    unchanged), NO double-drive. Detection is glob-by-CID + content, NEVER a name rebuilt from
+    state.sessionId, NEVER the tip. Uniformly safe for a LIVE and a DEAD winner (the loser writes
+    nothing either way — drive-stop-hook `_allow()`s a run-less session; no liveness branch)."""
+    repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
+    tip = _rev(repo, "drive/e2e-run")
+    handed_off, _ = _perform_handoff(repo, rd, session_id=SID_OUT)
+    assert handed_off
+    pending_cid = json.loads((rd / "state.json").read_text(encoding="utf-8"))["pendingCID"]
+
+    # WINNER claims (session id "winner-sess"); it has NOT yet rebound state.sessionId (the
+    # claimed-but-not-yet-rebound skew the round-2 BLOCKING covered).
+    outcome_w, winner_target = _resume_claim(rd, "winner-sess", pending_cid, tip)
+    assert outcome_w == "winner"
+    assert winner_target.name == f"checkpoint-claimed-winner-sess-{pending_cid}.marker", \
+        "the claim-target is named by the claimer's sid + the CID (advisory sid, CID-keyed detection)"
+
+    # LOSER (a different session) attempts the SAME claim -> ENOENT on source -> loser path.
+    sid_before = json.loads((rd / "state.json").read_text(encoding="utf-8"))["sessionId"]
+    outcome_l, found = _resume_claim(rd, "loser-sess", pending_cid, tip)
+    assert outcome_l == "loser", "the loser must detect the winner's current-CID claim-target"
+    assert found == winner_target, "detection globs the CURRENT pendingCID + content (not the tip)"
+    # The loser wrote NOTHING: state.sessionId is UNCHANGED, and no loser target was created.
+    assert json.loads((rd / "state.json").read_text(encoding="utf-8"))["sessionId"] == sid_before, \
+        "the loser must not clobber state.sessionId (writes NOTHING and exits)"
+    assert not (rd / f"checkpoint-claimed-loser-sess-{pending_cid}.marker").exists()
+
+
+def test_ac4_stale_older_cid_still_fails_closed(fake_home):
+    """AC4(b): a crashed prior winner left a SAME-TIP claim-target under an OLDER, different CID,
+    and the current `checkpoint-complete.marker` is absent (claimed away). The CURRENT pendingCID
+    has NO matching claim-target -> the loser-disambiguation finds no current-CID winner -> falls
+    closed to the rebirth-continue re-prove (stop:checkpoint-unprovable). The older-CID leftover is
+    IGNORED (the glob is CID-keyed, not tip-keyed) and state.sessionId is untouched (STOP, never a
+    silent sole-resumer write)."""
+    repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
+    tip = _rev(repo, "drive/e2e-run")
+    assert _perform_handoff(repo, rd)[0]
+    current_cid = json.loads((rd / "state.json").read_text(encoding="utf-8"))["pendingCID"]
+
+    (rd / "checkpoint-complete.marker").unlink()  # current marker claimed away (absent)
+    old_cid = "0000deadbeef"
+    assert old_cid != current_cid
+    (rd / f"checkpoint-claimed-crashed-{old_cid}.marker").write_text(
+        json.dumps({"at": "then", "sessionId": "crashed", "nonce": "ff" * 16,
+                    "proof": {"tip": tip}}), encoding="utf-8")
+
+    outcome, found = _resume_claim(rd, SID_IN, current_cid, tip)
+    assert outcome == "fail-closed", \
+        "a stale OLDER-CID same-tip leftover must NOT satisfy the current-CID loser match"
+    assert found is None
+    assert (rd / f"checkpoint-claimed-crashed-{old_cid}.marker").exists(), \
+        "the older-CID target is IGNORED (not consumed) — no false-loser exit"
+    assert json.loads((rd / "state.json").read_text(encoding="utf-8"))["sessionId"] == SID_OUT
+
+
+def test_ac4_forged_rebirth_no_pendingcid_fails_closed(fake_home):
+    """AC4(c): a FORGED rebirth (waiting=="rebirth" set by a bug/sibling path without I1's
+    prove→marker→wait, so NO pendingCID) with the marker absent -> the loser path has no
+    pendingCID to match -> fail-closed (stop:checkpoint-unprovable), never a sole-resumer write."""
+    repo, rd = mid_run_fixture(fake_home)
+    tip = _rev(repo, "drive/e2e-run")
+    outcome, found = _resume_claim(rd, SID_IN, None, tip)  # no marker, no pendingCID
+    assert outcome == "fail-closed" and found is None
+
+
+def test_ac4_step45_crash_window_no_claim_no_clobber(fake_home):
+    """AC4(d) (round-4 BLOCKING fix, D26): the I1 step-4→step-5 crash window — marker PRESENT but
+    `waiting != "rebirth"` and no pendingCID. The rebirth-gated claim is SKIPPED entirely (a
+    non-rebirth resume never claims): the marker is left inert, NO claim-target is created, and
+    state.sessionId is not clobbered. Modeled by the drive.md gate: claim ONLY when
+    `waiting == "rebirth"`."""
+    repo, rd = mid_run_fixture(fake_home)
+    proof = run_conformance(repo, rd, "checkpoint")[1]
+    _atomic_write_json(rd / "checkpoint-complete.marker",
+                       {"at": "now", "sessionId": SID_OUT, "nonce": DEFAULT_NONCE, "proof": proof})
+    st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    assert st.get("waiting") != "rebirth" and st.get("pendingCID") is None, \
+        "the crash window: marker present, waiting not rebirth, no pendingCID"
+
+    # The drive.md gate (D26): the resume claims ONLY when waiting=="rebirth". It is not.
+    claimed = None
+    if st.get("waiting") == "rebirth":
+        claimed = _resume_claim(rd, SID_IN, st.get("pendingCID"), _rev(repo, "drive/e2e-run"))
+    assert claimed is None, "no claim may be attempted when waiting != rebirth"
+    assert (rd / "checkpoint-complete.marker").exists(), "the leftover marker stays inert (not renamed)"
+    assert not list(rd.glob("checkpoint-claimed-*.marker")), "no claim-target created on the crash-window path"
+    assert json.loads((rd / "state.json").read_text(encoding="utf-8"))["sessionId"] == SID_OUT, "no clobber"
+
+
+def test_ac4_manual_recovery_restore_wins(fake_home):
+    """AC4(e): after a CURRENT winner crashed post-claim (its target survives, run not driven),
+    the human recovers manually — `mv` the current-CID claim-target back to
+    checkpoint-complete.marker — and a re-paste WINS the claim again (os.replace succeeds). The
+    run is never stranded, even after auto-resume spent its one attempt."""
+    repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
+    tip = _rev(repo, "drive/e2e-run")
+    assert _perform_handoff(repo, rd)[0]
+    cid = json.loads((rd / "state.json").read_text(encoding="utf-8"))["pendingCID"]
+
+    outcome_w, winner_target = _resume_claim(rd, "crashed-winner", cid, tip)
+    assert outcome_w == "winner"
+    os.replace(winner_target, rd / "checkpoint-complete.marker")  # manual restore
+    outcome_r, recovered_target = _resume_claim(rd, "recovery-sess", cid, tip)
+    assert outcome_r == "winner", "after manual restore, the re-paste WINS the claim (never stranded)"
+    assert recovered_target.exists()
+
+
+# =========================================================================== #
+# AC5 — the auto-trigger CID-conditional no-op AFTER a completed+cleaned resume (no clobber).
+# =========================================================================== #
+def test_ac5_auto_trigger_noop_after_resume_cleanup(fake_home):
+    """AC5: after the WINNER completes the rebirth resume + cleans up (removes its claim-target,
+    clears waiting=null AND pendingCID=null), a LATE auto-trigger carrying the now-STALE `CID_N`
+    hits the § Run setup & resume CID gate `state.pendingCID == CID_N AND waiting == "rebirth"`.
+    Both are cleared, so the gate is FALSE -> the trigger EXITS immediately, writing NO
+    state.sessionId (no clobber, never the sole resumer)."""
+    repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
+    tip = _rev(repo, "drive/e2e-run")
+    assert _perform_handoff(repo, rd)[0]
+    st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    stale_cid_n = st["pendingCID"]  # the auto-trigger was scheduled carrying THIS CID
+
+    # The winner resumes + completes: rebind, claim, drive, then the CONTINUE-branch final acts —
+    # clear waiting+pendingCID and remove the claim-target.
+    outcome, claim_target = _resume_claim(rd, SID_IN, stale_cid_n, tip)
+    assert outcome == "winner"
+    st["sessionId"] = SID_IN
+    st["waiting"] = None
+    st["pendingCID"] = None
+    _atomic_write_json(rd / "state.json", st)
+    claim_target.unlink()
+
+    # A LATE auto-trigger fires carrying CID_N == stale_cid_n. Evaluate the CID gate.
+    trig = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    gate_ok = (trig.get("pendingCID") == stale_cid_n and trig.get("waiting") == "rebirth")
+    assert gate_ok is False, "the stale auto-trigger must NOT pass the CID gate (pendingCID cleared)"
+    # Gate false -> the trigger EXITS writing NO state.json -> state.sessionId unchanged.
+    assert json.loads((rd / "state.json").read_text(encoding="utf-8"))["sessionId"] == SID_IN, "no clobber"
+
+
+# =========================================================================== #
+# AC15 — CID per-handoff uniqueness via the nonce (shasum path + shasum-absent fallback).
+# =========================================================================== #
+def test_ac15_cid_per_handoff_uniqueness_via_nonce():
+    """AC15: two checkpoint-complete.marker contents with IDENTICAL at/sessionId/proof but
+    DIFFERENT nonces yield DIFFERENT CIDs — for BOTH the shasum path (hash of the whole content)
+    AND the shasum-absent nonce[:12] fallback. The marker `nonce` field is additive: the resume
+    reader picks `proof.tip` only, so the nonce never affects tip-derived logic."""
+    base_proof = {"tip": "a" * 40, "clean": True, "mode": "checkpoint"}
+    n1 = "1111111111111111aaaaaaaaaaaaaaaa"
+    n2 = "2222222222222222bbbbbbbbbbbbbbbb"
+    m1 = json.dumps({"at": "now", "sessionId": "s", "nonce": n1, "proof": base_proof})
+    m2 = json.dumps({"at": "now", "sessionId": "s", "nonce": n2, "proof": base_proof})
+    # shasum path: hash of the whole content -> a different nonce -> a different CID.
+    assert _cid_of_text(m1) != _cid_of_text(m2), "distinct nonces must yield distinct shasum CIDs"
+    # shasum-absent fallback: CID = nonce[:12] -> distinct because the nonces differ in [:12].
+    assert n1[:12] != n2[:12], "the nonce[:12] fallback CID must also differ across handoffs"
+    # additive: both contents carry the SAME proof.tip (the reader picks proof.tip only).
+    assert json.loads(m1)["proof"]["tip"] == json.loads(m2)["proof"]["tip"] == "a" * 40

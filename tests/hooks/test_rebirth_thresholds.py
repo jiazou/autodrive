@@ -87,6 +87,9 @@ def test_resolve_window_known_200k(thresholds, model):
 @pytest.mark.parametrize("model", [
     "Sonnet 5", "claude-sonnet-5", "Sonnet 4.6", "claude-sonnet-4-6",
     "Opus 4.6", "claude-opus-4-6",
+    # AC10 (C2/Fable-5 hygiene): the Fable-5 1M-context family (display-name + id forms) is an
+    # EXPLICIT 1M rule (also covered pre-fix by the 1M default — see the mutation test below).
+    "Fable 5", "claude-fable-5", "fable-5",
 ])
 def test_resolve_window_1m_current_gen(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 1_000_000
@@ -191,11 +194,13 @@ def _statusline_case_window(model):
 
 
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash required")
-@pytest.mark.parametrize("model", ["Opus 4.8", "Opus 4.7", "Sonnet 5", "Sonnet 4.5", "Haiku"])
+@pytest.mark.parametrize("model", ["Opus 4.8", "Opus 4.7", "Sonnet 5", "Sonnet 4.5", "Haiku",
+                                   "Fable 5"])
 def test_json_window_matches_statusline_case(thresholds, model):
     """The python resolver (json table) and statusline.sh's inline case resolve the
     IDENTICAL window for the same display-name model — the AC6 no-drift pin. Includes
-    Sonnet 5 (1M) so both voices agree it is NOT clamped to 200k (C2)."""
+    Sonnet 5 (1M) so both voices agree it is NOT clamped to 200k (C2), and Fable 5 (1M,
+    AC10) so the json Fable rule and the statusline Fable arm agree."""
     assert rt.resolve_window(model, thresholds) == _statusline_case_window(model)
 
 
@@ -319,3 +324,28 @@ def test_mutating_json_changes_resolution(tmp_path):
     assert rt.resolve_window("Opus 4.8", t) == 7
     _w, hard, _s = rt.resolve_thresholds("Sonnet 4.5", t)
     assert hard == 42 * 0.5
+
+
+def test_mutating_fable_rule_changes_resolution(tmp_path):
+    """AC10/D5 (Fable entry-presence, mutation-verified): the Fable-5 pins are pre-fix GREEN
+    (fallthrough already yields the 1M default), so a naive golden/resolve pin passes WITHOUT
+    the explicit entry. This proves the entry is LOAD-BEARING: find the Fable rule BY CONTENT
+    (its match list contains 'Fable 5'), mutate ONLY its window, keep `defaultWindow` at 1M —
+    so a fallthrough would STILL be 1M — and assert `resolve_window('Fable 5')` tracks the
+    mutation. If the explicit Fable rule is dropped, resolve_window falls to the 1M default and
+    this reds."""
+    data = json.loads(THRESHOLDS_JSON.read_text(encoding="utf-8"))
+    fable = next((w for w in data["windows"] if "Fable 5" in w.get("match", [])), None)
+    assert fable is not None, "the explicit Fable-5 window rule must exist in the json (AC10)"
+    fable["window"] = 123456  # mutate ONLY the Fable rule's window
+    assert data["defaultWindow"] == 1_000_000, "control: the default stays 1M (a fallthrough would be 1M)"
+    mutated = tmp_path / "rebirth-thresholds.json"
+    mutated.write_text(json.dumps(data), encoding="utf-8")
+    t = rt.load_thresholds(str(mutated))
+    assert rt.resolve_window("Fable 5", t) == 123456, (
+        "resolve_window('Fable 5') must track the explicit Fable rule's window — proving the "
+        "entry is present and load-bearing, not a fallthrough to the 1M default"
+    )
+    assert rt.resolve_window("claude-fable-5", t) == 123456
+    # a non-Fable current-gen model still resolves via the default (1M) — the mutation is scoped.
+    assert rt.resolve_window("Opus 4.8", t) == 1_000_000

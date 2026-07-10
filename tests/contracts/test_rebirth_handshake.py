@@ -862,3 +862,141 @@ def test_no_live_goal_mechanism_reference_survives():
         + "\n".join(offenders)
     )
 
+
+# =========================================================================== #
+# AC1 (R1) — the folded rebirth-gated CID claim lives in bodies[0] (the sessionId-rebind
+# bullet) as its FIRST action, gated on waiting=="rebirth", BEFORE `freshSessionResume =`,
+# and the resume prose carries NO nested `- **` that would shatter the index map.
+# =========================================================================== #
+def test_bodies0_carries_rebirth_gated_claim_before_freshSessionResume():
+    """AC1: bodies[0] carries the atomic `os.replace` CLAIM as its FIRST action, GATED on
+    `waiting == "rebirth"` (D26), renaming to the CID-keyed claim-target, BEFORE the
+    `freshSessionResume =` capture; and bodies[0] contains exactly ONE `- **` (its own label)
+    — the claim sub-cases are PROSE, not nested bold bullets (which would break the index map)."""
+    section = _resume_section()
+    bodies = _resume_bullet_bodies(section)
+    b0 = bodies[0]
+    b0n = _norm(b0)
+    assert "os.replace" in b0n, "bodies[0] must carry the atomic os.replace claim"
+    assert 'ONLY when `waiting == "rebirth"`' in b0n, "the claim must be gated on waiting==rebirth (D26)"
+    assert "checkpoint-claimed-<$CLAUDE_CODE_SESSION_ID>-<CID>.marker" in b0n, (
+        "the claim renames to the CID-keyed claim-target"
+    )
+    assert b0n.index("os.replace") < b0n.index("freshSessionResume ="), (
+        "the claim must precede the `freshSessionResume =` capture (the FIRST action of the bullet)"
+    )
+    assert len(re.findall(r"^[ \t]+- \*\*", b0, re.MULTILINE)) == 1, (
+        "bodies[0] must contain exactly ONE `- **` (its own label) — the claim sub-cases are PROSE"
+    )
+
+
+# =========================================================================== #
+# AC13 (R1) — the resume WRITE-DISCIPLINE INVARIANT + rebirth-gating pinned as drive.md prose.
+# =========================================================================== #
+def test_write_discipline_invariant_rebirth_gating_pinned():
+    """AC13: a drive.md PROSE pin asserts the write-discipline INVARIANT + rebirth-gating — the
+    claim is rebirth-gated (a non-rebirth resume never claims); only the rename-winner or the
+    non-rebirth sole-resumer writes state.json; a loser to a current-CID claim-target writes
+    NOTHING; an auto-trigger never takes the sole-resumer path; detection is glob-by-CID +
+    proof.tip==tip. Guards the SPEC invariant, not only the AC4 e2e test."""
+    blob = _norm(_drive_md())
+    assert "the claim is rebirth-gated (a non-rebirth resume never claims)" in blob
+    assert (
+        "only the rename-winner or the non-rebirth sole-resumer writes state.json" in blob
+    ), "the write-discipline invariant (winner/sole-resumer only) must be pinned"
+    assert "a loser to a current-CID claim-target writes NOTHING" in blob
+    assert "an auto-trigger never takes the sole-resumer path" in blob
+    assert "detection is glob-by-CID + proof.tip==tip" in blob
+
+
+# =========================================================================== #
+# AC5 (R1) — the auto-trigger CID-conditional gate + I1 step 5.7 host-local capability +
+# per-CID create-only scheduled-marker dedup.
+# =========================================================================== #
+def test_auto_trigger_cid_gate_and_step_5_7_pinned():
+    """AC5: drive.md pins the auto-trigger CID gate (proceed ONLY IF `pendingCID == CID_N` AND
+    `waiting == "rebirth"`, else a clean no-op writing NO state.json; a human paste has no
+    CID_N), AND I1 step 5.7 with the (c) HOST-LOCAL capability clause + the per-CID create-only
+    scheduled-marker dedup + the fenced-block degradation."""
+    blob = _norm(_drive_md())
+    assert (
+        'proceed to the reconciliation below ONLY IF `state.pendingCID == CID_N` AND '
+        '`waiting == "rebirth"`' in blob
+    ), "the auto-trigger CID gate must be pinned"
+    assert "a late/duplicate auto-trigger is a clean no-op" in blob
+    assert "A HUMAN paste `/drive <runId>` carries no `CID_N`" in blob
+    # I1 step 5.7 exists, with the (c) host-local clause and per-CID create-only dedup.
+    assert "Schedule the fresh-session auto-resume trigger (capability-detected)" in blob
+    assert "(c) is HOST-LOCAL" in blob
+    assert "auto-resume-scheduled-<CID>.marker` exists" in blob, "per-CID dedup must be pinned"
+    assert "create-only" in blob
+    assert "degrade to the fenced block only" in blob
+
+
+# =========================================================================== #
+# AC9 (R3) — the ONE authoritative observability sub-event rule.
+# =========================================================================== #
+def test_subevent_authoritative_rule_pinned():
+    """AC9: drive.md carries the ONE authoritative observability sub-event rule — the six
+    schemas, `date -u`, jq-built, APPEND-only, WRITE-ONLY (NEVER-parse restated), and the
+    clear-after-record `idle_detected` seam with the absent/unparseable → no-emit guard."""
+    blob = _norm(_drive_md())
+    for kind in ("subagent-started", "codex-started", "suite-run-started",
+                 "suite-run-finished", "fix-applied", "idle_detected"):
+        assert kind in blob, f"the sub-event rule must define the `{kind}` schema"
+    assert "extend the `event-log.jsonl` VOCABULARY only" in blob
+    assert "`date -u`" in blob
+    assert "APPEND-only" in blob
+    assert "WRITE-ONLY" in blob
+    assert "NEVER parse event-log.jsonl" in blob, "the never-parse invariant must be restated"
+    # the idle_detected seam: clear-after-record, >30min, elapsedMin, fail-open guard
+    assert "clear-after-record step above" in blob
+    assert "> 30 min" in blob
+    assert "elapsedMin = floor(elapsed/60)" in blob
+    assert "absent/unparseable `startedAt` → NO line (fail-open)" in blob
+
+
+# =========================================================================== #
+# AC7 (R3) — the Present-human-pause notify side-effect: gateB differentiation, the anchored
+# decision-bearing grammar, rebirth exclusion, pure-side-effect contract, drive-notify.sh call.
+# =========================================================================== #
+def test_notify_side_effect_gateB_and_anchored_grammar_pinned():
+    """AC7: drive.md's Present-human-pause notify side-effect pins the gateB differentiation
+    (the gate QUESTION + "reply 'approve' after reviewing the diff", NEVER a `/drive <runId>`
+    line), fires ONLY for the ANCHORED `^(gateA|gateB|stop:.+|ask:.+)$` (never `rebirth`), is a
+    pure side-effect (does NOT gate/block/write state.json), and invokes bin/drive-notify.sh."""
+    blob = _norm(_drive_md())
+    assert "Notify side-effect (R3, decision-bearing parks only)" in blob
+    assert "`^(gateA|gateB|stop:.+|ask:.+)$` (NEVER `rebirth`)" in blob, (
+        "the notify must fire only for the anchored decision-bearing grammar, never rebirth"
+    )
+    assert (
+        'gateB: the gate QUESTION + "reply \'approve\' after reviewing the diff" '
+        "(NEVER a `/drive <runId>` paste line)" in blob
+    ), "the gateB message must carry the question + approve-instruction, NEVER a /drive paste line"
+    assert 'bin/drive-notify.sh --run-dir "$RUN_DIR" --waiting "$waiting"' in blob
+    assert "it does not gate, block, or write `state.json`" in blob
+    assert "never notify on rebirth" in blob
+
+
+# =========================================================================== #
+# AC14 (R1) — the state.pendingCID lifecycle + tolerated-extra doc-consistency (prose pin).
+# =========================================================================== #
+def test_pendingcid_lifecycle_tolerated_extra_prose_pinned():
+    """AC14: drive.md pins the pendingCID lifecycle — I1 step 5 sets `state.pendingCID = CID` in
+    the SAME write as `waiting="rebirth"`; the rebirth-continue bullet clears it with
+    `waiting=null`; it is a TOLERATED-EXTRA field (template default null), NOT a CORE key / not
+    state-lint-required, NOT in CLAUDE.md. The state.json TEMPLATE carries `"pendingCID": null`."""
+    md = _drive_md()
+    blob = _norm(md)
+    assert '"pendingCID": null' in md, "the state.json template must carry pendingCID (default null)"
+    assert 'set `state.waiting = "rebirth"` AND `state.pendingCID = CID`' in blob, (
+        "I1 step 5 must set pendingCID together with waiting=rebirth in ONE write"
+    )
+    assert "clear `state.waiting = null`, clear `state.pendingCID = null`" in blob, (
+        "the rebirth-continue bullet must clear pendingCID together with waiting=null"
+    )
+    assert "TOLERATED-EXTRA state.json field" in blob
+    assert "NOT a CORE key and NOT state-lint-required" in blob
+    assert "is NOT documented in CLAUDE.md" in blob
+

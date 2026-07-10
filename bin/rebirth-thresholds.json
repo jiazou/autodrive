@@ -3,7 +3,9 @@
     { "match": ["Haiku", "haiku",
                 "Sonnet 4.5", "sonnet-4-5", "sonnet-4.5", "Sonnet 4.0", "sonnet-4-0", "sonnet-4.0",
                 "Opus 4.5", "Opus 4.1", "opus-4-5", "opus-4-1", "opus-4.5", "opus-4.1"],
-      "window": 200000 }
+      "window": 200000 },
+    { "match": ["Fable 5", "claude-fable-5", "fable-5"],
+      "window": 1000000 }
   ],
   "defaultWindow": 1000000,
   "hardHighWaterFraction": 0.85,
