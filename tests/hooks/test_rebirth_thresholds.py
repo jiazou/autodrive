@@ -248,6 +248,45 @@ def test_statusline_case_id_forms_load_bearing(model, model_id, expected):
     assert _statusline_case_window(model, model_id) == expected
 
 
+# AC12 — every REAL 200k model id-form is behaviorally pinned on BOTH surfaces. A 200k
+# id-form is LOAD-BEARING in a way a 1M id-form is NOT: a coordinated deletion of a 200k
+# token from BOTH json and the inline `case` drops its model to the 1M `defaultWindow` — a
+# REAL regression (the exact class this run targets) — whereas a 1M id-form is inert (resolves
+# 1M via the default whether present or absent). Each id is paired with a GENERIC display
+# ("Brand X", matching no rule token) so ONLY the id-form can carry the 200k window; the pin
+# reds on a coordinated both-surface deletion of that token. Imprecision budget (D-p1-5): 1M
+# id-forms (`fable-5`, `sonnet-5`, `sonnet-4-6`, `opus-4-8/4-7/4-6`) are intentionally NOT
+# pinned against coordinated deletion (inert; the colliding `sonnet-4-6` is separately pinned
+# by AC4's id-beats-display test); future/unknown ids are out of scope (fail-safe direction).
+KNOWN_200K_IDS = [
+    "claude-sonnet-4-20250514",   # sonnet-4  (the reported bug)
+    "claude-sonnet-4-5",          # sonnet-4-5
+    "claude-opus-4-5",            # opus-4-5
+    "claude-opus-4-1",            # opus-4-1
+    "claude-3-5-haiku-20241022",  # bare haiku
+    "claude-haiku-4",             # bare haiku
+    "claude-haiku-4-5",           # bare haiku
+]
+
+
+@pytest.mark.parametrize("model_id", KNOWN_200K_IDS)
+def test_resolver_200k_id_forms_pinned(thresholds, model_id):
+    """AC12 (resolver half): every real 200k model id resolves to 200k via `resolve_window`.
+    Reds if its token is deleted from the json 200k rule (drops to the 1M default)."""
+    assert rt.resolve_window(model_id, thresholds) == 200_000
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="bash required")
+@pytest.mark.parametrize("model_id", KNOWN_200K_IDS)
+def test_statusline_200k_id_forms_pinned(model_id):
+    """AC12 (statusline half): every real 200k model id resolves to 200k via statusline.sh's
+    inline `case "$MODEL $MODEL_ID"` — id-only (generic display "Brand X"), so ONLY the id-form
+    carries the window. Reds if its token is deleted from the 200k `case` arm (drops to the 1M
+    default `*)` arm). Together with the resolver half, a coordinated both-surface token
+    deletion reds on at least one surface."""
+    assert _statusline_case_window("Brand X", model_id) == 200_000
+
+
 def test_json_case_token_sets_identical(thresholds):
     """AC5 — STRUCTURAL cross-surface parity: each json rule's FULL match-token set equals the
     corresponding inline `case` arm's FULL *"tok"* glob set, keyed by the SAME window. Reds on
