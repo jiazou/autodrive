@@ -14,11 +14,21 @@ code; for phase 1 it is `baseRef`). No code is written here — design only.
 
 ## Step 1 — Author the phase's detailed design (design subagent)
 
-Spawn a generic design subagent (the Agent tool) with **cwd = the featureBranch worktree**.
-Pass file PATHS, never contents.
+Spawn a generic design subagent (the Agent tool) with **cwd = the featureBranch worktree** —
+the Agent tool does NOT set the subagent's cwd, so include that ABSOLUTE worktree path IN the
+prompt (the subagent `cd`s to it as its FIRST ACTION so "the actual code in this worktree" it
+reads is the REAL prior-phase code, not the main repo's tree). Pass file PATHS, never contents.
 
 ----- BEGIN SUBAGENT SCOPE -----
 Produce the detailed design for phase `<P>`. Do NOT implement anything.
+
+**FIRST ACTION: `cd` into the absolute featureBranch-worktree path you were given, then confirm
+`git rev-parse --abbrev-ref HEAD` is the run's `featureBranch`. If the path is missing/wrong or the
+`cd` fails or HEAD is not that branch, STOP with `STATUS: BLOCKED — wrong cwd` instead of reading —
+do NOT design against the wrong tree.** The Agent tool does NOT set your cwd, so you begin in the
+MAIN repo, and "the actual code in this worktree" below would otherwise read the wrong tree (the
+main repo's `main`, not the run's real prior-phase code). You author only design docs into the
+absolute `$RUN_DIR` (never edit repo code), so this is a READ-correctness guard, not a commit guard.
 
 Read (current versions yourself):
 - $RUN_DIR/design.md       (the high-level design — find phase `<P>`'s scope/boundary/goal)

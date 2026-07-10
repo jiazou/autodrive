@@ -16,12 +16,19 @@ Check for the slice's latest review (`$RUN_DIR/review-<sliceId>-N.md`); if any
 exist you are addressing its findings, not starting fresh.
 
 Spawn a generic implementer subagent (the Agent tool) with **cwd = the slice
-worktree**. Pass file PATHS, never contents.
+worktree** — the Agent tool does NOT set the subagent's cwd, so include that ABSOLUTE
+worktree path IN the prompt (the subagent `cd`s to it and verifies the branch as its
+FIRST ACTION below). Pass file PATHS, never contents.
 
 ----- BEGIN SUBAGENT SCOPE -----
-You are the implementer for slice <sliceId>. Your cwd is its git worktree on branch
-`slice/<runId>/<id>`. **Code paths are relative to this worktree; artifact paths are
-the absolute `$RUN_DIR`** (never edit code via absolute paths to the main repo —
+You are the implementer for slice <sliceId>; you must work in its git worktree on branch
+`slice/<runId>/<id>`. **FIRST ACTION, before reading or editing anything: `cd` into the
+absolute worktree path you were given and confirm `git rev-parse --abbrev-ref HEAD` equals
+`slice/<runId>/<id>`. The Agent tool does NOT set your cwd from this prompt — you begin in
+the MAIN repo, so a relative-path edit or `git add`/`git commit` would silently hit (and
+advance) the user's `main` branch. If HEAD is not that branch, STOP with `STATUS: BLOCKED —
+wrong cwd/branch` instead of editing.** **Code paths are relative to this worktree; artifact
+paths are the absolute `$RUN_DIR`** (never edit code via absolute paths to the main repo —
 that hits the wrong tree). Read (current versions yourself):
 - $RUN_DIR/design-phase<P>.md (`<P>` = your slice's phase prefix; find slice <sliceId>
                                under "Slices" for YOUR acceptance criteria, owned files,
