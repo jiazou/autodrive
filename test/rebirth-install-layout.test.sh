@@ -159,17 +159,23 @@ installed_pct="$(
 check "installed (symlinked) statusline falls to the inline case -> Opus window (PCT 90)" "${installed_pct:-NONE}" "90"
 rm -rf "$LINK_DIR" "$TRANS_IL"
 
-# 4c. AC6 anti-drift: the inline `case` window numbers the install relies on MUST equal the
-#     json's, so the fallback yields the SAME answer as a source-tree json read. The table is
-#     a denylist (known-200k families listed; everything else defaults to 1M), so pin BOTH
-#     the default window (1_000_000, resolves Opus/unknown) and a denylist family (Sonnet 4.5, 200k;
-#     the denylist is version-qualified so 1M Sonnet 5 / 4.6 fall through to the default).
-inline_default_window="$(grep -oE 'WINDOW=1000000' "$STATUSLINE" | head -1 | sed 's/WINDOW=//')"
+# 4c. AC5/AC6 anti-drift: the inline `case` window numbers the install relies on MUST equal the
+#     json's, so the fallback yields the SAME answer as a source-tree json read. The ordered
+#     two-rule table lists the 1M families in windows[0] (which precedes windows[1]) and the
+#     200k families in windows[1]; everything unlisted resolves to the 1M default. Pin all THREE
+#     numbers, each anchored on its SPECIFIC arm so the two 1M-valued lines (the explicit 1M
+#     arm and the `*)` default) can't mask a drift: the default arm (the `*)` line), the inline
+#     1M arm (a 1M-arm token, `"Fable 5"`) == json windows[0].window, and the inline 200k arm
+#     (a 200k-arm token, `"Sonnet 4.5"`) == the json's Sonnet 4.5 window.
+inline_default_window="$(grep -E '^[[:space:]]*\*\)' "$STATUSLINE" | grep -oE 'WINDOW=[0-9]+' | head -1 | sed 's/WINDOW=//')"
 json_default_window="$(jq -r '.defaultWindow' "$DATA")"
-check "AC6 anti-drift: inline default window == json defaultWindow (1M, fallback matches)" "${inline_default_window:-X}" "${json_default_window:-Y}"
-inline_sonnet_window="$(grep -oE 'WINDOW=200000' "$STATUSLINE" | head -1 | sed 's/WINDOW=//')"
+check "AC6 anti-drift: inline default arm (*)) window == json defaultWindow (1M, fallback matches)" "${inline_default_window:-X}" "${json_default_window:-Y}"
+inline_1m_window="$(grep -E '"Fable 5"' "$STATUSLINE" | grep -oE 'WINDOW=[0-9]+' | head -1 | sed 's/WINDOW=//')"
+json_1m_window="$(jq -r '.windows[0].window' "$DATA")"
+check "AC5 anti-drift: inline 1M arm window == json windows[0].window (1M rule)" "${inline_1m_window:-X}" "${json_1m_window:-Y}"
+inline_sonnet_window="$(grep -E '"Sonnet 4.5"' "$STATUSLINE" | grep -oE 'WINDOW=[0-9]+' | head -1 | sed 's/WINDOW=//')"
 json_sonnet_window="$(jq -r '.windows[] | select(.match | index("Sonnet 4.5")) | .window' "$DATA")"
-check "AC6 anti-drift: inline 200k window == json Sonnet 4.5 window (denylist matches)" "${inline_sonnet_window:-X}" "${json_sonnet_window:-Y}"
+check "AC6 anti-drift: inline 200k arm window == json Sonnet 4.5 window (200k rule)" "${inline_sonnet_window:-X}" "${json_sonnet_window:-Y}"
 
 # --- 5. The installers deploy the rebirth files by REFERENCE, not by copy --
 # The installers register the hook in-place and symlink statusline; they must NOT

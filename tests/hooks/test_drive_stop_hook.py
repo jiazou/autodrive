@@ -443,10 +443,10 @@ def test_window_uses_model_of_latest_usage_line_not_a_later_usageless_line(fake_
     Transcript: a usage-bearing Opus-4.8 line at 909_200 tokens (>= 1M*0.85 -> over its
     1M window), then a LATER usage-less assistant line with a DIFFERENT model
     (`claude-haiku-4`, no usage). Pre-fix the hook read the model from the latest line
-    (haiku -> the then-bare `haiku` 200k entry; now the `haiku-4` entry) while the
-    tokens came from the opus line, so the %/window in the steer described the wrong
-    window. Post-fix both come from the opus line: the steer fires (909_200 >= 850_000)
-    and reports the 1_000_000-token window."""
+    (haiku -> the 200k rule's bare `haiku`/`Haiku` token) while the tokens came from the
+    opus line, so the %/window in the steer described the wrong window. Post-fix both come
+    from the opus line: the steer fires (909_200 >= 850_000) and reports the
+    1_000_000-token window."""
     # PREMISE PIN: this test discriminates only while the trailing model's window
     # differs from the usage-line model's. If a future table change gave claude-haiku-4
     # the same window as claude-opus-4-8, the assertions below would pass even with the
@@ -707,10 +707,10 @@ def test_failopen_steer_helper_unexpected_exception(fake_home, monkeypatch):
 def test_failopen_unknown_model_over_default_window_steers(fake_home):
     """Sibling of the above: an unknown model resolving to the default 1_000_000 window
     whose sum EXCEEDS 1_000_000*0.85=850_000 DOES steer — proving the default-window
-    branch is live (not a silent skip). Unknown models default to 1M (the version-qualified
-    ordered 200k rules cover the known-200k families and the `[1m]` marker covers an active
-    beta); a genuinely unknown 200k-window model firing late is the accepted residual of
-    the default-1M policy."""
+    branch is live (not a silent skip). Unknown models default to 1M (the ordered two-rule
+    table lists the 1M families in windows[0] and the 200k families in windows[1], and the
+    `[1m]` marker covers an active beta); a genuinely unknown 200k-window model firing late
+    is the accepted residual of the default-1M policy."""
     trans = fake_home / "unknown-model-hi.jsonl"
     trans.write_text(
         '{"type": "assistant", "message": {"model": "mystery-model-9", '

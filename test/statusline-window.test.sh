@@ -88,7 +88,9 @@ rendered_pct() {  # <display_name> — the PCT the statusline prints (strip ANSI
   printf '%s' "$(payload "$1" "$TRANS")" | bash "$STATUSLINE" \
     | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%'
 }
-for M in "Opus 4.8" "Sonnet 4.5"; do
+# Sonnet 4 (200k -> PCT 454, the reported bug) and Sonnet 4.6 (1M -> PCT 90, the collision
+# that must resolve 1M because the 1M rule precedes the 200k `Sonnet 4`) are in the loop.
+for M in "Opus 4.8" "Sonnet 4.5" "Sonnet 4" "Sonnet 4.6"; do
   W="$(resolve_window "$M")"
   expect_pct=$(( TOKENS * 100 / W ))
   assert_eq "AC6 [$M] window from data file = $W -> PCT $expect_pct" \
@@ -122,14 +124,31 @@ onem_id_pct="$(jq -n --arg t "$TRANS" \
   '{model:{display_name:"Sonnet 4.5", id:"claude-sonnet-4-5[1m]"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
   | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
 assert_eq "[1m] marker in model.id overrides a 200k model to 1M (PCT 90)" "90" "$onem_id_pct"
-# MODEL_ID matching: a model whose DISPLAY name does not match the denylist but whose ID
-# does still resolves to 200k from the table (id forms live in windows[].match). Brand X
-# alone -> default 1M -> 90; with the opus-4-1 id -> 200k -> 454, so the id does the work.
+# MODEL_ID matching: a model whose DISPLAY name matches no rule token but whose ID matches a
+# 200k-rule token still resolves to 200k from the table (id forms live in windows[].match).
+# Brand X alone -> default 1M -> 90; with the opus-4-1 id -> 200k -> 454, so the id does the work.
 id_match_pct="$(jq -n --arg t "$TRANS" \
   '{model:{display_name:"Brand X", id:"claude-opus-4-1"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
   | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
-assert_eq "MODEL_ID matches the denylist when display_name does not (opus-4-1 -> 200k, PCT 454)" \
+assert_eq "MODEL_ID matches the 200k rule when display_name does not (opus-4-1 -> 200k, PCT 454)" \
   "454" "$id_match_pct"
+# Sonnet-4 the reported bug, via the id alone: a generic display + the real Sonnet-4 id
+# (claude-sonnet-4-20250514, contains the 200k-rule `sonnet-4`) -> 200k -> PCT 454.
+sonnet4_id_pct="$(jq -n --arg t "$TRANS" \
+  '{model:{display_name:"Brand X", id:"claude-sonnet-4-20250514"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+  | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "MODEL_ID claude-sonnet-4-20250514 -> 200k rule (PCT 454), the reported bug" \
+  "454" "$sonnet4_id_pct"
+# Load-bearing id-beats-collision: display "Sonnet 4" (a 200k-rule token) paired with the 1M
+# id claude-sonnet-4-6 (contains the 200k substring `sonnet-4` AND the 1M substring
+# `sonnet-4-6`). The 1M rule precedes the 200k rule -> 1M -> PCT 90. This reds if `sonnet-4-6`
+# is dropped from the 1M rule (the display "Sonnet 4" would then win the 200k rule -> 454).
+# NOT covered by the display-only Sonnet 4.6 case, whose display alone catches it.
+id_beats_collision_pct="$(jq -n --arg t "$TRANS" \
+  '{model:{display_name:"Sonnet 4", id:"claude-sonnet-4-6"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+  | bash "$STATUSLINE" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "id claude-sonnet-4-6 (1M) beats colliding display Sonnet 4 (200k) -> 1M (PCT 90)" \
+  "90" "$id_beats_collision_pct"
 
 # --- Fallback (I3): a malformed data file falls back to the inline default window ---
 # so the statusline never breaks on a bad file (still renders a correct PCT).
