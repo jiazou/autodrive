@@ -103,33 +103,38 @@ def _resume_claim(rd, claimer_sid, pending_cid, tip):
       ("winner", claim_target)  — this racer won the atomic `os.replace`.
       ("loser",  winner_target) — a real winner of the CURRENT checkpoint exists (a content-valid
                                   `checkpoint-claimed-*-<pending_cid>.marker`, proof.tip==tip).
-      ("fail-closed", None)     — ENOENT on the source AND no current-CID winner (or no
+      ("fail-closed", None)     — the marker-content CID MISMATCHES `pending_cid` (a stale/forged
+                                  CID), OR ENOENT on the source AND no current-CID winner (or no
                                   pendingCID = a forged rebirth) → fall through to the
                                   rebirth-continue fail-closed re-prove (stop:checkpoint-unprovable).
 
     The CID keying the claim-target is DERIVED FROM THE MARKER CONTENT (`_cid(marker)`), NOT trusted
-    blindly from `pending_cid` — and the winner path ASSERTS `_cid(marker) == pending_cid`, binding the
-    routing hint to the content (a real rebirth has them equal — I1 wrote both from the same content).
-    A regression from "hash the marker content incl. nonce" to "trust state.pendingCID blindly" reds
-    the assert (the stale/forged-CID hole D23 hardened against). Detection is glob-by-CID + content
-    (NOT the tip, NOT a name rebuilt from state.sessionId); a stale same-tip leftover of an OLDER CID
-    is ignored. No liveness, no wall-clock (D9/D18)."""
+    blindly from `pending_cid` — the winner path claims ONLY when `_cid(marker) == pending_cid`, binding
+    the routing hint to the content (a real rebirth has them equal — I1 wrote both from the same
+    content). A MISMATCH (`_cid(marker) != pending_cid` — a stale/forged CID, D23) returns
+    ("fail-closed", None) WITHOUT claiming, GRACEFULLY mirroring the drive.md case (b) MISMATCH STOP
+    (stop:checkpoint-unprovable) — both racers hit the same mismatch and fail closed → no double-drive.
+    Detection is glob-by-CID + content (NOT the tip, NOT a name rebuilt from state.sessionId); a stale
+    same-tip leftover of an OLDER CID is ignored. No liveness, no wall-clock (D9/D18)."""
     marker = rd / "checkpoint-complete.marker"
     try:
         content_cid = _cid(marker)  # DERIVE the CID from the marker content (raises if absent)
     except FileNotFoundError:
         content_cid = None
-    if content_cid is not None:
-        assert content_cid == pending_cid, (
-            "the winner's claim CID must be DERIVED from the marker content (== state.pendingCID); "
-            "a routing hint that mismatches the content is a stale/forged-CID regression (D23)"
-        )
+    if content_cid is not None and content_cid == pending_cid:
+        # MATCH: the marker-content CID equals the routing hint → claim it (winner path).
         claim_target = rd / f"checkpoint-claimed-{claimer_sid}-{content_cid}.marker"
         try:
             os.replace(marker, claim_target)  # atomic; FileNotFoundError iff a twin already claimed
             return "winner", claim_target
         except FileNotFoundError:
             pass  # lost the atomic race between hashing and replacing → loser path
+    elif content_cid is not None:
+        # MISMATCH (`content_cid != pending_cid`): a stale/forged/wrong-handoff marker. Do NOT
+        # claim — return fail-closed GRACEFULLY (mirrors the drive.md case (b) STOP outcome,
+        # stop:checkpoint-unprovable). Both racers fail closed on the same mismatch → no
+        # double-drive (D23/D32).
+        return "fail-closed", None
     if not pending_cid:
         return "fail-closed", None  # forged rebirth: I1 sets pendingCID with waiting=rebirth
     for t in sorted(rd.glob(f"checkpoint-claimed-*-{pending_cid}.marker")):
@@ -902,6 +907,33 @@ def test_ac4_forged_rebirth_no_pendingcid_fails_closed(fake_home):
     assert outcome == "fail-closed" and found is None
 
 
+def test_ac_p1_mismatched_cid_marker_fails_closed_no_claim(fake_home):
+    """AC-P1 (finalize, D32): a rebirth resume whose `checkpoint-complete.marker` content CID
+    MISMATCHES `state.pendingCID` (a stale/forged/wrong-handoff marker — the human-paste path
+    carries no CID so it never sets a matching pendingCID) is REJECTED at the winner path:
+    the shared `_resume_rebirth` mirror returns "fail-closed" WITHOUT claiming, and NO
+    `checkpoint-claimed-*` target is created (mismatch => no claim => no double-drive). Models the
+    drive.md case (b) MISMATCH production path (stop:checkpoint-unprovable), not a raised assert."""
+    repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
+    tip = _rev(repo, "drive/e2e-run")
+    assert _perform_handoff(repo, rd)[0]
+    pending_cid = json.loads((rd / "state.json").read_text(encoding="utf-8"))["pendingCID"]
+
+    # Forge the MARKER content (a different nonce) so its CID no longer equals the routing hint.
+    forged = json.loads((rd / "checkpoint-complete.marker").read_text(encoding="utf-8"))
+    forged["nonce"] = "ff" * 16
+    _atomic_write_json(rd / "checkpoint-complete.marker", forged)
+    assert _cid(rd / "checkpoint-complete.marker") != pending_cid, \
+        "the forged marker's content CID must MISMATCH state.pendingCID"
+
+    outcome, target = _resume_rebirth(rd, SID_IN, tip)  # state waiting=rebirth, pendingCID unchanged
+    assert outcome == "fail-closed" and target is None, \
+        "a content-CID mismatch must fail closed (no claim), mirroring the drive.md case (b) STOP"
+    assert (rd / "checkpoint-complete.marker").exists(), "the mismatched marker was NOT claimed"
+    assert not list(rd.glob("checkpoint-claimed-*.marker")), \
+        "no claim-target created on the mismatch path => no double-drive"
+
+
 def test_ac4_step45_crash_window_no_claim_no_clobber(fake_home):
     """AC4(d) (round-4 BLOCKING fix, D26): the I1 step-4→step-5 crash window — marker PRESENT but
     `waiting != "rebirth"` and no pendingCID. Driven THROUGH the shared `_resume_rebirth` mirror
@@ -1072,11 +1104,13 @@ def test_ac15_claim_cid_is_derived_from_marker_content(fake_home):
     st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
     assert st["pendingCID"] == content_cid, "a real rebirth: the routing hint EQUALS the content CID"
 
-    # A FORGED/stale pendingCID (NOT derived from the marker content) is REJECTED by the binding.
+    # A FORGED/stale pendingCID (NOT derived from the marker content) is REJECTED by the binding —
+    # GRACEFULLY fail-closed (no claim), mirroring the drive.md case (b) MISMATCH STOP.
     st["pendingCID"] = "deadbeefdead"
     _atomic_write_json(rd / "state.json", st)
-    with pytest.raises(AssertionError):
-        _resume_rebirth(rd, SID_IN, tip)  # the CID-from-content binding must reject the mismatch
+    outcome_m, target_m = _resume_rebirth(rd, SID_IN, tip)  # CID-from-content binding rejects mismatch
+    assert outcome_m == "fail-closed" and target_m is None, \
+        "a pendingCID that mismatches the marker content must fail closed (no claim)"
     assert (rd / "checkpoint-complete.marker").exists(), "the marker was NOT claimed under a forged CID"
 
     # With the honest content-derived hint, the claim-target is named by _cid(marker).

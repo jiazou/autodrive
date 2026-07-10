@@ -27,7 +27,8 @@ WINDOW=$(jq -r --arg model "$MODEL" --arg modelid "$MODEL_ID" '
 ' "$THRESHOLDS_FILE" 2>/dev/null | head -1)
 if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
 # Inline fallback (kept at column 0 so it mirrors rebirth-thresholds.json's window
-# groups): the SAME 200k match set as the json — display-name AND id-forms — matched
+# groups): the SAME match set as the json (the Fable-5 1M arm and the 200k arm) — display-name
+# AND id-forms — matched
 # against "$MODEL $MODEL_ID" like the primary jq path, so a generic display_name with a
 # specific model.id still resolves. Used only when the data file is unreadable. AC6 pins
 # this `case` and the json to identical numbers.

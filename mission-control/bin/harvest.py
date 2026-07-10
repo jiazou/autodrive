@@ -248,10 +248,9 @@ _DRIVE_WAITING_RE = re.compile(r"^(gateA|gateB|stop:.+|ask:.+)$")
 def drive_waiting_runs():
     """Read-only scan of `~/.claude/harness-runs/*/state.json` for /drive runs PARKED on a
     human decision. Fail-open PER FILE (an unreadable/corrupt state.json is skipped, never
-    fatal). A run qualifies iff `state.waiting` is a STRING matching the anchored
-    decision-bearing grammar `^(gateA|gateB|stop:.+|ask:.+)$` — the `isinstance` guard skips a
-    non-str/malformed `waiting`, and the anchors exclude `rebirth` (auto-resumes) and a
-    `gateAfoo` false-match. Returns a list of `{runId, waiting, repoRoot}`."""
+    fatal). A run qualifies iff `state.waiting` is a STRING matching `_DRIVE_WAITING_RE` (the
+    `isinstance` guard skips a non-str/malformed `waiting`). Returns a list of
+    `{runId, waiting, repoRoot}`."""
     out = []
     for sj in sorted(glob.glob(os.path.join(HARNESS_RUNS_DIR, "*", "state.json"))):
         try:

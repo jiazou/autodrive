@@ -107,6 +107,34 @@ def test_past_timeout_transport_still_exits_zero(tmp_path):
     assert time.time() - start < 10, "the send must be backgrounded (no blocking on the transport)"
 
 
+def test_shasum_absent_still_sends_bias_to_send(tmp_path):
+    """AC6 fail-open (finalize): when `shasum` is ABSENT there is no reliable dedup key, so the
+    script SKIPS the dedup gate and STILL sends (bias-to-send: a duplicate ping is benign, a
+    miss is worse) — exiting 0 and writing NO `notified-*` marker. Shadowing shasum out of PATH
+    (a shim dir with the needed tools but no shasum) drives the shipped fallback deterministically,
+    independent of whether the host has shasum installed."""
+    rd = tmp_path / "rd"; rd.mkdir()
+    out = tmp_path / "delivered.txt"
+    # Build a shim PATH with the tools the script needs (tr/cut/basename/sh/cat) but WITHOUT shasum,
+    # so `command -v shasum` fails and the fail-open (empty-key) branch is taken deterministically.
+    shim = tmp_path / "shim"; shim.mkdir()
+    for tool in ("tr", "cut", "basename", "cat", "sh", "env", "timeout"):
+        p = shutil.which(tool)
+        if p:
+            os.symlink(p, shim / tool)
+    assert shutil.which("shasum", path=str(shim)) is None, "the shim PATH must NOT contain shasum"
+    bash = shutil.which("bash")
+    env = {"PATH": str(shim), "DRIVE_NOTIFY_CMD": f"cat > {out}"}
+    cp = subprocess.run([bash, str(NOTIFY), "--run-dir", str(rd), "--waiting", "gateB",
+                         "--tip", "abc", "--message", "hi"],
+                        env=env, capture_output=True, text=True, timeout=30)
+    assert cp.returncode == 0, "shasum absent must still exit 0 (fail-open)"
+    assert _wait_for(out), "shasum absent must NOT suppress the send (bias-to-send)"
+    assert out.read_text(encoding="utf-8") == "hi"
+    assert _markers(rd) == [], "the shasum-absent bias-to-send path builds NO dedup marker"
+    assert not (rd / "state.json").exists(), "drive-notify.sh must NEVER write state.json"
+
+
 # --------------------------------------------------------------------------- #
 # AC8 — dedup slug: filesystem-safe, collision-resistant, deduped repeat
 # --------------------------------------------------------------------------- #

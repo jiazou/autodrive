@@ -328,12 +328,10 @@ def test_mutating_json_changes_resolution(tmp_path):
 
 def test_mutating_fable_rule_changes_resolution(tmp_path):
     """AC10/D5 (Fable entry-presence, mutation-verified): the Fable-5 pins are pre-fix GREEN
-    (fallthrough already yields the 1M default), so a naive golden/resolve pin passes WITHOUT
-    the explicit entry. This proves the entry is LOAD-BEARING: find the Fable rule BY CONTENT
-    (its match list contains 'Fable 5'), mutate ONLY its window, keep `defaultWindow` at 1M —
-    so a fallthrough would STILL be 1M — and assert `resolve_window('Fable 5')` tracks the
-    mutation. If the explicit Fable rule is dropped, resolve_window falls to the 1M default and
-    this reds."""
+    (fallthrough already yields the 1M default), so a naive resolve pin passes WITHOUT the
+    explicit entry. Proving the entry is LOAD-BEARING: find the Fable rule BY CONTENT, mutate
+    ONLY its window, keep `defaultWindow` at 1M (a fallthrough would STILL be 1M), and assert
+    `resolve_window('Fable 5')` tracks the mutation — dropping the rule reds this."""
     data = json.loads(THRESHOLDS_JSON.read_text(encoding="utf-8"))
     fable = next((w for w in data["windows"] if "Fable 5" in w.get("match", [])), None)
     assert fable is not None, "the explicit Fable-5 window rule must exist in the json (AC10)"

@@ -81,9 +81,18 @@ verdict / merge / gate.
     (b) When `waiting == "rebirth"` (a real rebirth resume ALWAYS carries `state.pendingCID` —
     I1 sets it atomically with `waiting="rebirth"` at step 5): IF
     `$RUN_DIR/checkpoint-complete.marker` is PRESENT, read its content, compute `CID`
-    (§ Durable checkpoint contract), and atomically `os.replace` it →
-    `$RUN_DIR/checkpoint-claimed-<$CLAUDE_CODE_SESSION_ID>-<CID>.marker`. Exactly one racer's
-    rename succeeds — the WINNER.
+    (§ Durable checkpoint contract), then VERIFY `CID == state.pendingCID` BEFORE claiming
+    (the routing hint I1 set atomically with `waiting="rebirth"` at step 5; a real rebirth
+    resume's marker-content CID ALWAYS equals `pendingCID`). On a MATCH (`CID ==
+    state.pendingCID`) atomically `os.replace` it →
+    `$RUN_DIR/checkpoint-claimed-<$CLAUDE_CODE_SESSION_ID>-<CID>.marker`; the winner claims
+    ONLY on a match, so its claim-target is ALWAYS keyed on `pendingCID` and the loser's
+    `pendingCID`-keyed glob always matches it → no double-drive. On a MISMATCH (`CID !=
+    state.pendingCID` — a stale / forged / wrong-handoff marker) do NOT claim and do NOT
+    continue: STOP fail-closed via Present human pause with `waiting =
+    "stop:checkpoint-unprovable"` (both racers hit the same mismatch and STOP → no
+    double-drive; failing closed is safer than claiming under the wrong key). Exactly one
+    racer's rename succeeds — the WINNER.
     · Winner (rename succeeded) → continue to the capture/rewrite below → the marker-consume
     and rebirth-continue bullets → drive.
     · Loser (`os.replace` raised ENOENT on the source): a REAL winner of the CURRENT checkpoint

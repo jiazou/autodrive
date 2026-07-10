@@ -1000,3 +1000,27 @@ def test_pendingcid_lifecycle_tolerated_extra_prose_pinned():
     assert "NOT a CORE key and NOT state-lint-required" in blob
     assert "is NOT documented in CLAUDE.md" in blob
 
+
+# =========================================================================== #
+# AC-P1 (R1 finalize) — the winner path must VERIFY CID == state.pendingCID BEFORE claiming
+# and STOP fail-closed on a MISMATCH (a stale/forged/wrong-handoff marker), closing the
+# double-drive hole where the winner claimed under a wrong CID key that the loser's
+# pendingCID-keyed glob would miss.
+# =========================================================================== #
+def test_winner_verifies_cid_equals_pendingcid():
+    """AC-P1: drive.md case (b) mandates the WINNER VERIFY `CID == state.pendingCID` BEFORE
+    claiming, os.replace ONLY on a MATCH, and STOP fail-closed (`stop:checkpoint-unprovable`)
+    on a MISMATCH — so the claim-target is ALWAYS keyed on pendingCID and the loser's
+    pendingCID-keyed glob can never miss it (no double-drive). Guards the live PROSE the
+    coordinator follows, not only the executable mirror."""
+    blob = _norm(_drive_md())
+    assert "VERIFY `CID == state.pendingCID` BEFORE claiming" in blob, (
+        "the winner must verify CID == state.pendingCID before claiming"
+    )
+    assert "On a MISMATCH (`CID != state.pendingCID`" in blob, (
+        "case (b) must define the MISMATCH outcome explicitly"
+    )
+    assert "do NOT claim and do NOT continue: STOP fail-closed" in blob, (
+        "a MISMATCH must fail closed (no claim, no continue), not claim under a wrong key"
+    )
+
