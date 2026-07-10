@@ -604,3 +604,45 @@ def test_parse_frontmatter_block_list_crlf(mc_env):
     fm = vt._parse_frontmatter(text)
     assert fm["depends_on"] == ["a", "b"]
     assert fm["tags"] == ["x", "y"]   # no stray "\r"
+
+
+# --------------------------------------------------------------------------- #
+# [P2] Blank/comment interleaving inside an ACTIVE block does not disarm (D8 /
+#      design edge case 8): blank and comment lines `continue` WITHOUT touching
+#      `active`, so a block survives them and both items land -> ["a", "b"].
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_blank_comment_inside_block_does_not_disarm(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\n"
+        "type: task\n"
+        "depends_on:\n"
+        "  - a\n"
+        "\n"             # blank line inside the block -> does NOT disarm
+        "  # note\n"     # comment line inside the block -> does NOT disarm
+        "  - b\n"
+        "---\n"
+    )
+    fm = vt._parse_frontmatter(text)
+    assert fm["depends_on"] == ["a", "b"]   # block survives the interleaved blank/comment
+
+
+# --------------------------------------------------------------------------- #
+# [P2] A non-empty SCALAR value under a list key DISARMS (the `val.strip() != ""`
+#      branch, distinct input shape from the inline-list disarm test): `tags:
+#      somevalue` stays the scalar "somevalue" and a following `- c` is orphaned
+#      (dropped), NOT absorbed. Complements test_parse_frontmatter_inline_list_
+#      value_disarms (which uses the `tags: [a, b]` inline-list shape).
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_scalar_value_under_list_key_disarms(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\n"
+        "type: task\n"
+        "tags: somevalue\n"   # non-empty scalar value -> disarms
+        "  - c\n"             # orphan -> dropped, NOT absorbed into tags
+        "---\n"
+    )
+    fm = vt._parse_frontmatter(text)
+    assert fm["tags"] == "somevalue"       # scalar preserved, `- c` not absorbed
+    assert not isinstance(fm["tags"], list)
