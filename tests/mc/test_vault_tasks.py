@@ -474,3 +474,133 @@ def test_parse_frontmatter_block_under_scalar_key_disarms(mc_env):
     # status is not a list key -> never armed -> `- done` orphaned -> status stays "".
     assert fm["status"] == ""
     assert not isinstance(fm["status"], list)
+
+
+# =========================================================================== #
+# Harden phase 1 — block-list edge cases (P1 regression + P2 coverage gaps)
+# =========================================================================== #
+
+# --------------------------------------------------------------------------- #
+# [P1] A QUOTED-empty list value (`tags: ""` / `depends_on: ''`) parses to "" but
+#      is NOT a bare header — it must NOT arm block accumulation, so a following
+#      `- x` is DROPPED (matches base's strictly-additive contract, D9). Arming
+#      keys off the RAW value, not `parsed`. RED against the pre-fix `parsed == ""`
+#      arming, which absorbed the items into a block list.
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_quoted_empty_list_value_does_not_arm(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\n"
+        "type: task\n"
+        'tags: ""\n'          # quoted-empty scalar, NOT a bare header
+        "  - x\n"             # dropped: accumulation is not armed
+        "depends_on: ''\n"
+        "  - a\n"             # dropped
+        "---\n"
+    )
+    fm = vt._parse_frontmatter(text)
+    assert fm["tags"] == ""          # pre-fix bug: ["x"]
+    assert fm["depends_on"] == ""    # pre-fix bug: ["a"]
+    # Contrast: a truly BARE `tags:` header DOES still arm (regression guard on the
+    # correct-arm path — this fix must not disarm the legitimate bare header).
+    bare = vt._parse_frontmatter("---\ntype: task\ntags:\n  - x\n---\n")
+    assert bare["tags"] == ["x"]
+
+
+def test_load_tasks_quoted_empty_list_value_becomes_empty_list(mc_env, vault):
+    vt = mc_env.vault_tasks
+    vault.add_raw(
+        "01 Projects/P1/Tasks/quoted-empty.md",
+        "---\n"
+        "type: task\n"
+        "project: P1\n"
+        "status: todo\n"
+        'tags: ""\n'
+        "  - x\n"
+        "depends_on: ''\n"
+        "  - a\n"
+        "---\n"
+        "# Quoted empty\n",
+    )
+    (task,) = vt.load_tasks()
+    assert task["tags"] == []        # "" -> [] (item x dropped; pre-fix: ["x"])
+    assert task["depends_on"] == []  # "" -> [] (item a dropped; pre-fix: ["a"])
+
+
+# --------------------------------------------------------------------------- #
+# [P2] Empty-item skip (the `if item:` FALSE branch): a bare `- ` (nothing after
+#      the marker) inside an ACTIVE list block is skipped (not appended as ""),
+#      while a real following item still accumulates.
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_empty_block_item_skipped(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\n"
+        "type: task\n"
+        "depends_on:\n"
+        "  - a\n"
+        "  - \n"          # bare marker, nothing after -> skipped (not a "" entry)
+        "  - b\n"
+        "---\n"
+    )
+    fm = vt._parse_frontmatter(text)
+    assert fm["depends_on"] == ["a", "b"]   # no stray "" between a and b
+
+
+# --------------------------------------------------------------------------- #
+# [P2] `active` disarm/rebind: two NON-EMPTY blocks in one note (depends_on THEN
+#      tags) both land intact (the state transition from one list key holding
+#      items to a second); and an INLINE list value (`tags: [a, b]`) DISARMS, so
+#      a following `- c` is NOT absorbed.
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_two_nonempty_blocks_rebind(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\n"
+        "type: task\n"
+        "depends_on:\n"
+        "  - a\n"
+        "  - b\n"
+        "tags:\n"
+        "  - x\n"
+        "  - y\n"
+        "---\n"
+    )
+    fm = vt._parse_frontmatter(text)
+    assert fm["depends_on"] == ["a", "b"]
+    assert fm["tags"] == ["x", "y"]
+
+
+def test_parse_frontmatter_inline_list_value_disarms(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\n"
+        "type: task\n"
+        "tags: [a, b]\n"    # inline (non-blank) value -> disarms
+        "  - c\n"           # orphan -> dropped, NOT absorbed into tags
+        "---\n"
+    )
+    fm = vt._parse_frontmatter(text)
+    assert fm["tags"] == ["a", "b"]   # `- c` not absorbed
+
+
+# --------------------------------------------------------------------------- #
+# [P2] CRLF inside a block list: depends_on/tags blocks written with `\r\n`
+#      throughout parse to the correct lists (no stray `\r`).
+# --------------------------------------------------------------------------- #
+def test_parse_frontmatter_block_list_crlf(mc_env):
+    vt = mc_env.vault_tasks
+    text = (
+        "---\r\n"
+        "type: task\r\n"
+        "depends_on:\r\n"
+        "  - a\r\n"
+        "  - b\r\n"
+        "tags:\r\n"
+        "  - x\r\n"
+        "  - y\r\n"
+        "---\r\n"
+    )
+    fm = vt._parse_frontmatter(text)
+    assert fm["depends_on"] == ["a", "b"]
+    assert fm["tags"] == ["x", "y"]   # no stray "\r"

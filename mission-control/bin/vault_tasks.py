@@ -126,8 +126,11 @@ def _parse_frontmatter(text):
         key = key.strip()
         parsed = _parse_scalar(val)
         fm[key] = parsed
-        # Arm block accumulation ONLY for an empty-valued LIST key; anything else disarms.
-        active = key if (parsed == "" and key in _LIST_KEYS) else None
+        # Arm block accumulation ONLY for a truly BARE list-key header (`tags:` with no
+        # value); key off the RAW value, not `parsed`. A quoted-empty scalar (`tags: ""`,
+        # `depends_on: ''`) parses to "" but is NOT a bare header — it must NOT arm, so a
+        # following `- x` is dropped (matching base's strictly-additive contract, D9).
+        active = key if (val.strip() == "" and key in _LIST_KEYS) else None
     return fm
 
 
