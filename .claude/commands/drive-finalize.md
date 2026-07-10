@@ -315,11 +315,19 @@ each kept item Mechanical / Taste / User-Challenge (6 principles); Taste → log
 
 ## Step 3 — Fix (implementer subagent, cwd = finalize worktree)
 
-Spawn a generic implementer subagent with **cwd = `$RUN_DIR/wt/finalize`**. Pass file
+Spawn a generic implementer subagent with **cwd = `$RUN_DIR/wt/finalize`** — the Agent tool
+does NOT set the subagent's cwd, so include that ABSOLUTE worktree path IN the prompt (the
+subagent `cd`s to it and verifies the branch as its FIRST ACTION below). Pass file
 PATHS + the finalize + codex finding paths, never contents.
 
 ----- BEGIN SUBAGENT SCOPE -----
-You are finalizing the run. Your cwd is the finalize worktree on branch `featureBranch`.
+You are finalizing the run; you must work in the finalize worktree on branch `featureBranch`.
+**FIRST ACTION, before reading or editing anything: `cd` into the absolute worktree path you
+were given (`$RUN_DIR/wt/finalize`) and confirm `git rev-parse --abbrev-ref HEAD` equals the
+run's `featureBranch`. The Agent tool does NOT set your cwd from this prompt — you begin in
+the MAIN repo, so a relative-path edit or `git add`/`git commit` would silently hit (and
+advance) the user's `main` branch. If HEAD is not that branch, STOP with `STATUS: BLOCKED —
+wrong cwd/branch` instead of editing.**
 Code paths are relative to this worktree; artifact paths are the absolute `$RUN_DIR`
 (never edit code via absolute paths to the main repo). Read:
 - $RUN_DIR/design-phase<P>.md for each phase (acceptance criteria)

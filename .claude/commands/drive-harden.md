@@ -243,13 +243,20 @@ Gate B; User-Challenge → STOP and surface.
 
 ## Step 3 — Fix (implementer subagent, cwd = phaseInt worktree)
 
-Spawn a generic implementer subagent with **cwd = the `phaseInt/<runId>/<P>` worktree**. Pass
+Spawn a generic implementer subagent with **cwd = the `phaseInt/<runId>/<P>` worktree** — the
+Agent tool does NOT set the subagent's cwd, so include that ABSOLUTE worktree path IN the prompt
+(the subagent `cd`s to it and verifies the branch as its FIRST ACTION below). Pass
 file PATHS + the harden + codex finding paths, never contents.
 
 ----- BEGIN SUBAGENT SCOPE -----
-You are hardening phase <P>. Your cwd is its assembled integration worktree on branch
-`phaseInt/<runId>/<P>`. Code paths are relative to this worktree; artifact paths are the
-absolute `$RUN_DIR` (never edit code via absolute paths to the main repo). Read:
+You are hardening phase <P>; you must work in its assembled integration worktree on branch
+`phaseInt/<runId>/<P>`. **FIRST ACTION, before reading or editing anything: `cd` into the
+absolute worktree path you were given and confirm `git rev-parse --abbrev-ref HEAD` equals
+`phaseInt/<runId>/<P>`. The Agent tool does NOT set your cwd from this prompt — you begin in
+the MAIN repo, so a relative-path edit or `git add`/`git commit` would silently hit (and
+advance) the user's `main` branch. If HEAD is not that branch, STOP with `STATUS: BLOCKED —
+wrong cwd/branch` instead of editing.** Code paths are relative to this worktree; artifact
+paths are the absolute `$RUN_DIR` (never edit code via absolute paths to the main repo). Read:
 - $RUN_DIR/design-phase<P>.md (acceptance criteria for the phase's slices)
 - $RUN_DIR/decisions.md (stay consistent)
 - $RUN_DIR/harden-<P>-N.md + codex-harden-<P>.md (the fix set; codex-only items live
