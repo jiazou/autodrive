@@ -55,12 +55,18 @@ new bugs live.
   launchd job. *Fix:* coerce list→scalar for project/status/priority/area (mirror the
   `depends_on` guard at :148-150). — **DONE (already fixed by `2e032c5`, PR #75):** added the
   `_scalar()` helper (:86) applied to project/status + `test_load_tasks_wikilink_project_coerced_to_scalar`.
-- [ ] **[V] `mission-control/bin/vault_tasks.py:94`** — `_parse_frontmatter` skips any line with
+- [x] **[V] `mission-control/bin/vault_tasks.py:94`** — `_parse_frontmatter` skips any line with
   no `:` , so block-style YAML lists (`depends_on:\n  - other-task`, Obsidian's Properties
   serialization) parse as `''` → `depends_on` silently dropped → `mc standup` lists a blocked
   task as "Ready to start now" and the parallel plan dispatches work whose dep is still open.
   `tags` lists are lost the same way. *Fix:* accumulate subsequent `- item` lines under the
-  preceding key as a list.
+  preceding key as a list. — **DONE (PR #81, 2026-07-10):** `_parse_frontmatter` accumulates
+  block-style `- item` lines into a list, armed ONLY for the list-valued keys `{depends_on, tags}`
+  (`_LIST_KEYS`, keyed off the raw `val.strip()==""` so a quoted-empty scalar and any scalar-key
+  block can't corrupt a value or crash `bucket()`); `- `-branch precedes the `:` branch; guarded
+  orphan skip; `load_tasks` empty-`tags:`→`[]`. 22 tests (mutation-verified); e2e-verified the
+  block-`depends_on` task classifies BLOCKED, not "Ready to start now". Pre-existing inline
+  `due:[x]`→`bucket()` crash is orthogonal → `.harness/followups.md`.
 - [x] **[V] `mission-control/bin/session_summary.py:47,63`** — `tail_text` opens `hits[0]` with
   no guard and `summarize` calls it *outside* its try, so a removed/unreadable transcript (or a
   non-dict `message`) raises through `harvest.build_summaries`' `ex.map`, crashing the whole
