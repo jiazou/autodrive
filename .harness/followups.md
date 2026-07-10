@@ -921,3 +921,54 @@ test/install-drive-hooks.test.sh:420-423 — comment says three hooks/four entri
   failure mode (single-voice degrade). If ever wiring `--mode probe` into the pipeline or hardening
   against $RUN_DIR tampering, add a node-type preflight of the derived probe-log (mirror R4-A). (codex
   finalize r3; overruled with evidence, imprecision budget stated.)
+
+
+## /drive run mc-vault-blocklist-20260710-092624 — 2026-07-10T05:33:12Z
+
+# Follow-ups — mc-vault-blocklist-20260710-092624
+
+- (RESOLVED IN-RUN, was flagged out-of-scope by round-1 review) empty `tags:` header parsing to
+  `""` instead of `[]`: both design-review voices flagged the `depends_on`/`tags` empty->[]
+  inconsistency, so it was folded into this run's scope (load_tasks `tags` mirrors the
+  `depends_on` empty->[] coercion). No longer a follow-up.
+
+- (Low, benign) A bare `-` with NO trailing space is treated as a plain colon-less line
+  (skipped), not an empty list item, because the marker check is `startswith("- ")`.
+  Obsidian always emits `- item`, so this never arises in practice; flagged only for
+  completeness. No action planned.
+
+- (PRE-EXISTING, real crash, OUT OF SCOPE — codex phasedesign1 P1, overruled with evidence)
+  `load_tasks` reads `due`/`scheduled` via `fm.get("due") or ""` (vault_tasks.py:157-158) WITHOUT
+  the `_scalar()` list->scalar coercion that `status`/`priority`/`project`/`area` use. An INLINE
+  bracket `due: [2026-01-01]` parses (via `_parse_scalar`) to a LIST, so `task["due"]` is a list;
+  `bucket()`'s prio-sort key `(t["priority"], t["due"] or "9999")` then compares a list vs a string
+  when two same-priority tasks land in the same bucket -> `TypeError: '<' not supported between
+  'str' and 'list'` -> crashes standup/harvest. REPRODUCED on unmodified main (cf43393):
+  `bucket([{...due:["2026-01-01"]...},{...due:"someday-not-a-date"...}])` raises the TypeError.
+  This is entirely the inline-bracket path (`_parse_scalar`), UNCHANGED by the block-list fix;
+  the block-list change adds NO new list-`due` path (`due` not in `_LIST_KEYS`, so `due:`+`- x`
+  yields `""`). Fix (separate, ~2 lines): coerce `due`/`scheduled` through `_scalar()` in
+  load_tasks like the other scalar fields (and/or make bucket's sort key list-safe). Not fixed
+  here — distinct bug, orthogonal to block-style list parsing (this run's premise, vault_tasks.py:94).
+
+## slop (deferred to finalize)
+- mission-control/bin/vault_tasks.py:71 — _LIST_KEYS comment partly restates the code
+- mission-control/bin/vault_tasks.py:112 — the 4-line `- ` branch comment partly restates the loop logic
+- tests/mc/test_vault_tasks.py:1 — module docstring may drift from added block-list tests
+- tests/mc/test_vault_tasks.py:63 — potential redundant/near-duplicate assertion (codex-flagged)
+- tests/mc/test_vault_tasks.py:83 — potential redundant/near-duplicate assertion (codex-flagged)
+- tests/mc/test_vault_tasks.py:284 — potential copy-paste test scaffolding (codex-flagged)
+- tests/mc/test_vault_tasks.py:417 — potential copy-paste test scaffolding (codex-flagged)
+- tests/mc/test_vault_tasks.py:444 — potential copy-paste test scaffolding (codex-flagged)
+- tests/mc/test_vault_tasks.py — inline '# pre-fix bug:' history-narration comments in round-1 harden tests (redundant narration)
+- tests/mc/test_vault_tasks.py — a round-1 harden test comment restates the assertion (redundant comment)
+
+## finalize — adjudicated codex de-slop suggestions (non-blocking, not applied)
+- tests/mc/test_vault_tasks.py:1 — module docstring ("Slice 1.2 — … AC 1,2,3,4 + edge #2") is
+  stale/under-describes the file's block-list coverage. PRE-EXISTING (outside this run's diff
+  lines) → routed per finalize scope-creep gate (non-P1 improvement outside the diff), not fixed
+  in-run. A future touch of this file could refresh the docstring.
+- tests/mc/test_vault_tasks.py:229-230,439,502 — codex flagged the inline `# pre-fix bug: [...]`
+  tail comments on the regression-test assertions as redundant. Kept: they document the exact
+  pre-fix value each guard test asserts (regression provenance / the non-obvious "why"), which
+  Claude assessed as keep-worthy. Taste-note only; no behavior impact.

@@ -5433,3 +5433,204 @@ variant): the "pathological pre-existing node at a helper-owned scratch path" me
 defense-in-depth vs fs tampering, NOT reachable; load-bearing correctness = the reachable behavioral
 paths + mutation-verified tests. Further same-class findings pre-overruled → followups. Kept the r2
 parent-dir fix (committed, green, harmless class-completion; reverting = churn). Surface at Gate B.
+
+
+## /drive run mc-vault-blocklist-20260710-092624 — 2026-07-10T05:33:12Z
+
+# Decisions — mc-vault-blocklist-20260710-092624
+
+
+## PLAN-stage decisions (mc-vault-blocklist)
+- Restrict block-list accumulation to empty-valued keys only (header form); keys with a scalar/inline value never absorb following `- ` lines. Additive, backward-compatible. Classification: Taste
+- Block-list items reuse inline-list item coercion (strip `- ` marker, then strip quotes) so `- "a"` == `[ "a" ]`. Classification: Taste
+- Only `- ` marked lines accumulate; plain colon-less lines stay skipped; a new `key:` line rebinds the active target — preserves the two pinned SKIP tests and inline/scalar behavior. Classification: Mechanical
+- Blank/comment lines inside a block are skipped as today and do not terminate an active block. Classification: Taste
+- Scope: ONE phase, 2 touch-points (`vault_tasks.py:_parse_frontmatter` + `tests/mc/test_vault_tasks.py`), ~10-15 production SLOC. No change to `load_tasks`/`_parse_scalar`. Classification: Mechanical
+
+## D1 — Right-size the plan-stage reviews (autoplan light + one dual-voice design review)
+Classification: Mechanical
+The change is a single additive ~15-SLOC edit to one function (`_parse_frontmatter`) + tests.
+Running autoplan's full 4-phase per-phase dual-voice gauntlet AND a separate /drive-review
+design dual-voice over the same 40-line design.md is review-churn (OPERATING: "review-churn
+and over-design are the same failure"), not added correctness signal (identical content).
+Decision: autoplan runs as a proportional advisory pass (premise/scope/eng/dx assessed
+honestly inline; CEO+DX near-vacuous for an internal parser fix with no product-strategy or
+developer-facing surface); the load-bearing adversarial dual-voice (Claude reviewer + codex)
+is the `/drive-review design` step, which also produces the SHA-bound plan-gate artifacts
+(review-design-N.md + codex-review-design.md). One thorough dual-voice pass, not two.
+
+## D2 — autoplan advisory verdict (proportional)
+Classification: Mechanical
+- Premise (CEO gate): ACCEPTED — a pre-confirmed, hand-verified TODO P2 bug (block-style YAML
+  frontmatter lists silently dropped → mc standup mislabels a blocked task "Ready to start now").
+  Right problem; no reframing yields more impact.
+- Scope (P1 completeness / P2 boil-lakes): ONE phase, additive, disjoint from the in-flight
+  R1/R3 run. In-blast-radius siblings (tags block-lists) folded in. No expansion beyond depends_on/tags.
+- Design lens: N/A — no UI scope.
+- Eng lens (load-bearing): approach sound — accumulation restricted to empty-valued keys keeps
+  the change additive and preserves the two pinned colon-less SKIP tests + inline-list/scalar tests.
+  One genuine design choice deferred to detailed design (indentation strictness for continuation
+  items). Test coverage plan is adequate (block depends_on/tags, empty header, quoted items,
+  standup-level regression). No P1.
+- DX lens: mission-control is a dev tool, but THIS diff adds no developer-facing surface (no new
+  command/flag/error-message/API) — it is internal parser correctness. DX review N/A with reason.
+Verdict: no P1; no User-Challenge; no Taste decision requiring a human. Proceed to dual-voice
+design review.
+
+## D3 — Round-1 design-review FINDINGS resolved (P1 orphan-skip + fold in empty-tags fix)
+Classification: Mechanical (P1) + Taste/boil-lakes (P2)
+Round-1 dual-voice design review: codex 0 P1 / 1 P2, Claude 1 P1 / 1 P2.
+- P1 (Claude, MAJOR): design under-specified the orphan `- ` line (list marker with no active
+  empty-valued key). An unguarded append would crash all mc (traceback outside load_tasks's
+  try/except). RESOLUTION: added a Decision — orphan `- ` lines are skipped; the append is
+  guarded on an active empty-valued key (never .append on None/non-list). Design now specifies it.
+- P2 (BOTH voices): empty `tags:` yields `""` not `[]` (load_tasks coerces empty depends_on->[] at
+  :159 but not tags at :172). RESOLUTION: folded the fix into scope (change :172 to
+  `fm.get("tags") or []`) — in blast radius, ~1 line, both voices flagged it, makes
+  "empty block header → []" true for both keys. Moved from followups into scope.
+- Resolved the sole open question (indentation strictness) → indentation-agnostic continuation.
+
+## D4 — Round-2 design review CONVERGED; non-blocking P2/P3 carried to detailed design
+Classification: Mechanical
+Round 2 (revised design): codex 0 P1 / 1 P2 / 1 P3; Claude 0 P1 / 3 P3. CONVERGED (no open P1).
+Non-blocking items to honor in /drive-design + implement (logged, not blocking Gate A):
+- [P2, both voices] PRECEDENCE: the `- ` continuation check MUST run BEFORE the generic
+  `":" in line` branch, else a colon-bearing block item (`tags:\n  - "a:b"`, `- k:v`) is
+  misparsed as a `key: value` line. Pinned into design Decisions.
+- [P3] Skip an empty block item (a bare `- ` with no content) rather than appending "".
+- [P3] Consolidate the duplicate `## Out of scope` sections (doc-hygiene; a round-1-edit artifact).
+No 3rd review round (P2/P3 incorporation of the reviewers' own suggestions is not a re-convergence
+trigger; avoids review-churn per OPERATING).
+
+## D5 — Continue in-session at Seam A (skip the proactive post-Gate-A context-clear handoff)
+Classification: Taste (proportionality)
+The spec fires a deterministic Seam-A handoff on Gate-A approval so Execute starts in a fresh
+session. That is proactive context-hygiene, NOT a correctness gate — durable run state lives in
+$RUN_DIR, and the class-A context-pressure rebirth is the safety net if the window fills. For a
+~15-SLOC one-file fix in a short, un-pressured session, a context-clear handoff only adds a
+manual `/drive <runId>` paste-stall (the latency the efficiency audit flags as the #1 waste).
+Decision: continue Execute in this session; if context pressure arises later, the class-A rebirth
+handles it. Gate B (the outward-action gate) is unaffected and remains human.
+
+## D6 — Block-item coercion is the inline per-item transform, not `_parse_scalar`
+Classification: Mechanical (correctness)
+Block items are coerced with `stripped[2:].strip().strip('"').strip("'")` — exactly the
+transform inline-list items already use (`_parse_scalar` line 82) — NOT `_parse_scalar(item)`.
+`_parse_scalar` bracket-detects, so a wikilink item `[[X]]` would wrongly become the nested
+list `["[X]"]` and `- [a,b]` a nested list. Mirroring the inline transform makes `- "a"` ==
+`[ "a" ]`, keeps every item a `str`, and sidesteps nested-list ambiguity (out of scope).
+
+## D7 — Empty-item skip tested on the coerced item
+Classification: Taste
+`if item:` (post quote-strip) skips both a bare `- ` and an explicitly-empty `- ""`, rather
+than appending `""`. Matches the PLAN P3 decision (skip empty block items).
+
+## D8 — Only a real `key:` line rebinds `active`; blank/comment/colon-less lines do not
+Classification: Taste
+`active` is armed only by an empty-valued `key:` line (`parsed == ""`) and disarmed only by a
+non-empty `key:` line. Blank, comment, and plain colon-less lines `continue` without touching
+`active`, so a block survives interleaved/stray lines. The two pinned SKIP tests are unaffected
+(`active` is `None` throughout them).
+
+## D9 — `active` detection uses `parsed == ""` (the `_parse_scalar` result)
+Classification: Mechanical
+Only the bare-header `key:` form (parses to `""`) becomes an accumulation target. An inline
+empty list `tags: []` parses to `[]` (`[] != ""`), so it disarms — inline empty lists never
+absorb trailing `- ` lines.
+
+## D10 — List promotion is the crash guard
+Classification: Mechanical (correctness)
+Before the first append, `if not isinstance(fm.get(active), list): fm[active] = []` promotes
+the stored `""` header to a list. Combined with the `active is not None` guard, the append can
+never run against a `None`/`str` target — closing the crash-all-mc path (`_parse_frontmatter`
+is called outside `load_tasks`'s try/except). Zero-item headers keep the stored `""`, which
+`load_tasks` coerces to `[]`.
+
+## D11 — Restrict block-list accumulation to the list-valued keys {depends_on, tags} (closes codex P1)
+Classification: Mechanical (correctness) — SUPERSEDES the "generic to any empty-valued key" part of D8/D9.
+Phasedesign round-1 dual voice: codex MAJOR (P1), Claude MINOR (P2) — same issue. Arming block
+accumulation on ANY empty-valued key means a malformed scalar-key block corrupts or crashes:
+- `status:` + `- done` → fm["status"]=["done"] → load_tasks `_scalar(["done"],"todo")` → "done"
+  (SILENT corruption; changes bucket()/classify_ready). This is a REGRESSION vs pre-change
+  behavior (old: `- done` skipped → status defaults "todo").
+- `due:`/`scheduled:` + `- x` → a list-valued `due` → `bucket()` prio-sort `(priority, list)`
+  vs `(priority, "9999")` → TypeError comparing list vs str → crash-all-standup.
+Verified against the real code (vault_tasks.py `_scalar`:86, load_tasks status/due:167,157,
+bucket prio-sort:200). RESOLUTION: introduce module constant `_LIST_KEYS = frozenset(("depends_on",
+"tags"))` and arm `active` ONLY when `parsed == "" and key in _LIST_KEYS`. A `- ` under any
+scalar key stays a skipped orphan → the scalar key is byte-for-byte unaffected. This makes the
+whole change additive: only depends_on/tags gain block-list support. New AC8 guards it (RED vs
+arm-on-any-key). Note: adding a future list-valued key needs a one-token `_LIST_KEYS` update —
+acceptable given only these two keys are list-valued in the whole schema.
+
+## D12 — Overrule codex phasedesign1 round-2 P1 as pre-existing + out-of-scope (with evidence)
+Classification: Mechanical (adversarial-BLOCKING adjudication)
+codex round 2 confirmed the round-1 P1 (block-list arming on any empty key) CLOSED by _LIST_KEYS,
+but raised a NEW MAJOR (P1): a `due:[x]` inline bracket -> list -> `bucket()` `'str' < 'list'`
+TypeError. REPRODUCED against unmodified main: real crash. BUT it is via the pre-existing
+`_parse_scalar` inline-bracket path (UNCHANGED by this run), and the `_LIST_KEYS` restriction means
+the block-style change adds NO new list-`due` path (`due:`+`- x` -> "" on main AND post-change).
+Not introduced, not worsened, orthogonal to block-style list parsing. Overruled as out-of-scope,
+routed to followups.md with the repro. Claude reviewer round-2 = CONVERGED (0 P1). Combined verdict:
+CONVERGED (the sole codex P1 is a documented, evidenced overrule per OPERATING "refuted-at-integration
+-> overrule WITH evidence, never silently drop"). AC8 remains correctly scoped to BLOCK-STYLE scalar
+keys; the design's Out-of-scope now names the pre-existing inline-bracket crash explicitly.
+
+## D13 — INCIDENT: implementer subagent ran in the MAIN repo, committed to main; recovered
+Classification: Mechanical (process failure + recovery)
+The Agent tool does NOT set the subagent's cwd from the prompt — a subagent inherits the
+main-repo cwd. The slice-1.1 implementer, told "cwd IS the worktree", edited relative paths
+against the MAIN repo and did `git add <files> && git commit` on `main`, creating commit
+d97eaeb ("feat(mc): parse block-style YAML lists...") and advancing the user's main branch
+(cf43393 -> d97eaeb). The content was correct (mutation-verified, 157 passed), just on the
+wrong branch. RECOVERY: (1) `git reset --hard d97eaeb` in the slice worktree -> slice branch
+now carries the commit (1 commit past base, both owned files); (2) `git reset --hard cf43393`
+on main -> restored to origin/main (d97eaeb never pushed), clean, _LIST_KEYS absent; d97eaeb
+stays reachable via the slice branch. Independently re-verified 157 passed on the slice tree.
+FIX FORWARD (applies to every worktree-scoped subagent — implement/harden/finalize): the
+dispatch MUST instruct the subagent to `cd "<abs-worktree>"` as its FIRST action and CONFIRM
+`git rev-parse --abbrev-ref HEAD` == the expected branch BEFORE editing, and use the absolute
+worktree path for any Edit/Write. A plain "your cwd is the worktree" sentence is NOT enough.
+
+## D14 — Slice 1.1 review CONVERGED; benign off-schema P2 noted (no action)
+Classification: Mechanical
+Both voices 0 P1. codex sole P2 (MINOR): a frontmatter line `- foo: bar` with NO active list key
+is now SKIPPED (the `- ` branch precedes the colon partition), whereas before it created a junk
+key `"- foo"`. This is off-schema garbage (no legitimate frontmatter key starts with `- `); the
+new behavior (drop it) is at worst harmless and arguably cleaner. No pinned test covers it. No
+action. Claude sole P3 (`tags: ""` explicit-quoted-empty arms accumulation — harmless list-key
+semantics) — no action.
+
+## D15 — Harden round 1: fix codex P1 (quoted-empty arming) + add P2 coverage
+Classification: Mechanical (correctness)
+Harden audit: Claude 0 P1 / 3 P2 (test gaps); codex 1 P1 / 3 P2. codex P1 CONFIRMED by repro:
+a QUOTED-empty header `tags: ""` / `depends_on: ''` parses (via _parse_scalar quote-strip) to ""
+and ARMS block accumulation, absorbing following `- x` items -> `["x"]`, while base returned ""
+and dropped them. Breaks the "empty-header-only / strictly-additive" contract (D9). FIX: arm on
+the RAW value being bare (`val.strip() == ""`), not the parsed value (`parsed == ""`), so a
+quoted-empty scalar no longer arms (bare `tags:` still does). + a regression test (RED against
+current). P2 test gaps added: empty-item-skip false branch; disarm/rebind across two NON-empty
+blocks (depends_on->tags) and `tags:[a,b]`+`- c`; CRLF-inside-a-block. Slop (8) persisted to
+followups (deferred to finalize), not fixed here.
+
+## D16 — Harden round 2 (final fix round): add last 2 edge-case coverage tests
+Classification: Mechanical
+Round-2 confirming audit: 0 P1 (both voices confirm the round-1 arming fix correct, logic clean,
+suite green). 2 cheap in-blast-radius P2 test gaps remain (the last of the 8 design edge cases):
+(1) [Claude] a blank/comment line INSIDE an active block does not disarm (edge case 8, D8);
+(2) [codex] a non-empty SCALAR value under a list key (`tags: foo` + `- c`) disarms (same
+`val.strip() != ""` branch as the existing inline-list-disarm test, but a distinct input shape).
+Per harden Step 2 (cheap + in blast radius → fix), applying both in ONE final fix round. This is
+BOUNDED (the 8 edge cases are finite; these are the last). If a round-3 audit still surfaces new
+cheap P2s, they route to followups (no treadmill). 2 new slop notes persisted to followups.
+
+## D17 — Finalize CONVERGED (clean confirming round; codex de-slop adjudicated to followups)
+Classification: Mechanical (voice-disagreement adjudication)
+Finalize dual voice: Claude 0 P1 / 0 applicable-slop / 0 ARCH (CONVERGED); codex 0 P1 / 2 cheap
+de-slop P2 / 0 ARCH. Adjudicated the 2 codex de-slop items as NON-applicable with evidence:
+(1) stale test docstring is PRE-EXISTING + outside the run-diff LINES → finalize scope-creep gate
+routes it to followups (not fixed in-run); (2) the `# pre-fix bug:` regression-provenance comments
+are the non-obvious "why" (OPERATING: comments keep the why), Claude assessed keep-worthy — not
+slop. Applicable de-slop set empty → CONVERGED (AppliedEdits: no), no fix round, finalizeRound=0.
+review-finalize-1.md binds featureBranch tip 8377e03 (== tip, R..tip empty) — the terminal ship
+artifact. No ARCH findings → no finalize-todo.md (no TODO promotion at ship).
