@@ -984,6 +984,39 @@ def test_ac5_auto_trigger_noop_after_resume_cleanup(fake_home):
     assert json.loads((rd / "state.json").read_text(encoding="utf-8"))["sessionId"] == SID_IN, "no clobber"
 
 
+def test_ac5_auto_trigger_noop_on_stale_cid_during_subsequent_rebirth(fake_home):
+    """AC5 (CID clause, mutation cover): a STALE auto-trigger from rebirth N arriving DURING a
+    SUBSEQUENT rebirth. Here `waiting == "rebirth"` is TRUE (a later rebirth is in flight) but
+    `state.pendingCID` has ADVANCED to the new rebirth's CID, while the late trigger still carries
+    the OLD `CID_N`. The § Run setup & resume gate `pendingCID == CID_N AND waiting == "rebirth"`
+    must therefore be a NO-OP — ONLY the `pendingCID == CID_N` clause can reject it (waiting is
+    "rebirth"), so this ISOLATES the CID clause the both-true/both-false AC5 test cannot reach.
+    MUTATION-VERIFIED: dropping `pendingCID == cid_n` from `_auto_trigger_proceeds` reds the stale
+    assertion below (a stale trigger would then reconcile the WRONG checkpoint)."""
+    repo, rd = mid_run_fixture(fake_home, rebirth_pending=True)
+    assert _perform_handoff(repo, rd)[0]
+    st = json.loads((rd / "state.json").read_text(encoding="utf-8"))
+    stale_cid_n = st["pendingCID"]  # rebirth N's CID — the late auto-trigger still carries THIS
+
+    # A SUBSEQUENT rebirth re-checkpointed: `waiting` stays "rebirth", but `pendingCID` ADVANCES to
+    # a new, DISTINCT CID (the gate reads pendingCID as an opaque token — same on-disk shape the
+    # real subsequent handoff would leave; consistent with the cleanup-write style above).
+    current_cid = "deadbeefcafe0000deadbeefcafe0000"
+    assert current_cid != stale_cid_n
+    st["pendingCID"] = current_cid
+    st["waiting"] = "rebirth"
+    _atomic_write_json(rd / "state.json", st)
+
+    # Control: the CURRENT rebirth's trigger PASSES (waiting==rebirth AND pendingCID==current_cid) —
+    # proving the mirror is not constant-False and `waiting=="rebirth"` genuinely holds here.
+    assert _auto_trigger_proceeds(rd, current_cid) is True, \
+        "control: the current rebirth's trigger passes the CID gate"
+    # Load-bearing: the STALE CID_N trigger is a NO-OP. `waiting=="rebirth"` is TRUE, so ONLY the
+    # `pendingCID == CID_N` clause can reject it — dropping that clause REDS this assertion.
+    assert _auto_trigger_proceeds(rd, stale_cid_n) is False, \
+        "a stale auto-trigger (old CID_N) must NOT reconcile the SUBSEQUENT rebirth's checkpoint"
+
+
 # =========================================================================== #
 # AC15 — CID per-handoff uniqueness via the nonce (shasum path + shasum-absent fallback).
 # =========================================================================== #

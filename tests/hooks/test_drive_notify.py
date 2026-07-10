@@ -127,6 +127,66 @@ def test_dedup_repeat_waiting_tip_no_second_send(tmp_path):
     assert len(_markers(rd)) == 1, "the dedup marker is single per (waiting,tip)"
 
 
+def _race(tmp_path, script, *, n=40):
+    """Fire N racers for one (waiting,tip) at `script` behind a start-barrier and return
+    (deliveries, markers). Deliveries are counted race-free by a per-send unique file
+    (`$$` = the transport sh's PID) — the pre-fix `mv -f` overwrites the SINGLE marker path,
+    so markers can't be counted; sends must."""
+    tag = script.stem
+    rd = tmp_path / f"rd-{tag}"; rd.mkdir()
+    deliv = tmp_path / f"deliv-{tag}"; deliv.mkdir()
+    barrier = tmp_path / f"go-{tag}"
+    env = {**os.environ}
+    env.pop("RUN_DIR", None)
+    env["DRIVE_NOTIFY_CMD"] = f"cat > {deliv}/d.$$"   # $$ expanded by the transport sh -> unique
+    env["DRIVE_NOTIFY_TIMEOUT"] = "20"
+    args = ["--run-dir", str(rd), "--waiting", "gateB", "--tip", "deadbeef", "--message", "m"]
+    # Each racer spins on the barrier file then execs the script — releasing all N together.
+    wrapper = f'while [ ! -e "{barrier}" ]; do :; done; exec bash "{script}" "$@"'
+    procs = [subprocess.Popen(["bash", "-c", wrapper, "notify", *args], env=env,
+                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+             for _ in range(n)]
+    time.sleep(0.4)      # let all N reach the spin-wait
+    barrier.touch()      # release the herd
+    for p in procs:
+        p.wait(timeout=30)
+    # Wait for the (backgrounded) send(s) to land, then let any stragglers settle.
+    end = time.time() + 5
+    while time.time() < end and not any(deliv.iterdir()):
+        time.sleep(0.03)
+    time.sleep(1.0)
+    return len(list(deliv.iterdir())), len(_markers(rd))
+
+
+def test_concurrent_same_waiting_tip_exactly_one_send(tmp_path):
+    """AC8 CONCURRENCY: N racers for one (waiting,tip) must yield EXACTLY ONE delivery — the
+    ATOMIC O_EXCL marker claim admits a single sender; every other racer loses the claim and
+    exits 0 WITHOUT sending.
+
+    Mutation guard (DETERMINISTIC): a RACY variant that restores the old check-then-create dedup
+    WITH a widened window double-sends under the SAME harness — proving (a) the harness DETECTS a
+    double-send (so the exactly-ONE assertion is not vacuous) and (b) the atomic claim is the
+    load-bearing difference. The shipped narrow-window TOCTOU is timing-dependent to hit black-box,
+    so the variant makes the window observable — exactly how the audit reproduced it (injected
+    sleep). The `sleep 0.3` presence check reds if the atomic-claim anchor is ever reverted."""
+    # Real (atomic) script: exactly ONE delivery, one marker.
+    sends, marks = _race(tmp_path, NOTIFY)
+    assert sends == 1, f"the atomic claim must admit exactly ONE sender; got {sends}"
+    assert marks == 1, "a single dedup marker for the (waiting,tip)"
+
+    # Racy variant: check-then-create with a WIDENED window -> the TOCTOU manifests -> many sends.
+    racy_src = NOTIFY.read_text(encoding="utf-8").replace(
+        '( set -o noclobber; : > "$MARKER" ) 2>/dev/null || exit 0',
+        '[ -e "$MARKER" ] && exit 0\n  sleep 0.3\n  : > "$MARKER"')
+    assert "sleep 0.3" in racy_src, \
+        "the atomic-claim anchor must be present to build the racy variant (fix reverted?)"
+    racy = tmp_path / "drive-notify-racy.sh"
+    racy.write_text(racy_src, encoding="utf-8")
+    racy_sends, _ = _race(tmp_path, racy)
+    assert racy_sends > 1, \
+        f"the racy check-then-create pattern MUST double-send under concurrency; got {racy_sends}"
+
+
 def test_sanitize_colliding_distinct_waitings_get_distinct_markers(tmp_path):
     rd = tmp_path / "rd"; rd.mkdir()
     # `stop:a b` and `stop:a/b` both SANITIZE to `stop_a_b` but the sha256 of the RAW waiting

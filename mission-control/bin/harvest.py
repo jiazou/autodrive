@@ -259,6 +259,8 @@ def drive_waiting_runs():
                 st = json.load(fh)
         except Exception:
             continue  # fail-open per file — an unreadable/corrupt run never breaks harvest
+        if not isinstance(st, dict):
+            continue  # a PARSEABLE but non-object state.json (`[]`/`42`/`"x"`) — skip, never crash
         w = st.get("waiting")
         if not isinstance(w, str) or not _DRIVE_WAITING_RE.match(w):
             continue

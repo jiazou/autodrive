@@ -66,6 +66,21 @@ def test_drive_waiting_runs_skips_non_str_and_unreadable(mc_env, monkeypatch, tm
     assert {r["runId"] for r in got} == {"run-ok"}
 
 
+def test_drive_waiting_runs_skips_non_object_state_json(mc_env, monkeypatch, tmp_path):
+    """A PARSEABLE but NON-OBJECT state.json (`[]`, `42`, `"x"`) must be SKIPPED, not crash
+    drive_waiting_runs(). json.load succeeds on these, so the per-file try/except (which wraps
+    only open()/json.load) does NOT catch them — the `isinstance(st, dict)` guard (mirroring
+    drive-stop-hook.py) keeps the per-file fail-open. Reds pre-guard: `st.get("waiting")` raises
+    AttributeError on a list/int/str and aborts the WHOLE scan."""
+    runs = _runs_dir(mc_env, monkeypatch, tmp_path)
+    _write_run(runs, "run-list", waiting=None, raw="[]")       # parseable list -> skipped
+    _write_run(runs, "run-int", waiting=None, raw="42")        # parseable int  -> skipped
+    _write_run(runs, "run-str", waiting=None, raw='"gateB"')   # parseable str  -> skipped
+    _write_run(runs, "run-ok", waiting="gateB")
+    got = mc_env.harvest.drive_waiting_runs()  # must NOT raise
+    assert {r["runId"] for r in got} == {"run-ok"}
+
+
 def test_drive_waiting_runs_empty_when_no_runs(mc_env, monkeypatch, tmp_path):
     _runs_dir(mc_env, monkeypatch, tmp_path)
     assert mc_env.harvest.drive_waiting_runs() == []

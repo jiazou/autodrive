@@ -60,11 +60,12 @@ if command -v shasum >/dev/null 2>&1; then
 fi
 if [ -n "$hash" ]; then
   MARKER="$RUN_DIR/notified-${sane}-${hash}-${stip}.marker"
-  # Already notified this (waiting,tip) → exit 0, NO send.
-  [ -e "$MARKER" ] && exit 0
-  # Create the marker (tmp + mv) BEFORE the send, so a concurrent re-fire dedups.
-  tmp="$MARKER.tmp.$$"
-  { : > "$tmp" && mv -f "$tmp" "$MARKER"; } 2>/dev/null || rm -f "$tmp" 2>/dev/null || true
+  # ATOMIC create-only claim (O_EXCL via `noclobber`): the FIRST invocation for this
+  # (waiting,tip) creates the marker and proceeds to send; a claim that FAILS means the
+  # marker already exists → already notified → exit 0, NO send. This closes the old
+  # check-then-`mv` TOCTOU where two concurrent racers both saw the marker absent and BOTH
+  # sent (AC8). The claim failure is a normal dedup-hit, NOT an error — still exit 0.
+  ( set -o noclobber; : > "$MARKER" ) 2>/dev/null || exit 0
 fi
 
 # 4. Send: BACKGROUNDED, timeout-bounded, output discarded. Message on STDIN (never interpolated).
