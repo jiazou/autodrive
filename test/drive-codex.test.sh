@@ -802,7 +802,7 @@ mkfake fake_stdin_banner \
   'case "$1" in doctor) echo ok; exit 0 ;; esac' \
   'data="$(cat)"' \
   'if [ -n "$data" ]; then printf "Reading additional input from stdin...\n"; exit 0; fi' \
-  'printf "reviewing\nMINOR: nit\ndone\n"; exit 0'
+  'printf "Reading additional input from stdin...\nreviewing\nMINOR: nit\ndone\n"; exit 0'
 
 # always banner-only regardless of stdin (the pure OK-gate degeneracy).
 mkfake fake_banner_only \
@@ -856,6 +856,22 @@ mkfake fake_banner_malformed_esc \
   'case "$1" in doctor) echo ok; exit 0 ;; esac' \
   'printf "\033]0;untermtitle Reading additional input from stdin...\033[0;1;2\n"; exit 0'
 
+# DEGENERATE whitespace-only rc0 log (no banner, no content) — the documented "whitespace-only" lane;
+# must fail closed as degenerate-log, not slip an OK.
+mkfake fake_whitespace_only \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "   \n\t\n  \n"; exit 0'
+
+# counter-driven: STALL on exec call 1 (killed), then rc0 BANNER-ONLY on retry. The killed-latch
+# (round_was_killed==1) must WIN — the degenerate-arm is gated on round_was_killed==0, so a post-kill
+# banner-only rc0 routes to CODEX_KILLED_TIMEOUT, NOT degenerate-log/CODEX_UNAVAILABLE.
+mkfake fake_stall_then_banner \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'n=$(cat "$CNT" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$CNT"' \
+  'if [ "$n" = 1 ]; then printf "start\n"; sleep 60; else printf "Reading additional input from stdin...\n"; exit 0; fi'
+
 # a REAL review whose text merely MENTIONS an escape as a literal backslash string — must stay OK
 # (no ACTUAL ESC byte, so nothing is stripped).
 mkfake fake_literal_esc_real \
@@ -872,9 +888,12 @@ OUT="$(timeout 30 env DRIVE_CODEX_CMD="$BIN/fake_stdin_banner" "$HELPER" --mode 
    --marker "$WORK/codex-review-si1.md" --prompt-file "$PROMPT" --poll-secs 0.05 \
    < "$WORK/openstdin.txt" 2>/dev/null)"; RC=$?
 if [ "$RC" = 124 ]; then fail "FIX-1 no hang on inherited open stdin (timeout hit)"; else pass "FIX-1 no hang on inherited open stdin (bounded completion)"; fi
-check_contains "FIX-1 inherited open stdin ⇒ raw log holds the REAL review (redirect worked)" "$(cat "$WORK/codex-raw-si1.log" 2>/dev/null)" "MINOR"
-check_absent   "FIX-1 inherited open stdin ⇒ raw log is NOT the stdin banner" "$(cat "$WORK/codex-raw-si1.log" 2>/dev/null)" "$BANNER"
-check "FIX-1 inherited open stdin ⇒ token OK (real review)" "$OUT" "OK"
+# The healthy /dev/null path emits "banner + review" (real codex prints the banner even with
+# < /dev/null — non-TTY — then PROCEEDS to the review); the DEGENERATE inherited-stdin path emits the
+# banner ALONE. So the load-bearing FIX-1 assertion is that the raw log holds the REAL review CONTENT
+# (present ONLY when the redirect let codex proceed): RED pre-fix (raw is banner-only, no "MINOR").
+check_contains "FIX-1 inherited open stdin ⇒ raw log holds the REAL review (redirect let codex proceed)" "$(cat "$WORK/codex-raw-si1.log" 2>/dev/null)" "MINOR"
+check "FIX-1 inherited open stdin ⇒ token OK (real review, not banner-only)" "$OUT" "OK"
 
 # --- FIX-2 (token; the OK-gate degeneracy guard). A banner-only raw log must fail CLOSED, never OK. ---
 disp fake_banner_only bo1 slice "$WORK/codex-review-bo1.md" --poll-secs 0.05
@@ -906,6 +925,14 @@ check "FIX-2 precision: OSC-title-prefixed REAL review ⇒ OK (strip removes tit
 # malformed/unterminated escapes (the whole class) fail closed:
 disp fake_banner_malformed_esc bm1 slice "$WORK/codex-review-bm1.md" --poll-secs 0.05
 check "FIX-2 robustness: banner+malformed CSI+unterminated OSC ⇒ CODEX_UNAVAILABLE (class-complete)" "$OUT" "CODEX_UNAVAILABLE"
+# whitespace-only rc0 log ⇒ degenerate-log (the documented lane), never a false OK:
+disp fake_whitespace_only ws1 slice "$WORK/codex-review-ws1.md" --poll-secs 0.05
+check "FIX-2: whitespace-only rc0 log ⇒ CODEX_UNAVAILABLE (degenerate-log, no false OK)" "$OUT" "CODEX_UNAVAILABLE"
+check_contains "FIX-2: whitespace-only ⇒ honest degenerate-log cause" "$(cat "$WORK/codex-review-ws1.md" 2>/dev/null)" "degenerate-log"
+# killed-latch WINS over the degenerate-arm: stall-kill on attempt 1, rc0 banner-only on retry ⇒ KILLED:
+CNTK="$WORK/cnt_klatch"; : > "$CNTK"
+CNT="$CNTK" disp fake_stall_then_banner kl1 slice "$WORK/codex-review-kl1.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100
+check "FIX-2: post-stall-kill rc0 banner-only ⇒ CODEX_KILLED_TIMEOUT (killed-latch beats degenerate-arm)" "$OUT" "CODEX_KILLED_TIMEOUT"
 # a review that merely QUOTES an escape as a literal string (no actual ESC byte) ⇒ OK (not stripped):
 disp fake_literal_esc_real le1 slice "$WORK/codex-review-le1.md" --poll-secs 0.05
 check "FIX-2 precision: review quoting a literal \\033[0m string ⇒ OK (only real ESC bytes strip)" "$OUT" "OK"
