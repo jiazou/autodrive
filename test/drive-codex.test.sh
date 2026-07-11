@@ -836,6 +836,33 @@ mkfake fake_colored_review \
   'case "$1" in doctor) echo ok; exit 0 ;; esac' \
   'printf "\033[31mMAJOR\033[0m: a real bug at x.py:10\n"; exit 0'
 
+# DEGENERATE banner wrapped in an OSC escape (ESC ] … BEL) — OSC embeds ARBITRARY text (a title), the
+# escape class that a CSI-only strip leaks. Must fail closed.
+mkfake fake_banner_osc \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033]0;window-title\aReading additional input from stdin...\n"; exit 0'
+
+# a REAL review carrying an OSC title prefix — the OSC strip must remove the title but KEEP the review.
+mkfake fake_osc_real \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033]0;title\aMAJOR: a genuine finding at y.py:5\n"; exit 0'
+
+# DEGENERATE banner + a MALFORMED CSI (params, no final byte) and an UNTERMINATED OSC — the whole
+# escape class (malformed/unterminated included) must fail closed, else the param/title residue leaks.
+mkfake fake_banner_malformed_esc \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033]0;untermtitle Reading additional input from stdin...\033[0;1;2\n"; exit 0'
+
+# a REAL review whose text merely MENTIONS an escape as a literal backslash string — must stay OK
+# (no ACTUAL ESC byte, so nothing is stripped).
+mkfake fake_literal_esc_real \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "NIT: the code emits a literal \\\\033[0m sequence at z.py:9\n"; exit 0'
+
 # --- FIX-1 (raw-log CONTENT; a token-only assertion is VACUOUS — OK pre AND post). The helper is
 # invoked with an INHERITED OPEN-FILE stdin (content); pre-fix the backgrounded exec inherits it →
 # banner-only raw log; post-fix (< /dev/null) → real review. RED pre-fix: raw lacks "MINOR". ---
@@ -868,9 +895,20 @@ check "FIX-2 robustness: banner+hidden-byte (NUL) ⇒ CODEX_UNAVAILABLE (no fail
 check "FIX-2 robustness: banner+NUL ⇒ exit 1" "$RC" "1"
 disp fake_banner_ansi ba1 slice "$WORK/codex-review-ba1.md" --poll-secs 0.05
 check "FIX-2 robustness: banner+ANSI escapes ⇒ CODEX_UNAVAILABLE (residue not content)" "$OUT" "CODEX_UNAVAILABLE"
-# guard the ANSI strip does NOT over-strip a real colored review into a false degenerate:
+# OSC embeds arbitrary text — the whole-class strip must fail it closed (a CSI-only strip leaked here):
+disp fake_banner_osc bo2 slice "$WORK/codex-review-bo2.md" --poll-secs 0.05
+check "FIX-2 robustness: banner+OSC escape ⇒ CODEX_UNAVAILABLE (arbitrary-text escape closed)" "$OUT" "CODEX_UNAVAILABLE"
+# guard the escape strip does NOT over-strip real reviews (CSI-colored, OSC-title-prefixed) into false degenerates:
 disp fake_colored_review cr1 slice "$WORK/codex-review-cr1.md" --poll-secs 0.05
 check "FIX-2 precision: ANSI-colored REAL review ⇒ OK (strip removes color, keeps content)" "$OUT" "OK"
+disp fake_osc_real or1 slice "$WORK/codex-review-or1.md" --poll-secs 0.05
+check "FIX-2 precision: OSC-title-prefixed REAL review ⇒ OK (strip removes title, keeps content)" "$OUT" "OK"
+# malformed/unterminated escapes (the whole class) fail closed:
+disp fake_banner_malformed_esc bm1 slice "$WORK/codex-review-bm1.md" --poll-secs 0.05
+check "FIX-2 robustness: banner+malformed CSI+unterminated OSC ⇒ CODEX_UNAVAILABLE (class-complete)" "$OUT" "CODEX_UNAVAILABLE"
+# a review that merely QUOTES an escape as a literal string (no actual ESC byte) ⇒ OK (not stripped):
+disp fake_literal_esc_real le1 slice "$WORK/codex-review-le1.md" --poll-secs 0.05
+check "FIX-2 precision: review quoting a literal \\033[0m string ⇒ OK (only real ESC bytes strip)" "$OUT" "OK"
 
 # --- FIX-3: a banner-only --prior-codex must NOT down-tier (degenerate prior ⇒ fail toward FULL
 # effort). RED pre-fix: banner-only passes _log_nonempty + zero tags ⇒ EFFORT_LOW ⇒ argv shows medium. ---

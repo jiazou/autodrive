@@ -277,23 +277,37 @@ _log_nonempty() {
 # substring strip, so a real review line that QUOTES the banner (e.g.
 # `MINOR: prints "Reading additional input from stdin..."`) is NOT dropped and stays a real review.
 # Banner literal pinned to codex v0.142.5 (live-captured); a future codex reword silently retires
-# this net but FIX-1 (< /dev/null) still prevents the bug. Defense-in-depth only. $1 = path.
+# this net but FIX-1 (< /dev/null) still prevents the bug. Defense-in-depth only.
+# IMPRECISION BUDGET (safe direction): a review that is ENTIRELY non-ASCII (no ASCII graph byte
+# survives normalization) classifies as degenerate → CODEX_UNAVAILABLE, never a false OK — codex
+# reviews always carry ASCII severity tags, so this cannot mis-drop a real review. The whole
+# escape-embedded-text class is closed (valid + malformed CSI/OSC/DCS/Fe); this is NOT a general
+# adversarial-input sanitizer, and need not be — real codex writes to a NON-TTY file and emits no
+# escapes, so its degenerate output is the plain banner. $1 = path.
 _log_banner_only() {
   [ -s "$1" ] || return 1
   # Normalize so a banner line carrying stray/hidden bytes STILL matches the full-line banner
   # pattern and is dropped. WITHOUT this the matcher is fail-OPEN — a degenerate rc0 log of
-  # "banner + junk" (`\0`, BEL, an ANSI escape, zero-width U+200B) fails the full-line match, its
-  # banner TEXT reads as real content, and a false OK slips past the gate (codex adversarial
-  # finding). Two normalization passes:
-  #   (a) strip ANSI/VT escape sequences (ESC + CSI/OSC-ish body) — the printable `[0m` residue of a
-  #       naive control-only strip would otherwise leak as content;
-  #   (b) LC_ALL=C tr: keep ONLY newline + printable-ASCII (drops CR, NUL, BEL, DEL, TAB, leftover
-  #       ESC, and any non-ASCII byte).
-  # Then drop full-line banner matches (the only remaining whitespace is space/newline); if any
-  # VISIBLE (`[[:graph:]]`) content remains it is a real review → return 1; else degenerate
-  # (banner-only, blank, or banner+junk) → 0. Full-LINE anchored (grep -vx) so a real review line
-  # that QUOTES the banner is NOT dropped.
-  if LC_ALL=C sed $'s/\033[][()#;?]*[0-9;]*[A-Za-z@-~]//g' "$1" \
+  # "banner + junk" fails the full-line match, its banner TEXT reads as real content, and a false OK
+  # slips past the gate (codex adversarial finding). Two normalization passes:
+  #   (a) strip ECMA-48 escape sequences — the FULL class that can embed printable residue: OSC
+  #       (ESC ] … BEL|ST) and DCS/SOS/PM/APC (ESC P/X/^/_ … ST) carry ARBITRARY text and MUST be
+  #       removed whole (their body would otherwise leak as content); CSI (ESC [ … final) and the
+  #       Fe two-char (ESC <byte>) are also stripped. Stripping the whole escape-embedded-text class
+  #       (not one shape) is the class-level fix — a per-escape-shape patch is a treadmill.
+  #   (b) LC_ALL=C tr: keep ONLY newline + printable-ASCII (drops CR, NUL, BEL, DEL, TAB, any bare
+  #       ESC left after (a), and any non-ASCII byte e.g. zero-width U+200B).
+  # Then drop full-line banner matches (only space/newline remain as whitespace); if any VISIBLE
+  # (`[[:graph:]]`) content remains it is a real review → return 1; else degenerate → 0. Full-LINE
+  # anchored (grep -vx) so a real review line that QUOTES the banner is NOT dropped.
+  # sed rules (per line — sed's line-orientation bounds each strip to its own line, so an
+  # unterminated escape can never eat a following review line): OSC (ESC ] … BEL|ST), DCS/SOS/PM/APC
+  # (ESC P/X/^/_ … ST), CSI (ESC [ params intermediates final), Fe two-char (ESC <byte>). The OSC/DCS
+  # terminators AND the CSI final are OPTIONAL (`?`) so a MALFORMED/unterminated escape is stripped to
+  # end-of-line too (else its param/title residue would leak as content). Only ACTUAL ESC bytes
+  # trigger a strip, so real-review text (brackets, digits, `;`, even a literal "\033[0m" string) is
+  # never touched.
+  if LC_ALL=C sed -E $'s/\033\\][^\a\033]*(\a|\033\\\\)?//g; s/\033[PX^_][^\033]*(\033\\\\)?//g; s/\033\\[[0-9;?]*[ -\\/]*[@-~]?//g; s/\033[@-Z\\\\-_]//g' "$1" \
        | LC_ALL=C tr -cd '\012\040-\176' \
        | grep -vx ' *Reading additional input from stdin\.\.\. *' \
        | grep -q '[[:graph:]]'; then
@@ -730,7 +744,7 @@ do_dispatch() {
         # rc0 but the raw log is only the codex stdin banner (no real review) — fail closed as an
         # HONEST degradation (CODEX_UNAVAILABLE token family, marker written), NOT a false OK.
         log_attempt degrade "$attempt" CODEX_UNAVAILABLE degenerate-log "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
-        emit_degraded CODEX_UNAVAILABLE "Codex unavailable (degenerate-log: rc0 raw log with no real review content — banner-only, blank, or banner+hidden bytes): probe_rc=$PROBE_RC live_attempt=degenerate attempt_log=$ATTEMPT_LOG" ;;
+        emit_degraded CODEX_UNAVAILABLE "Codex unavailable (degenerate-log: rc0 non-empty raw log with no real review content — banner-only, banner+junk/escapes, or whitespace-only; a zero-byte log is exec-failed): probe_rc=$PROBE_RC live_attempt=degenerate attempt_log=$ATTEMPT_LOG" ;;
       exec-failed)
         log_attempt degrade "$attempt" CODEX_UNAVAILABLE exec-failed "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
         emit_degraded CODEX_UNAVAILABLE "Codex unavailable (exec-failed): probe_rc=$PROBE_RC live_attempt=failed attempt_log=$ATTEMPT_LOG" ;;
