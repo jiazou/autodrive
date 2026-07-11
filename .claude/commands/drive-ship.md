@@ -204,6 +204,13 @@ their FINAL round, computed from the final-round `codex-*` files + `$RUN_DIR/cod
 Codex artifacts are single-file-per-scope, so no per-round history is claimed (the count is scopes
 degraded at their final round). Advisory — it does NOT block Gate B.
 
+**Portability advisory** (surface at Gate B alongside the diff summary): run
+`bin/drive-portability-lint.sh <changed test/*.sh + bin/*.sh in baseRef..featureBranch>` and
+surface any hits — commands the `macos-latest` CI runner lacks (`timeout`, GNU `g*` tools, …)
+that pass locally (homebrew) but red on CI. **ADVISORY — it does NOT block Gate B** (the lint is a
+grep heuristic, abstain-biased, exit 0 always; the real gate is the post-push CI-wait, step 1a).
+It just lets the human catch a portability slip here and save a push→CI→red→fix round-trip.
+
 End commit messages with this trailer, substituting <model> = the shipping session's own
 model name as reported by its environment (e.g. `Claude Fable 5`); if unavailable, use
 `Claude`:
@@ -220,7 +227,39 @@ so a `completedAt` written before removals finished would itself make the run sw
 marker MUST be the LAST thing, written only after EVERY required removal is PROVEN done.
 
 1. Push `featureBranch`; open ONE PR (`gh pr create --base <baseRef>` / `glab`). Record the
-   PR url to `state.ship.prUrl`.
+   PR url to `state.ship.prUrl`. **PR-create IDEMPOTENCY (a resume after a CI-wait STOP
+   re-enters here with the PR ALREADY open):** BEFORE `gh pr create`, if `state.ship.prUrl` is
+   already set, OR `gh pr list --head <featureBranch> --json url` returns a non-empty result,
+   SKIP the create and REUSE that PR url — a second `gh pr create` errors ("a pull request
+   already exists"), so a naive re-create would wedge the resume before it re-reaches the
+   CI-wait. Push is idempotent (fast-forward / `--force-with-lease` on a rebased resume).
+1a. **CI-wait gate (post-push; BEFORE teardown) — a /drive run must not reach `stage=done`
+   with red CI (the human no longer has to notice).** After the push + PR, run
+   `bin/drive-ci-wait.sh --pr <state.ship.prUrl> --repo-root <repoRoot>` (GitHub/`gh` only —
+   see the GitLab residual below) and map its exit code:
+   - `0` (GREEN — CI started, all checks concluded non-failing) → proceed to teardown (step 2).
+   - `2` (NO-CI — no `.github/workflows` and 0 checks, OR `gh`/`jq` unavailable) → best-effort
+     PROCEED to teardown (never block a run for absent/unreachable CI — mirrors the base-preflight
+     / notify fail-open posture). Note it at step 6's report.
+   - `1` (RED — ≥1 check FAILED) → **STOP via the Present human pause routine** (drive.md §
+     *Present human pause*; `waiting = "stop:ci-red"`), which fires the R3 notify so the human
+     LEARNS CI is red. Surface the failing check names/links from the helper's stdout. Do NOT
+     tear down, do NOT write `completedAt`/`stage="done"` — the run stays NOT-done /
+     not-sweepable / resumable. **Recovery is NOT a bare re-push:** a fix to a `test/*.sh` /
+     `bin/*.sh` / product file is a NON-ledger change that moves `featureBranch` past finalize's
+     `reviewed-sha R`, so the run must **re-enter `/drive-finalize`** (re-review the new code,
+     re-bind the terminal artifact) BEFORE re-shipping — else the ship gate's precondition #3
+     (`R..tip ≤1 commit ⊆ ledger allowlist`) false-STOPs. (Surface the failing checks so the
+     human can distinguish a required-check red — fix — from an advisory/optional red —
+     approve-anyway.)
+   - `3` (PENDING — max wait elapsed with checks still pending, or workflows-present-but-0-checks)
+     → **STOP via Present human pause** (`waiting = "stop:ci-pending"`) reporting "CI still
+     pending after N min"; re-runnable on resume (the CI-wait re-polls; PR-create is skipped per
+     step 1's idempotency). NOT a red, NOT done.
+   **GitLab residual (named, out of scope):** `drive-ci-wait.sh` is GitHub/`gh`-only. On a
+   `glab`/GitLab-backed run, do NOT invoke it — the run degrades to the pre-existing
+   behaviour (the human catches a CI-red at merge, as before). Provider-aware CI-wait is a
+   follow-up; documenting it keeps this a NAMED residual, not a silent fail-open.
 2. **Require a `-d`-VALID `repoRoot`, then `cd` OUT of `wt/ship` to a VERIFIED-STABLE dir
    FIRST**, BEFORE the removal loop. The ship coordinator's cwd is `$RUN_DIR/wt/ship` — itself
    a drive-owned name the loop removes; the removal would delete the live cwd if cwd is still
