@@ -1127,3 +1127,18 @@ control-byte/ANSI producer drift). It is fuzz-verified + regression-free but add
 judged over-built at de-slop, a simpler `tr -cd '\012\040-\176'`-only normalize (closes control/hidden
 bytes, drops ANSI/OSC which are non-TTY-unreachable) is an option — but that reds the ANSI/OSC tests,
 so it's a scoped tradeoff, not a free simplification. Not blocking; correct + tested as-is.
+## Run deflake-notify-20260711-100816 (2026-07-11) — de-flake test_drive_notify _wait_for
+
+
+- **[finalize de-slop]** `_wait_for`'s `expected=None` byte-stable fallback branch is dead code for
+  this file (all 3 callers pass `expected`). Both phasedesign voices flagged it (Claude NIT, codex
+  MINOR). At /drive-finalize, decide: drop the fallback (narrow to exact-match, make `expected`
+  required) — the anti-slop choice — OR keep it as a documented generic helper affordance. Leaning
+  DROP per "no speculative fallbacks unless the plan requires it".
+
+- **[test-arch, deferred]** Add a genuinely dep-independent `_wait_for` contract unit test (exact-match
+  True; partial-prefix→timeout False fail-loud; absent→timeout False), OUTSIDE the bash/drive-notify.sh
+  module skip (its own module, or extract `_wait_for` to a shared `tests/hooks/_helpers.py`). The harden
+  attempt in this run added them inside test_drive_notify.py where the module-level pytestmark skips them
+  in lean envs (codex MAJOR) — reverted as net-negative for a de-flake-scoped run. Mutation-verified
+  design exists in this run's git history (commit c81ce9f, reverted).

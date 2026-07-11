@@ -6043,3 +6043,22 @@ threshold converges (N beaten by N+1; reds terse reals). FIX-1 (< /dev/null) is 
 defense-in-depth catching the observed degenerate + escape/control-byte drift. Documented at the code
 site (IMPRECISION BUDGET / ACCEPTED RESIDUAL). Per OPERATING: refuted-at-integration → overrule WITH
 evidence, never chase per-shape (treadmill).
+## Run deflake-notify-20260711-100816 (2026-07-11) — de-flake test_drive_notify _wait_for
+
+
+## D1 (Mechanical) — fix the shared `_wait_for` helper with exact-content-match
+Fix `_wait_for(path, expected=...)` to poll until file content EQUALS `expected` (exact-match),
+falling back to non-empty+byte-stable only when a caller cannot name the content. Chosen over
+byte-stable-only because exact-match cannot false-early-return on a stable partial prefix
+(design-review codex P1, round 1). All three affected callers know their exact expected bytes.
+Classification: Mechanical.
+
+## D2 (Mechanical) — bounded timeout, fail-loud on timeout
+Keep the existing bounded `timeout` (default 3.0s); return `False` on timeout so a genuine
+non-delivery still fails at the `assert _wait_for(...)` site, never silently swallowed.
+Classification: Mechanical.
+
+## D3 (Mechanical) — expected literals are byte-exact (no trailing newline)
+drive-notify.sh delivers via `printf '%s' "$MESSAGE"` (no trailing newline) and `cat` copies
+exactly, so the `expected` literals are the raw messages with NO trailing newline
+("the message body" / "hi" / "first"). Classification: Mechanical.
