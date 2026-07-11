@@ -54,6 +54,7 @@ GE="$(printf '\033')"  # ESC
 golden_for() {  # <model> — the exact line statusline.sh must print (no trailing \n)
   case "$1" in
     "Opus 4.8")           printf '%s[36m%s%s[0m [Opus 4.8] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
+    "Fable 5")            printf '%s[36m%s%s[0m [Fable 5] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
     "Opus 4.7")           printf '%s[36m%s%s[0m [Opus 4.7] %s[31m90%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
     "Sonnet 4.5")         printf '%s[36m%s%s[0m [Sonnet 4.5] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
     "Haiku 4")            printf '%s[36m%s%s[0m [Haiku 4] %s[31m454%%%s[0m' "$GE" "zzz-not-a-git-repo/golden/statusline-dir" "$GE" "$GE" "$GE" ;;
@@ -65,7 +66,7 @@ golden_payload() {  # <display_name> <transcript> — uses the FIXED non-git dir
     '{model:{display_name:$m}, workspace:{current_dir:$d}, transcript_path:$t}'
 }
 GOLDEN_HOME="$(mktemp -d)"  # empty HOME -> no $HOME/.bun/bin/ccusage -> empty cost seg
-for M in "Opus 4.8" "Opus 4.7" "Sonnet 4.5" "Haiku 4" "Some Unknown Model"; do
+for M in "Opus 4.8" "Fable 5" "Opus 4.7" "Sonnet 4.5" "Haiku 4" "Some Unknown Model"; do
   P="$(golden_payload "$M" "$TRANS")"
   # Strip ccusage from PATH so the cost segment is empty in any environment.
   got="$(printf '%s' "$P" | HOME="$GOLDEN_HOME" PATH=/usr/bin:/bin bash "$STATUSLINE")"
@@ -152,7 +153,33 @@ bad_id="$(jq -n --arg t "$TRANS" \
   | bash "$BAD_DIR/bin/statusline.sh" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
 assert_eq "fallback: malformed json + generic display_name but 200k model.id -> 200k via id (PCT 454)" \
   "454" "$bad_id"
+# Fable 5 hits its DEDICATED 1M fallback arm. Cover BOTH match forms through the fallback: the
+# display_name ("Fable 5") and the model.id ("claude-fable-5", with a generic display_name).
+bad_fable_name="$(printf '%s' "$(payload "Fable 5" "$TRANS")" | bash "$BAD_DIR/bin/statusline.sh" \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "fallback: malformed json + Fable display_name -> Fable 1M arm (PCT 90)" "90" "$bad_fable_name"
+bad_fable_id="$(jq -n --arg t "$TRANS" \
+  '{model:{display_name:"Brand X", id:"claude-fable-5"}, workspace:{current_dir:"/tmp/x"}, transcript_path:$t}' \
+  | bash "$BAD_DIR/bin/statusline.sh" | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "fallback: malformed json + generic display_name but Fable model.id -> Fable 1M arm (PCT 90)" \
+  "90" "$bad_fable_id"
 rm -rf "$BAD_DIR"
+
+# Mutation guard: the Fable FALLBACK arm is LOAD-BEARING (its value flows to Fable). A pure DELETE
+# of the arm is MASKED by the shared 1M default (Fable would still resolve 1M), so the SHARP
+# mutation alters the ARM'S window — the rendered PCT must then track the arm, proving it executes
+# for Fable. Only the Fable arm line carries "Fable 5", so the sed is surgical (the `*)` default is
+# untouched). tokens 909200 / mutated window 250000 -> PCT 363 (not the real arm's 90).
+FAB_DIR="$(mktemp -d)"
+cp -R "$REPO/bin" "$FAB_DIR/bin"
+printf 'this is not json {{{' > "$FAB_DIR/bin/rebirth-thresholds.json"   # force the fallback path
+sed -i.bak '/Fable 5/ s/WINDOW=1000000/WINDOW=250000/' "$FAB_DIR/bin/statusline.sh"
+rm -f "$FAB_DIR/bin/statusline.sh.bak"
+mut_fable="$(printf '%s' "$(payload "Fable 5" "$TRANS")" | bash "$FAB_DIR/bin/statusline.sh" \
+  | sed 's/\x1b\[[0-9;]*m//g' | grep -oE '[0-9]+%' | tr -d '%')"
+assert_eq "mutating the Fable fallback arm's window changes Fable's PCT (arm is load-bearing)" \
+  "363" "$mut_fable"
+rm -rf "$FAB_DIR"
 
 rm -f "$TRANS"
 
