@@ -787,6 +787,67 @@ OUT="$(DRIVE_CODEX_WATCHDOG=off DRIVE_CODEX_CMD="$BIN/fake_stall" "$HELPER" --mo
 check "WD DRIVE_CODEX_WATCHDOG=off ⇒ KILLED (env hatch = --no-watchdog)" "$OUT" "CODEX_KILLED_TIMEOUT"
 check_contains "WD env-off ⇒ cause=BACKSTOP" "$(wdcause "$mwenv")" "Codex killed (backstop)"
 
+# ============================================================================= #
+echo "=== FIX-1/2/3: stdin-hang + false-OK-on-degenerate-review (.harness/followups.md F5) ==="
+
+# The codex stdin banner (pinned literal, codex v0.142.5). Real codex prints this whenever stdin
+# is a non-TTY; a degenerate (inherited-open-stdin) dispatch writes ONLY this and exits rc0.
+BANNER='Reading additional input from stdin...'
+
+# fd0-SENSITIVE fake — models real codex: with inherited stdin CONTENT it degenerates to a
+# banner-only log (the bug); with /dev/null EOF (FIX-1) it produces a real review. doctor never
+# reads stdin (returns before the cat), so the shared inherited fd is untouched for the exec.
+mkfake fake_stdin_banner \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'data="$(cat)"' \
+  'if [ -n "$data" ]; then printf "Reading additional input from stdin...\n"; exit 0; fi' \
+  'printf "reviewing\nMINOR: nit\ndone\n"; exit 0'
+
+# always banner-only regardless of stdin (the pure OK-gate degeneracy).
+mkfake fake_banner_only \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "Reading additional input from stdin...\n"; exit 0'
+
+# a REAL review whose line QUOTES the banner substring — must NOT be mis-classified banner-only
+# (full-line anchored match, not a substring strip).
+mkfake fake_quote_banner \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "MINOR: helper prints \"Reading additional input from stdin...\" on an inherited fd\ndone\n"; exit 0'
+
+# --- FIX-1 (raw-log CONTENT; a token-only assertion is VACUOUS — OK pre AND post). The helper is
+# invoked with an INHERITED OPEN-FILE stdin (content); pre-fix the backgrounded exec inherits it →
+# banner-only raw log; post-fix (< /dev/null) → real review. RED pre-fix: raw lacks "MINOR". ---
+printf 'inherited open stdin that never came from a prompt\n' > "$WORK/openstdin.txt"
+OUT="$(timeout 30 env DRIVE_CODEX_CMD="$BIN/fake_stdin_banner" "$HELPER" --mode dispatch --scope si1 \
+   --scope-class slice --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-si1.log" \
+   --marker "$WORK/codex-review-si1.md" --prompt-file "$PROMPT" --poll-secs 0.05 \
+   < "$WORK/openstdin.txt" 2>/dev/null)"; RC=$?
+if [ "$RC" = 124 ]; then fail "FIX-1 no hang on inherited open stdin (timeout hit)"; else pass "FIX-1 no hang on inherited open stdin (bounded completion)"; fi
+check_contains "FIX-1 inherited open stdin ⇒ raw log holds the REAL review (redirect worked)" "$(cat "$WORK/codex-raw-si1.log" 2>/dev/null)" "MINOR"
+check_absent   "FIX-1 inherited open stdin ⇒ raw log is NOT the stdin banner" "$(cat "$WORK/codex-raw-si1.log" 2>/dev/null)" "$BANNER"
+check "FIX-1 inherited open stdin ⇒ token OK (real review)" "$OUT" "OK"
+
+# --- FIX-2 (token; the OK-gate degeneracy guard). A banner-only raw log must fail CLOSED, never OK. ---
+disp fake_banner_only bo1 slice "$WORK/codex-review-bo1.md" --poll-secs 0.05
+check "FIX-2 banner-only raw log ⇒ CODEX_UNAVAILABLE (no false OK)" "$OUT" "CODEX_UNAVAILABLE"
+check "FIX-2 banner-only ⇒ exit 1" "$RC" "1"
+check "FIX-2 banner-only ⇒ marker 1st line == token" "$(head -1 "$WORK/codex-review-bo1.md" 2>/dev/null)" "CODEX_UNAVAILABLE"
+check_contains "FIX-2 honest cause=degenerate-log (rc was 0, NOT exec-failed)" "$(cat "$WORK/codex-review-bo1.md" 2>/dev/null)" "degenerate-log"
+
+# --- FIX-2 precision: a real review that QUOTES the banner is NOT banner-only ⇒ OK (guards against a
+# naive substring strip, which would delete the line → banner-only → CODEX_UNAVAILABLE ⇒ this reds). ---
+disp fake_quote_banner qb1 slice "$WORK/codex-review-qb1.md" --poll-secs 0.05
+check "FIX-2 precision: real review quoting the banner ⇒ OK (full-line match, not substring)" "$OUT" "OK"
+
+# --- FIX-3: a banner-only --prior-codex must NOT down-tier (degenerate prior ⇒ fail toward FULL
+# effort). RED pre-fix: banner-only passes _log_nonempty + zero tags ⇒ EFFORT_LOW ⇒ argv shows medium. ---
+PRIOR_BANNER="$WORK/codex-review-prior-banner.md"; printf 'Reading additional input from stdin...\n' > "$PRIOR_BANNER"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv fx3 slice "$WORK/codex-review-fx3.md" --poll-secs 0.05 --confirmation-class --prior-codex "$PRIOR_BANNER"
+check_absent "FIX-3 banner-only --prior-codex ⇒ FULL effort (no down-tier on a degenerate prior)" "$(cat "$WORK/argv.log")" "model_reasoning_effort"
+
 echo ""
 echo "===================================================================="
 printf 'drive-codex.test.sh: %d passed, %d failed\n' "$PASS" "$FAIL"
