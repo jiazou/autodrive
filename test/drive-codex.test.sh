@@ -883,11 +883,13 @@ mkfake fake_literal_esc_real \
 # invoked with an INHERITED OPEN-FILE stdin (content); pre-fix the backgrounded exec inherits it →
 # banner-only raw log; post-fix (< /dev/null) → real review. RED pre-fix: raw lacks "MINOR". ---
 printf 'inherited open stdin that never came from a prompt\n' > "$WORK/openstdin.txt"
-OUT="$(timeout 30 env DRIVE_CODEX_CMD="$BIN/fake_stdin_banner" "$HELPER" --mode dispatch --scope si1 \
+# No external `timeout` (not portable — macOS ships none): the HELPER self-bounds via
+# --stall-secs/--backstop-secs, so a genuine hang is killed by the helper (→ a token), never an
+# infinite wait. The fakes EOF on a regular-file stdin anyway, so this returns promptly.
+OUT="$(env DRIVE_CODEX_CMD="$BIN/fake_stdin_banner" "$HELPER" --mode dispatch --scope si1 \
    --scope-class slice --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-si1.log" \
    --marker "$WORK/codex-review-si1.md" --prompt-file "$PROMPT" --poll-secs 0.05 \
-   < "$WORK/openstdin.txt" 2>/dev/null)"; RC=$?
-if [ "$RC" = 124 ]; then fail "FIX-1 no hang on inherited open stdin (timeout hit)"; else pass "FIX-1 no hang on inherited open stdin (bounded completion)"; fi
+   --stall-secs 10 --backstop-secs 10 < "$WORK/openstdin.txt" 2>/dev/null)"; RC=$?
 # The healthy /dev/null path emits "banner + review" (real codex prints the banner even with
 # < /dev/null — non-TTY — then PROCEEDS to the review); the DEGENERATE inherited-stdin path emits the
 # banner ALONE. So the load-bearing FIX-1 assertion is that the raw log holds the REAL review CONTENT
@@ -955,11 +957,11 @@ mkfake fake_probe_stdin_sensitive \
   'if [ "$1" = doctor ]; then [ -c /dev/fd/0 ] && { echo ok; exit 0; } || exit 1; fi' \
   'printf "reviewing\nMINOR: nit\ndone\n"; exit 0'
 printf 'inherited open stdin content for the probe\n' > "$WORK/openstdin-probe.txt"
-OUT="$(timeout 30 env DRIVE_CODEX_CMD="$BIN/fake_probe_stdin_sensitive" "$HELPER" --mode dispatch --scope psi1 \
+# No external `timeout` (macOS ships none): the helper self-bounds via --stall/--backstop-secs.
+OUT="$(env DRIVE_CODEX_CMD="$BIN/fake_probe_stdin_sensitive" "$HELPER" --mode dispatch --scope psi1 \
    --scope-class slice --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-psi1.log" \
    --marker "$WORK/codex-review-psi1.md" --prompt-file "$PROMPT" --poll-secs 0.05 \
-   < "$WORK/openstdin-probe.txt" 2>/dev/null)"; RC=$?
-if [ "$RC" = 124 ]; then fail "FIX-1 probe: no hang on inherited open stdin (timeout hit)"; else pass "FIX-1 probe: no hang on inherited open stdin"; fi
+   --stall-secs 10 --backstop-secs 10 < "$WORK/openstdin-probe.txt" 2>/dev/null)"; RC=$?
 check "FIX-1 probe: doctor stdin routed to /dev/null ⇒ probe OK ⇒ token OK (redirect on the probe launch)" "$OUT" "OK"
 
 echo ""
