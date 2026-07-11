@@ -268,6 +268,64 @@ _log_nonempty() {
   grep -q '[^[:space:]]' "$1" 2>/dev/null
 }
 
+# rc0 (true) iff the raw log is DEGENERATE — it carries NO real review content: it is the codex
+# stdin banner "Reading additional input from stdin..." alone (the inherited-open-stdin
+# degeneration, ~39 bytes, rc0 but no review), OR blank, OR the banner plus only hidden/stray
+# bytes. codex prints this banner whenever stdin is a non-TTY (verified codex v0.142.5, EVEN with
+# `< /dev/null`), so a HEALTHY log is "banner + real review" and must NOT match; only a
+# no-real-content log matches, so the OK gate fails it closed. Full-LINE anchored (grep -vx), NOT a
+# substring strip, so a real review line that QUOTES the banner (e.g.
+# `MINOR: prints "Reading additional input from stdin..."`) is NOT dropped and stays a real review.
+# Banner literal pinned to codex v0.142.5 (live-captured); a future codex reword silently retires
+# this net but FIX-1 (< /dev/null) still prevents the bug. Defense-in-depth only.
+# IMPRECISION BUDGET (safe direction): a review that is ENTIRELY non-ASCII (no ASCII graph byte
+# survives normalization) classifies as degenerate → CODEX_UNAVAILABLE, never a false OK — codex
+# reviews always carry ASCII severity tags, so this cannot mis-drop a real review. The whole
+# escape-embedded-text class is closed (valid + malformed CSI/OSC/DCS/Fe); this is NOT a general
+# adversarial-input sanitizer, and need not be — real codex writes to a NON-TTY file and emits no
+# escapes, so its degenerate output is the plain banner.
+# ACCEPTED RESIDUAL (overrule-with-evidence, codex r3): `banner + any VISIBLE printable residue`
+# (`banner...X`, or `banner\n.\n`) classifies as a REAL review (→ OK), NOT degenerate. This is by
+# design, not a bypass: (a) after FIX-1 the HEALTHY log IS `banner\n<review>`, so the matcher MUST
+# pass `banner + substantive content`; `banner + X` (tiny junk) is byte-INDISTINGUISHABLE from
+# `banner + a terse real review`, and NO content threshold converges (an adversary crafts N+1 chars;
+# N also reds legitimately-terse real reviews). (b) The real producer cannot emit it — codex's banner
+# is its own complete newline-terminated line, so `banner...X` on that line is unreachable, and a
+# lone-`.` review body is not codex's degenerate output (which is the plain banner, caught here).
+# FIX-1 (< /dev/null) is the load-bearing guarantee; this net catches the exact observed degenerate
+# shape + escape/control-byte drift. $1 = path.
+_log_banner_only() {
+  [ -s "$1" ] || return 1
+  # Normalize so a banner line carrying stray/hidden bytes STILL matches the full-line banner
+  # pattern and is dropped. WITHOUT this the matcher is fail-OPEN — a degenerate rc0 log of
+  # "banner + junk" fails the full-line match, its banner TEXT reads as real content, and a false OK
+  # slips past the gate (codex adversarial finding). Two normalization passes:
+  #   (a) strip ECMA-48 escape sequences — the FULL class that can embed printable residue: OSC
+  #       (ESC ] … BEL|ST) and DCS/SOS/PM/APC (ESC P/X/^/_ … ST) carry ARBITRARY text and MUST be
+  #       removed whole (their body would otherwise leak as content); CSI (ESC [ … final) and the
+  #       Fe two-char (ESC <byte>) are also stripped. Stripping the whole escape-embedded-text class
+  #       (not one shape) is the class-level fix — a per-escape-shape patch is a treadmill.
+  #   (b) LC_ALL=C tr: keep ONLY newline + printable-ASCII (drops CR, NUL, BEL, DEL, TAB, any bare
+  #       ESC left after (a), and any non-ASCII byte e.g. zero-width U+200B).
+  # Then drop full-line banner matches (only space/newline remain as whitespace); if any VISIBLE
+  # (`[[:graph:]]`) content remains it is a real review → return 1; else degenerate → 0. Full-LINE
+  # anchored (grep -vx) so a real review line that QUOTES the banner is NOT dropped.
+  # sed rules (per line — sed's line-orientation bounds each strip to its own line, so an
+  # unterminated escape can never eat a following review line): OSC (ESC ] … BEL|ST), DCS/SOS/PM/APC
+  # (ESC P/X/^/_ … ST), CSI (ESC [ params intermediates final), Fe two-char (ESC <byte>). The OSC/DCS
+  # terminators AND the CSI final are OPTIONAL (`?`) so a MALFORMED/unterminated escape is stripped to
+  # end-of-line too (else its param/title residue would leak as content). Only ACTUAL ESC bytes
+  # trigger a strip, so real-review text (brackets, digits, `;`, even a literal "\033[0m" string) is
+  # never touched.
+  if LC_ALL=C sed -E $'s/\033\\][^\a\033]*(\a|\033\\\\)?//g; s/\033[PX^_][^\033]*(\033\\\\)?//g; s/\033\\[[0-9;?]*[ -\\/]*[@-~]?//g; s/\033[@-Z\\\\-_]//g' "$1" \
+       | LC_ALL=C tr -cd '\012\040-\176' \
+       | grep -vx ' *Reading additional input from stdin\.\.\. *' \
+       | grep -q '[[:graph:]]'; then
+    return 1
+  fi
+  return 0
+}
+
 # (`_is_positive_number` is defined ABOVE, before the numeric-env resolution it guards.)
 
 # TERM the group leader was sent; give a brief grace, then KILL the whole group. $1 = pgid.
@@ -404,7 +462,9 @@ run_probe() {
   if [ -z "$PROBE_OUT" ]; then
     if [ -n "$RAW_LOG" ]; then PROBE_OUT="${RAW_LOG%.log}.probe.log"; else PROBE_OUT="$(dirname "$ATTEMPT_LOG")/codex-probe-$SCOPE.log"; fi
   fi
-  "$DRIVE_CODEX_CMD" doctor --json > "$PROBE_OUT" 2>&1 &
+  # `< /dev/null`: never let doctor BLOCK reading an inherited open stdin (helper dispatched
+  # from a backgrounded Bash whose fd 0 is a live-open fd). doctor is non-interactive.
+  "$DRIVE_CODEX_CMD" doctor --json > "$PROBE_OUT" 2>&1 < /dev/null &
   local dpid=$! dpgid; dpgid=$dpid
   PROBE_PGID="$dpgid"   # FIX C: track the doctor group so the reaper trap covers the PROBE window —
                         # an external TERM during the probe must reap a forking doctor's child.
@@ -445,7 +505,12 @@ run_attempt() {
   [ "$EFFORT_LOW" = 1 ] && cmd+=(-c "model_reasoning_effort=$EFFORT_TIER_LOW")
   # $PROMPT_TEXT was read + validated PRE-LAUNCH (FIX B) — reuse it, never a second cat that could
   # read-fail to "" and slip a degenerate empty prompt past the pre-launch guard.
-  "${cmd[@]}" "$PROMPT_TEXT" > "$RAW_LOG" 2>&1 &
+  # `< /dev/null`: the prompt is passed as ARGV, so codex needs no stdin. Without this, a helper
+  # dispatched from a backgrounded Bash whose fd 0 is an inherited live-open fd makes codex print
+  # "Reading additional input from stdin..." and BLOCK/degenerate — it exits rc0 having written
+  # only that ~39-byte banner and NO review (a silent false OK). /dev/null gives immediate EOF so
+  # codex consumes only its argv prompt and produces the real review. (Fixes .harness/followups.md F5.)
+  "${cmd[@]}" "$PROMPT_TEXT" > "$RAW_LOG" 2>&1 < /dev/null &
   local child=$! pgid; pgid=$child          # under monitor mode the job leader pid == its pgid
   # FIX C / round-6 MAJOR: track the codex group for the ONE installed reaper trap (do_dispatch),
   # so a helper that is itself killed/exits REAPS its codex child group instead of orphaning it.
@@ -532,8 +597,15 @@ run_attempt() {
     return
   fi
 
-  # kill_confirmed==0 → codex self-exited (step 4): OK iff rc==0 AND the log is non-empty.
-  if [ "$wstatus" = 0 ] && _log_nonempty "$RAW_LOG"; then ATTEMPT_RESULT=ok; return; fi
+  # kill_confirmed==0 → codex self-exited (step 4): OK iff rc==0 AND the log is non-empty AND it is
+  # NOT a DEGENERATE banner-only log (the inherited-open-stdin residual — rc0 but no real review;
+  # defense-in-depth for FIX-1, which prevents the banner-only degeneration at the source).
+  if [ "$wstatus" = 0 ] && _log_nonempty "$RAW_LOG" && ! _log_banner_only "$RAW_LOG"; then ATTEMPT_RESULT=ok; return; fi
+  # rc0 but banner-only ⇒ degenerate, NOT an exec failure — fail closed with an HONEST cause (rc was
+  # 0, so `exec-failed` would mislead debugging toward spawn/absence). Gated on round_was_killed==0 so
+  # a rc0-degenerate retry AFTER an earlier stall-kill keeps the killed-latch (falls through to
+  # killed-exec-failed → CODEX_KILLED_TIMEOUT below), preserving that authority.
+  if [ "$wstatus" = 0 ] && [ "$round_was_killed" = 0 ] && _log_banner_only "$RAW_LOG"; then ATTEMPT_RESULT=degenerate-log; return; fi
   # Availability failure (nonzero rc OR empty log). The killed-latch is authoritative here too:
   # a RETRY after an earlier stall-kill that exec-fails is terminal CODEX_KILLED_TIMEOUT, never
   # CODEX_UNAVAILABLE (round-3 Claude MAJOR — closes the step-4 escape).
@@ -606,8 +678,13 @@ do_dispatch() {
   # round-6 FIX A: `_log_nonempty` also requires the prior be NON-EMPTY / non-whitespace — an EMPTY or
   # whitespace-only prior is NOT a real completed clean review, so it must fail toward FULL effort
   # (D-16 conservative direction), NOT fall through the clean-first-line/zero-tag scan into a down-tier.
+  # FIX 3 (both design voices): a banner-only prior (rc0 degenerate) passes `_log_nonempty` + has
+  # zero severity tags → would wrongly set EFFORT_LOW=1 (down-tier on a degenerate "clean" prior —
+  # the WRONG direction). `! _log_banner_only` makes a degenerate prior fail toward FULL effort
+  # (conservative). Low-stakes post-FIX-1 (priors are never banner-only once FIX-1 ships) but a cheap,
+  # in-blast-radius belt-and-suspenders at the OTHER gate that consumes codex review output.
   EFFORT_LOW=0
-  if [ "$TIERING_ON" = 1 ] && [ "$CONFIRMATION_CLASS" = 1 ] && [ "$SECURITY_DIFF" != 1 ] && [ -n "$PRIOR_CODEX" ] && [ -f "$PRIOR_CODEX" ] && [ -r "$PRIOR_CODEX" ] && _log_nonempty "$PRIOR_CODEX"; then
+  if [ "$TIERING_ON" = 1 ] && [ "$CONFIRMATION_CLASS" = 1 ] && [ "$SECURITY_DIFF" != 1 ] && [ -n "$PRIOR_CODEX" ] && [ -f "$PRIOR_CODEX" ] && [ -r "$PRIOR_CODEX" ] && _log_nonempty "$PRIOR_CODEX" && ! _log_banner_only "$PRIOR_CODEX"; then
     local fl; fl="$(head -n1 "$PRIOR_CODEX" 2>/dev/null)"
     case "$fl" in
       CODEX_UNAVAILABLE*|CODEX_KILLED_TIMEOUT*) : ;;   # degraded prior → full effort
@@ -673,6 +750,11 @@ do_dispatch() {
       internal-fault)
         log_attempt degrade "$attempt" CODEX_UNAVAILABLE internal "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
         emit_degraded CODEX_UNAVAILABLE "Codex unavailable (internal): probe_rc=$PROBE_RC live_attempt=failed attempt_log=$ATTEMPT_LOG" ;;
+      degenerate-log)
+        # rc0 but the raw log is only the codex stdin banner (no real review) — fail closed as an
+        # HONEST degradation (CODEX_UNAVAILABLE token family, marker written), NOT a false OK.
+        log_attempt degrade "$attempt" CODEX_UNAVAILABLE degenerate-log "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
+        emit_degraded CODEX_UNAVAILABLE "Codex unavailable (degenerate-log: rc0 non-empty raw log with no real review content — banner-only, banner+junk/escapes, or whitespace-only; a zero-byte log is exec-failed): probe_rc=$PROBE_RC live_attempt=degenerate attempt_log=$ATTEMPT_LOG" ;;
       exec-failed)
         log_attempt degrade "$attempt" CODEX_UNAVAILABLE exec-failed "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
         emit_degraded CODEX_UNAVAILABLE "Codex unavailable (exec-failed): probe_rc=$PROBE_RC live_attempt=failed attempt_log=$ATTEMPT_LOG" ;;

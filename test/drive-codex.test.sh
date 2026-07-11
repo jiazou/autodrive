@@ -787,6 +787,183 @@ OUT="$(DRIVE_CODEX_WATCHDOG=off DRIVE_CODEX_CMD="$BIN/fake_stall" "$HELPER" --mo
 check "WD DRIVE_CODEX_WATCHDOG=off ⇒ KILLED (env hatch = --no-watchdog)" "$OUT" "CODEX_KILLED_TIMEOUT"
 check_contains "WD env-off ⇒ cause=BACKSTOP" "$(wdcause "$mwenv")" "Codex killed (backstop)"
 
+# ============================================================================= #
+echo "=== FIX-1/2/3: stdin-hang + false-OK-on-degenerate-review (.harness/followups.md F5) ==="
+
+# The codex stdin banner (pinned literal, codex v0.142.5). Real codex prints this whenever stdin
+# is a non-TTY; a degenerate (inherited-open-stdin) dispatch writes ONLY this and exits rc0.
+BANNER='Reading additional input from stdin...'
+
+# fd0-SENSITIVE fake — models real codex: with inherited stdin CONTENT it degenerates to a
+# banner-only log (the bug); with /dev/null EOF (FIX-1) it produces a real review. doctor never
+# reads stdin (returns before the cat), so the shared inherited fd is untouched for the exec.
+mkfake fake_stdin_banner \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'data="$(cat)"' \
+  'if [ -n "$data" ]; then printf "Reading additional input from stdin...\n"; exit 0; fi' \
+  'printf "Reading additional input from stdin...\nreviewing\nMINOR: nit\ndone\n"; exit 0'
+
+# always banner-only regardless of stdin (the pure OK-gate degeneracy).
+mkfake fake_banner_only \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "Reading additional input from stdin...\n"; exit 0'
+
+# a REAL review whose line QUOTES the banner substring — must NOT be mis-classified banner-only
+# (full-line anchored match, not a substring strip).
+mkfake fake_quote_banner \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "MINOR: helper prints \"Reading additional input from stdin...\" on an inherited fd\ndone\n"; exit 0'
+
+# DEGENERATE banner + a hidden byte (NUL) — the fail-OPEN bypass (codex adversarial). The stray byte
+# must NOT let the banner text read as "real content" and slip a false OK past the gate.
+mkfake fake_banner_nul \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "Reading additional input from stdin...\0\n"; exit 0'
+
+# DEGENERATE banner wrapped in ANSI color escapes — the printable [0m residue must NOT read as content.
+mkfake fake_banner_ansi \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033[0mReading additional input from stdin...\033[0m\n"; exit 0'
+
+# a REAL review that is ANSI-COLORED — the ANSI strip must NOT over-strip it into a false degenerate.
+mkfake fake_colored_review \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033[31mMAJOR\033[0m: a real bug at x.py:10\n"; exit 0'
+
+# DEGENERATE banner wrapped in an OSC escape (ESC ] … BEL) — OSC embeds ARBITRARY text (a title), the
+# escape class that a CSI-only strip leaks. Must fail closed.
+mkfake fake_banner_osc \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033]0;window-title\aReading additional input from stdin...\n"; exit 0'
+
+# a REAL review carrying an OSC title prefix — the OSC strip must remove the title but KEEP the review.
+mkfake fake_osc_real \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033]0;title\aMAJOR: a genuine finding at y.py:5\n"; exit 0'
+
+# DEGENERATE banner + a MALFORMED CSI (params, no final byte) and an UNTERMINATED OSC — the whole
+# escape class (malformed/unterminated included) must fail closed, else the param/title residue leaks.
+mkfake fake_banner_malformed_esc \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033]0;untermtitle Reading additional input from stdin...\033[0;1;2\n"; exit 0'
+
+# DEGENERATE whitespace-only rc0 log (no banner, no content) — the documented "whitespace-only" lane;
+# must fail closed as degenerate-log, not slip an OK.
+mkfake fake_whitespace_only \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "   \n\t\n  \n"; exit 0'
+
+# counter-driven: STALL on exec call 1 (killed), then rc0 BANNER-ONLY on retry. The killed-latch
+# (round_was_killed==1) must WIN — the degenerate-arm is gated on round_was_killed==0, so a post-kill
+# banner-only rc0 routes to CODEX_KILLED_TIMEOUT, NOT degenerate-log/CODEX_UNAVAILABLE.
+mkfake fake_stall_then_banner \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'n=$(cat "$CNT" 2>/dev/null || echo 0); n=$((n+1)); echo "$n" > "$CNT"' \
+  'if [ "$n" = 1 ]; then printf "start\n"; sleep 60; else printf "Reading additional input from stdin...\n"; exit 0; fi'
+
+# a REAL review whose text merely MENTIONS an escape as a literal backslash string — must stay OK
+# (no ACTUAL ESC byte, so nothing is stripped).
+mkfake fake_literal_esc_real \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "NIT: the code emits a literal \\\\033[0m sequence at z.py:9\n"; exit 0'
+
+# --- FIX-1 (raw-log CONTENT; a token-only assertion is VACUOUS — OK pre AND post). The helper is
+# invoked with an INHERITED OPEN-FILE stdin (content); pre-fix the backgrounded exec inherits it →
+# banner-only raw log; post-fix (< /dev/null) → real review. RED pre-fix: raw lacks "MINOR". ---
+printf 'inherited open stdin that never came from a prompt\n' > "$WORK/openstdin.txt"
+# No external `timeout` (not portable — macOS ships none): the HELPER self-bounds via
+# --stall-secs/--backstop-secs, so a genuine hang is killed by the helper (→ a token), never an
+# infinite wait. The fakes EOF on a regular-file stdin anyway, so this returns promptly.
+OUT="$(env DRIVE_CODEX_CMD="$BIN/fake_stdin_banner" "$HELPER" --mode dispatch --scope si1 \
+   --scope-class slice --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-si1.log" \
+   --marker "$WORK/codex-review-si1.md" --prompt-file "$PROMPT" --poll-secs 0.05 \
+   --stall-secs 10 --backstop-secs 10 < "$WORK/openstdin.txt" 2>/dev/null)"; RC=$?
+# The healthy /dev/null path emits "banner + review" (real codex prints the banner even with
+# < /dev/null — non-TTY — then PROCEEDS to the review); the DEGENERATE inherited-stdin path emits the
+# banner ALONE. So the load-bearing FIX-1 assertion is that the raw log holds the REAL review CONTENT
+# (present ONLY when the redirect let codex proceed): RED pre-fix (raw is banner-only, no "MINOR").
+check_contains "FIX-1 inherited open stdin ⇒ raw log holds the REAL review (redirect let codex proceed)" "$(cat "$WORK/codex-raw-si1.log" 2>/dev/null)" "MINOR"
+check "FIX-1 inherited open stdin ⇒ token OK (real review, not banner-only)" "$OUT" "OK"
+
+# --- FIX-2 (token; the OK-gate degeneracy guard). A banner-only raw log must fail CLOSED, never OK. ---
+disp fake_banner_only bo1 slice "$WORK/codex-review-bo1.md" --poll-secs 0.05
+check "FIX-2 banner-only raw log ⇒ CODEX_UNAVAILABLE (no false OK)" "$OUT" "CODEX_UNAVAILABLE"
+check "FIX-2 banner-only ⇒ exit 1" "$RC" "1"
+check "FIX-2 banner-only ⇒ marker 1st line == token" "$(head -1 "$WORK/codex-review-bo1.md" 2>/dev/null)" "CODEX_UNAVAILABLE"
+check_contains "FIX-2 honest cause=degenerate-log (rc was 0, NOT exec-failed)" "$(cat "$WORK/codex-review-bo1.md" 2>/dev/null)" "degenerate-log"
+
+# --- FIX-2 precision: a real review that QUOTES the banner is NOT banner-only ⇒ OK (guards against a
+# naive substring strip, which would delete the line → banner-only → CODEX_UNAVAILABLE ⇒ this reds). ---
+disp fake_quote_banner qb1 slice "$WORK/codex-review-qb1.md" --poll-secs 0.05
+check "FIX-2 precision: real review quoting the banner ⇒ OK (full-line match, not substring)" "$OUT" "OK"
+
+# --- FIX-2 robustness: banner + a hidden byte (NUL) is STILL degenerate ⇒ CODEX_UNAVAILABLE, never a
+# false OK. RED against the CR-only normalizer (the stray byte broke the full-line match ⇒ false OK). ---
+disp fake_banner_nul bn1 slice "$WORK/codex-review-bn1.md" --poll-secs 0.05
+check "FIX-2 robustness: banner+hidden-byte (NUL) ⇒ CODEX_UNAVAILABLE (no fail-open bypass)" "$OUT" "CODEX_UNAVAILABLE"
+check "FIX-2 robustness: banner+NUL ⇒ exit 1" "$RC" "1"
+disp fake_banner_ansi ba1 slice "$WORK/codex-review-ba1.md" --poll-secs 0.05
+check "FIX-2 robustness: banner+ANSI escapes ⇒ CODEX_UNAVAILABLE (residue not content)" "$OUT" "CODEX_UNAVAILABLE"
+# OSC embeds arbitrary text — the whole-class strip must fail it closed (a CSI-only strip leaked here):
+disp fake_banner_osc bo2 slice "$WORK/codex-review-bo2.md" --poll-secs 0.05
+check "FIX-2 robustness: banner+OSC escape ⇒ CODEX_UNAVAILABLE (arbitrary-text escape closed)" "$OUT" "CODEX_UNAVAILABLE"
+# guard the escape strip does NOT over-strip real reviews (CSI-colored, OSC-title-prefixed) into false degenerates:
+disp fake_colored_review cr1 slice "$WORK/codex-review-cr1.md" --poll-secs 0.05
+check "FIX-2 precision: ANSI-colored REAL review ⇒ OK (strip removes color, keeps content)" "$OUT" "OK"
+disp fake_osc_real or1 slice "$WORK/codex-review-or1.md" --poll-secs 0.05
+check "FIX-2 precision: OSC-title-prefixed REAL review ⇒ OK (strip removes title, keeps content)" "$OUT" "OK"
+# malformed/unterminated escapes (the whole class) fail closed:
+disp fake_banner_malformed_esc bm1 slice "$WORK/codex-review-bm1.md" --poll-secs 0.05
+check "FIX-2 robustness: banner+malformed CSI+unterminated OSC ⇒ CODEX_UNAVAILABLE (class-complete)" "$OUT" "CODEX_UNAVAILABLE"
+# whitespace-only rc0 log ⇒ degenerate-log (the documented lane), never a false OK:
+disp fake_whitespace_only ws1 slice "$WORK/codex-review-ws1.md" --poll-secs 0.05
+check "FIX-2: whitespace-only rc0 log ⇒ CODEX_UNAVAILABLE (degenerate-log, no false OK)" "$OUT" "CODEX_UNAVAILABLE"
+check_contains "FIX-2: whitespace-only ⇒ honest degenerate-log cause" "$(cat "$WORK/codex-review-ws1.md" 2>/dev/null)" "degenerate-log"
+# killed-latch WINS over the degenerate-arm: stall-kill on attempt 1, rc0 banner-only on retry ⇒ KILLED:
+CNTK="$WORK/cnt_klatch"; : > "$CNTK"
+CNT="$CNTK" disp fake_stall_then_banner kl1 slice "$WORK/codex-review-kl1.md" --poll-secs 0.05 --stall-secs 0.2 --backstop-secs 100
+check "FIX-2: post-stall-kill rc0 banner-only ⇒ CODEX_KILLED_TIMEOUT (killed-latch beats degenerate-arm)" "$OUT" "CODEX_KILLED_TIMEOUT"
+# a review that merely QUOTES an escape as a literal string (no actual ESC byte) ⇒ OK (not stripped):
+disp fake_literal_esc_real le1 slice "$WORK/codex-review-le1.md" --poll-secs 0.05
+check "FIX-2 precision: review quoting a literal \\033[0m string ⇒ OK (only real ESC bytes strip)" "$OUT" "OK"
+
+# --- FIX-3: a banner-only --prior-codex must NOT down-tier (degenerate prior ⇒ fail toward FULL
+# effort). RED pre-fix: banner-only passes _log_nonempty + zero tags ⇒ EFFORT_LOW ⇒ argv shows medium. ---
+PRIOR_BANNER="$WORK/codex-review-prior-banner.md"; printf 'Reading additional input from stdin...\n' > "$PRIOR_BANNER"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv fx3 slice "$WORK/codex-review-fx3.md" --poll-secs 0.05 --confirmation-class --prior-codex "$PRIOR_BANNER"
+check_absent "FIX-3 banner-only --prior-codex ⇒ FULL effort (no down-tier on a degenerate prior)" "$(cat "$WORK/argv.log")" "model_reasoning_effort"
+
+# --- FIX-1 (PROBE half): the `codex doctor < /dev/null` redirect must route the DOCTOR probe's stdin
+# to /dev/null too, so an inherited open stdin can't degrade/hang the probe. The doctor detects its
+# stdin TYPE STATELESSLY (`-c /dev/fd/0`: /dev/null is a char device, an inherited regular file is
+# not) — stateless so the probe RETRY re-evaluates identically (a content-consuming check would be
+# masked by the shared file offset: first read empties the file, retry sees EOF → false pass). WITH
+# the redirect ⇒ stdin is /dev/null (char) ⇒ probe OK ⇒ OK; RED pre-fix ⇒ inherited regular file ⇒
+# probe fails on BOTH attempts ⇒ confirmed outage ⇒ CODEX_UNAVAILABLE. ---
+mkfake fake_probe_stdin_sensitive \
+  '#!/usr/bin/env bash' \
+  'if [ "$1" = doctor ]; then [ -c /dev/fd/0 ] && { echo ok; exit 0; } || exit 1; fi' \
+  'printf "reviewing\nMINOR: nit\ndone\n"; exit 0'
+printf 'inherited open stdin content for the probe\n' > "$WORK/openstdin-probe.txt"
+# No external `timeout` (macOS ships none): the helper self-bounds via --stall/--backstop-secs.
+OUT="$(env DRIVE_CODEX_CMD="$BIN/fake_probe_stdin_sensitive" "$HELPER" --mode dispatch --scope psi1 \
+   --scope-class slice --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-psi1.log" \
+   --marker "$WORK/codex-review-psi1.md" --prompt-file "$PROMPT" --poll-secs 0.05 \
+   --stall-secs 10 --backstop-secs 10 < "$WORK/openstdin-probe.txt" 2>/dev/null)"; RC=$?
+check "FIX-1 probe: doctor stdin routed to /dev/null ⇒ probe OK ⇒ token OK (redirect on the probe launch)" "$OUT" "OK"
+
 echo ""
 echo "===================================================================="
 printf 'drive-codex.test.sh: %d passed, %d failed\n' "$PASS" "$FAIL"
