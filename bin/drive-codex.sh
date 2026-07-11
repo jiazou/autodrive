@@ -283,7 +283,17 @@ _log_nonempty() {
 # reviews always carry ASCII severity tags, so this cannot mis-drop a real review. The whole
 # escape-embedded-text class is closed (valid + malformed CSI/OSC/DCS/Fe); this is NOT a general
 # adversarial-input sanitizer, and need not be — real codex writes to a NON-TTY file and emits no
-# escapes, so its degenerate output is the plain banner. $1 = path.
+# escapes, so its degenerate output is the plain banner.
+# ACCEPTED RESIDUAL (overrule-with-evidence, codex r3): `banner + any VISIBLE printable residue`
+# (`banner...X`, or `banner\n.\n`) classifies as a REAL review (→ OK), NOT degenerate. This is by
+# design, not a bypass: (a) after FIX-1 the HEALTHY log IS `banner\n<review>`, so the matcher MUST
+# pass `banner + substantive content`; `banner + X` (tiny junk) is byte-INDISTINGUISHABLE from
+# `banner + a terse real review`, and NO content threshold converges (an adversary crafts N+1 chars;
+# N also reds legitimately-terse real reviews). (b) The real producer cannot emit it — codex's banner
+# is its own complete newline-terminated line, so `banner...X` on that line is unreachable, and a
+# lone-`.` review body is not codex's degenerate output (which is the plain banner, caught here).
+# FIX-1 (< /dev/null) is the load-bearing guarantee; this net catches the exact observed degenerate
+# shape + escape/control-byte drift. $1 = path.
 _log_banner_only() {
   [ -s "$1" ] || return 1
   # Normalize so a banner line carrying stray/hidden bytes STILL matches the full-line banner
