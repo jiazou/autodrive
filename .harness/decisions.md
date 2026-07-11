@@ -5634,3 +5634,100 @@ are the non-obvious "why" (OPERATING: comments keep the why), Claude assessed ke
 slop. Applicable de-slop set empty → CONVERGED (AppliedEdits: no), no fix round, finalizeRound=0.
 review-finalize-1.md binds featureBranch tip 8377e03 (== tip, R..tip empty) — the terminal ship
 artifact. No ARCH findings → no finalize-todo.md (no TODO promotion at ship).
+
+## Run sonnet4-window-20260710-092355 (2026-07-10) — phantom Sonnet-4 window fix
+
+## D-plan-1 (Mechanical) — right-size the plan review
+Given the <30 SLOC mechanical bugfix scope, the load-bearing plan gate is the dual-voice
+design review (Claude + codex), which both converged with 0 P1 over 2 rounds. The heavy
+gstack `autoplan` (CEO/Design/Eng/DX) pass is disproportionate for a phantom-string bugfix
+and was folded into the dual-voice review. Rationale: OPERATING "right-size at design;
+review-churn and over-design are the same failure" + principle 3 (pragmatic).
+Classification: Mechanical.
+
+## D-p1-1 (Mechanical) — restore 3bf4866's two-rule TEST structure, adapted for D1+D3
+Phase-1 design. Restore the per-rule mutation test (windows[0]=1M / windows[1]=200k
+indexing), real `Sonnet 4`/`claude-sonnet-4-20250514` in known_200k, the 1M id-forms incl.
+the collision id `claude-sonnet-4-6`, the expanded json↔statusline boundary params, and the
+layout suite's 1M-rule anti-drift check. TWO forced adaptations from a verbatim 3bf4866 test
+restore, both mandated by prior decisions: (a) keep the `case "$MODEL $MODEL_ID"` regex +
+id-forms in both case arms (D1 preserves 0a76c89), NOT 3bf4866's `$MODEL`-only case; (b) bare
+`Haiku` (D3) means do NOT add bare `"Haiku"` to test_resolve_window_default_is_1m (3bf4866
+did — under bare Haiku it now resolves 200k) — instead pin D3 via `Haiku 3.5`/
+`claude-3-5-haiku-20241022`→200k in known_200k. Rationale: principles 1 (completeness) + 4
+(DRY) + not undoing prior fixes. Classification: Mechanical.
+
+## D-p1-2 (Mechanical) — py docstring needs no wording change
+Phase-1 design. bin/rebirth_thresholds.py's docstring already describes the ordered 1M-first
+two-rule table (incl. the `Sonnet 4.6` contains `Sonnet 4` note); the HEAD single-rule json
+made it stale, and restoring the table re-syncs reality to it. Expected diff: zero; correct
+only a genuinely-stale example if one surfaces during implement. Rationale: OPERATING "edit
+the source of truth, cut gratuitous churn" + principle 3 (pragmatic). Classification: Mechanical.
+
+## D-p1-3 (Mechanical) — sweep scope: grep-clean + all-five-green, no artificial edits
+Phase-1 design. "No window-test suite left un-swept" = every phantom form
+(`Sonnet 4.0`/`sonnet-4-0`/`sonnet-4.0` + the prose `4.5/4.0`) gone from bin/ + all five test
+files (grep-clean, AC7) AND every one of the five suites green under the restored table (AC8).
+test_rebirth_e2e.py and test_drive_stop_hook.py carry no phantom form and their Opus/Haiku
+fixtures survive the restore (bare-Haiku keeps `claude-haiku-4`→200k) → verify-clean, NOT
+injected with artificial Sonnet-4 assertions (right-size; no gold-plating). Behavioral Sonnet-4
+pins land on the window-resolving surfaces (resolver test + statusline bash test); the collision
+pin (Sonnet 4.6→1M, Sonnet 4→200k) lands on BOTH surfaces. Rationale: OPERATING "right-size at
+design" + principle 3 (pragmatic). Classification: Mechanical.
+
+## D-p1-4 (Mechanical, from design review r1) — load-bearing id pins + structural lock-step
+Phase-1 design, closing two P1 review gaps. (a) A "generic display + 1M id → 1M" test is
+VACUOUS — the 1M defaultWindow / `*)` arm catches a deleted id-form, so it passes on the buggy
+path. Every 1M-id-form pin must instead use the id-beats-a-colliding-200k-display shape (id
+`claude-sonnet-4-6` contains the 200k substring `sonnet-4`, so `("Sonnet 4","claude-sonnet-4-6")
+→1M` reds if `sonnet-4-6` is dropped from the 1M rule/arm — the only shape that reds on
+deletion); and `_statusline_case_window` must be extended from display-only to match
+`"$MODEL $MODEL_ID"` so id-forms are exercised on the statusline surface. (b) A STRUCTURAL
+compare — json rule→match-token sets == inline-`case` arm→glob-token sets under identical
+window assignment — replaces the sampled per-model checks, but its HONEST guarantee is
+CROSS-SURFACE parity (one surface drifts, the other doesn't → reds), NOT "any 1M-entry drift
+reds": a coordinated both-surface deletion of a NON-colliding 1M id-form (`fable-5`, `opus-4-8`)
+is functionally inert (resolves 1M via the default present-or-absent) and stays green — a
+non-regression intentionally left unpinned (right-size). Colliding 1M id-forms are pinned by
+AC4 (fall to 200k on deletion). AC5/edge-case-#6 wording is scoped to this bound (no "ANY drift
+reds" absolute); lock-step covers only the two executable surfaces (docstring human-maintained,
+AC9 verify-only). Rationale: OPERATING "a green test can lie — verify it exercises the real
+path" + "anchor load-bearing gates on the deterministic source" + right-size (don't pin a
+non-regression). Classification: Mechanical.
+
+## D-p1-5 (Mechanical) — 200k id-forms are load-bearing; pin the whole real-200k-id class (AC12)
+Slice review r1 (codex, workspace-write). D-p1-4's "coordinated both-surface deletion is inert"
+reasoning holds ONLY for 1M id-forms (default is 1M). A 200k id-form deleted from BOTH surfaces
+drops its model to the 1M defaultWindow = a REAL regression (this run's target class). Codex
+proved it: removing `opus-4-5` from json AND the inline case left all suites green while
+`claude-opus-4-5` misresolved 1M (90% not 454%). Fix the CLASS in one round: a per-model
+behavioral pin for every real 200k model id (`claude-sonnet-4-20250514`, `claude-sonnet-4-5`,
+`claude-opus-4-5`, `claude-opus-4-1`, `claude-3-5-haiku-20241022`/`claude-haiku-4`/`claude-haiku-4-5`)
+asserting →200k on BOTH resolver and statusline, mutation-verified to red on a token drop (AC12).
+Imprecision budget: 1M id-forms stay unpinned (inert); non-existent future ids out of scope
+(fail-safe). Rationale: OPERATING "a green test can lie — verify it exercises the real path" +
+fix the whole input-class in one round (avoid the per-token treadmill). Classification: Mechanical.
+
+## D-p1-6 (Mechanical) — harden P1/P2 routed to followups (scope gate), phase HARDENED
+Harden phase 1 (codex). Codex flagged a P1 (resolve_window non-string-model robustness,
+bin/rebirth_thresholds.py:61) and a P2 (display-only `Opus 4.1` unpinned). BOTH reproduced.
+The P1 is PRE-EXISTING and OUT-OF-DIFF (bin/rebirth_thresholds.py unchanged this phase; last
+touched 831e998) and contingent on non-production input (message.model is always a string) →
+routed to followups F3, NOT fixed (harden scope-creep HARD GATE forbids editing unrelated
+out-of-diff working code that is not the root cause of a phase P1; and a defensive non-string
+bolt-on is a deliberate design call, not a harden fix — net-negative risk). The P2 `Opus 4.1`
+display token is redundant with the pinned `opus-4-1` id-form for real sessions (same class as
+sonnet-4-5) → followups F4, intentional per D-p1-5. Actionable phase-surface fix set EMPTY →
+HARDENED (AppliedEdits: no; hardenRound stays 0). Slop persisted to followups for finalize.
+Rationale: OPERATING harden scope discipline + right-size + refuted/scope-routed WITH evidence,
+never silently dropped. Classification: Mechanical.
+
+## D-finalize-1 (Mechanical) — finalize diff scope = frozen baseSha, not moved `main`
+`main` advanced e8ed271→d2d717f after branch-cut (docs/todo reconcile commits touching
+`.harness/followups.md` + `TODO.md`). `git diff main..featureBranch` therefore injects
+ledger-divergence noise (the branch looks to "revert" main's newer ledger edits). The
+honest whole-run diff is `baseSha(e8ed271)..featureBranch` — the 6 files the run actually
+changed (bin/rebirth-thresholds.json, bin/statusline.sh, +4 test files). Finalize audits
+that scope. The followups/TODO divergence is a trivial append-only-ledger conflict resolved
+at ship (materialize real merge into main, suite on merged tree, flag at Gate B) —
+[[diverged-base-ship-verify-merged-tree]].

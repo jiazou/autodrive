@@ -972,3 +972,87 @@ test/install-drive-hooks.test.sh:420-423 — comment says three hooks/four entri
   tail comments on the regression-test assertions as redundant. Kept: they document the exact
   pre-fix value each guard test asserts (regression provenance / the non-obvious "why"), which
   Claude assessed as keep-worthy. Taste-note only; no behavior impact.
+
+## Run sonnet4-window-20260710-092355 (2026-07-10) — phantom Sonnet-4 window fix
+
+# Follow-ups (run-local; promoted to repo .harness/followups.md at ship)
+
+## F1 — Opus-4 base model (`claude-opus-4-20250514`) resolves to 1M, not its real 200k
+Discovered during phasedesign1 review. The restored two-rule table (faithful to `3bf4866` +
+D3) carries `Opus 4.5`/`Opus 4.1` but NOT bare `Opus 4`/`opus-4`, and the base Opus-4 id
+`claude-opus-4-20250514` contains none of the 1M or 200k substrings, so it falls through to
+`defaultWindow` = 1M. This is the SAME bug class as the Sonnet-4 symptom (a real 200k model
+resolving 1M → rebirth fires late, statusline under-reports at ~4x), but it is:
+  - NOT a regression from this change (HEAD's single-rule table also missed it), and
+  - explicitly OUT OF SCOPE per design.md ("expanding the 1M roster / unverified windows keep
+    their fail-safe direction") and the narrowly-Sonnet-4 goal.
+Fix later by adding `Opus 4`/`opus-4` to the 200k rule (note: `opus-4` is a substring of the
+1M `opus-4-8`/`opus-4-7`/`opus-4-6` id-forms, so ordering already protects the 1M Opus models —
+the 1M rule is scanned first — making a bare `opus-4` 200k entry safe). Verify the real window
+before adding. Not blocking this run.
+
+## F2 — Version-qualified 200k id-tokens latently substring-collide with FUTURE dot-versions
+Noted during phase-1 harden audit (no current impact — non-existent models). The 200k rule's
+version-qualified id-tokens are substrings of hypothetical future higher-dot-version ids:
+`opus-4-1` ⊂ `claude-opus-4-10`…`claude-opus-4-19`; `opus-4-5` ⊂ `claude-opus-4-50`…;
+`sonnet-4-5` ⊂ `claude-sonnet-4-50`…. If Anthropic ever ships e.g. Opus 4.10 (presumably 1M),
+its id would resolve to 200k via `opus-4-1` unless a preceding 1M-rule token is added first —
+the SAME wrong-direction clamp this run fixes for Sonnet-4. Zero current models are affected;
+explicitly out of scope (edge case #8 / D-p1-5 category 4: future ids keep the fail-safe
+framing). Mitigation when such a model ships: add its 1M id-form to windows[0] (scanned first)
+BEFORE it can be caught by the narrower 200k token. Not blocking this run. Same class as F1.
+
+## slop (deferred to finalize)
+bin/statusline.sh:26 — jq `first(., empty)` redundant no-op given the pipeline ends `| head -1` (pre-existing, functionally correct)
+bin/statusline.sh:29 — (codex) same redundant jq first() region
+tests/hooks/test_rebirth_thresholds.py:251 — (codex) minor slop
+test/rebirth-install-layout.test.sh:2 — (codex) minor slop
+test/rebirth-install-layout.test.sh:162 — (codex) minor slop
+
+## F3 — resolve_window() not robust to a non-string message.model (pre-existing)
+Flagged by codex harden (phase 1). bin/rebirth_thresholds.py:61 `resolve_window()` does
+`sub in model` on the raw transcript `message.model`; a non-string value raises (int/bool →
+TypeError → the stop-hook suppresses rebirth steering) or misclassifies (a list resolves 200k
+by element membership) — and diverges from statusline (which renders the 1M default for a
+non-string display). PRE-EXISTING (bin/rebirth_thresholds.py is NOT in this run's diff; last
+touched by 831e998) and contingent on non-production input (Claude Code transcripts always
+emit a string model id). Out of scope for this Sonnet-4-window run per the harden scope gate.
+Fix later: coerce/guard `model` to a string in resolve_window (and decide the intended window
+for a malformed model — likely defaultWindow), with a regression test for int/bool/list. Not
+blocking this run.
+
+## F4 — display-only `Opus 4.1` token is redundant (not behaviorally pinned)
+Flagged by codex harden (phase 1) as P2. The `Opus 4.1` DISPLAY token in the 200k rule is
+redundant with the pinned `opus-4-1` id-form for real sessions: a real Opus-4.1 session carries
+id `claude-opus-4-1` (AC12-pinned → 200k) regardless of the display token. Deleting the display
+token alone only affects a hypothetical display-only "Opus 4.1" session (no id), which does not
+occur. Same class as the redundant `sonnet-4-5` token; intentionally not behaviorally pinned per
+D-p1-5's imprecision budget. Non-regression; logged for completeness. Not blocking.
+
+## F5 — drive-codex.sh does not redirect codex stdin (background-dispatch hang)
+`bin/drive-codex.sh` launches `codex exec "$PROMPT_TEXT" > "$RAW_LOG" 2>&1 &` (line ~448)
+with NO stdin redirect. When the helper is dispatched from a backgrounded Bash whose stdin
+is an inherited open fd, `codex exec` prints "Reading additional input from stdin..." and
+degenerates/hangs (produces a 39-byte raw log, no review, yet exits rc 0 → a false OK token).
+Hit in this run's finalize round 1; recovered by re-invoking the helper with `</dev/null`.
+FIX (harness): add `</dev/null` to the codex exec launch in drive-codex.sh (or to every
+stage-command dispatch block). Until fixed, callers MUST append `</dev/null` to the helper
+invocation. The helper should ALSO validate a non-trivial raw log before returning OK
+(a 39-byte "Reading additional input from stdin..." log is not a real review).
+
+## F7 — explicit 1M window entries broader than the collision fix (codex finalize r2, P2)
+Fable 5 / Sonnet 5 / Opus 4.8/4.7/4.6 in the 1M rule (bin/rebirth-thresholds.json windows[0] +
+bin/statusline.sh 1M case arm) are behaviorally INERT — they resolve to 1M via defaultWindow
+even if absent; only Sonnet 4.6/sonnet-4-6 is load-bearing (collides with the 200k Sonnet 4).
+NOT changed in-run: the explicit table is a converged design choice (explicit-over-clever +
+forward-safety, restoring 3bf4866); removing entries is a taste edit to security-adjacent
+product code with collision-regression risk and no P1. If ever slimmed, keep Sonnet 4.6 and
+mutation-verify no 200k-substring model loses its 1M resolution.
+
+## F8 — anti-drift tests are structural-shape-coupled by design (codex finalize r2, P2)
+test_rebirth_thresholds.py (windows[0]/[1] indexing, token-set equality) + rebirth-install-layout
+(first-quoted-glob-arm anchor) assert SOURCE STRUCTURE, so a behavior-preserving refactor
+(regrouping tokens, splitting a rule, reformatting the case) would red them. This is the
+INTENDED anti-drift trade-off (structure-coupling is how edit-one-forget-the-twin drift is
+caught); imprecision budget documented (D-p1-5 / AC12). Not loosened in-run (would weaken the
+guarantee). Revisit only if the table's shape genuinely churns.
