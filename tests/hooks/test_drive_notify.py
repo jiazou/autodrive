@@ -41,35 +41,25 @@ def _markers(rd):
     return sorted(p.name for p in Path(rd).glob("notified-*.marker"))
 
 
-def _wait_for(path, timeout=3.0, expected=None):
-    """Poll until the delivered file is COMPLETE, not merely present.
+def _wait_for(path, expected, timeout=3.0):
+    """Poll until the delivered file's bytes EQUAL `expected`, or until `timeout`.
 
     drive-notify.sh backgrounds its transport (fire-and-forget), so `cat > out` CREATES the file
     before `cat` finishes copying stdin into it — waiting on mere existence races the write and can
-    read partial/empty content. Wait for the delivery to finish instead:
-      - `expected` given  → return once the file's bytes EQUAL `expected` (exact-match: a partial
-        prefix never equals the full expected string, so this cannot return early).
-      - `expected` omitted → return once the file is non-empty AND byte-stable across two consecutive
-        reads (a best-effort completion heuristic for a caller that cannot name the content).
-    Returns True on completion, False on timeout — so a genuine non-delivery still fails loud at the
-    `assert _wait_for(...)` call site, never silently.
+    read partial/empty content. Exact-match waits for the delivery to COMPLETE: a partial prefix
+    never equals the full expected string, so this cannot return early. Returns True on match, False
+    on timeout — so a genuine non-delivery still fails loud at the `assert _wait_for(...)` call site,
+    never silently.
     """
+    want = expected.encode("utf-8")
     p = Path(path)
-    want = None if expected is None else expected.encode("utf-8")
     end = time.time() + timeout
-    prev = None
     while time.time() < end:
         try:
-            data = p.read_bytes()
-        except OSError:
-            data = None
-        if data is not None:
-            if want is not None:
-                if data == want:
-                    return True
-            elif data and data == prev:
+            if p.read_bytes() == want:
                 return True
-            prev = data
+        except OSError:
+            pass
         time.sleep(0.03)
     return False
 
