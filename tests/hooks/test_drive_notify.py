@@ -58,8 +58,8 @@ def _wait_for(path, expected, timeout=3.0):
         try:
             if p.read_bytes() == want:
                 return True
-        except OSError:
-            pass
+        except FileNotFoundError:
+            pass  # the only race to tolerate: file not created yet — a real bad path fails loud
         time.sleep(0.03)
     return False
 
