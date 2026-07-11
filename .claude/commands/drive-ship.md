@@ -46,6 +46,61 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
   partial attempt): `git worktree remove --force $RUN_DIR/wt/ship 2>/dev/null; git
   worktree prune`, then `git worktree add $RUN_DIR/wt/ship <featureBranch>` and work
   there (cwd).
+- **Base-freshness preflight (diverged-base auto-resolve) — BEFORE the ledger promotion.**
+  A run branches from `baseRef` at the frozen `state.baseSha`; if `baseRef` advanced while the
+  run was in flight (common in a shared clone) AND both sides appended to the append-only
+  `.harness` ledgers, promoting onto the STALE base copy yields a PR that CONFLICTS at merge —
+  silently, unless checked. Run **`bin/drive-base-preflight.sh $RUN_DIR`** — a read-only detector
+  that predicts the merge via `git merge-tree`, mutates nothing, and ALWAYS exits 0 with a JSON
+  verdict (a legacy run without `baseSha`, or any unresolvable ref / invalid repoRoot, fails OPEN
+  to `recommendation:"none"` → ship exactly as today; it never invents a block). Act on
+  `.recommendation`:
+  - `none` / `ship-as-is` → proceed UNCHANGED (base unmoved, or moved but the merge is clean).
+    For `ship-as-is`, surface "base moved `.movedCommits` commits, merge clean" at Gate B
+    (informational).
+  - `manual-merge` (base moved AND a **non-ledger** file conflicts — a genuine semantic overlap;
+    a clean auto-merge of overlapping subsystems is NOT a correct merge) → do NOT auto-rewrite;
+    **STOP** via Present human pause (`waiting="stop:base-diverged-conflict"`), reporting
+    `.conflicts` + `.currentBase` for the human to rebase/merge.
+  - `auto-rebase` (base moved, the run's code is disjoint, and the ONLY conflict is on the
+    append-only ledgers — either already on the tree, OR the PENDING promotion append the detector
+    predicts from `git diff <baseSha>..<currentBase>` ∩ the ledgers the run will append to. NOTE:
+    the detector returns `auto-rebase` even when the current-tree merge is "clean" (`mergeClean:true`),
+    because on a FRESH ship featureBranch has not appended its ledger entries yet — the conflict is
+    the pending append, which `mergeClean` cannot see) → AUTO-RESOLVE, each step a fail-closed gate:
+    1. **Semantic gate — merged-tree suite.** A ledger-only TEXT conflict is not proof of
+       semantic safety. In a SCRATCH worktree at `.currentBase`, `git merge <featureBranch>` and
+       run the FULL suite (`bin/run-tests.sh`). Red → **STOP** (`waiting="stop:base-diverged-suite-red"`),
+       do NOT rebase; remove the scratch worktree either way.
+    2. **Rebase onto the fresh base.** In `wt/ship`,
+       `git rebase --onto <.currentBase> <state.baseSha> <featureBranch>` (content-preserving —
+       the code is disjoint). **VERIFY content-preservation:** the run's own files — the name-set
+       from `git diff --name-only <state.baseSha>..<featureBranch>` (the FROZEN fork point, NOT
+       the movable `baseRef` name) — have IDENTICAL blobs at the pre- vs post-rebase finalize
+       commit. Not identical → `git rebase --abort` / reset to the pre-rebase tip and **STOP**
+       (`waiting="stop:base-rebase-not-clean"`).
+    3. **Re-bind finalize's `reviewed-sha` (sanctioned post-rebase re-bind, NOT a forge).** The
+       finalize commit's sha changed under the rebase; the reviewed CODE is byte-identical (step
+       2), so the CONVERGED review still holds. REPLACE the single `reviewed-sha:` line IN PLACE
+       in the terminal `$RUN_DIR/review-finalize-N.md` (highest-N, `## AppliedEdits: no`) with the
+       rebased finalize commit sha (the post-rebase pre-ledger `featureBranch` tip). Do NOT touch
+       the `## Verdict:` line.
+    4. **Re-confirm clean (fail-closed).** Re-run `bin/drive-base-preflight.sh $RUN_DIR`; require
+       `.mergeClean == true`. Still conflicting → **STOP** (`waiting="stop:base-rebase-unresolved"`).
+       Surface the auto-resolution ("rebased onto `.currentBase`; finalize reviewed-sha re-bound")
+       at Gate B.
+  **Degraded check** — when the detector could not run its prediction fully: `.fetchOk == false`
+  (could not fetch `baseRef` from `origin`, so the compare ran against a possibly-STALE
+  remote-tracking ref) OR the verdict carries a `.reason` (a fail-open — e.g. `merge-tree-failed`,
+  an unresolvable ref). A `none`/`ship-as-is` from a degraded check may MISS a real divergence, so
+  do NOT trust it silently: surface at Gate B — "base-freshness check was degraded (`<reason>` /
+  fetch failed); the merge-conflict prediction may be stale — verify the base is current before
+  merge" — REGARDLESS of `.recommendation`. A warning, NOT a block (offline / old-git / no-remote
+  dev is legitimate — mirrors drive.md's base pre-flight fail-open; it degrades to the pre-detector
+  behaviour where the human catches the conflict at merge).
+  A FRESH ship rebases BEFORE the first push, so no force-push is needed; a RESUMED ship whose
+  branch was already pushed force-pushes the rebased branch at the push step (§ After approval —
+  explicit refspec, `--force-with-lease`).
 - **Resume-idempotency rule (do NOT double-promote / double-commit).** The ledger commit
   is created BEFORE the suite-red STOP and BEFORE Gate B, so a resumed ship re-enters
   here AFTER it already landed. Determine state from git BEFORE appending: let `R` =
