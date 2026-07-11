@@ -6007,3 +6007,23 @@ glob always matches). Written as PROSE (no nested `- **`, os.replace still prece
 AC1 index-map invariant preserved). (2) a matching prose-pin in test_rebirth_handshake.py (mutation-verified:
 deleting the clause reds it). Folded cheap in-scope: a shasum-absent test for bin/drive-notify.sh (R3
 fail-open/portability, both voices P2) + audit-confirmed-present deferred-slop comment/docstring cleanups.
+
+## Run deflake-notify-20260711-100816 (2026-07-11) — de-flake test_drive_notify _wait_for
+
+
+## D1 (Mechanical) — fix the shared `_wait_for` helper with exact-content-match
+Fix `_wait_for(path, expected=...)` to poll until file content EQUALS `expected` (exact-match),
+falling back to non-empty+byte-stable only when a caller cannot name the content. Chosen over
+byte-stable-only because exact-match cannot false-early-return on a stable partial prefix
+(design-review codex P1, round 1). All three affected callers know their exact expected bytes.
+Classification: Mechanical.
+
+## D2 (Mechanical) — bounded timeout, fail-loud on timeout
+Keep the existing bounded `timeout` (default 3.0s); return `False` on timeout so a genuine
+non-delivery still fails at the `assert _wait_for(...)` site, never silently swallowed.
+Classification: Mechanical.
+
+## D3 (Mechanical) — expected literals are byte-exact (no trailing newline)
+drive-notify.sh delivers via `printf '%s' "$MESSAGE"` (no trailing newline) and `cat` copies
+exactly, so the `expected` literals are the raw messages with NO trailing newline
+("the message body" / "hi" / "first"). Classification: Mechanical.
