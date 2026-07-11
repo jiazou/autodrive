@@ -268,23 +268,35 @@ _log_nonempty() {
   grep -q '[^[:space:]]' "$1" 2>/dev/null
 }
 
-# rc0 (true) iff the raw log is DEGENERATE — every non-blank line (CR/space-normalized) is
-# EXACTLY the codex stdin banner "Reading additional input from stdin...". codex prints this
-# banner whenever stdin is a non-TTY (verified codex v0.142.5, EVEN with `< /dev/null`), so a
-# HEALTHY log is "banner + real review" and must NOT match — only a banner-AND-NOTHING-ELSE log
-# (the inherited-open-stdin degeneration, ~39 bytes, rc0 but no review) matches, so the OK gate
-# fails it closed. Full-LINE anchored (grep -vx), NOT a substring strip, so a real review line
-# that QUOTES the banner (e.g. `MINOR: prints "Reading additional input from stdin..."`) is NOT
-# stripped and stays a real review. Banner literal pinned to codex v0.142.5 (live-captured); a
-# future codex reword silently retires this net but FIX-1 (< /dev/null) still prevents the bug.
-# Defense-in-depth only. $1 = path.
+# rc0 (true) iff the raw log is DEGENERATE — it carries NO real review content: it is the codex
+# stdin banner "Reading additional input from stdin..." alone (the inherited-open-stdin
+# degeneration, ~39 bytes, rc0 but no review), OR blank, OR the banner plus only hidden/stray
+# bytes. codex prints this banner whenever stdin is a non-TTY (verified codex v0.142.5, EVEN with
+# `< /dev/null`), so a HEALTHY log is "banner + real review" and must NOT match; only a
+# no-real-content log matches, so the OK gate fails it closed. Full-LINE anchored (grep -vx), NOT a
+# substring strip, so a real review line that QUOTES the banner (e.g.
+# `MINOR: prints "Reading additional input from stdin..."`) is NOT dropped and stays a real review.
+# Banner literal pinned to codex v0.142.5 (live-captured); a future codex reword silently retires
+# this net but FIX-1 (< /dev/null) still prevents the bug. Defense-in-depth only. $1 = path.
 _log_banner_only() {
   [ -s "$1" ] || return 1
-  # Drop CRs, drop full-line banner matches; if ANY non-whitespace remains it is a real review
-  # (not banner-only) → return 1. Nothing meaningful remains → banner-only → return 0.
-  if tr -d '\r' < "$1" \
-       | grep -vx '[[:space:]]*Reading additional input from stdin\.\.\.[[:space:]]*' \
-       | grep -q '[^[:space:]]'; then
+  # Normalize so a banner line carrying stray/hidden bytes STILL matches the full-line banner
+  # pattern and is dropped. WITHOUT this the matcher is fail-OPEN — a degenerate rc0 log of
+  # "banner + junk" (`\0`, BEL, an ANSI escape, zero-width U+200B) fails the full-line match, its
+  # banner TEXT reads as real content, and a false OK slips past the gate (codex adversarial
+  # finding). Two normalization passes:
+  #   (a) strip ANSI/VT escape sequences (ESC + CSI/OSC-ish body) — the printable `[0m` residue of a
+  #       naive control-only strip would otherwise leak as content;
+  #   (b) LC_ALL=C tr: keep ONLY newline + printable-ASCII (drops CR, NUL, BEL, DEL, TAB, leftover
+  #       ESC, and any non-ASCII byte).
+  # Then drop full-line banner matches (the only remaining whitespace is space/newline); if any
+  # VISIBLE (`[[:graph:]]`) content remains it is a real review → return 1; else degenerate
+  # (banner-only, blank, or banner+junk) → 0. Full-LINE anchored (grep -vx) so a real review line
+  # that QUOTES the banner is NOT dropped.
+  if LC_ALL=C sed $'s/\033[][()#;?]*[0-9;]*[A-Za-z@-~]//g' "$1" \
+       | LC_ALL=C tr -cd '\012\040-\176' \
+       | grep -vx ' *Reading additional input from stdin\.\.\. *' \
+       | grep -q '[[:graph:]]'; then
     return 1
   fi
   return 0
@@ -718,7 +730,7 @@ do_dispatch() {
         # rc0 but the raw log is only the codex stdin banner (no real review) — fail closed as an
         # HONEST degradation (CODEX_UNAVAILABLE token family, marker written), NOT a false OK.
         log_attempt degrade "$attempt" CODEX_UNAVAILABLE degenerate-log "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
-        emit_degraded CODEX_UNAVAILABLE "Codex unavailable (degenerate-log: rc0 banner-only raw log, no review): probe_rc=$PROBE_RC live_attempt=degenerate attempt_log=$ATTEMPT_LOG" ;;
+        emit_degraded CODEX_UNAVAILABLE "Codex unavailable (degenerate-log: rc0 raw log with no real review content — banner-only, blank, or banner+hidden bytes): probe_rc=$PROBE_RC live_attempt=degenerate attempt_log=$ATTEMPT_LOG" ;;
       exec-failed)
         log_attempt degrade "$attempt" CODEX_UNAVAILABLE exec-failed "$effort_desc" "$sandbox_desc" "$MAX_GAP" "" "$PROBE_RC" "$CODEX_RC"
         emit_degraded CODEX_UNAVAILABLE "Codex unavailable (exec-failed): probe_rc=$PROBE_RC live_attempt=failed attempt_log=$ATTEMPT_LOG" ;;

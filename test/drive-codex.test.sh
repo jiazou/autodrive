@@ -817,6 +817,25 @@ mkfake fake_quote_banner \
   'case "$1" in doctor) echo ok; exit 0 ;; esac' \
   'printf "MINOR: helper prints \"Reading additional input from stdin...\" on an inherited fd\ndone\n"; exit 0'
 
+# DEGENERATE banner + a hidden byte (NUL) — the fail-OPEN bypass (codex adversarial). The stray byte
+# must NOT let the banner text read as "real content" and slip a false OK past the gate.
+mkfake fake_banner_nul \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "Reading additional input from stdin...\0\n"; exit 0'
+
+# DEGENERATE banner wrapped in ANSI color escapes — the printable [0m residue must NOT read as content.
+mkfake fake_banner_ansi \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033[0mReading additional input from stdin...\033[0m\n"; exit 0'
+
+# a REAL review that is ANSI-COLORED — the ANSI strip must NOT over-strip it into a false degenerate.
+mkfake fake_colored_review \
+  '#!/usr/bin/env bash' \
+  'case "$1" in doctor) echo ok; exit 0 ;; esac' \
+  'printf "\033[31mMAJOR\033[0m: a real bug at x.py:10\n"; exit 0'
+
 # --- FIX-1 (raw-log CONTENT; a token-only assertion is VACUOUS — OK pre AND post). The helper is
 # invoked with an INHERITED OPEN-FILE stdin (content); pre-fix the backgrounded exec inherits it →
 # banner-only raw log; post-fix (< /dev/null) → real review. RED pre-fix: raw lacks "MINOR". ---
@@ -841,6 +860,17 @@ check_contains "FIX-2 honest cause=degenerate-log (rc was 0, NOT exec-failed)" "
 # naive substring strip, which would delete the line → banner-only → CODEX_UNAVAILABLE ⇒ this reds). ---
 disp fake_quote_banner qb1 slice "$WORK/codex-review-qb1.md" --poll-secs 0.05
 check "FIX-2 precision: real review quoting the banner ⇒ OK (full-line match, not substring)" "$OUT" "OK"
+
+# --- FIX-2 robustness: banner + a hidden byte (NUL) is STILL degenerate ⇒ CODEX_UNAVAILABLE, never a
+# false OK. RED against the CR-only normalizer (the stray byte broke the full-line match ⇒ false OK). ---
+disp fake_banner_nul bn1 slice "$WORK/codex-review-bn1.md" --poll-secs 0.05
+check "FIX-2 robustness: banner+hidden-byte (NUL) ⇒ CODEX_UNAVAILABLE (no fail-open bypass)" "$OUT" "CODEX_UNAVAILABLE"
+check "FIX-2 robustness: banner+NUL ⇒ exit 1" "$RC" "1"
+disp fake_banner_ansi ba1 slice "$WORK/codex-review-ba1.md" --poll-secs 0.05
+check "FIX-2 robustness: banner+ANSI escapes ⇒ CODEX_UNAVAILABLE (residue not content)" "$OUT" "CODEX_UNAVAILABLE"
+# guard the ANSI strip does NOT over-strip a real colored review into a false degenerate:
+disp fake_colored_review cr1 slice "$WORK/codex-review-cr1.md" --poll-secs 0.05
+check "FIX-2 precision: ANSI-colored REAL review ⇒ OK (strip removes color, keeps content)" "$OUT" "OK"
 
 # --- FIX-3: a banner-only --prior-codex must NOT down-tier (degenerate prior ⇒ fail toward FULL
 # effort). RED pre-fix: banner-only passes _log_nonempty + zero tags ⇒ EFFORT_LOW ⇒ argv shows medium. ---
