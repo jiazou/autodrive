@@ -443,10 +443,10 @@ def test_window_uses_model_of_latest_usage_line_not_a_later_usageless_line(fake_
     Transcript: a usage-bearing Opus-4.8 line at 909_200 tokens (>= 1M*0.85 -> over its
     1M window), then a LATER usage-less assistant line with a DIFFERENT model
     (`claude-haiku-4`, no usage). Pre-fix the hook read the model from the latest line
-    (haiku -> the then-bare `haiku` 200k entry; now the `haiku-4` entry) while the
-    tokens came from the opus line, so the %/window in the steer described the wrong
-    window. Post-fix both come from the opus line: the steer fires (909_200 >= 850_000)
-    and reports the 1_000_000-token window."""
+    (haiku -> the 200k rule's bare `haiku`/`Haiku` token) while the tokens came from the
+    opus line, so the %/window in the steer described the wrong window. Post-fix both come
+    from the opus line: the steer fires (909_200 >= 850_000) and reports the
+    1_000_000-token window."""
     # PREMISE PIN: this test discriminates only while the trailing model's window
     # differs from the usage-line model's. If a future table change gave claude-haiku-4
     # the same window as claude-opus-4-8, the assertions below would pass even with the
@@ -479,6 +479,37 @@ def test_window_uses_model_of_latest_usage_line_not_a_later_usageless_line(fake_
     # The window in the steer is the opus line's 1M, NOT the later haiku line's default.
     assert "1000000-token window" in d["reason"]
     assert "200000-token window" not in d["reason"]
+
+
+# --- Sonnet-4 id-collision END-TO-END: the hook path this whole run fixes ---- #
+@pytest.mark.parametrize(
+    "model, steers",
+    [("claude-sonnet-4-20250514", True), ("claude-sonnet-4-6", False)],
+    ids=["sonnet-4-200k-steers", "sonnet-4-6-1M-no-steer"],
+)
+def test_sonnet4_id_collision_steers_at_200k_window(fake_home, model, steers):
+    """The id-level collision the entire run guards, exercised on the REAL consumer path
+    (the rebirth Stop-hook), not just the resolver: the same 300_000-token transcript
+    steers for a real Sonnet-4 session (`claude-sonnet-4-20250514`, a 200_000 window —
+    200_000*0.85 = 170_000 <= 300_000) but does NOT steer for Sonnet 4.6
+    (`claude-sonnet-4-6`, a 1M window — 1_000_000*0.85 = 850_000 > 300_000). The two ids
+    collide on the `sonnet-4` substring yet must resolve to OPPOSITE steer decisions at the
+    same token count; pre-fix, `claude-sonnet-4-20250514` fell to the 1M default and never
+    steered. Built inline like test_hard_water_boundary_is_inclusive (no fixture file)."""
+    trans = fake_home / f"sonnet4-{model}.jsonl"
+    trans.write_text(
+        '{"type": "assistant", "message": {"model": "' + model + '", '
+        '"usage": {"input_tokens": 300000, "cache_creation_input_tokens": 0, '
+        '"cache_read_input_tokens": 0}}}\n',
+        encoding="utf-8",
+    )
+    write_run(fake_home, "run-42", _block_state())
+    cp = run_hook(_payload(transcript=trans), home=fake_home)
+
+    assert cp.returncode == 0
+    d = decision(cp)
+    assert d is not None and d["decision"] == "block"
+    assert (CONTEXT_PRESSURE_ANCHOR in d["reason"]) is steers
 
 
 # --- AC5: post-flag over-water -> ESCALATION steer (not the set-flag steer) -- #
@@ -707,10 +738,10 @@ def test_failopen_steer_helper_unexpected_exception(fake_home, monkeypatch):
 def test_failopen_unknown_model_over_default_window_steers(fake_home):
     """Sibling of the above: an unknown model resolving to the default 1_000_000 window
     whose sum EXCEEDS 1_000_000*0.85=850_000 DOES steer — proving the default-window
-    branch is live (not a silent skip). Unknown models default to 1M (the version-qualified
-    ordered 200k rules cover the known-200k families and the `[1m]` marker covers an active
-    beta); a genuinely unknown 200k-window model firing late is the accepted residual of
-    the default-1M policy."""
+    branch is live (not a silent skip). Unknown models default to 1M (the ordered two-rule
+    table lists the 1M families in windows[0] and the 200k families in windows[1], and the
+    `[1m]` marker covers an active beta); a genuinely unknown 200k-window model firing late
+    is the accepted residual of the default-1M policy."""
     trans = fake_home / "unknown-model-hi.jsonl"
     trans.write_text(
         '{"type": "assistant", "message": {"model": "mystery-model-9", '

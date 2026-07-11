@@ -84,7 +84,12 @@ new bugs live.
   (2026-07-10):** both action-loops now consume the separate-arg flag value; RED→GREEN tests
   (`gh pr --repo o/r create`, `-R`, `glab mr`, brace-tainted twin) in test/drive-merge-gate.test.sh;
   codex find-the-bypass: no residual fail-open / over-deny.
-- [ ] **[V] `bin/rebirth-thresholds.json:4` + `bin/statusline.sh:35`** — the 200k tokens
+- [x] **[V] `bin/rebirth-thresholds.json:4` + `bin/statusline.sh:35`** — **DONE (/drive run
+  sonnet4-window-20260710-092355): restored `3bf4866`'s ordered 1M-first window-match table in
+  both `bin/rebirth-thresholds.json` and the `bin/statusline.sh` inline `case` (kept in lock-step,
+  substring-collision ordering fixed), corrected the `bin/rebirth_thresholds.py` docstring, and
+  added real-Sonnet-4 coverage (`Sonnet 4` + `claude-sonnet-4-20250514` → 200k) across the five
+  window test files plus an end-to-end rebirth-hook steer discriminator.** the 200k tokens
   `"Sonnet 4.0"/"sonnet-4-0"/"sonnet-4.0"` are phantom forms: the real Sonnet-4 display `Sonnet 4`
   and id `claude-sonnet-4-20250514` contain none of them (confirmed), so a Sonnet-4 session falls
   through to the 1M default → the class-A rebirth hard-threshold (0.85×1M) is unreachable in a
@@ -686,3 +691,14 @@ promoted to repo-root TODO.md at ship).
   not a defect introduced by this run — recorded as a durable follow-up: if the combine state-machine
   grows further, consider extracting it into a small `bin/` helper (like `drive-codex.sh` itself)
   that is directly unit-testable. Out of scope for R2/R4 (whole-harness refactor).
+
+## /drive run sonnet4-window-20260710-092355 — architectural follow-ups (2026-07-10T23:52:06Z)
+
+- The driven window table is TWO executable model tables (`bin/rebirth-thresholds.json` +
+  the `bin/statusline.sh` inline `case`), not one runtime source of truth — the installed
+  (symlinked) statusline cannot read the JSON sibling (its `dirname(BASH_SOURCE)` is the
+  symlink's dir) and intentionally falls to the inline `case`, so every model-table edit is a
+  dual-update kept in lock-step only via tests (the AC5/AC6 anti-drift + token-set-parity
+  pins). Out of this run's blast radius (a design change: collapsing to a single runtime
+  source, e.g. generating the inline `case` from the JSON at install, or making the installed
+  statusline resolve the JSON by absolute path).
