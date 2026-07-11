@@ -916,6 +916,25 @@ PRIOR_BANNER="$WORK/codex-review-prior-banner.md"; printf 'Reading additional in
 : > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv fx3 slice "$WORK/codex-review-fx3.md" --poll-secs 0.05 --confirmation-class --prior-codex "$PRIOR_BANNER"
 check_absent "FIX-3 banner-only --prior-codex ⇒ FULL effort (no down-tier on a degenerate prior)" "$(cat "$WORK/argv.log")" "model_reasoning_effort"
 
+# --- FIX-1 (PROBE half): the `codex doctor < /dev/null` redirect must route the DOCTOR probe's stdin
+# to /dev/null too, so an inherited open stdin can't degrade/hang the probe. The doctor detects its
+# stdin TYPE STATELESSLY (`-c /dev/fd/0`: /dev/null is a char device, an inherited regular file is
+# not) — stateless so the probe RETRY re-evaluates identically (a content-consuming check would be
+# masked by the shared file offset: first read empties the file, retry sees EOF → false pass). WITH
+# the redirect ⇒ stdin is /dev/null (char) ⇒ probe OK ⇒ OK; RED pre-fix ⇒ inherited regular file ⇒
+# probe fails on BOTH attempts ⇒ confirmed outage ⇒ CODEX_UNAVAILABLE. ---
+mkfake fake_probe_stdin_sensitive \
+  '#!/usr/bin/env bash' \
+  'if [ "$1" = doctor ]; then [ -c /dev/fd/0 ] && { echo ok; exit 0; } || exit 1; fi' \
+  'printf "reviewing\nMINOR: nit\ndone\n"; exit 0'
+printf 'inherited open stdin content for the probe\n' > "$WORK/openstdin-probe.txt"
+OUT="$(timeout 30 env DRIVE_CODEX_CMD="$BIN/fake_probe_stdin_sensitive" "$HELPER" --mode dispatch --scope psi1 \
+   --scope-class slice --attempt-log "$ALOG" --raw-log "$WORK/codex-raw-psi1.log" \
+   --marker "$WORK/codex-review-psi1.md" --prompt-file "$PROMPT" --poll-secs 0.05 \
+   < "$WORK/openstdin-probe.txt" 2>/dev/null)"; RC=$?
+if [ "$RC" = 124 ]; then fail "FIX-1 probe: no hang on inherited open stdin (timeout hit)"; else pass "FIX-1 probe: no hang on inherited open stdin"; fi
+check "FIX-1 probe: doctor stdin routed to /dev/null ⇒ probe OK ⇒ token OK (redirect on the probe launch)" "$OUT" "OK"
+
 echo ""
 echo "===================================================================="
 printf 'drive-codex.test.sh: %d passed, %d failed\n' "$PASS" "$FAIL"
