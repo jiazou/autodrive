@@ -6007,3 +6007,39 @@ glob always matches). Written as PROSE (no nested `- **`, os.replace still prece
 AC1 index-map invariant preserved). (2) a matching prose-pin in test_rebirth_handshake.py (mutation-verified:
 deleting the clause reds it). Folded cheap in-scope: a shasum-absent test for bin/drive-notify.sh (R3
 fail-open/portability, both voices P2) + audit-confirmed-present deferred-slop comment/docstring cleanups.
+
+
+## Run codexstdin-20260711-100912 (2026-07-11) — drive-codex.sh stdin hang + false-OK-on-empty-review
+## D1 (Mechanical) — FIX 1 redirects BOTH codex spawn launches from /dev/null
+`codex exec` (dispatch, ~L448) AND `codex doctor` (probe, ~L407) get `< /dev/null`. Uniform;
+prevents the inherited-open-stdin hang. Both voices confirm no fd-9/PGID/watchdog interaction.
+
+## D2 (Taste) — FIX 2 matcher is a FULL-LINE anchored exact-banner match, not a substring strip
+`_log_banner_only`: banner-only iff every CR/space-normalized non-blank line == exactly
+`Reading additional input from stdin...`. Rejects the degenerate log without false-positiving a
+real review line that quotes the banner. Banner pinned to live-captured codex v0.142.5 bytes.
+Rationale: prefer structural/precise over a byte-floor/turn-marker heuristic that would red the 183 fakes.
+
+## D3 (Taste) — banner-only routes to a DISTINCT ATTEMPT_RESULT=degenerate-log, not exec-failed
+rc was 0; labeling it exec-failed misleads debugging. Distinct cause `degenerate-log` →
+emit_degraded CODEX_UNAVAILABLE (same fail-closed token family + marker). Honest diagnostics; low surface.
+
+## D4 (Mechanical, boil-lakes) — FIX 3: guard the --prior-codex down-tier scan with the same helper
+Line ~610: add `&& ! _log_banner_only "$PRIOR_CODEX"`. A degenerate prior fails toward FULL effort
+(conservative). In blast radius (same false-clean class, same helper), trivial effort. Both design
+voices flagged it (codex MAJOR / Claude P3). `_log_nonempty` itself left untouched for its other callers.
+
+## D5 (Mechanical) — regression tests split by surface, each mutation-verified RED
+FIX-1 asserts RAW-LOG CONTENT (fd0-sensitive fake); FIX-2 asserts the token (always-banner fake);
+plus a banner-precision (quoted-banner→OK) and a FIX-3 (no down-tier) test. Token-only FIX-1 test is vacuous.
+
+## D6 (User-Challenge-class, resolved by evidence) — OVERRULE codex r3 "banner+visible-residue" BLOCKING
+codex escalated across 3 review rounds finding degenerate-log variants: r2 banner+hidden-byte (NUL/
+BEL/ANSI/U+200B) — FIXED (ECMA-48 escape strip + printable-ASCII normalize); r3 banner+VISIBLE
+printable residue (banner...X, banner\n.\n) — OVERRULED with evidence. Independent adjudicator (high
+confidence) + integration evidence: real codex → non-TTY file → plain 39-byte banner (its own complete
+line); banner+X is stub-only AND byte-indistinguishable from banner+terse-review, so NO content
+threshold converges (N beaten by N+1; reds terse reals). FIX-1 (< /dev/null) is load-bearing; FIX-2 is
+defense-in-depth catching the observed degenerate + escape/control-byte drift. Documented at the code
+site (IMPRECISION BUDGET / ACCEPTED RESIDUAL). Per OPERATING: refuted-at-integration → overrule WITH
+evidence, never chase per-shape (treadmill).

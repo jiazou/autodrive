@@ -1094,3 +1094,36 @@ run-level lease. (Non-blocking; convergence not gated on it.)
 
 ## Deferred-slop seed (RESOLVED in finalize, 2026-07-10) — no open items
 The run's `## slop (deferred to finalize)` harden→finalize seed was resolved in /drive-finalize: 3 comment/docstring items applied (statusline stale comment, rebirth-thresholds docstring, harvest commentary); 2 skipped as out-of-scope (statusline-window.test.sh comment byte-identical in main / pre-existing) or not-slop (the e2e concurrency docstring is now the load-bearing _resume_claim mismatch-path doc). No open slop followups.
+
+
+## Run codexstdin-20260711-100912 (2026-07-11)
+## P3-1 (code review, Claude) — "FIX-1 no hang" assertion is a fidelity boundary, not a real hang test
+The FIX-1 regression uses a regular-file stdin (openstdin.txt), so the fake's `cat` EOFs immediately and
+can never hang → the `RC != 124` check passes even pre-fix. The LOAD-BEARING proof of FIX-1 is the
+raw-log CONTENT assertion (reds pre-fix). A true never-EOF pipe hang is not exercised (a deterministic
+hang model is costly). Acceptable; label overclaims slightly. Not blocking.
+
+## P3-2 (code review, Claude) — whitespace-only rc0 log relabels exec-failed -> degenerate-log
+`_log_banner_only` returns TRUE for a whitespace-only (no banner) rc0 log (vacuous truth: zero non-blank
+lines), so such a log now emits cause "degenerate-log (banner-only)" instead of "exec-failed". Same
+CODEX_UNAVAILABLE token, same exit 1, same fail-closed marker — only the diagnostic sub-cause string is
+imprecise. Optional tighten: require >=1 actual banner line matched. Candidate for harden.
+
+## PROCESS LESSON — codex exec reviews cwd; must run with cwd = the WORKTREE
+Round-1 codex review was launched from the MAIN repo cwd (at pre-fix `main`), so it reviewed the
+UNPATCHED helper and reported all fixes "absent" (BLOCKING x2 / MAJOR x4, all "patch not in this tree").
+Re-run with cwd = $RUN_DIR/wt/<slice> fixed it. Extends memory agent-subagent-inherits-main-cwd to
+`codex exec`: ALWAYS cd to the worktree before launching codex for a slice/phase review. (main tree
+was verified clean — codex workspace-write did not mutate it.)
+
+## RESIDUAL (accepted, D6) — _log_banner_only passes banner+visible-residue as OK
+By design + evidence: unreachable from the real producer + no converging threshold. If a future codex
+version emits its banner NOT as its own complete line (interleaves a partial first token), revisit —
+but the fix would still not be a content threshold (non-converging). FIX-1 remains load-bearing.
+
+## FINALIZE/de-slop consideration — escape-hardening complexity
+The ECMA-48 escape strip in _log_banner_only closes the escape-embedded-text class (plausible
+control-byte/ANSI producer drift). It is fuzz-verified + regression-free but adds a hairy sed. If
+judged over-built at de-slop, a simpler `tr -cd '\012\040-\176'`-only normalize (closes control/hidden
+bytes, drops ANSI/OSC which are non-TTY-unreachable) is an option — but that reds the ANSI/OSC tests,
+so it's a scoped tradeoff, not a free simplification. Not blocking; correct + tested as-is.
