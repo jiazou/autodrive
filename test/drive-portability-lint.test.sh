@@ -24,6 +24,15 @@ has  "flags tac (after pipe)" "$OUT" "tac"
 has  "flags setsid"    "$OUT" "setsid"
 if [ "$RC" = 0 ]; then pass "ADVISORY: exit 0 even with hits"; else fail "exit $RC not 0 (must be advisory)"; fi
 
+# --- more command positions (review: if/while/until/xargs were missed) ---
+P="$(mkf pos.sh 'if timeout 5 c; then :; fi' 'while timeout 1 c; do :; done' 'until timeout 1 c; do :; done' 'printf x | xargs timeout 5 echo' 'a && timeout 3 b')"
+OUT="$("$SUT" "$P" 2>&1)"
+has  "flags 'if timeout'"    "$OUT" "pos.sh:1"
+has  "flags 'while timeout'" "$OUT" "pos.sh:2"
+has  "flags 'until timeout'" "$OUT" "pos.sh:3"
+has  "flags 'xargs timeout'" "$OUT" "pos.sh:4"
+has  "flags '&& timeout'"    "$OUT" "pos.sh:5"
+
 # --- ABSTAIN cases (portable/benign — must NOT flag) ---
 A="$(mkf abstain.sh \
   '# timeout in a comment' \

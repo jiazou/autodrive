@@ -99,25 +99,40 @@ while :; do
     echo "drive-ci-wait: no .github/workflows and 0 checks — no CI configured (proceed)"; exit 2
   fi
 
-  # CI has STARTED (≥1 check). Classify buckets (gh: pass|fail|pending|skipping|cancel).
-  fails="$(printf '%s' "$json" | jq -r '[.[]|select(.bucket=="fail")]' 2>/dev/null)"
-  n_fail="$(printf '%s' "$json" | jq '[.[]|select(.bucket=="fail")]|length' 2>/dev/null || echo 0)"
-  n_pend="$(printf '%s' "$json" | jq '[.[]|select(.bucket=="pending")]|length' 2>/dev/null || echo 0)"
-
-  if [ "${n_fail:-0}" -gt 0 ]; then
-    echo "CI RED — failing checks:"
-    printf '%s' "$json" | jq -r '.[]|select(.bucket=="fail")|"  \(.name): \(.state) \(.link // "")"' 2>/dev/null
-    exit 1
-  fi
-  if [ "${n_pend:-0}" -gt 0 ]; then
-    if [ "$el" -ge "$MAX" ]; then
-      echo "drive-ci-wait: still pending after ${el}s:"
-      printf '%s' "$json" | jq -r '.[]|select(.bucket=="pending")|"  \(.name): \(.state)"' 2>/dev/null
-      exit 3
-    fi
+  # CI has STARTED. FAIL-CLOSED classification (positive GREEN allowlist — both review voices, the
+  # load-bearing correctness point): GREEN only if EVERY check is a recognized non-failing terminal.
+  # Classify off BOTH `bucket` AND `state` (a future gh that drops/renames `bucket`, or a partial/
+  # truncated payload, must NOT default to green). Any fail → RED; any UNKNOWN/pending/unparseable →
+  # keep waiting, NEVER green.
+  # First: the payload must be a JSON ARRAY (a gh error object / truncated pipe is NOT a pass).
+  if ! printf '%s' "$json" | jq -e 'type=="array"' >/dev/null 2>&1; then
+    [ "$el" -ge "$MAX" ] && { echo "drive-ci-wait: checks JSON not an array after ${el}s (not a pass)"; exit 3; }
     sleep "$POLL"; continue
   fi
-  # ≥1 check, none failing, none pending (all pass/skipping/cancel) → GREEN.
-  echo "CI GREEN — all checks concluded non-failing"
-  exit 0
+  # A jq/count error yields -1 (an ANOMALY) → never green: keep waiting, PENDING at max.
+  _fail_sel='.[]|select(((.bucket//"")=="fail") or (((.state//"")|ascii_upcase) as $s|($s=="FAILURE" or $s=="TIMED_OUT" or $s=="ERROR" or $s=="ACTION_REQUIRED" or $s=="STARTUP_FAILURE")))'
+  _ok_sel='.[]|select((((.bucket//"")) as $b|($b=="pass" or $b=="skipping" or $b=="cancel")) or (((.state//"")|ascii_upcase) as $s|($s=="SUCCESS" or $s=="NEUTRAL" or $s=="SKIPPED" or $s=="CANCELLED")))'
+  n_total="$(printf '%s' "$json" | jq 'length' 2>/dev/null || echo -1)"
+  n_fail="$(printf '%s' "$json" | jq "[$_fail_sel]|length" 2>/dev/null || echo -1)"
+  n_ok="$(printf '%s' "$json" | jq "[$_ok_sel]|length" 2>/dev/null || echo -1)"
+  if [ "$n_total" = "-1" ] || [ "$n_fail" = "-1" ] || [ "$n_ok" = "-1" ]; then
+    [ "$el" -ge "$MAX" ] && { echo "drive-ci-wait: check classification error after ${el}s (not a pass)"; exit 3; }
+    sleep "$POLL"; continue
+  fi
+  if [ "$n_fail" -gt 0 ]; then
+    echo "CI RED — failing checks:"
+    printf '%s' "$json" | jq -r "$_fail_sel|\"  \(.name): \(.state // \"?\") \(.link // \"\")\"" 2>/dev/null
+    exit 1
+  fi
+  # GREEN iff EVERY check is recognized-ok (n_ok == n_total). Anything left (pending OR unknown) waits.
+  if [ "$n_total" -gt 0 ] && [ "$n_ok" -eq "$n_total" ]; then
+    echo "CI GREEN — all ${n_total} checks concluded non-failing"
+    exit 0
+  fi
+  if [ "$el" -ge "$MAX" ]; then
+    echo "drive-ci-wait: not all checks concluded after ${el}s (${n_ok}/${n_total} ok, 0 fail) — not-yet-green:"
+    printf '%s' "$json" | jq -r ".[]|select(((((.bucket//\"\")) as \$b|(\$b==\"pass\" or \$b==\"skipping\" or \$b==\"cancel\")) or (((.state//\"\")|ascii_upcase) as \$s|(\$s==\"SUCCESS\" or \$s==\"NEUTRAL\" or \$s==\"SKIPPED\" or \$s==\"CANCELLED\")))|not)|\"  \(.name): \(.state // \"?\")\"" 2>/dev/null
+    exit 3
+  fi
+  sleep "$POLL"; continue
 done

@@ -22,6 +22,10 @@
 # Usage:  drive-portability-lint.sh <file.sh> [file.sh ...]
 #   (drive-ship passes the changed test/*.sh + bin/*.sh; caller computes the list.)
 # Prints `file:line: <cmd> — not on macos-latest ...` per hit; exit 0 always. No files → exit 0.
+#
+# ADVISORY RESIDUALS (acceptable — exit 0, the CI-wait is the real gate): abstains are PER-LINE (a real
+# hit sharing a line with a `command -v`/`--flag`/`VAR=` is suppressed), and heredoc PAYLOAD text can
+# false-warn (no heredoc tracking in a line grep). Both are low-harm for an advisory warning.
 set -uo pipefail
 
 # class-(i) macOS-absent binaries (extend as new ones bite; keep to ENTIRELY-absent tools).
@@ -46,7 +50,7 @@ for f in "$@"; do
       esac
       printf '%s:%s: %s — not on macos-latest (BSD/coreutils gap); use a portable alt or the tool'\''s own bound\n' "$f" "$ln" "$cmd"
       hits=$((hits + 1))
-    done < <(grep -nE "(^|[;&|(\`{}]|\\\$\(|[[:space:]](then|do|else)[[:space:]])[[:space:]]*${cmd}([[:space:]]|\$|[;&|<>)])" "$f" 2>/dev/null)
+    done < <(grep -nE "(^|[;&|(\`{}]|\\\$\(|(^|[[:space:]])(then|do|else|if|while|until|xargs)[[:space:]])[[:space:]]*${cmd}([[:space:]]|\$|[;&|<>)])" "$f" 2>/dev/null)
   done
 done
 

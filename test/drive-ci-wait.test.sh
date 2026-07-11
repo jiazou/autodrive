@@ -65,6 +65,26 @@ OUT="$(CNT="$CNT2" DRIVE_CI_WAIT_GH="$BIN/gh_pend_then_red" "$SUT" --pr 1 --repo
 mkgh gh_pending '#!/usr/bin/env bash' 'echo '\''[{"name":"a","bucket":"pending","state":"QUEUED","link":""}]'\'''
 OUT="$(DRIVE_CI_WAIT_GH="$BIN/gh_pending" "$SUT" --pr 1 --repo-root "$WF" --poll-secs 0 --grace-secs 0 --max-secs 1 2>&1)"; ck "pending past max ⇒ exit 3 (PENDING pause)" "$?" "3"
 
+# --- FAIL-CLOSED (positive green-allowlist): a MISSING/unknown bucket must NEVER default to GREEN ---
+# a failing check with NO bucket field (state only) ⇒ RED via state fallback (not a false GREEN).
+mkgh gh_nobucket_fail '#!/usr/bin/env bash' 'echo '\''[{"name":"unit","state":"FAILURE","link":"http://x"}]'\'''
+run gh_nobucket_fail "$WF"; ck "missing bucket + state FAILURE ⇒ exit 1 RED (no fail-open GREEN)" "$RC" "1"
+# an in-progress check with NO bucket ⇒ UNKNOWN/pending ⇒ NOT green ⇒ exit 3 at max (never 0).
+mkgh gh_nobucket_run '#!/usr/bin/env bash' 'echo '\''[{"name":"unit","state":"IN_PROGRESS","link":""}]'\'''
+run gh_nobucket_run "$WF"; ck "missing bucket + state IN_PROGRESS ⇒ exit 3 (unknown≠green, fail-closed)" "$RC" "3"
+# a passing check via STATE only (no bucket) ⇒ recognized-ok ⇒ GREEN.
+mkgh gh_nobucket_pass '#!/usr/bin/env bash' 'echo '\''[{"name":"unit","state":"SUCCESS","link":""}]'\'''
+run gh_nobucket_pass "$WF"; ck "missing bucket + state SUCCESS ⇒ exit 0 GREEN (state fallback)" "$RC" "0"
+# a non-array JSON object (gh error / truncated) ⇒ NOT a pass ⇒ exit 3 at max (never GREEN/proceed).
+mkgh gh_notarray '#!/usr/bin/env bash' 'echo '\''{"message":"Not Found"}'\'''
+run gh_notarray "$WF"; ck "non-array JSON (gh error obj) ⇒ exit 3 (not a false GREEN)" "$RC" "3"
+# an UNRECOGNIZED bucket AND unrecognized state (a future gh vocabulary) ⇒ unknown ⇒ NOT green.
+mkgh gh_unknown '#!/usr/bin/env bash' 'echo '\''[{"name":"unit","bucket":"wat","state":"HUH"}]'\'''
+run gh_unknown "$WF"; ck "unknown bucket+state ⇒ exit 3 (fail-closed, not GREEN)" "$RC" "3"
+# mixed: one pass + one failing-by-state ⇒ RED (a real fail is never masked by a sibling pass).
+mkgh gh_mixed '#!/usr/bin/env bash' 'echo '\''[{"name":"a","bucket":"pass","state":"SUCCESS"},{"name":"b","state":"TIMED_OUT"}]'\'''
+run gh_mixed "$WF"; ck "one pass + one state-TIMED_OUT ⇒ exit 1 RED" "$RC" "1"
+
 echo ""
 echo "===================================================================="
 printf 'drive-ci-wait.test.sh: %d passed, %d failed\n' "$PASS" "$FAIL"
