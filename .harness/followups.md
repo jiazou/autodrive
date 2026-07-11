@@ -1094,3 +1094,19 @@ run-level lease. (Non-blocking; convergence not gated on it.)
 
 ## Deferred-slop seed (RESOLVED in finalize, 2026-07-10) — no open items
 The run's `## slop (deferred to finalize)` harden→finalize seed was resolved in /drive-finalize: 3 comment/docstring items applied (statusline stale comment, rebirth-thresholds docstring, harvest commentary); 2 skipped as out-of-scope (statusline-window.test.sh comment byte-identical in main / pre-existing) or not-slop (the e2e concurrency docstring is now the load-bearing _resume_claim mismatch-path doc). No open slop followups.
+
+## Run deflake-notify-20260711-100816 (2026-07-11) — de-flake test_drive_notify _wait_for
+
+
+- **[finalize de-slop]** `_wait_for`'s `expected=None` byte-stable fallback branch is dead code for
+  this file (all 3 callers pass `expected`). Both phasedesign voices flagged it (Claude NIT, codex
+  MINOR). At /drive-finalize, decide: drop the fallback (narrow to exact-match, make `expected`
+  required) — the anti-slop choice — OR keep it as a documented generic helper affordance. Leaning
+  DROP per "no speculative fallbacks unless the plan requires it".
+
+- **[test-arch, deferred]** Add a genuinely dep-independent `_wait_for` contract unit test (exact-match
+  True; partial-prefix→timeout False fail-loud; absent→timeout False), OUTSIDE the bash/drive-notify.sh
+  module skip (its own module, or extract `_wait_for` to a shared `tests/hooks/_helpers.py`). The harden
+  attempt in this run added them inside test_drive_notify.py where the module-level pytestmark skips them
+  in lean envs (codex MAJOR) — reverted as net-negative for a de-flake-scoped run. Mutation-verified
+  design exists in this run's git history (commit c81ce9f, reverted).

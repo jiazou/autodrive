@@ -41,11 +41,25 @@ def _markers(rd):
     return sorted(p.name for p in Path(rd).glob("notified-*.marker"))
 
 
-def _wait_for(path, timeout=3.0):
+def _wait_for(path, expected, timeout=3.0):
+    """Poll until the delivered file's bytes EQUAL `expected`, or until `timeout`.
+
+    drive-notify.sh backgrounds its transport (fire-and-forget), so `cat > out` CREATES the file
+    before `cat` finishes copying stdin into it — waiting on mere existence races the write and can
+    read partial/empty content. Exact-match waits for the delivery to COMPLETE: a partial prefix
+    never equals the full expected string, so this cannot return early. Returns True on match, False
+    on timeout — so a genuine non-delivery still fails loud at the `assert _wait_for(...)` call site,
+    never silently.
+    """
+    want = expected.encode("utf-8")
+    p = Path(path)
     end = time.time() + timeout
     while time.time() < end:
-        if Path(path).exists():
-            return True
+        try:
+            if p.read_bytes() == want:
+                return True
+        except FileNotFoundError:
+            pass  # the only race to tolerate: file not created yet — a real bad path fails loud
         time.sleep(0.03)
     return False
 
@@ -80,7 +94,8 @@ def test_real_send_delivers_message_on_stdin_and_writes_only_marker(tmp_path):
                      "--tip", "deadbeef", "--message", "the message body"],
                     env_extra={"DRIVE_NOTIFY_CMD": f"cat > {out}"})
     assert cp.returncode == 0
-    assert _wait_for(out), "the backgrounded transport must receive the message on STDIN"
+    assert _wait_for(out, expected="the message body"), \
+        "the backgrounded transport must receive the message on STDIN"
     assert out.read_text(encoding="utf-8") == "the message body"
     # exactly one filesystem-safe marker, and NO state.json.
     marks = _markers(rd)
@@ -129,7 +144,7 @@ def test_shasum_absent_still_sends_bias_to_send(tmp_path):
                          "--tip", "abc", "--message", "hi"],
                         env=env, capture_output=True, text=True, timeout=30)
     assert cp.returncode == 0, "shasum absent must still exit 0 (fail-open)"
-    assert _wait_for(out), "shasum absent must NOT suppress the send (bias-to-send)"
+    assert _wait_for(out, expected="hi"), "shasum absent must NOT suppress the send (bias-to-send)"
     assert out.read_text(encoding="utf-8") == "hi"
     assert _markers(rd) == [], "the shasum-absent bias-to-send path builds NO dedup marker"
     assert not (rd / "state.json").exists(), "drive-notify.sh must NEVER write state.json"
@@ -143,7 +158,7 @@ def test_dedup_repeat_waiting_tip_no_second_send(tmp_path):
     out = tmp_path / "n.txt"
     args = ["--run-dir", str(rd), "--waiting", "stop:x", "--tip", "abc123", "--message", "first"]
     cp1 = run_notify(args, env_extra={"DRIVE_NOTIFY_CMD": f"cat >> {out}"})
-    assert cp1.returncode == 0 and _wait_for(out)
+    assert cp1.returncode == 0 and _wait_for(out, expected="first")
     first = out.read_text(encoding="utf-8")
     # Repeat the SAME (waiting, tip): dedup-hit -> exit 0, NO second send.
     cp2 = run_notify(["--run-dir", str(rd), "--waiting", "stop:x", "--tip", "abc123",
