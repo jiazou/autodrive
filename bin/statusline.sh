@@ -35,7 +35,7 @@ if [ -z "$WINDOW" ] || ! [ "$WINDOW" -gt 0 ] 2>/dev/null; then
 # Used only when the data file is unreadable. AC5 pins this `case` and the json to identical
 # token sets + numbers.
 case "$MODEL $MODEL_ID" in
-    *"Fable 5"*|*"fable-5"*|*"Sonnet 5"*|*"sonnet-5"*|*"Sonnet 4.6"*|*"sonnet-4-6"*|*"sonnet-4.6"*|*"Opus 4.8"*|*"opus-4-8"*|*"opus-4.8"*|*"Opus 4.7"*|*"opus-4-7"*|*"opus-4.7"*|*"Opus 4.6"*|*"opus-4-6"*|*"opus-4.6"*)   WINDOW=1000000 ;;
+    *"Fable 5"*|*"claude-fable-5"*|*"fable-5"*|*"Sonnet 5"*|*"sonnet-5"*|*"Sonnet 4.6"*|*"sonnet-4-6"*|*"sonnet-4.6"*|*"Opus 4.8"*|*"opus-4-8"*|*"opus-4.8"*|*"Opus 4.7"*|*"opus-4-7"*|*"opus-4.7"*|*"Opus 4.6"*|*"opus-4-6"*|*"opus-4.6"*)   WINDOW=1000000 ;;
     *"Sonnet 4.5"*|*"sonnet-4-5"*|*"sonnet-4.5"*|*"Sonnet 4"*|*"sonnet-4"*|*"Haiku"*|*"haiku"*|*"Opus 4.5"*|*"opus-4-5"*|*"opus-4.5"*|*"Opus 4.1"*|*"opus-4-1"*|*"opus-4.1"*)   WINDOW=200000 ;;
     *)                                                                   WINDOW=1000000 ;;
 esac

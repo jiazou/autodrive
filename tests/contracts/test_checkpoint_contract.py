@@ -1193,9 +1193,11 @@ def test_sessionId_rebind_is_first_resume_bullet():
 
 
 def test_checkpoint_marker_consumption_single_use():
-    """AC6/AC7 (D17): the checkpoint-complete.marker is consumed at resume — validate
-    (parse + proof.tip == current tip) then DELETE, single-use, record-not-authorization
-    (tip-match necessary, NOT sufficient)."""
+    """AC6/AC7 (D17, R1-updated): the checkpoint-complete.marker is consumed at resume — on a
+    rebirth resume it is CLAIMED via an atomic content-preserving rename (validate markerValid
+    from the claim-target, then the winner removes it on completion), single-use,
+    record-not-authorization (tip-match necessary, NOT sufficient). The pinned tokens
+    (SINGLE-USE / proof-record / necessary-not-sufficient) are unchanged."""
     blob = _norm(_drive_md())
     assert "checkpoint-complete.marker" in blob
     assert "SINGLE-USE" in blob, "the marker must be pinned SINGLE-USE"

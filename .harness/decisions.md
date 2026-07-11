@@ -5731,3 +5731,279 @@ changed (bin/rebirth-thresholds.json, bin/statusline.sh, +4 test files). Finaliz
 that scope. The followups/TODO divergence is a trivial append-only-ledger conflict resolved
 at ship (materialize real merge into main, suite on merged tree, flag at Gate B) —
 [[diverged-base-ship-verify-merged-tree]].
+## Run r1r3-latency-20260710-081223 (2026-07-10) — R1 auto-resume rebirth seams + R3 push-notify decision-bearing parks + observability
+# Decisions — r1r3-latency (R1 auto-resume + R3 notify/observability)
+(D-numbers prefixed `D-r1r3-N`; inline `DN` references are run-local to this block.)
+
+## D-r1r3-1 — R1 atomic-claim edits the resume consumer, not only I1 step 6 (Mechanical; completeness)
+TODO's "edit I1 step 6 ONLY" governs the fenced-block preservation + outgoing trigger-scheduling; the
+atomic mv-rename claim is inherently INCOMING-resume behavior, so R1 also edits the resume
+marker-consume bullet (drive.md L80-85) and the Durable-checkpoint single-use rule (L624-626), both
+currently "validate then DELETE". Minimal coherent edit set; fenced block stays byte-for-byte.
+
+## D-r1r3-2 — fresh-session trigger specified by CAPABILITY, feature-detected (Mechanical; C12 capability-over-id)
+The trigger is described as "a primitive that spawns a FRESH session firing /drive <runId>", never a
+hardcoded tool id — survives rename/replacement of the primitive, degrades to the fenced-block
+fallback where absent. CronCreate (same-session/in-memory) explicitly does NOT qualify.
+
+## D-r1r3-3 — R3 transport is a config-driven bin/drive-notify.sh with a no-op fail-open default (Mechanical)
+A backgrounded, timeout-bounded shell send can never wedge the pause turn or the stop-hook
+allow-stop-when-waiting contract; a harness tool-call would not background and would not exist for
+non-Claude consumers. Unset config → exit 0 (inert default; can never break a run).
+
+## D-r1r3-4 — sub-events are write-only forward-only event-log lines, one authoritative rule (Mechanical)
+subagent-started/codex-started/suite-run-started/finished/fix-applied/idle_detected(>30min), date -u,
+JSON-safe via jq, APPEND-only. Never a new PARSED surface — the NEVER-parse-event-log.jsonl invariant
+holds.
+
+## D-r1r3-5 — Fable-5 entry-presence proven by a MUTATION test (Mechanical; C2 protocol)
+Fable pins are pre-fix GREEN (fallthrough already yields 1M), so a naive golden/resolve pin passes
+without the explicit entry. Entry-presence power comes from a mutation test (mutate the Fable rule →
+assert resolve_window('Fable 5') changes), per decisions.md:2900/3001-3006.
+
+## D-r1r3-6 — coordinator authored the high-level design.md directly (Mechanical; avoid lossy re-derivation)
+Rather than re-dispatch a planner subagent to re-derive grounding already produced by the 4-reader
+surface-map workflow + full spec-set reads, the coordinator authored design.md from that complete
+context; the dual-voice design review supplies the required independent fresh-context check.
+
+## D-r1r3-7 — folded 2 post-convergence design P2s (reviewer-requested clarifications; no re-review) (Mechanical)
+Design review CONVERGED at round 3 (0 P1 both voices). Two logged P2s were folded in as final polish
+BEFORE Gate A — they add reviewer-requested binding notes with NO approach change, so they cannot
+reopen a P1: (a) codex P2 — /harvest committed to Phase 1 at the single minimal read-only surface (drop
+the fuzzy maybe-defer); (b) reviewer P2 — the winner's re-prove must re-source `markerValid`/proof from
+the CLAIM-TARGET file R1 renamed the marker to, else the legitimate winner false-STOPs on every
+auto-resume (fail-safe, never double-drive, but would defeat R1's feature). Both are binding notes for
+/drive-design, not new machinery.
+
+---
+
+## Phase 1 detailed-design decisions (D8–D26; /drive-design, see design-phase1.md)
+
+## D-r1r3-8 — the atomic CLAIM folds into bodies[0]'s first action; resume-bullet index map UNCHANGED (Mechanical)
+REVISED (round-1 review): the sessionId-rebind is HARD-PINNED at resume-bullet index 0
+(test_rebirth_handshake.py:307/709/737, test_checkpoint_contract.py:1174/1189 whose comment guards "a NEW
+bullet inserted ahead of the rebind breaks the pin"). Constraint (i) needs the claim BEFORE the
+`state.sessionId` write, which lives in bodies[0] — so the claim's ONLY pin-legal home is bodies[0]'s FIRST
+sub-step, before the `freshSessionResume` capture. No new bullet, no relabel, no index shift: rebind[0]/
+marker[1]/rebirth[2] and their labels stay; only BODY PROSE changes (bodies[1] rewords DELETE→validate-
+from-claim-target; bodies[2] consults markerValid from the claim-target). (Supersedes round-1 D8's "claim
+as new bullet [0]", which would red all the index/label pins.)
+
+## D-r1r3-9 — loser detection = glob-by-tip + content; liveness ADVISORY-ONLY, never an authorization (Taste)
+REVISED (round-2 codex: 1 BLOCKING + 1 MAJOR, both REAL). The loser detects a real winner by GLOBBING
+`checkpoint-claimed-*-<tip>.marker` + content-validating (`proof.tip==tip`) — NOT by reconstructing the
+name from `state.sessionId` (round-2 BLOCKING: that misses the winner's sid-named target in the
+claimed-but-not-yet-rebound skew → clobber). On a content-valid claim-target the loser writes NOTHING (no
+state.sessionId, no waiting) and EXITS with an advisory note — UNIFORMLY safe for LIVE and DEAD winners:
+drive-stop-hook.py:193 `_allow()`s a session owning no run, so writing nothing never double-drives; a dead
+winner is recovered manually (mv the claim-target back to checkpoint-complete.marker + re-paste). Liveness
+is an ADVISORY hint in the note only — a wrong hint is harmless because the loser writes nothing. NO
+procStart cross-check (session `procStart` "Wed Jul 8 02:59:31 2026" vs `ps -o lstart` "Wed Jul 8 10:59:31
+2026" for the SAME live pid differ by 8h/TZ → hardened liveness would misfire every race), NO
+fail-closed-vs-silent branch, NO wall clock. This DISSOLVES codex's liveness MAJOR (no weak-signal
+authorization to exploit). Supersedes round-1's 10-min staleness and round-2's name-from-state.sessionId +
+procStart-hardened liveness.
+
+## D-r1r3-10 — outgoing trigger = fractional I1 step 5.7, not a step-6 rewrite (Mechanical; pin-safety)
+`_I1_STEP_RE` enumerates only INTEGER steps; AC1 pins marker=step4/waiting=step5/adjacent + len>=6.
+Inserting the trigger as fractional step 5.7 (after 5.5 decant, before 6 present) preserves all integer
+indices; step 6 + the fenced ↻ REBIRTH block stay byte-for-byte. Divergence from design.md's literal
+"within step 6" framing, resolved against the real pins.
+
+## D-r1r3-11 — Fable-5 rule APPENDED (windows[0]==200k denylist preserved) (Mechanical; minimal churn)
+test_mutating_json_changes_resolution hardcodes windows[0]==200k denylist; inserting Fable at windows[0]
+reds it. "Fable 5" collides with no 200k substring so 1M-first-for-collisions doesn't require Fable-first
+→ append. The Fable mutation test (D5) finds the rule by CONTENT, not index.
+
+## D-r1r3-12 — drive-notify.sh transport = $DRIVE_NOTIFY_CMD, message on STDIN, always exit 0 (Mechanical)
+Injection-safe (message via STDIN, never shell-interpolated; command is the operator's trusted config);
+backgrounded + timeout-bounded; ALWAYS exit 0 on every path; never writes state.json; unset → pure no-op.
+
+## D-r1r3-13 — dedup slug = sanitize+truncate + sha256[:12] of raw waiting (Mechanical)
+`notified-<slug>-<tipSha>.marker`, slug = ([^A-Za-z0-9._-]→`_`, trunc 40) + `-` + sha256[:12] of the RAW
+waiting (collision-resistant for spaces/`/`). shasum absent → skip dedup, bias-to-SEND (dup ping benign,
+a miss is worse).
+
+## D-r1r3-14 — the coordinator builds the notify MESSAGE per waiting-kind (Mechanical)
+gateB message = the gate QUESTION + "reply 'approve' after reviewing the diff", NEVER a `/drive <runId>`
+line; drive-notify.sh is content-agnostic transport. Notify fires only for waiting∈{gateA,gateB,stop:,ask:},
+never rebirth.
+
+## D-r1r3-15 — ONE authoritative sub-event rule; idle_detected at the clear-after-record step (Mechanical)
+Six schemas (subagent/codex/suite-run-started/finished/fix-applied/idle_detected), date -u, jq-built,
+APPEND-only, WRITE-ONLY (NEVER-parse invariant holds). idle_detected hangs off the single clear-after-record
+step (uniform across all inflight kinds); startedAt absent/unparseable → no emit (fail-open).
+
+## D-r1r3-16 — /harvest minimal surface committed to Phase 1, no escalation (Mechanical)
+Read-only `drive_waiting_runs()` glob of harness-runs/*/state.json + a conditional render section listing
+waiting∈{gateA,gateB,stop:,ask:} (excludes rebirth); NO overlay/join/mc-hook change. Minimal surface is
+trivial → no scope escalation to followups.
+
+## D-r1r3-17 — ONE slice (Taste)
+The Fable-hygiene disjoint-file seam is clean but ~3 SLOC — right-sizing (marginal parallelism < worktree
++review overhead) + a single all-suite token-sweep favour one slice; drive-notify.sh↔drive.md notify hook
+is a produced-then-consumed contract that must be one slice regardless.
+
+## D-r1r3-18 — claim-target keyed on CID + single-use lifecycle (Mechanical; REVISED round-3)
+Claim-target = `checkpoint-claimed-<claimerSid>-<CID>.marker` (CID = hash of the marker content, D23/D24).
+DETECTION globs the CURRENT `state.pendingCID` + content (`proof.tip==tip`), so a stale older-CID same-tip
+leftover is IGNORED (fixes the round-3 stale-same-tip poison). The sid in the name is for the ADVISORY hint
++ manual recovery only. Winner re-sources markerValid from it, removes it on completion, and consumes its
+scheduled-marker. Supersedes round-2's tip-keyed claim-target.
+
+## D-r1r3-19 — step-5.7 per-CID dedup marker; unsound failure-detection DROPPED (Taste; REVISED round-3)
+The scheduled-marker `auto-resume-scheduled-<CID>.marker` is a pure per-CID create-only dedup (at most one
+trigger per checkpoint across leave-pending re-presentations), consumed by a successful resume. The round-2
+"marker-exists ⇒ prior auto-resume failed → failure-notify + suppress" inference is DROPPED (unsound — the
+marker existing may just mean the trigger has not fired yet); the CID-conditional resume no-op (D25) gives
+idempotency instead. Repeated-failure-notify + exponential backoff + crashed-winner auto-reclaim DESCOPED to
+followups.md F1.
+
+## D-r1r3-20 — winner/loser/absent sub-cases + bodies[0] claim sub-steps are PROSE, not `- **` bullets (Mechanical; FIX-1)
+The handshake bold-span regex `^[ \t]+- \*\*(.+?)\*\*` enumerates `- **` at ANY indent — a nested bold
+sub-bullet inside bodies[0] would land ahead of bodies[1] and shatter the index map. So the claim sub-steps
+and the winner/loser/absent cases render as prose / non-`- **` lines; only the three top-level bullets
+bold-enumerate.
+
+## D-r1r3-21 — /harvest + R3 notify filter key on the authoritative waiting grammar (Mechanical; FIX-5/FIX-D)
+Quote the ANCHORED `^(gateA|gateB|stop:.+|ask:.+)$` verbatim (excluding rebirth), mirroring
+drive-conformance.sh:1164 — EXACT for gateA/gateB, PREFIX for stop:/ask:; the anchors block the `gateAfoo`
+false-match (never a loose unanchored "startswith").
+
+## D-r1r3-22 — the resume WRITE-DISCIPLINE INVARIANT, pinned as drive.md prose (Mechanical; REVISED round-3 — CID-scoped)
+ONE invariant closes the whole concurrency-correctness class (skew clobber, double-drive, stale-same-tip
+poison, late-trigger clobber): only the rename-WINNER, or the SOLE resumer when NO content-valid claim-target
+for the CURRENT checkpoint (`state.pendingCID`) exists AND `waiting != "rebirth"`, writes state.json; a
+session that LOST the rename to a current-CID claim-target writes NOTHING and exits; an AUTO-TRIGGER NEVER
+takes the sole-resumer path (D25). Detection is glob-by-CID + `proof.tip==tip`. Pinned as a drive.md PROSE
+clause (AC13), not only exercised by the AC4 test.
+
+## D-r1r3-23 — CID = the per-handoff identity, threaded EVERYWHERE (Mechanical; REVISED round-3)
+`drive/<runId>` moves ONLY at the step-6 advance (drive.md:620-621), so the tip is NOT a unique handoff
+identity (Seam A + state-only handoffs recur at the same tip). CID = hash of the checkpoint-complete.marker
+CONTENT (per-handoff `at` + proof), distinct across handoffs even at the same tip. CID keys the claim-target
+(D18), the scheduled-marker (D19), `state.pendingCID` (D24), and the auto-trigger payload (D25) — ONE
+identity everywhere.
+
+## D-r1r3-24 — pendingCID is a TOLERATED-EXTRA routing field, documented in drive.md ONLY (Mechanical; REVISED round-4 / FIX-4)
+`state.pendingCID` (set by I1 in the SAME write as `waiting="rebirth"`; cleared by the resume with
+`waiting=null`) is a resume-ROUTING HINT — NOT a checkpoint-proof input (the fail-closed dual-mode re-prove
+stays the CONTINUE authority; `--mode checkpoint` never reads state.json). It is a TOLERATED-EXTRA field:
+add it to the drive.md state.json template (default null) + the resume prose; do NOT add it to CORE_KEYS /
+state-lint-required (would red legacy runs), do NOT add it to CLAUDE.md (unowned; carries subset/inventory
+pins — test_claude_md_imports, test_drive_codex_contract:455-464). test_state_json_shape.py:91 (core-keys-
+PRESENT subset) stays GREEN UNMODIFIED. The loser matches `checkpoint-claimed-*-<state.pendingCID>.marker`
+(the CURRENT CID), so an older-CID same-tip leftover is IGNORED and a forged rebirth (no pendingCID) falls
+closed to `stop:checkpoint-unprovable` exactly as today.
+
+## D-r1r3-25 — capability predicate adds clause (c) HOST-LOCAL; CID-conditional no-op, NO liveness (Mechanical; REVISED round-4 / FIX-2)
+A qualifying fresh-session trigger capability must satisfy ALL of: (a) spawns a NEW session firing `/drive
+<runId>`; (b) can carry a resume payload `CID_N` (env/arg); (c) is HOST-LOCAL — the spawned session reaches
+this run's local `$RUN_DIR` (`~/.claude/harness-runs/<runId>/state.json`). Run state is local/non-portable
+and drive.md only takes the resume branch when the local state.json exists, so a cloud/remote trigger
+(satisfies a+b, not c) would no-op or misengage a wrong-host FRESH run → does NOT qualify → degrade to
+fenced-block-only. The auto-trigger carries `CID_N` and resumes ONLY IF `state.pendingCID == CID_N` AND
+`waiting == "rebirth"`; otherwise it EXITS as a clean no-op (NO state.json, never sole-resumer) — idempotent,
+NO liveness. A human paste (no CID_N) is the general resume, unaffected. (Round-3's CID-conditional gate,
+plus round-4's host-local clause.)
+
+## D-r1r3-26 — the marker-claim is REBIRTH-GATED; closes the I1 step-4→step-5 crash window (Mechanical; round-4 codex BLOCKING / FIX-1)
+I1 writes checkpoint-complete.marker (step 4) BEFORE `pendingCID`+`waiting="rebirth"` (step 5, one write); a
+crash between leaves marker-present + `waiting != "rebirth"` + no pendingCID, and an UNGATED claim then fell
+into a sole-resumer clobber. FIX: the atomic claim + loser-disambiguation in bodies[0] runs ONLY IF
+`waiting == "rebirth"`. A non-rebirth resume SKIPS the claim entirely (a leftover marker is inert,
+overwritten by the next checkpoint) → normal reconcile, no clobber. The marker-claim is thus a REBIRTH-resume
+mechanism; a non-rebirth resume never claims. A real rebirth resume always has pendingCID (I1 atomic), so the
+"pendingCID absent" branch is reachable only for a forged rebirth → STOP. Pins preserved: the rebind
+sub-steps + `freshSessionResume`-before-`state.sessionId` still run for every resume (the claim is a
+conditional FIRST sub-step of bodies[0]).
+
+## Post-convergence P2 folds (both voices CONVERGED 0 P1; binding-note clarifications, no approach change — D7 precedent)
+Design LOCKED at round-4 convergence. Three reviewer-requested clarifications folded (no re-review): (1)
+§1.2's illustrative bodies[0] prose flattened to non-`- **` forms so the design is self-consistent with the
+§0.3/AC1 rule it mandates for shipped drive.md. (2) BOTH-suite honesty (guards the two-conformance-suites
+trap): the Fable-5 statusline pin also lives in the BASH suite `test/statusline-window.test.sh` (:54
+`golden_for`) — AC10 + §6 now add a "Fable 5" bash golden case (owned-files updated), so the §1.9 arm change
+does not red the bash suite while pytest is green. (3) AC14 gains an EXECUTABLE state-lint assertion (bash
+`test/drive-conformance.test.sh` § state-lint) proving a pendingCID-bearing state.json is `clean` — the
+tolerated-extra is test-backed, not prose-only. No D-number changes (D8–D26 stand).
+
+---
+
+## Phase 1 slice-1.1 implementer decisions (D27–D29; /drive-implement)
+
+## D-r1r3-27 — drive-notify.sh arg-parse hardened against a dangling final flag (Mechanical; AC6 fail-open)
+The design's `while … case … shift 2` loops forever on a dangling final flag (`--waiting` with no
+value): bash `shift 2` fails silently when <2 args remain, so `$#` never decrements. Fixed with
+`shift 2 || shift` (drop the flag, always make progress). Required by AC6 ("bad args → exit 0");
+surfaced by the test, not the static spec.
+
+## D-r1r3-28 — AC14 bash state-lint case backed by a new mk_state_lint `pendingcid` fixture (Mechanical; test-support)
+The AC14 executable state-lint case (`test/drive-conformance.test.sh`, an owned file) needs a
+pendingCID-bearing state.json fixture. All `mk_state_lint` variants live in `test/fixtures/mkfixture.sh`
+(the shared fixture generator the bash suite sources), so the `pendingcid` variant was added there —
+following the established pattern rather than inlining a fixture. mkfixture.sh is not in the literal
+owned-files list, but it is test-support for an owned bash test; no parallel slice, so no ownership
+conflict. FLAGGED in the STATUS report.
+
+## D-r1r3-29 — harvest drive-waits section also renders on the no-live-sessions path (Mechanical; strictly-more-correct)
+The design says "append AFTER the unbound block" (the has-live path). A /drive run parked at a gate
+whose Claude session has already EXITED would then be invisible in a no-live harvest. `_append_drive_waits`
+is called on BOTH the no-live early-return and the normal path so a parked run always surfaces — a
+minor correctness enhancement with no downside (empty/None → nothing, per the design).
+
+## D-r1r3-30 — slice-1.1 round-1 review fixes (3 P1s from codex-review-1.1.md) (Mechanical; security + test-rigor)
+(a) BLOCKING drive-notify.sh --tip path-traversal: sanitize --tip the same way as the slug
+([^A-Za-z0-9._-]→'_', trunc 64) so the marker ALWAYS stays directly inside $RUN_DIR; a 40-hex SHA
+passes through unchanged. Faithful repro test (pre-created intermediate dir) reds against the
+unsanitized code, green after. (b) MAJOR vacuous AC4(d)/AC5 pins: factored the rebirth gate+claim
+into ONE shared faithful mirror `_resume_rebirth` (reads waiting/pendingCID from disk, applies the
+D26 gate internally) + `_auto_trigger_proceeds`; AC4(d)/AC5 + the other rebirth-gate tests drive
+THROUGH it, not an inline gate (guard-drop mutation reds both — verified). (c) MAJOR CID not
+content-bound: `_resume_claim` now DERIVES the CID from the marker content (`_cid(marker)`) and
+asserts it == pending_cid (binds the routing hint to content, D23); AC15 uses `_cid()` on real
+files + verifies the loser glob ignores a same-tip DIFFERENT-CID target + a new test rejects a
+forged/stale pendingCID. Full bin/run-tests.sh green.
+
+## D-r1r3-31 — phase-1 harden fix round 1 (union of Claude + codex audits; 4 fixes, all mutation-verified) (Mechanical/Taste; test-rigor + a documented deviation)
+(1) drive-notify.sh dedup TOCTOU → chose the ATOMIC O_EXCL `noclobber` claim
+`( set -o noclobber; : > "$MARKER" ) 2>/dev/null || exit 0` over `mkdir` because it keeps the marker a
+FILE — zero disruption to the existing marker-glob assertions — while giving the same create-only atomic
+semantics (preserves ALWAYS-exit-0 + NEVER-writes-state.json + --tip sanitization).
+(2) AC8 concurrency test — DEVIATION worth flagging: the SHIPPED narrow-window TOCTOU does NOT reliably
+red black-box (empirically N=80 racers on the unmodified pre-fix → exactly 1 send; process-startup +
+~8 pre-marker forks de-sync racers past the sub-ms mv window — the audit itself only reproduced it with
+an injected sleep). A test that can't red the bug is vacuous, so the concurrency test is a DETERMINISTIC
+mutation guard instead: real atomic script → exactly-1 send; a racy variant built from the real script
+(check-then-create + widened `sleep 0.3` window) → many sends under the SAME N-racer harness; plus an
+anchor-presence assertion that reds if the atomic claim is ever reverted. This proves the harness detects
+double-sends AND that atomicity is the load-bearing difference (mutation-verified: reverting the fix reds
+the test).
+(3) harvest.py non-object state.json → `isinstance(st, dict)` guard mirroring drive-stop-hook.py.
+(4) Fable-5 statusline FALLBACK arm mutation cover — the arm is REDUNDANT with the 1M `*)` default, so a
+pure DELETE cannot red a PCT pin (Fable stays 1M via the default). Mutation-covered via a value-mutation
+guard (arm window→250000 → Fable PCT 363≠90); this reds when the arm is removed (the sed target vanishes).
+The redundant arm is intentional documentation (guards a future default change) — NOT removed; flagged as a
+possible de-slop candidate for /drive-finalize to weigh.
+
+## D-r1r3-32 — finalize round-1: winner-path CID==pendingCID verification closes a spec/mirror divergence (Mechanical; completeness/security — codex-only P1, integration-confirmed)
+Codex (adversarial finalize voice) flagged, and reproduction against the artifacts CONFIRMED, that the
+drive.md rebirth WINNER-path (§ Run setup & resume, bodies[0] case (b)) computes `CID` from the
+checkpoint-complete.marker CONTENT and claims to `checkpoint-claimed-<sid>-<CID>.marker` WITHOUT verifying
+`CID == state.pendingCID`, while the LOSER globs `checkpoint-claimed-*-<state.pendingCID>.marker`. The
+e2e mirror `_resume_claim` (tests/contracts/test_rebirth_e2e.py:122-126) ASSERTS `content_cid ==
+pending_cid` — so the executable mirror DEFENDS the invariant but the shipped drive.md PROSE (what the
+coordinator follows) does NOT mandate it: a spec/mirror divergence (green test, unguarded real path). The
+auto-trigger parent gate (drive.md:57 `pendingCID == CID_N`) does NOT cover it — human-paste rebirth resumes
+carry no CID_N and bypass that gate entirely, so the winner has NO content-CID guard. If a stale/forged/
+wrong-handoff marker (CID(marker) != pendingCID) is present with waiting==rebirth, the winner's claim-target
+is keyed on the wrong CID → the loser's pendingCID-keyed glob MISSES it → both drive (the D-4269 double-drive
+class R1 exists to close). The Claude reviewer returned CONVERGED (it reasoned about the atomic-rename window,
+not the claim-key vs loser-glob-key divergence); OVERRULED with evidence per the adversarial-is-load-bearing
+rule for gate code. FIX (finalize round 1): (1) drive.md bodies[0] case (b) — before the os.replace, VERIFY
+`CID == state.pendingCID`; on MISMATCH do NOT claim → fall through to the loser/fail-closed re-prove
+(stop:checkpoint-unprovable), so the winner only ever claims a marker whose content-CID == pendingCID (loser
+glob always matches). Written as PROSE (no nested `- **`, os.replace still precedes `freshSessionResume =` —
+AC1 index-map invariant preserved). (2) a matching prose-pin in test_rebirth_handshake.py (mutation-verified:
+deleting the clause reds it). Folded cheap in-scope: a shasum-absent test for bin/drive-notify.sh (R3
+fail-open/portability, both voices P2) + audit-confirmed-present deferred-slop comment/docstring cleanups.

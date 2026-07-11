@@ -93,6 +93,9 @@ def test_resolve_window_known_200k(thresholds, model):
 @pytest.mark.parametrize("model", [
     "Sonnet 5", "claude-sonnet-5", "Sonnet 4.6", "claude-sonnet-4-6",
     "Opus 4.6", "claude-opus-4-6",
+    # AC10 (C2/Fable-5 hygiene): the Fable-5 1M-context family (display-name + id forms) is an
+    # EXPLICIT 1M rule (also covered pre-fix by the 1M default — see the mutation test below).
+    "Fable 5", "claude-fable-5", "fable-5",
 ])
 def test_resolve_window_1m_current_gen(thresholds, model):
     assert rt.resolve_window(model, thresholds) == 1_000_000
@@ -222,12 +225,14 @@ def _statusline_case_arms():
 @pytest.mark.skipif(shutil.which("bash") is None, reason="bash required")
 @pytest.mark.parametrize("model", [
     "Opus 4.8", "Opus 4.7", "Sonnet 5", "Sonnet 4.6", "Sonnet 4.5", "Sonnet 4", "Haiku",
+    "Fable 5",
 ])
 def test_json_window_matches_statusline_case(thresholds, model):
     """The python resolver (json table) and statusline.sh's inline case resolve the
     IDENTICAL window for the same display-name model — a behavioral spot-check of the two
-    surfaces. Includes Sonnet 5 / Sonnet 4.6 (1M, NOT clamped — C2 / the collision) and
-    Sonnet 4 (200k, the reported bug)."""
+    surfaces (the AC6 no-drift pin). Includes Sonnet 5 / Sonnet 4.6 (1M, NOT clamped — C2 /
+    the collision), Sonnet 4 (200k, the reported bug), and Fable 5 (1M, AC10) so the json
+    Fable rule and the statusline Fable arm agree."""
     assert rt.resolve_window(model, thresholds) == _statusline_case_window(model)
 
 
@@ -426,3 +431,28 @@ def test_mutating_json_changes_resolution(tmp_path):
     assert rt.resolve_window("Some Future Model", t) == 7   # unmatched -> defaultWindow
     _w, hard, _s = rt.resolve_thresholds("Sonnet 4.5", t)
     assert hard == 99 * 0.5
+
+
+def test_mutating_fable_rule_changes_resolution(tmp_path):
+    """AC10/D5 (Fable entry-presence, mutation-verified): the Fable-5 pins are pre-fix GREEN
+    (fallthrough already yields the 1M default), so a naive resolve pin passes WITHOUT the
+    explicit entry. Proving the entry is DATA-DRIVEN: find the rule carrying `Fable 5` BY
+    CONTENT (in the restructured ordered table that is the shared 1M rule, windows[0], which
+    groups every 1M family), mutate ONLY that rule's window, keep `defaultWindow` at 1M (a
+    fallthrough would STILL be 1M), and assert `resolve_window('Fable 5')` tracks the mutation
+    — dropping the Fable token from the json reds this (it would fall to the 1M default)."""
+    data = json.loads(THRESHOLDS_JSON.read_text(encoding="utf-8"))
+    fable = next((w for w in data["windows"] if "Fable 5" in w.get("match", [])), None)
+    assert fable is not None, "the explicit Fable-5 window token must exist in the json (AC10)"
+    fable["window"] = 123456  # mutate the 1M rule that carries the Fable tokens
+    assert data["defaultWindow"] == 1_000_000, "control: the default stays 1M (a fallthrough would be 1M)"
+    mutated = tmp_path / "rebirth-thresholds.json"
+    mutated.write_text(json.dumps(data), encoding="utf-8")
+    t = rt.load_thresholds(str(mutated))
+    assert rt.resolve_window("Fable 5", t) == 123456, (
+        "resolve_window('Fable 5') must track its 1M rule's window — proving the token is "
+        "present and data-driven, not a fallthrough to the 1M default"
+    )
+    assert rt.resolve_window("claude-fable-5", t) == 123456
+    # scoped: a model in the SEPARATE 200k rule (windows[1]) is untouched by the 1M-rule mutation.
+    assert rt.resolve_window("Sonnet 4.5", t) == 200_000

@@ -51,7 +51,62 @@ verdict / merge / gate.
 - **Resume:** if invoked with an existing runId (its `$RUN_DIR/state.json` exists), load it
   and reconcile from git — `git worktree list`, branch tips, and ancestry are authoritative;
   state fields are hints. Never re-dispatch, advance, or clean up on a state value alone:
-  - **sessionId rebind (FIRST, on ANY resume into a new session):** **FIRST, before the
+  **Auto-trigger CID gate (parent — evaluated BEFORE the child steps; the child index map is
+  untouched).** If this resume was fired by an auto-resume trigger (it carries a resume payload
+  `CID_N` — an env var / command arg the scheduling capability set on the fired session,
+  § I1 step 5.7, D2), proceed to the reconciliation below ONLY IF `state.pendingCID == CID_N`
+  AND `waiting == "rebirth"`. Otherwise EXIT immediately, writing NO `state.json` — the
+  checkpoint was already resumed/advanced; a late/duplicate auto-trigger is a clean no-op and
+  NEVER reconciles as the sole resumer (an auto-trigger NEVER takes the sole-resumer path). A
+  HUMAN paste `/drive <runId>` carries no `CID_N` and is the GENERAL resume, unaffected.
+  **`state.pendingCID` lifecycle (a resume-ROUTING HINT, never a proof input).** I1 records
+  `state.pendingCID = CID` in the SAME JSON-safe write that sets `waiting="rebirth"` (I1 step 5;
+  CID from the step-4 marker content, § I1 step 5.7). A completed rebirth resume CLEARS
+  `state.pendingCID` in the same write that sets `waiting=null` (the rebirth-continue bullet).
+  `pendingCID` is a TOLERATED-EXTRA state.json field (template default `null`); it is NOT a
+  CORE key and NOT state-lint-required (state-lint tolerates it) and is NOT documented in
+  CLAUDE.md. The fail-closed dual-mode re-prove stays the CONTINUE authority; `--mode
+  checkpoint` never reads state.json.
+  - **sessionId rebind (FIRST, on ANY resume into a new session):** **Atomic rebirth CLAIM
+    (the FIRST action of this bullet, ONLY when `waiting == "rebirth"` — D26).** The
+    marker-claim is a REBIRTH-resume mechanism: the claim is rebirth-gated (a non-rebirth
+    resume never claims). The WRITE-DISCIPLINE INVARIANT is that only the rename-winner or the
+    non-rebirth sole-resumer writes state.json; a loser to a current-CID claim-target writes
+    NOTHING and exits; an auto-trigger never takes the sole-resumer path; detection is
+    glob-by-CID + proof.tip==tip.
+    (a) When `waiting != "rebirth"`: SKIP the claim entirely and proceed straight to the
+    capture/rewrite below → normal reconcile. A leftover `checkpoint-complete.marker` from an
+    I1 step-4→step-5 crash is inert (ignored, overwritten by the next I1 checkpoint) — NO
+    claim, NO loser path, NO clobber.
+    (b) When `waiting == "rebirth"` (a real rebirth resume ALWAYS carries `state.pendingCID` —
+    I1 sets it atomically with `waiting="rebirth"` at step 5): IF
+    `$RUN_DIR/checkpoint-complete.marker` is PRESENT, read its content, compute `CID`
+    (§ Durable checkpoint contract), then VERIFY `CID == state.pendingCID` BEFORE claiming
+    (the routing hint I1 set atomically with `waiting="rebirth"` at step 5; a real rebirth
+    resume's marker-content CID ALWAYS equals `pendingCID`). On a MATCH (`CID ==
+    state.pendingCID`) atomically `os.replace` it →
+    `$RUN_DIR/checkpoint-claimed-<$CLAUDE_CODE_SESSION_ID>-<CID>.marker`; the winner claims
+    ONLY on a match, so its claim-target is ALWAYS keyed on `pendingCID` and the loser's
+    `pendingCID`-keyed glob always matches it → no double-drive. On a MISMATCH (`CID !=
+    state.pendingCID` — a stale / forged / wrong-handoff marker) do NOT claim and do NOT
+    continue: STOP fail-closed via Present human pause with `waiting =
+    "stop:checkpoint-unprovable"` (both racers hit the same mismatch and STOP → no
+    double-drive; failing closed is safer than claiming under the wrong key). Exactly one
+    racer's rename succeeds — the WINNER.
+    · Winner (rename succeeded) → continue to the capture/rewrite below → the marker-consume
+    and rebirth-continue bullets → drive.
+    · Loser (`os.replace` raised ENOENT on the source): a REAL winner of the CURRENT checkpoint
+    exists IFF a claim-target `checkpoint-claimed-*-<state.pendingCID>.marker` exists whose
+    content `proof.tip` equals the `drive/<runId>` tip — glob the CURRENT `state.pendingCID` +
+    content (NOT the tip, NOT a name rebuilt from `state.sessionId`; a stale same-tip leftover
+    of an OLDER CID is IGNORED; glob+content only, NO liveness). Match → write NOTHING, leave an
+    advisory note, and EXIT (safe — drive-stop-hook.py `_allow()`s a run-less session; a
+    crashed-winner recovery is MANUAL: `mv $RUN_DIR/checkpoint-claimed-<sid>-<CID>.marker
+    $RUN_DIR/checkpoint-complete.marker` then re-paste `/drive <runId>`). No match, OR
+    `state.pendingCID` absent (a FORGED rebirth — UNREACHABLE for a real rebirth resume, which
+    always has pendingCID) → fall through to the rebirth-continue bullet's fail-closed re-prove
+    → `stop:checkpoint-unprovable`, exactly as today (no live winner to clobber).
+    **Then, before the
     overwrite below, capture the ephemeral fresh-session flag** `freshSessionResume =
     (state.sessionId != $CLAUDE_CODE_SESSION_ID)` reading the OLD persisted
     `state.sessionId` — computed UNCONDITIONALLY so it is defined on BOTH branches (`true` →
@@ -77,12 +132,16 @@ verdict / merge / gate.
     session carrying a stale `rebirth_pending = true` re-arms cleanly here (path a), so the
     successor's safe-boundary handler does not fire a spurious empty handoff at its first
     boundary.
-  - **Consume `checkpoint-complete.marker` (single-use):** if
-    `$RUN_DIR/checkpoint-complete.marker` exists, validate it (JSON parses AND `proof.tip`
-    equals the current `drive/<runId>` tip) — record this validity as `markerValid` — then
-    DELETE it (valid or invalid) before any reconciliation acts on its content. Resume never
-    REQUIRES the marker for a non-`rebirth` resume: missing/invalid means reconcile from
-    scratch. (Format + validity rules: § Durable checkpoint contract.)
+  - **Consume `checkpoint-complete.marker` (single-use):** on a `rebirth` WINNER path the
+    marker was already CLAIMED (the atomic rebirth-gated `os.replace` that is the FIRST action
+    of the sessionId-rebind bullet), so the marker file has MOVED to the claim-target
+    `checkpoint-claimed-<sid>-<CID>.marker`: validate it FROM THE CLAIM-TARGET the winner
+    renamed to (JSON parses AND `proof.tip` equals the current `drive/<runId>` tip) — record
+    this validity as `markerValid`. The winner REMOVES the claim-target on completion
+    (single-use); a stale same-tip leftover of an OLDER CID is harmless because loser-matching
+    is CID-keyed (§ sessionId-rebind bullet). Resume never REQUIRES the marker for a
+    non-`rebirth` resume: no claim happened, so missing/invalid means reconcile from scratch.
+    (Format + validity rules: § Durable checkpoint contract.)
   - **`waiting == "rebirth"` → re-proven CONTINUE (fail closed), NOT a STOP.** A
     `rebirth`-waiting run found on resume is the outgoing session's context-clear handoff —
     either a context-pressure rebirth (class A) or a deterministic seam (class B: Gate A
@@ -96,10 +155,13 @@ verdict / merge / gate.
     `bin/drive-conformance.sh $RUN_DIR --mode checkpoint` AND `bin/drive-conformance.sh
     $RUN_DIR --mode state-lint`** (§ Durable checkpoint contract, the proof = both modes,
     both clean — a `state-lint` failure on resume fails closed exactly like a checkpoint
-    failure; the just-consumed marker's
+    failure; the winner re-sources `markerValid` from the CLAIM-TARGET it renamed to, and that
     `markerValid` is corroborating evidence only, never the authorization): a passing proof
-    (BOTH exit 0) re-establishes resumability → clear `state.waiting = null` AND reset
-    `state.rebirth_pending = false` (one JSON-safe write) and continue autonomous reconciliation
+    (BOTH exit 0) re-establishes resumability → clear `state.waiting = null`, clear
+    `state.pendingCID = null`, AND reset `state.rebirth_pending = false` (one JSON-safe write),
+    then as its FINAL acts REMOVE the claim-target `checkpoint-claimed-<sid>-<CID>.marker` it
+    validated `markerValid` from and CONSUME this checkpoint's
+    `auto-resume-scheduled-<CID>.marker` (§ I1 step 5.7), and continue autonomous reconciliation
     exactly as any resume. The `rebirth_pending` reset belongs ONLY on this passing-proof
     CONTINUE branch (never before the re-prove, never on the fail-closed branch below — those
     must leave the signal intact), and it is UNCONDITIONAL w.r.t. the sessionId-rebind: it does
@@ -417,6 +479,7 @@ verdict / merge / gate.
   "slices": {}, "phaseDesign": {}, "phaseReview": {}, "finalizeRound": 0, "lastGate": null,
   "verify": { "attempts": [] }, "ship": { "suite": null, "conformance": null, "prUrl": null },
   "sessionId": null, "autoContinue": true, "waiting": null, "rebirth_pending": false,
+  "pendingCID": null,
   "designPath": "$RUN_DIR/design.md" }
 ```
 
@@ -586,6 +649,26 @@ the coordinator's self-report. Two marker families carry the contract:
   appended. No `pid`, no liveness probing. Content:
   `{"kind": "...", "scope": "...", "runId": "<runId>", "sessionId": "<dispatching session or null>", "startedAt": "<iso>"}`.
 
+**Observability sub-events (event-log vocabulary — ONE authoritative rule).** Sub-events extend
+the `event-log.jsonl` VOCABULARY only: each is `date -u`-timestamped, jq-built (JSON-safe, like
+every event-log line), APPEND-only, and **WRITE-ONLY — nothing parses them (`NEVER parse
+event-log.jsonl` holds)**. Schemas (`<iso>` = `date -u +%Y-%m-%dT%H:%M:%SZ`):
+
+| kind | schema | emitted at |
+|---|---|---|
+| subagent-started | `{"event":"subagent-started","kind":"<implement\|review\|design\|harden\|finalize\|verify\|ship\|heal>","scope":"<scope>","at":"<iso>"}` | write-before-dispatch, after the inflight marker is written + the subagent dispatched |
+| codex-started | `{"event":"codex-started","scope":"<scope>","at":"<iso>"}` | when the background codex launches in a review/harden/finalize scope |
+| suite-run-started | `{"event":"suite-run-started","scope":"<scope>","at":"<iso>"}` | immediately before a `bin/run-tests.sh` invocation |
+| suite-run-finished | `{"event":"suite-run-finished","scope":"<scope>","result":"pass\|fail","at":"<iso>"}` | immediately after that suite run returns |
+| fix-applied | `{"event":"fix-applied","scope":"<scope>","round":<int>,"at":"<iso>"}` | when a review/harden/finalize fix round commits an edit |
+| idle_detected | `{"event":"idle_detected","kind":"<kind>","scope":"<scope>","startedAt":"<iso>","elapsedMin":<int>,"at":"<iso>"}` | the § idle seam below |
+
+**`idle_detected` seam.** Bind it to the ONE universal clear-after-record step above: before
+`rm`ing ANY `inflight-<kind>-<scope>.marker`, read its `startedAt`; if it parses as ISO AND
+`date -u` minus `startedAt` > 30 min, append one `idle_detected` line
+(`elapsedMin = floor(elapsed/60)`). **An absent/unparseable `startedAt` → NO line (fail-open)** —
+never block or error on the observation. One rule, uniform across every inflight kind (D4/D15).
+
 **Safe boundary** = no open `inflight-*.marker` AND no partial multi-step git mutation
 detectable from git. Two steps carry NO marker by design: **assemble** — a partial phase
 integration is git-detectable and inert (the step-5 rebuild-from-base is the rollback) —
@@ -614,16 +697,34 @@ stage-aware `phaseList`, each slice's `step` in the valid enum, non-empty `owns`
 `deps`, well-formed `verify`/`ship`).
 After it exits 0, write **`$RUN_DIR/checkpoint-complete.marker`** (tmp + `mv`; single
 file, overwritten), content:
-`{"at": "<iso>", "sessionId": "<outgoing>", "proof": <the mode's stdout JSON, incl. tip + counters>}`.
+`{"at": "<iso>", "sessionId": "<outgoing>", "nonce": "<32hex>", "proof": <the mode's stdout JSON, incl. tip + counters>}`.
+The additive `"nonce"` (a 128-bit value `nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"`
+— 32 hex, PORTABLE on macOS+Linux; NEVER `date +%s%N`, GNU-only) makes the marker's content
+UNIQUE per handoff (the reader picks `proof.tip` only, so the nonce is transparent to it).
+
+**CID — the per-handoff identity (nonce-unique).** `CID` = `shasum -a 256` over the WHOLE
+marker content, first 12 hex (`shasum -a 256 <marker> | cut -c1-12`); **shasum absent → CID =
+the first 12 hex of the `nonce`** (itself unique — never a bare `at`). Because the nonce is
+unique per checkpoint, two same-tip/same-second checkpoints from the same session NEVER
+collide. CID keys the claim-target (§ Run setup & resume), the scheduled-marker + auto-trigger
+payload (§ I1 step 5.7), and `state.pendingCID`.
+
 Validity rules:
 - **A proof RECORD, never an authorization.** `proof.tip` must equal the current
   `drive/<runId>` tip — necessary, NOT sufficient (`drive/<runId>` moves only at the
   step-6 advance, so later work — even an open in-flight marker — can postdate a
   tip-matching file). Any consumer needing current safety MUST re-run the proof (both
   modes, above); the marker attests only that a passing proof was computed at `at`.
-- **SINGLE-USE — consumed at resume.** The resume path validates then DELETES it (valid
-  or not) as its first act after the sessionId rebind; one marker covers at most one
-  resume, and any later checkpoint re-proves from scratch and writes a fresh marker.
+- **SINGLE-USE — CLAIMED at a REBIRTH resume via an atomic content-preserving rename.** ONLY
+  a `waiting=="rebirth"` resume claims it — via an atomic `os.replace` to
+  `checkpoint-claimed-<claimerSid>-<CID>.marker` (CID = hash of the marker content incl. its
+  per-handoff nonce, above) as the FIRST action of the sessionId-rebind bullet, before the
+  `state.sessionId` write. A session that LOST the rename to a content-valid claim-target for
+  the CURRENT checkpoint (`state.pendingCID`, `proof.tip==tip`) writes NOTHING and exits; a
+  stale same-tip leftover of an OLDER CID is ignored; a genuinely-absent/forged rebirth falls
+  closed to `stop:checkpoint-unprovable`. A non-rebirth resume never claims (a leftover marker
+  is inert). The winner re-sources `markerValid` from the claim-target and removes it on
+  completion — single-use; any later checkpoint writes a fresh marker (a new CID).
 
 **Prove-then-pause:** a rebirth pause may be entered ONLY after a passing proof (both
 modes, above) plus a fresh `checkpoint-complete.marker`. If, after finishing the
@@ -749,14 +850,20 @@ with no open `inflight-*.marker`). Steps, in this exact order (this handler NEVE
    contract, Prove-then-pause).
 4. **WRITE the durable marker.** On a passing proof (exit 0) write
    `$RUN_DIR/checkpoint-complete.marker` (§ Durable checkpoint contract — tmp + `mv`, single
-   file, content `{"at": …, "sessionId": <outgoing>, "proof": <the mode's stdout JSON incl.
-   tip + counters>}`).
+   file, content `{"at": …, "sessionId": <outgoing>, "nonce": "<32hex>", "proof": <the mode's
+   stdout JSON incl. tip + counters>}`), including the additive per-handoff `"nonce"`
+   (`nonce="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"`, § Durable checkpoint contract).
+   Compute `CID` = `shasum -a 256` of the marker content, first 12 hex (shasum absent →
+   nonce[:12]) — the per-handoff identity threaded into step 5's `state.pendingCID` and step
+   5.7's auto-resume trigger.
 5. **THEN set `waiting = "rebirth"`.** Only after the marker is written AND validated
    (re-read it; JSON parses AND `proof.tip` equals the `drive/<runId>` tip) set
-   `state.waiting = "rebirth"` (JSON-safe write). The ordering is load-bearing and
+   `state.waiting = "rebirth"` AND `state.pendingCID = CID` (the step-4 value) in ONE JSON-safe
+   write. The ordering is load-bearing and
    fail-closed: the marker write is step 4 and the `waiting` set is step 5 — marker BEFORE
    `waiting`, adjacent. (Setting `waiting` first would let the turn end before resumability
-   is durable.)
+   is durable.) A real rebirth resume therefore ALWAYS carries `state.pendingCID` set together
+   with `waiting="rebirth"` — the resume's claim gate keys on it (§ Run setup & resume).
 5.5. **Run `/decant`** (EVERY trigger — pressure or deterministic seam). Now that
    resumability is durable (marker written, `waiting="rebirth"` set), distill the OUTGOING
    leg's learnings before the context clears: invoke the `decant` skill in its default
@@ -771,6 +878,31 @@ with no open `inflight-*.marker`). Steps, in this exact order (this handler NEVE
    satisfies the standing "run `/decant` on context-clear" rule for this handoff, so do NOT
    additionally run a wrap-decant at the same clear. (The standing run-wrap decant fires only
    at the TRUE run-wrap — after Gate B / `stage=done` — which is not a handoff seam.)
+5.7. **Schedule the fresh-session auto-resume trigger (capability-detected).** `CID` = the
+   step-4 value (also stored in `state.pendingCID` at step 5). **Feature-detect a harness-native
+   trigger capability that satisfies ALL of:** (a) spawns a NEW Claude Code session firing
+   `/drive <runId>`; (b) can carry a resume PAYLOAD `CID_N` (env/arg) on that session; **(c) is
+   HOST-LOCAL — the spawned session runs on THIS host and can reach this run's local `$RUN_DIR`
+   (`~/.claude/harness-runs/<runId>/state.json`)** — run state is local/non-portable, and
+   drive.md only takes the resume branch when the local `state.json` exists, so a cloud/remote
+   trigger (satisfies a+b but not c) would no-op at best or treat `/drive <runId>` as a FRESH
+   run on the wrong host. Described by **capability, never a hardcoded tool id** (D2); a
+   same-session/in-memory scheduler (`CronCreate`), a cloud routine, or any capability missing
+   (a)/(b)/(c) does NOT qualify → **degrade to the fenced block only**.
+   - Capability absent / not (a+b+c) → present the fenced block only.
+   - Capability present:
+     - `$RUN_DIR/auto-resume-scheduled-<CID>.marker` exists → already scheduled for THIS
+       checkpoint (a leave-pending re-presentation) → do NOT schedule a second (pure per-CID
+       dedup) → present the fenced block.
+     - Else → schedule EXACTLY ONE trigger carrying `CID_N = CID`, write
+       `$RUN_DIR/auto-resume-scheduled-<CID>.marker` (create-only, tmp+mv), THEN proceed to
+       step 6.
+   A SUCCESSFUL resume CONSUMES its `auto-resume-scheduled-<CID>.marker` (§ Run setup & resume,
+   rebirth-continue bullet). A late/already-resumed trigger no-ops at the § Run setup & resume
+   CID gate — NO "scheduled-marker still exists ⇒ prior failed" inference (DROPPED, unsound).
+   Repeated-failure-notify + backoff stay DESCOPED to `followups.md` (F1).
+   `auto-resume-scheduled-*.marker` is NOT an `inflight-*` marker. Step 6 + the fenced
+   `↻ REBIRTH` block stay BYTE-FOR-BYTE.
 6. **Present the handoff via Present human pause.** `waiting` is already set (step 5), so
    the routine emits the context-of-execution summary + the run graph (rendering the
    `↻ REBIRTH` node from `waiting=="rebirth"`) and presents the **rebirth handoff block**
@@ -861,6 +993,16 @@ forgotten:
 
    (This session can stop now; the fresh session owns the run once it resumes.)
    ```
+
+   **Notify side-effect (R3, decision-bearing parks only).** For `waiting` matching the
+   ANCHORED `^(gateA|gateB|stop:.+|ask:.+)$` (NEVER `rebirth`), fire a backgrounded best-effort
+   notification AFTER `waiting` is set (step 1) and the graph is emitted (step 2): build `MSG`
+   per pause kind — **gateB: the gate QUESTION + "reply 'approve' after reviewing the diff"
+   (NEVER a `/drive <runId>` paste line)**; gateA / `stop:` / `ask:` per kind — then
+   `bin/drive-notify.sh --run-dir "$RUN_DIR" --waiting "$waiting" --tip "$(git rev-parse <featureBranch tip>)" --message "$MSG" >/dev/null 2>&1 &`.
+   SIDE-EFFECT ONLY: it does not gate, block, or write `state.json`; a missing/failed
+   `drive-notify.sh` is silently ignored. No notify message carries a `/drive <runId>` line.
+   `rebirth` is EXCLUDED (it auto-resumes, § I1 step 5.7) — never notify on rebirth.
 
 **Pre-run exception:** the **preconditions** STOPs (gstack missing, dirty tree) fire *before*
 a run exists — there is no `$RUN_DIR`/`state.json` to render, so they STOP plainly (no graph).

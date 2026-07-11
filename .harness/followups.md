@@ -622,9 +622,10 @@ docs/drive-enforcement.md:242 — verbose repeated AC/residual discharge prose (
   the mixed shape. /drive-retro v1 absorbs it with a tolerant raw_decode stream parser
   (DP2-2); fixing the writer is out of Phase 2's boundary.
 
-- [ ] **Follow-on (named in docs/trellis-analysis.md TR-3 + design-phase2.md, not built):**
-  automatic run-wrap wiring for /drive-retro — a drive.md Completion-step edit invoking it
-  in the sequence where /decant already runs. v2 candidate: cross-run aggregation.
+- [ ] **Follow-on (run-wrap wiring DONE; v2 aggregation still open):** the automatic run-wrap
+  wiring for /drive-retro — a drive.md Completion-step edit invoking it in the sequence where
+  /decant already runs — is **DONE (2026-07-10, live in `main`: drive.md § Completion runs
+  /drive-retro before the wrap-/decant)**. STILL OPEN: v2 candidate: cross-run aggregation.
   DP2-5 names bin/drive-retro-stats.py if the inline parse snippet grows a second consumer.
 
 - [ ] **Follow-on (from phase-2 design r1, DP2-8 — not built):** /drive-retro in-flight
@@ -1056,3 +1057,40 @@ test_rebirth_thresholds.py (windows[0]/[1] indexing, token-set equality) + rebir
 INTENDED anti-drift trade-off (structure-coupling is how edit-one-forget-the-twin drift is
 caught); imprecision budget documented (D-p1-5 / AC12). Not loosened in-run (would weaken the
 guarantee). Revisit only if the table's shape genuinely churns.
+## Run r1r3-latency-20260710-081223 (2026-07-10) — R1 auto-resume rebirth seams + R3 push-notify decision-bearing parks + observability
+
+## F1 — R1 auto-resume: repeated-failure-notify + exponential backoff + crashed-winner AUTO-reclaim (descoped, D19/D25)
+Phase 1's step-5.7 schedules at most ONE trigger per checkpoint (per-CID create-only dedup, D19/D23); the
+CID-conditional resume no-op (D25) makes a late/duplicate trigger idempotent WITHOUT any failure inference.
+Three sophistications DESCOPED as beyond this cut's premise: (a) a repeated-failure notification (the
+round-2/3 "scheduled-marker exists ⇒ prior failed" inference was DROPPED as unsound — the marker existing
+may just mean the trigger has not fired yet); (b) genuine exponential backoff across legs (would need a
+per-CID attempts counter + delay schedule); (c) AUTO-reclaim of a winner that CRASHED after claiming the
+CURRENT checkpoint. Under Phase 1, a crashed current-winner surfaces as: the racing loser writes NOTHING +
+an advisory note (best-effort liveness HINT only, never a gate), and the human recovers MANUALLY — `mv
+$RUN_DIR/checkpoint-claimed-<sid>-<CID>.marker $RUN_DIR/checkpoint-complete.marker` then re-paste `/drive
+<runId>` (the re-paste WINS the restored rename). Premise-consistent (pre-R1 already strands a crashed
+/drive session until a human re-pastes). Any future auto-reclaim MUST avoid the wall-clock /
+liveness-authorization / tip-non-uniqueness traps rounds 1–3 surfaced (key on CID, never authorize on
+liveness).
+
+## F-harden1 (P3, in-phase, drive-notify.sh timeout robustness)
+`bin/drive-notify.sh:75-77` — a malformed `$DRIVE_NOTIFY_TIMEOUT` (`0`, or non-numeric) silently
+disables the send timeout (`timeout 0` = run indefinitely; a non-numeric errors the timeout and
+skips the send). Impact is bounded/low: the send is BACKGROUNDED (`&`), so the R3 "never wedge the
+pause turn / Stop hook" guarantee is preserved either way — the only cost is a lingering background
+transport process on operator misconfig. Not fixed at harden (operator-config, negligible impact);
+optional hardening: validate the timeout is a positive integer, else fall back to the default 5.
+
+## F-finalize-r1 — general-resume (non-rebirth) double-paste concurrency (PRE-EXISTING; out of scope)
+Surfaced by the finalize round-1 adversarial security pass. A HUMAN paste of `/drive <runId>` arriving AFTER
+another session already won the rebirth claim and cleared `waiting=null` (mid-drive) takes the NON-rebirth
+resume path (case (a) — no claim mechanism) and could reconcile/drive concurrently with the winner. This is
+PRE-EXISTING general-resume behavior, independent of R1's auto-trigger mechanism; the D-4269 auto-trigger
+double-drive vector R1 targets IS closed (the auto-trigger is caught by the CID gate). The finalize fix does
+NOT introduce or worsen this. Out of the run's blast radius → logged, not fixed in-run. Possible future
+hardening: extend the atomic-claim discipline to the general non-rebirth resume path, or a lightweight
+run-level lease. (Non-blocking; convergence not gated on it.)
+
+## Deferred-slop seed (RESOLVED in finalize, 2026-07-10) — no open items
+The run's `## slop (deferred to finalize)` harden→finalize seed was resolved in /drive-finalize: 3 comment/docstring items applied (statusline stale comment, rebirth-thresholds docstring, harvest commentary); 2 skipped as out-of-scope (statusline-window.test.sh comment byte-identical in main / pre-existing) or not-slop (the e2e concurrency docstring is now the load-bearing _resume_claim mismatch-path doc). No open slop followups.

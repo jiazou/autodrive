@@ -963,6 +963,13 @@ assert_out_contains "SL real stage clean envelope" '"clean":true,"mode":"state-l
 read -r repo rd < <(mk_state_lint stage_finalize_clean)
 run_conf "$repo" "$rd" --mode state-lint;           assert_rc "AC38 stage:\"finalize\" (Stage 4c) clean" 0 "$RC"
 assert_out_contains "AC38 finalize-stage clean envelope" '"clean":true,"mode":"state-lint"'
+# AC14: a state.json carrying the tolerated-EXTRA `pendingCID` field (a resume-routing hint set
+# by I1 with waiting="rebirth") PASSES state-lint clean — proving pendingCID is a tolerated-extra,
+# NOT a CORE / state-lint-required key (state-lint validates only the routing fields + tolerates
+# extras). This is the EXECUTABLE backing for the drive.md pendingCID tolerated-extra doc-claim.
+read -r repo rd < <(mk_state_lint pendingcid)
+run_conf "$repo" "$rd" --mode state-lint;           assert_rc "AC14 pendingCID-bearing state.json clean (tolerated-extra)" 0 "$RC"
+assert_out_contains "AC14 pendingCID clean envelope" '"clean":true,"mode":"state-lint"'
 # P1-C: phaseList element must be a REF-SAFE phase id — a value with spaces forms an
 # invalid phaseInt/<runId>/<P> ref.
 read -r repo rd < <(mk_state_lint phaselist_badref)

@@ -25,6 +25,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import vault_tasks  # single source of the configurable vault path (MC_VAULT)
 SESSIONS_DIR = os.path.join(HOME, ".claude", "sessions")
 PROJECTS_DIR = os.path.join(HOME, ".claude", "projects")
+# /drive run state lives here (sibling of SESSIONS_DIR); the harvest bridge reads it
+# READ-ONLY to surface runs parked on a human decision (mc tests monkeypatch this).
+HARNESS_RUNS_DIR = os.path.join(HOME, ".claude", "harness-runs")
 BINDINGS = os.path.join(HOME, "mission-control", "bindings.jsonl")
 STATUS_LEDGER = os.path.join(HOME, "mission-control", "status.jsonl")
 SELF_ID = os.environ.get("CLAUDE_CODE_SESSION_ID", "")
@@ -236,6 +239,38 @@ def load_bindings():
     return {s: e for s, e in latest.items() if e.get("event") != "unbind"}
 
 
+# The authoritative decision-bearing `waiting` grammar (drive-conformance.sh:1164 /
+# drive.md R3 notify filter), ANCHORED so `gateAfoo` cannot false-match and `rebirth`
+# (which auto-resumes — never a human decision) is EXCLUDED.
+_DRIVE_WAITING_RE = re.compile(r"^(gateA|gateB|stop:.+|ask:.+)$")
+
+
+def drive_waiting_runs():
+    """Read-only scan of `~/.claude/harness-runs/*/state.json` for /drive runs PARKED on a
+    human decision. Fail-open PER FILE (an unreadable/corrupt state.json is skipped, never
+    fatal). A run qualifies iff `state.waiting` is a STRING matching `_DRIVE_WAITING_RE` (the
+    `isinstance` guard skips a non-str/malformed `waiting`). Returns a list of
+    `{runId, waiting, repoRoot}`."""
+    out = []
+    for sj in sorted(glob.glob(os.path.join(HARNESS_RUNS_DIR, "*", "state.json"))):
+        try:
+            with open(sj) as fh:
+                st = json.load(fh)
+        except Exception:
+            continue  # fail-open per file — an unreadable/corrupt run never breaks harvest
+        if not isinstance(st, dict):
+            continue  # a PARSEABLE but non-object state.json (`[]`/`42`/`"x"`) — skip, never crash
+        w = st.get("waiting")
+        if not isinstance(w, str) or not _DRIVE_WAITING_RE.match(w):
+            continue
+        out.append({
+            "runId": st.get("runId") or os.path.basename(os.path.dirname(sj)),
+            "waiting": w,
+            "repoRoot": st.get("repoRoot") or "?",
+        })
+    return out
+
+
 def short(sid):
     return sid.split("-")[0] if sid else "?"
 
@@ -261,13 +296,27 @@ STATUS_GLYPH = {
 }
 
 
-def render(live, binds, now_str, summaries=None):
+def _append_drive_waits(lines, drive_waits):
+    """Append the `/drive runs waiting on you:` section when non-empty (else nothing) —
+    one `⏸ <runId> — <waiting> · <repoRoot>` line per parked run. Shared by both the
+    no-live and the normal render paths so a parked /drive run surfaces even when its
+    Claude session has already exited."""
+    if not drive_waits:
+        return
+    lines.append("")
+    lines.append("/drive runs waiting on you:")
+    for w in drive_waits:
+        lines.append(f"  ⏸ {w['runId']} — {w['waiting']} · {w['repoRoot']}")
+
+
+def render(live, binds, now_str, summaries=None, drive_waits=None):
     lines = []
     lines.append(f"🛰️  MISSION CONTROL — Session Harvest · {now_str}")
     lines.append("")
 
     if not live:
         lines.append("No live Claude sessions found.")
+        _append_drive_waits(lines, drive_waits)
         return "\n".join(lines)
 
     # sort: waiting-on-you first, then working, then idle/shell; this session last
@@ -316,6 +365,7 @@ def render(live, binds, now_str, summaries=None):
         for sid, s, _ in unbound:
             lines.append(f"  mc bind {short(sid)} --project \"<Project>\" [--task <slug>]")
 
+    _append_drive_waits(lines, drive_waits)
     return "\n".join(lines)
 
 
@@ -337,7 +387,8 @@ def main():
     live = load_live_sessions()
     binds = load_bindings()
     summaries = build_summaries(live) if "--summarize" in sys.argv else None
-    out = render(live, binds, now.strftime("%Y-%m-%d %H:%M"), summaries)
+    out = render(live, binds, now.strftime("%Y-%m-%d %H:%M"), summaries,
+                 drive_waits=drive_waiting_runs())
     print(out)
     if "--log" in sys.argv:
         path, created = log_to_vault(out, now)

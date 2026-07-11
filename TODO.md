@@ -241,9 +241,11 @@ new bugs live.
   import this module" but names one consumer (the coordinator soft-check was removed) — leftover
   dual-consumer phrasing. **[V] `test/drive-tool-gate.test.sh`** is the sole bash suite committed
   `100644` (no exec bit) — `git update-index --chmod=+x`.
-- [ ] **[V] `TODO.md:379`** — the "Wire `/drive-retro` into the run-wrap sequence" directive is
-  already implemented in `drive.md:1454-1461`; mark done / delete with a pointer, and sweep the
-  matching stale HANDOFF at `followups.md:682`.
+- [x] **[V] `TODO.md:379`** — **DONE (2026-07-10): retro-wiring confirmed live in `main` (drive.md
+  § Completion); the directive is marked done below.** the "Wire `/drive-retro` into the run-wrap
+  sequence" directive is already implemented in `drive.md`; mark done / delete with a pointer, and
+  sweep the matching stale HANDOFF at `.harness/followups.md` (residual ledger-sweep — done in this
+  same commit if the stale entry was found).
 
 ## /drive efficiency plan R1–R9 — from docs/efficiency-audit-2026-07-08.md (2026-07-08)
 
@@ -281,7 +283,7 @@ ONE batch (single pin-suite migration), not five. (3) Implementation order by
 (hours-saved / risk): R2 → R1+R3 → R4 → R5–R9 batch.
 
 ### Tier A — human-latency pool (the biggest lever, ~3–8h/run)
-- [ ] **R2 (P1/small/spec-only)** Codex-first dual-voice overlap: in drive-review.md
+- [x] **R2 (P1/small/spec-only)** — **DONE (PR #78, 2026-07-09).** Codex-first dual-voice overlap: in drive-review.md
   (Step 1 ~L87 / Step 2 ~L172), drive-harden.md (~L105–166), drive-finalize.md
   (~L152–230), launch the background `codex exec` FIRST, spawn the Claude reviewer while
   codex runs, wait for BOTH before the Combine step. Log/marker/stranded-log mechanics
@@ -333,7 +335,7 @@ ONE batch (single pin-suite migration), not five. (3) Implementation order by
   unattributable-stall bucket into measurable classes for the next audit.
 
 ### Tier B — codex tail-bounding (~15 min vs 8–10h worst case)
-- [ ] **R4 (P1/small/code+spec)** Codex progress-watchdog + outage degrade. Kill a codex
+- [x] **R4 (P1/small/code+spec)** — **DONE (PR #78, 2026-07-09).** Codex progress-watchdog + outage degrade. Kill a codex
   call ONLY when `codex-raw-<scope>.log` has appended **no bytes for 15 minutes**
   (mtime/size polled in the existing wait loop), absolute backstop 3h; retry once; then
   write a DISTINCT first-line marker `CODEX_KILLED_TIMEOUT` (never masquerading as
@@ -619,7 +621,7 @@ Full audit with per-candidate evidence and both lens verdicts: session artifact
   stopgap; the durable fix (a single source resolved at deploy time) is deferred (codex ARCH).
 # Finalize TODO routing (promoted to repo-root TODO.md at ship)
 
-- **Wire `/drive-retro` into the run-wrap sequence, ordered BEFORE the wrap-decant**
+- **[DONE — live in `main`, drive.md § Completion (2026-07-10)]** **Wire `/drive-retro` into the run-wrap sequence, ordered BEFORE the wrap-decant**
   (user-directed, 2026-07-05). At the TRUE run-wrap only (after Gate B, once
   `completedAt` / `stage=done` exist — retro's completeness gate requires a finished
   run): `/drive` Completion runs `/drive-retro <runId>` first, then the standing
