@@ -186,7 +186,53 @@ verdict / merge / gate.
     re-prove is the SOLE carve-out from the marker-consume bullet's "missing/invalid →
     reconcile from scratch" rule: a `rebirth` waiting requires a passing proof, not a
     from-scratch reconcile. Reconcile phase / counters from git + artifacts as normal.
-  - **Current phase:** `state.phase` = the lowest phase in `state.phaseList` whose
+  - **Pre-Execute resume route (phaseList × stage matrix — runs BEFORE Current phase):** the
+    "not-started" boundary cannot be derived from absence-of-artifact (an empty `∀` over
+    `phaseList` is vacuously true), so branch on `state.phaseList` emptiness HERE, before the
+    ancestry-based Current-phase derivation. `phaseList` becomes non-empty ONLY at the atomic
+    Gate-A transition, which sets `stage = execute` in the SAME `state.json` write, so in a
+    well-formed run a non-empty `phaseList` ⟹ `stage ∈ {execute, finalize, verify, ship,
+    done}` and an empty `phaseList` ⟹ `stage ∈ {premises, plan}`. This guard is a TOTAL
+    function over the (emptiness × `stage`) matrix and FAILS CLOSED on BOTH malformed corners.
+    Do **NOT** key this route on `state.lastGate` (D1: it false-routes done runs, false-blocks
+    stale-gate execute runs, and is not on the `--mode state-lint` validated routing surface).
+    **Each case below TERMINATES the resume in its branch — do NOT fall through to the
+    Current-phase or any later Execute-oriented reconcile bullet except where it explicitly
+    says "fall through".**
+    - `state.phaseList` **empty** → branch by `state.stage`, mirroring the `--mode state-lint`
+      rule (`bin/drive-conformance.sh`, empty phaseList legitimate ONLY at `premises`/`plan`):
+      - `stage ∈ {premises, plan}` — the legitimate pre-Execute case:
+        - Parked human pause — `state.waiting` ∈ {`gateA`, `ask:*`, `stop:*`} → **RE-PRESENT
+          that pause** via the Present human pause routine (the human is back to an open
+          question — the existing resume contract). Do NOT re-enter a stage or re-invoke a
+          command. (`rebirth` cannot appear here — its own earlier bullet consumed it; `gateB`
+          is impossible pre-Execute.)
+        - Autonomous — `waiting == null` → re-enter the pipeline at the reconciled pre-Execute
+          point: `stage == premises` → resume **Stage 0 (Premises)**; `stage == plan` → set
+          `stage = plan` and **re-invoke `/drive-plan`** to continue design-review convergence.
+          Do **NOT** re-enter Stage 0 Premises when `task.md`/`design.md` already exist (that
+          would re-ask the human the premise).
+      - `stage ∈ {execute, finalize, verify, ship, done}` or unknown → an empty `phaseList`
+        here is the exact malformed state `--mode state-lint` flags `phaselist-malformed` (the
+        Gate-A transition writes `stage=execute` + parsed `phaseList` in ONE atomic write, so a
+        clean `{stage:execute, phaseList:[]}` is unreachable). **Fail closed: STOP** via the
+        Present human pause routine (`waiting = "stop:phaselist-malformed"`) with the
+        inconsistency — **never silently restart at Plan** (which would DISCARD real
+        Execute/Finalize progress, a wrong-outcome mirroring the bug this fix removes).
+    - `state.phaseList` **non-empty** → branch by `state.stage` (the symmetric malformed corner
+      `--mode state-lint` UNDER-polices — it flags only the EMPTY case outside premises/plan,
+      NOT a non-empty phaseList at premises/plan):
+      - `stage ∈ {execute, finalize, verify, ship, done}` → **fall through UNCHANGED** to the
+        Current-phase / PAST-Execute derivation below (the ancestry `∀` is now over a non-empty
+        set, so it can no longer be vacuously true). Done / mid-Execute / finalize / verify /
+        ship resumes all take this path exactly as today.
+      - `stage ∈ {premises, plan}` or unknown → **fail-closed STOP**
+        (`waiting = "stop:phaselist-malformed"`): a non-empty `phaseList` at a pre-Execute
+        stage is the SYMMETRIC malformed corner. The atomic Gate-A write makes it unreachable
+        in a clean run — a legitimate resume's non-empty `phaseList` ALWAYS carries
+        `stage ≥ execute`, so this NEVER false-blocks a legitimate resume; it fires only on
+        genuine corruption. Never fall through to the Current-phase derivation from here.
+  - **Current phase (reached ONLY when `state.phaseList` is non-empty — the pre-Execute route above terminates every empty-`phaseList` resume in its own branch):** `state.phase` = the lowest phase in `state.phaseList` whose
     `phaseInt/<runId>/<P>` is not yet an ancestor of `featureBranch` (branch absent, or
     `git merge-base --is-ancestor phaseInt/<runId>/<P> <featureBranch>` fails). All are
     ancestors → the run is PAST Execute; distinguish **finalize** (Stage 4c) from
@@ -1317,6 +1363,14 @@ the one human gate here. If no approved/converged design → STOP. → `lastGate
 Parse the `## Phases` breakdown into the ordered phase ids in `state.phaseList`. **Slices
 are NOT defined here** — `state.slices` stays empty; each phase's `/drive-design` (Execute
 step 1) produces and records its own slices, in detail, against the real prior-phase code.
+
+This Gate-A transition is a **single atomic `state.json` write**: `stage = "execute"`,
+`lastGate = "A"`, `waiting = null`, and the parsed `phaseList` are committed TOGETHER (never
+`stage=execute` first and `phaseList` in a later write). This closes the crash-intermediate
+`{stage:execute, phaseList:[]}` so the resume guard's later-stage fail-closed STOP is a
+genuine-malformed backstop, not a false-STOP of an interrupted handoff — and it matches what
+the Seam-A `--mode state-lint` gate already requires (it rejects an empty `phaseList` once
+`stage ≠ premises/plan`).
 
 **Seam A — deterministic handoff after Gate A approval.** Once approved (`lastGate="A"`,
 `stage="execute"`, `phaseList` parsed) the plan is fully recorded and no `inflight-*.marker`

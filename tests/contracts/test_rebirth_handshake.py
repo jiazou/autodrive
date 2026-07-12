@@ -1024,3 +1024,284 @@ def test_winner_verifies_cid_equals_pendingcid():
         "a MISMATCH must fail closed (no claim, no continue), not claim under a wrong key"
     )
 
+
+
+# =========================================================================== #
+# Slice 1.1 — Pre-Execute resume guard (phaseList × stage matrix). Fixes the
+# resume "Current phase" vacuous-∀ misroute: a Plan-stage rebirth with an empty
+# `phaseList` must resume into Plan, not fall through to the PAST-Execute /
+# Finalize derivation. Pins P1–P4b/P6/P7 (+ P5 atomic Gate-A transition) bind the
+# guard prose SECTION-BOUND (never a whole-file grep); every load-bearing guard-arm
+# token asserted by `_assert_guard_structural` is mutation-verified by a committed
+# `_mutation_reds` flip below — the P1 route's four sub-clauses (empty+autonomous
+# Plan re-entry, Premises re-entry, do-NOT-re-enter Premises; the non-empty legitimate
+# fall-through) plus P2/P3/P4/P4b, one flip each.
+# =========================================================================== #
+def _guard_body():
+    """The Pre-Execute resume guard sub-bullet's own FULL span (section-bound), or None.
+    Sliced by the live `_RESUME_BULLET_RE` enumeration so a pin scans ONLY the guard's
+    text — no inner guard line may begin `  - **` (it would truncate this body)."""
+    bodies = _resume_bullet_bodies(_resume_section())
+    return next(
+        (b for b in bodies if b.lstrip().startswith("- **Pre-Execute resume route")),
+        None,
+    )
+
+
+def _current_phase_body_of(section):
+    """The Current-phase resume sub-bullet's FULL span from an ARBITRARY resume section."""
+    bodies = _resume_bullet_bodies(section)
+    return next(
+        (b for b in bodies if b.lstrip().startswith("- **Current phase")),
+        None,
+    )
+
+
+def test_pre_execute_guard_positive_route():
+    """P1 (AC1): the empty-`phaseList` + `{premises,plan}` + autonomous case re-enters the
+    pipeline at Plan/Premises (re-invoke `/drive-plan`), NOT the Current-phase derivation;
+    the non-empty legitimate case falls through. Section-bound to the guard body only."""
+    body = _guard_body()
+    assert body is not None, "the Pre-Execute resume guard sub-bullet must be enumerated"
+    nb = _norm(body)
+    assert "set `stage = plan` and **re-invoke `/drive-plan`**" in nb, (
+        "empty+plan+autonomous must re-invoke /drive-plan (not route to Current-phase)"
+    )
+    assert "`stage == premises` → resume **Stage 0 (Premises)**" in nb, (
+        "empty+premises+autonomous must resume Stage 0 (Premises)"
+    )
+    assert "Do **NOT** re-enter Stage 0 Premises when `task.md`/`design.md` already exist" in nb, (
+        "the autonomous branch must NOT re-ask the premise when task.md/design.md exist"
+    )
+    assert "**fall through UNCHANGED** to the Current-phase" in nb, (
+        "the non-empty legitimate case must fall through to the Current-phase derivation"
+    )
+
+
+def test_current_phase_derivation_bound_to_nonempty_phaselist():
+    """P2 (AC2): the Current-phase derivation is reached ONLY when `phaseList` is non-empty —
+    the anti-vacuity precondition. Section-bound to the Current-phase bullet body. Deleting
+    the Interface-2 precondition clause reds this (mutation-verified below by
+    `test_pre_execute_guard_current_phase_precondition_mutation_reds`)."""
+    body = _current_phase_body_of(_resume_section())
+    assert body is not None, "the Current-phase resume sub-bullet must be enumerated"
+    assert "reached ONLY when `state.phaseList` is non-empty" in _norm(body), (
+        "the Current-phase derivation must be bound to a non-empty phaseList (anti-vacuity)"
+    )
+
+
+def test_pre_execute_guard_parked_waiting_represent():
+    """P3 (AC3): empty+plan+parked (`waiting` ∈ {gateA, ask:*, stop:*}) RE-PRESENTS the pause
+    via Present human pause, NOT a /drive-plan re-invoke. Section-bound to the guard body."""
+    nb = _norm(_guard_body())
+    assert "`state.waiting` ∈ {`gateA`, `ask:*`, `stop:*`} →" in nb, (
+        "the parked-pause branch must key on waiting ∈ {gateA, ask:*, stop:*}"
+    )
+    assert "RE-PRESENT" in nb and "Present human pause" in nb, (
+        "the parked-pause branch must RE-PRESENT via the Present human pause routine"
+    )
+    assert "Do NOT re-enter a stage or re-invoke a command" in nb, (
+        "the parked-pause branch must NOT swallow the pause into a re-invoke"
+    )
+
+
+def test_pre_execute_guard_failclosed_empty_corner():
+    """P4 (AC4): empty+later-stage (execute/finalize/verify/ship/done or unknown) STOPs with
+    `stop:phaselist-malformed` — never silently restarts Plan. Section-bound to the guard."""
+    nb = _norm(_guard_body())
+    assert "`stage ∈ {execute, finalize, verify, ship, done}` or unknown → an empty" in nb, (
+        "the empty-branch later-stage arm must be present (` or unknown → an empty` suffix)"
+    )
+    assert "Fail closed: STOP" in nb, "the empty later-stage corner must fail closed with a STOP"
+    assert '`waiting = "stop:phaselist-malformed"`' in nb, (
+        "the STOP must set waiting=stop:phaselist-malformed"
+    )
+    assert "never silently restart at Plan" in nb, (
+        "the empty later-stage corner must NEVER silently restart Plan (would discard progress)"
+    )
+
+
+def test_pre_execute_guard_failclosed_symmetric_nonempty_corner():
+    """P4b (AC4b): non-empty+pre-Execute (`{premises,plan}` or unknown) STOPs with
+    `stop:phaselist-malformed` — the SYMMETRIC corner --mode state-lint under-polices — and
+    does NOT fall through; the fall-through is CONDITIONAL on `stage ≥ execute`, never
+    unconditional. Section-bound to the guard body."""
+    nb = _norm(_guard_body())
+    assert "`stage ∈ {premises, plan}` or unknown → **fail-closed STOP**" in nb, (
+        "the non-empty pre-Execute corner must fail closed (symmetric malformed STOP)"
+    )
+    assert "a non-empty `phaseList` at a pre-Execute stage is the SYMMETRIC malformed corner" in nb, (
+        "the symmetric malformed corner must be named"
+    )
+    assert "ALWAYS carries `stage ≥ execute`, so this NEVER false-blocks a legitimate resume" in nb, (
+        "the symmetric STOP must document why it never false-blocks a legitimate resume"
+    )
+    assert "`stage ∈ {execute, finalize, verify, ship, done}` → **fall through UNCHANGED**" in nb, (
+        "the non-empty fall-through must be CONDITIONAL on stage ≥ execute (not unconditional)"
+    )
+
+
+def test_atomic_gateA_transition_both_files():
+    """P5 (AC5): drive.md § Stage 1 states the Gate-A mutation as ONE atomic state.json write
+    (stage+lastGate+waiting+phaseList together, never two writes); drive-plan.md is consistent
+    (not two separable writes). Section-bound to the Stage-1 body / the After-this-stage
+    region — never a whole-file grep."""
+    stage1 = _norm(_stage_section("Stage 1 — Plan"))
+    assert "single atomic `state.json` write" in stage1, (
+        "drive.md Stage 1 must call the Gate-A transition a single atomic state.json write"
+    )
+    for field in ("`stage = \"execute\"`", "`lastGate = \"A\"`", "`waiting = null`", "parsed `phaseList`"):
+        assert field in stage1, f"the atomic write must name {field} in the same clause"
+    assert "never\n`stage=execute` first and `phaseList` in a later write".replace("\n", " ") in stage1, (
+        "drive.md must state the negative intent (never stage=execute first, phaseList later)"
+    )
+    after = _norm(_section(_drive_plan_md(), "After this stage", level="## "))
+    assert "ONE atomic `state.json` write" in after, (
+        "drive-plan.md § After this stage must state the transition is ONE atomic write "
+        "(doc-drift guard, consistent with drive.md § Stage 1)"
+    )
+
+
+def test_pre_execute_guard_is_adjacent_between_rebirth_and_current_phase():
+    """P6 (AC6): the guard sits at resume-bullet index 3 — EXACTLY between the
+    `waiting=="rebirth"` bullet (its own earlier bullet must have cleared `waiting`) and the
+    Current-phase bullet, ADJACENT on both sides (a sibling slipped between either pair breaks
+    the "runs BEFORE Current phase, after rebirth clears waiting" contract)."""
+    labels = _resume_bullet_labels(_resume_section())
+    guard_idx = next(i for i, l in enumerate(labels) if l.startswith("Pre-Execute resume route"))
+    rebirth_idx = next(i for i, l in enumerate(labels) if l.startswith('`waiting == "rebirth"`'))
+    phase_idx = next(i for i, l in enumerate(labels) if l.startswith("Current phase"))
+    assert guard_idx == rebirth_idx + 1 and phase_idx == guard_idx + 1, (
+        f"guard must sit ADJACENT — immediately after rebirth and immediately before "
+        f"Current phase; got rebirth={rebirth_idx}, guard={guard_idx}, phase={phase_idx}"
+    )
+
+
+def _assert_guard_structural(drive_md):
+    """P7 factoring: bound the guard + Current-phase bullets from an ARBITRARY drive.md TEXT
+    (real or mutated) and re-assert the load-bearing P1/P3/P4/P4b/P2 tokens, so a mutation
+    that guts a malformed-corner STOP reds. Raises AssertionError when a clause is unbound."""
+    section = _resume_section_of(drive_md)
+    bodies = _resume_bullet_bodies(section)
+    guard = next((b for b in bodies if b.lstrip().startswith("- **Pre-Execute resume route")), None)
+    phase = next((b for b in bodies if b.lstrip().startswith("- **Current phase")), None)
+    assert guard is not None, "the Pre-Execute resume guard bullet must be enumerated"
+    assert phase is not None, "the Current-phase bullet must be enumerated"
+    nb = _norm(guard)
+    np = _norm(phase)
+    # P1 (positive route) — all four load-bearing sub-clauses of the autonomous arm
+    assert "set `stage = plan` and **re-invoke `/drive-plan`**" in nb
+    assert "`stage == premises` → resume **Stage 0 (Premises)**" in nb
+    assert "Do **NOT** re-enter Stage 0 Premises when `task.md`/`design.md` already exist" in nb
+    assert "**fall through UNCHANGED** to the Current-phase" in nb
+    # P3 (parked re-present)
+    assert "`state.waiting` ∈ {`gateA`, `ask:*`, `stop:*`} →" in nb
+    # P4 (empty corner fail-closed) — the load-bearing empty-branch STOP
+    assert "`stage ∈ {execute, finalize, verify, ship, done}` or unknown → an empty" in nb
+    assert "never silently restart at Plan" in nb
+    # P4b (symmetric non-empty corner fail-closed)
+    assert "`stage ∈ {premises, plan}` or unknown → **fail-closed STOP**" in nb
+    # P2 (anti-vacuity precondition on the Current-phase bullet)
+    assert "reached ONLY when `state.phaseList` is non-empty" in np
+
+
+def test_pre_execute_guard_is_structural_not_prose_only():
+    """P7 (AC8): the factored guard structural pin is green on the REAL merged drive.md."""
+    _assert_guard_structural(_drive_md())
+
+
+def test_pre_execute_guard_empty_branch_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the empty-branch later-stage STOP unbinds P4 → reds."""
+    mutated = _drive_md().replace(
+        "`stage ∈ {execute, finalize, verify, ship, done}` or unknown → an empty",
+        "(empty-branch STOP removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_symmetric_branch_mutation_reds():
+    """P7 (AC8) non-vacuity: reverting the non-empty branch to an unconditional fall-through
+    (removing the symmetric STOP) unbinds P4b → reds."""
+    mutated = _drive_md().replace(
+        "`stage ∈ {premises, plan}` or unknown → **fail-closed STOP**",
+        "(symmetric STOP removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_current_phase_precondition_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the Current-phase precondition clause (Interface 2)
+    unbinds P2 → reds. The `old` substring is the exact anti-vacuity token P2 asserts on the
+    Current-phase bullet body (unique in drive.md, single raw line)."""
+    mutated = _drive_md().replace(
+        "reached ONLY when `state.phaseList` is non-empty",
+        "(precondition removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_parked_pause_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the empty+plan parked-pause clause unbinds P3 → reds.
+    The `old` substring is the exact parked-waiting token P3 asserts on the guard body
+    (unique in drive.md, single raw line)."""
+    mutated = _drive_md().replace(
+        "`state.waiting` ∈ {`gateA`, `ask:*`, `stop:*`} →",
+        "(parked-pause clause removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_positive_route_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the empty+autonomous Plan re-entry arm unbinds P1 → reds.
+    This is ONE of the P1-arm mutation flips (the empty+autonomous Plan re-entry arm); together
+    with the sibling premises / no-reenter / fall-through / parked-pause / symmetric-corner /
+    current-phase-precondition flips they make every guard arm non-vacuous. The `old` substring
+    is the load-bearing chunk of the P1 re-invoke-`/drive-plan` token (unique in drive.md,
+    single raw line)."""
+    mutated = _drive_md().replace(
+        "`stage = plan` and **re-invoke `/drive-plan`**",
+        "(positive Plan re-entry removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_premises_reentry_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the empty+autonomous Premises re-entry sub-clause unbinds
+    the P1-arm Premises token → reds. The `old` substring is the exact Premises-re-entry token
+    now asserted in `_assert_guard_structural` (unique in drive.md, single raw line)."""
+    mutated = _drive_md().replace(
+        "`stage == premises` → resume **Stage 0 (Premises)**",
+        "(Premises re-entry removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_no_reenter_premises_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the do-NOT-re-enter-Premises guard sub-clause unbinds the
+    P1-arm do-not-re-enter token → reds. The `old` substring is the exact do-not-re-enter token
+    now asserted in `_assert_guard_structural` (unique in drive.md, single raw line)."""
+    mutated = _drive_md().replace(
+        "Do **NOT** re-enter Stage 0 Premises when `task.md`/`design.md` already exist",
+        "(do-not-re-enter Premises removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_fall_through_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the non-empty legitimate FALL-THROUGH clause unbinds the
+    P1-route fall-through token → reds. The `old` substring `**fall through UNCHANGED**` is the
+    load-bearing chunk of the fall-through token `_assert_guard_structural` asserts (unique in
+    drive.md; the full token wraps a raw newline, so the flip keys on this unique sub-token)."""
+    mutated = _drive_md().replace(
+        "**fall through UNCHANGED**",
+        "(fall-through removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)

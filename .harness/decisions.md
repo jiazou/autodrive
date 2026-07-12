@@ -6062,3 +6062,114 @@ Classification: Mechanical.
 drive-notify.sh delivers via `printf '%s' "$MESSAGE"` (no trailing newline) and `cat` copies
 exactly, so the `expected` literals are the raw messages with NO trailing newline
 ("the message body" / "hi" / "first"). Classification: Mechanical.
+
+## /drive run drive-planresume-fix-20260712-015606 — decisions
+
+
+## D1 — Gate PAST-Execute on a positive "Execute-entered" precondition
+Classification: Mechanical
+The PAST-Execute derivation fires ONLY when `phaseList` is non-empty AND `lastGate == "A"`,
+not merely by special-casing the empty list. Closes the whole vacuous-"all ancestors" class
+(completeness + explicit-over-clever), anchored on the deterministic upstream fact that Execute
+began.
+
+## D2 — Plan route reuses existing plan-stage resume rules
+Classification: Mechanical
+The guard only redirects an empty-phaseList / pre-Gate-A resume into Stage 1 Plan; it does not
+re-specify Plan resume. No new mechanism (DRY, pragmatic).
+
+## D3 — No conformance edit unless a real drift surfaces
+Classification: Mechanical
+`--mode state-lint` already treats empty-phaseList-while-executing as malformed, consistent with
+the guard. Cross-check is verification, not a scoped edit; edit conformance only if implement
+finds an actual disagreement (pragmatic, no gold-plating).
+
+## D4 — ONE phase / ONE slice; guard prose + pin in one review unit
+Classification: Mechanical
+No fan-out, no staged risk; guard prose and its RED→GREEN pin are shared-contract and stay in a
+single review unit so the pin provably binds the guard (right-size, bias-to-action).
+# Run drive-planresume-fix-20260712-015606 (2026-07-12) — /drive resume Plan-stage misroute fix
+
+## D1 (correctness, evidence-driven; surfaced at Gate A) — pre-Execute route keys on phaseList emptiness ALONE, NOT lastGate
+Premise proposed `phaseList empty OR lastGate != "A"`. All 3 autoplan review voices (codex
+Critical/High + 2 Claude subagents HIGH) refuted the lastGate term with concrete attack states:
+(a) `lastGate != "A"` false-ROUTES a done run {stage:done, lastGate:B, phaseList:["1"]} back to
+Plan (done-teardown sits AFTER the guard, drive.md:251>189); (b) `lastGate == "A"` false-BLOCKS a
+legit execute resume with stale/absent lastGate; (c) lastGate is NOT on the --mode state-lint
+validated routing surface. Correct predicate: phaseList non-empty ⟺ Execute-entered (parsed
+atomically at Gate A, never re-emptied). SUPERSEDES the premise's literal proposal; better
+satisfies the premise's own "cross-check state-lint" instruction. Classification: correctness,
+surfaced at Gate A for human veto.
+
+## D2 (completeness, fail-closed) — empty phaseList at a later stage STOPs, does not restart Plan
+Empty phaseList + stage ∈ {execute,finalize,verify,ship,done} is the exact state-lint
+`phaselist-malformed` case → fail closed (STOP), never silently restart at Plan (which would
+discard real Execute progress — the mirror wrong-outcome). Guard = exact routing-side mirror of
+state-lint's stage-branch.
+
+## D3 (completeness, wire-the-callee) — the fix ADDS the Plan-resume route, not redirects to an assumed one
+No pre-existing plan-stage reconcile bullet. Specify: set stage=plan, re-invoke /drive-plan from
+reconstructed designReview counter, do NOT re-enter Premises when task.md/design.md exist.
+
+## D4 (DRY) — no bin/drive-conformance.sh change; state-lint already encodes the mirrored stage-branch.
+## D5 (right-size) — ONE phase / ONE slice; guard prose + all pins (positive/negative/fail-closed) in one review unit.
+
+## D6 (mechanical; Phase-1 detailed design) — pin home, guard label/index, STOP reason
+Classification: Mechanical
+(a) Pins live in tests/contracts/test_rebirth_handshake.py — it has the section-bounding helpers
+(_resume_section, _resume_bullet_bodies, _resume_section_of) and the mutation-flip precedent the
+four pins + non-vacuity proof need; keeps guard prose + binding pins in one review unit (D5). P5
+(atomic Gate-A transition) may co-locate in test_checkpoint_contract.py (targets the Stage-1
+body). (b) Guard sub-bullet label begins "Pre-Execute resume route (phaseList emptiness …):",
+inserted at resume-bullet INDEX 3 — after waiting=="rebirth" (index 2), before Current phase — so
+both _RESUME_BULLET_RE variants enumerate it and indices 0/1/2 (rebind/marker/rebirth) are
+preserved (existing ordering + reset-on-resume pins stay green). (c) Fail-closed STOP reason
+string = "stop:phaselist-malformed", matching the --mode state-lint violation name so the
+routing-side mirror is textually explicit and P4 has a distinct token to bind.
+
+## D7 (correctness; dual-voice review of design-phase1.md — F3 + F5) — TOTAL (emptiness × stage) matrix; drop designReview claim
+Classification: Mechanical (design-shape correction, routing logic unchanged/validated sound)
+Review MAJOR F3: the earlier draft justified an UNCONDITIONAL non-empty fall-through by claiming
+non-empty phaseList is "exactly and only Execute-entered" — an overclaim (--mode state-lint,
+drive-conformance.sh ~1073, rejects only the EMPTY case outside premises/plan; it does NOT police
+{stage:plan, phaseList:["1"]}). Fix: the guard is now a TOTAL function over (emptiness × stage) —
+the non-empty branch fails closed on the SYMMETRIC corner (non-empty + {premises,plan}/unknown →
+stop:phaselist-malformed) and falls through ONLY for stage ≥ execute. The atomic Gate-A write
+makes the corner unreachable in a clean run, so it NEVER false-blocks a legitimate resume
+(non-empty ⟹ stage ≥ execute). New pin P4b + a symmetric mutation-flip bind it. F5 (minor): the
+autonomous-Plan route no longer asserts state.designReview is /drive-plan's loop counter (not
+grounded in the shipped contract, not load-bearing) — logged to followups F2. Also corrected the
+line-local-regex hazards the review caught: guard inner sub-bullets use no leading "- **" (F1,
+else _resume_bullet_bodies truncates the guard span); the Current-phase bold label stays on ONE
+physical line (F2, else it drops from enumeration); P6 asserts ADJACENCY (guard == rebirth+1,
+phase == guard+1), not bare ordering (F4).
+
+## D8 (mechanical; implement — Classification: Mechanical) — all pins in test_rebirth_handshake.py; test_checkpoint_contract.py untouched
+Placed P5 (atomic Gate-A transition) alongside P1–P4b/P6/P7 in
+tests/contracts/test_rebirth_handshake.py rather than test_checkpoint_contract.py. Per design
+DD1/§5 (implementer's call): that file already carries the accessors P5 needs
+(`_stage_section`, `_section`, `_drive_plan_md`) which test_checkpoint_contract.py lacks, so
+co-locating is DRY (Principle 4) and keeps the guard prose + every binding pin in ONE review
+unit (D5). test_checkpoint_contract.py needs no edit; its existing
+test_sessionId_rebind_is_first_resume_bullet stays green (rebind index 0, len(labels) 5→6).
+
+## D9 — Overrule codex harden P1 (drive-plan.md Gate-A atomicity) with evidence
+Classification: Mechanical (adversarial finding reproduced + refuted at integration).
+Codex round-2 confirming audit flagged P1: drive-plan.md line 129 "clear waiting=null on approval" allegedly reopens the {stage:execute, phaseList:[]} split-write intermediate the atomic Gate-A clause (line 141) makes unreachable. REFUTED against the real file: line 129 is the Present-human-pause routine's generic waiting-clear and writes NEITHER stage NOR phaseList; only line 141 writes stage=execute, atomically committed with phaseList. The only intermediate line 129 can produce is {stage:plan, phaseList:[], waiting:null} — a LEGITIMATE plan-state the new guard routes safely to re-invoke /drive-plan (not the dangerous execute-empty state). The atomic-write invariant is about stage+phaseList being written together; line 129 does not touch either. Overruled as not-a-P1. Residual: line 128-129 prose could be marginally clearer that the waiting clear is part of the atomic After-this-stage write; logged as a P3 clarity followup (NOT fixed — a prose edit to a refuted-P1 risks pin-churn for a non-bug).
+
+## D10 (finalize; adversarial-overrule with evidence) — codex finalize P1×4 verified against the real integrated path
+Codex finalize tagged 4 P1s on the pre-Execute resume guard; each verified against the REAL
+resume flow (drive.md) + `git show main`, none is a NEW misroute-to-Finalize (the guard fails
+CLOSED on every pre-Execute empty-phaseList path — the gate is sound for its purpose):
+- P1.1 done→verify regress — PRE-EXISTING (main reaches the identical Current-phase bullet;
+  non-empty branch is "fall through UNCHANGED"), out-of-scope per "no behavior change to other
+  stages" → F3.
+- P1.2 premises route ambiguity — unreachable corner (no Stage-0 checkpoint boundary), stays in
+  Plan tier → F5 clarity, not churned.
+- P1.3 state-lint symmetric under-policing — DOCUMENTED (drive.md:222-224); guard fails closed;
+  D4 chose no drive-conformance.sh edit; outside diff → F4 defense-in-depth.
+- P1.4 no routing-matrix test — codex's own ARCH (prose-as-command); string-pins + per-arm
+  mutation-flips are the mechanism → not actionable.
+Codex P2 "remove mutation-test block (1213-1304)" is VETOED: those flips ARE the run's
+acceptance criterion (task: "mutation-verified: reverting the guard reds it") — removing them
+DROPS criterion coverage. Applied ONLY Claude P2 docstring de-slop (test:1258 reword).
