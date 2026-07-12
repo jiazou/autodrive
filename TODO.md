@@ -22,13 +22,21 @@ phaseBaseSha ce12c42, pre-insertion of this section).
   (b) OPERATING.md conciseness pass — **agent-authorship pending user decision
   (OQ1/D13)**, user-voice; (c) CLAUDE.md trim — repo diff, strings pinned by contract
   suites → own token-sweep migration; sequencing vs the R5–R9 batch below:
-  INDEPENDENT (disjoint files/pins), may land in its own window.
+  INDEPENDENT (disjoint files/pins), may land in its own window. Veto carve-out for
+  (c): the finalize-CONVERGED gate rule at CLAUDE.md ~L131 stays VERBATIM — one of
+  three surfaces followups.md:320 (as-of ce12c42) requires kept identical (audit §4.8).
 - [ ] **N3** — drive.md § "Run setup & resume" narration trim (39% of the per-leg
   spec weight; audit §1.2/§2 N3). Spec-trim sequencing (binding): land WITH or AFTER
   the pending R5–R9 one-batch spec edit (§ "/drive efficiency plan R1–R9" below,
-  global constraint 2) so the overlapping pin-suite migration is paid once; delta
-  bounded to in-file narration beyond followups' known cross-file rebirth-prose item
-  (audit §3 row).
+  global constraint 2) so the overlapping pin-suite migration is paid once. Delta
+  boundary (binding): in-file narration ONLY — beyond followups' known cross-file
+  rebirth-prose item (audit §3 row) AND EXCLUDING the veto-covered passages:
+  drive.md:281 (+ sibling drive-review.md:139), whose prose trims are VETOED at
+  followups.md:833 (as-of ce12c42; exact-string-pinned by
+  tests/contracts/test_checkpoint_contract.py:1481 + test_state_json_shape.py:102),
+  and the finalize-CONVERGED tri-surface rule at drive.md ~L113 (followups.md:320).
+  Trim only outside those pins, or pay their migration deliberately INSIDE the R5–R9
+  batch — never as a standalone trim (audit §2 N3 delta boundary, §4.8).
 - [ ] **CI workflow `concurrency:` cancel-in-progress** (demoted from quick-win by D8;
   audit §1.3). Full constraint list (binding): per-ref group key; cancellation on
   PR events ONLY (never push-to-main); validate with `actionlint` PLUS one observed
