@@ -43,11 +43,13 @@ phaseBaseSha ce12c42, pre-insertion of this section).
   it weakens the gate; ceiling ≈ 1 min saved. LOW priority.
 - [ ] **N4** — harness-runs retention scheduling — **external** (machine config; no
   repo diff): periodic `bin/drive-retention.sh` report + notify (or confirm-gated
-  `--apply`); 278 MB residue at audit time (audit §1.4/§2 N4). The retention
-  contract's 3-layer drift stays a separate known follow-up (audit §3). If `--apply`
-  is ever automated/unattended, the per-run advisory lock pre-declared at
-  followups.md:408 (as-of ce12c42) is mandatory; the confirm-gated posture needs no
-  lock.
+  `--apply`); 278 MB corpus at audit time, but the TOOL-reclaimable universe is
+  bounded — ~27 MiB (heavy logs + `wt/` worktrees), 0 B eligible on the audit-day
+  classifier run; the value is bounding future growth, not a one-time reclaim (audit
+  §1.4/§2 N4). The retention contract's 3-layer drift stays a separate known
+  follow-up (audit §3). If `--apply` is ever automated/unattended, the per-run
+  advisory lock pre-declared at followups.md:408 (as-of ce12c42) is mandatory; the
+  confirm-gated posture needs no lock.
 
 ## Whole-repo audit — bugs / logic / inconsistency / slop (2026-07-09)
 

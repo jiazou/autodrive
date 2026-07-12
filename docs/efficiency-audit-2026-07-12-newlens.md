@@ -62,6 +62,13 @@ session); every figure here is as-of its command's run.
 transcript-derived). Any byte-only figure is labeled **static proxy** (est. tokens ≈
 bytes/4 — an estimate, not a measured token count).
 
+**Output-block convention (every evidence block in §1):** blocks quote the stated
+command/procedure's VALUES verbatim as measured at the audit timestamp; layout,
+labels, column packing, and path ellipses are editorial. Any line that is a sum,
+ratio, or percentage of printed values is DERIVED (arithmetic on the procedure's
+output, not an extra measurement). A rerun diffs against the values (modulo
+live-corpus drift), never the layout.
+
 ## 1. Evidence — measurements per lens
 
 ### 1.1 Token/cost per run
@@ -84,8 +91,7 @@ AND every Agent-subagent dispatch (the operating rules + project instructions +
 auto-memory are injected into subagent context too).
 
 Primary (transcripts): full-stratum streaming line-tolerant parse over all 69
-top-level transcripts. **Procedure P1 (rerunnable — the output block below is P1's
-output at the audit timestamp; reruns drift per D22):**
+top-level transcripts. **Procedure P1 (rerunnable; reruns drift per D22):**
 
 ```
 python3 - <<'EOF'
@@ -115,7 +121,10 @@ EOF
 ```
 
 The D16 threshold (≥20 usable usage records) is far exceeded, so the E1 static-proxy
-fallback was NOT taken. P1 output at the audit timestamp:
+fallback was NOT taken. The block below is DERIVED from P1's output at the audit
+timestamp — every value maps 1:1 to a P1 print (values verbatim, labels/layout
+editorial), except the `uncached total` and `cached:uncached` line, which is
+arithmetic on P1's printed sums:
 
 ```
 sessions with >=1 usage record: 68 / 69
@@ -124,7 +133,7 @@ sum input_tokens (uncached):         3,038,085
 sum cache_creation (uncached):     150,523,987
 sum cache_read (cached):         6,302,200,596
 sum output_tokens:                  30,016,544
-uncached total:                    153,562,072   cached:uncached = 41.0 : 1
+uncached total (derived):          153,562,072   cached:uncached = 41.0 : 1
 median per-record cache_read:          262,238   (p90 606,851)
 per-session medians: 234 usage records; 1,400,092 cache_creation; 45,822,624 cache_read
 ```
@@ -141,8 +150,7 @@ here; the full top-level parse found **0** top-level sidechain records (P1's
 `sidechain` counter), confirming the originally-designed top-level scan is dead):
 1,038 dispatch transcripts (pinned command above) ≈ **15 dispatches per top-level
 session** (1,038/69). Newest-20-by-mtime sample, FIRST usage record per file (the
-per-dispatch prefix-creation cost). **Procedure P2 (rerunnable; output below is P2's
-at the audit timestamp):**
+per-dispatch prefix-creation cost). **Procedure P2 (rerunnable):**
 
 ```
 python3 - <<'EOF'
@@ -165,12 +173,13 @@ print('first-record cache_read: median',st.median(cr),'min',min(cr),'max',max(cr
 EOF
 ```
 
+P2's aggregates at the audit timestamp (values verbatim, labels editorial; P2 prints
+aggregates only — no per-file rows; the sample is a rolling newest-20 window, so
+reruns re-sample):
+
 ```
 first-record cache_creation_input_tokens: median 26,968  (min 20,968, max 37,552)
 first-record cache_read_input_tokens:     median  9,054  (min 0,      max  9,501)
-e.g.  agent-ac48767….jsonl  in=2      cc=28,410  cr=8,746
-      agent-a2e212c….jsonl  in=2      cc=36,011  cr=0
-      agent-a531c62….jsonl  in=7,025  cc=20,968  cr=9,054
 ```
 
 Reading (a SAMPLED median — newest 20 of 1,038 — plus extrapolation, NOT a
@@ -212,7 +221,7 @@ PRIMARY (era-independent durable artifact families, run-root globs):
 
 BEST-EFFORT (event logs; coverage-bounded): one-pass vocabulary enumeration over the
 pinned glob `~/.claude/harness-runs/*/event-log.jsonl`. **Procedure P3 (rerunnable;
-the figures below are P3's output at the audit timestamp):**
+the figures below are P3's values at the audit timestamp — table layout editorial):**
 
 ```
 python3 - <<'EOF'
@@ -338,11 +347,24 @@ $ du -sh ~/.claude/harness-runs/                        → 278M
   referenced by TODO's R1–R9 plan → keep.
 - **Classics clean**: no committed `__pycache__`/`.pyc`; `.tmp*/` gitignored
   (design-verified).
-- **External-but-adjacent**: `~/.claude/harness-runs/` = 278 MB; retention tooling
-  exists (`bin/drive-retention.sh`) but is **report-only by default** ("WITHOUT
-  --apply it is byte-for-byte report-only" — script header) — residue shrinks only
-  when a human runs `--apply`. Noted as external plan item N4; any change is machine
-  config, never a repo diff.
+- **External-but-adjacent**: `~/.claude/harness-runs/` = 278 MB (corpus total — NOT a
+  reclaimable figure; see below); retention tooling exists (`bin/drive-retention.sh`)
+  but is **report-only by default** ("WITHOUT --apply it is byte-for-byte
+  report-only" — script header) — residue shrinks only when a human runs `--apply`.
+  **Measured eligibility (the REAL classifier, run read-only:
+  `bash bin/drive-retention.sh --json`, 2026-07-12):** 13 runs classified;
+  **Tier-L eligible today = 0 runs / 0 bytes** (per-run reasons: 5 `not-aged`, 7
+  `waiting`, 1 `inflight-open` — the classifier's quiet+done+≥14-day gates);
+  **Tier-W eligible = 0** of 2 classified `wt/` children. The tool's reclaim
+  UNIVERSE is bounded by design: Tier-L covers only heavy logs
+  (`codex-raw-*.log`/`codex-harden-*.log` — sum of the report's `tierL.bytes` =
+  15,973,632 B ≈ 15.2 MiB corpus-wide) and Tier-W only drive-owned worktrees under
+  `<run>/wt/` (`du -sk ~/.claude/harness-runs/*/wt` → 9 dirs, ~12 MiB); history
+  (`.md`/`.json`/`.jsonl`) is NEVER touched (script header). The corpus bulk is
+  per-run `tmp/` scratch outside BOTH tiers (`du -sk ~/.claude/harness-runs/*/tmp \|
+  sort -rn` vs the run-dir totals — the three largest runs measured 92 of 101 MiB,
+  61 of 64 MiB, and 61 of 68 MiB `tmp/`). Noted as external plan item N4; any change
+  is machine config, never a repo diff.
 
 ## 2. Ranked recommendations
 
@@ -355,9 +377,9 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
   measured median 26,968 uncached cache-creation tokens per subagent dispatch
   (newest-20 sample); 1,038 dispatches in corpus; extrapolation ≈ 28.0M uncached
   tokens ≈ 18% of total uncached consumption (estimate).
-- **Cost denomination:** quota — the baseline is ~48% of every dispatch's ~27k uncached
-  prefix creation (static-proxy share of a measured median); occupancy — ~12.9k tokens
-  of every window, all sessions machine-wide.
+- **Cost denomination:** quota — the baseline is ~48% of the sampled-median
+  dispatch's ~27k uncached prefix creation (static-proxy share; newest-20 sample of
+  1,038); occupancy — ~12.9k tokens of every window, all sessions machine-wide.
 - **Run-level effect:** fan-out quota burn.
 - **Effort:** medium (three surfaces; two live outside the repo diff or are
   user-voice).
@@ -401,17 +423,24 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
 
 **N4 — harness-runs retention is manual (report-only default)**
 
-- **Lens:** 1.4. **Evidence:** §1.4 — 278 MB residue; `bin/drive-retention.sh`
-  report-only without `--apply`; 73 codex-raw logs (11 MB) are Tier-L-sweepable.
+- **Lens:** 1.4. **Evidence:** §1.4 — 278 MB corpus total (not all reclaimable);
+  `bin/drive-retention.sh` report-only without `--apply`; MEASURED eligibility via
+  the real classifier in report mode: 0 bytes eligible today in either tier (5
+  not-aged / 7 waiting / 1 inflight-open); tool-reclaimable universe = heavy logs
+  ~15.2 MiB + `wt/` worktrees ~12 MiB, gated quiet+done+≥14-day per run.
 - **Cost denomination:** cost only — disk bytes, zero tokens (static proxy
   denomination inapplicable; no window/quota component).
 - **Run-level effect:** cost only (plus corpus hygiene: bounded residue keeps the
   pinned enumeration corpora honest).
 - **Effort:** trivial–small (schedule a periodic report+notify, or a confirm-gated
   `--apply`).
-- **Savings estimate:** ~0 D10-unit tokens (denomination inapplicable); up to
-  ~278 MB disk reclaimable over time, of which 11 MB of codex-raw logs is immediately
-  Tier-L-sweepable.
+- **Savings estimate:** ~0 D10-unit tokens (denomination inapplicable). Disk,
+  measured: **0 B eligible today**; upper bound of what the tool can EVER reclaim at
+  the current corpus ≈ **27 MiB** (15.2 MiB heavy logs + 12 MiB worktrees) as runs
+  age past the quiet+done+≥14-day gates. The ~278 MB corpus total is a SIZE, not a
+  reclaimable figure — the bulk (per-run `tmp/` scratch + history
+  `.md`/`.json`/`.jsonl`) is outside both tiers by design (§1.4). The scheduling
+  value is BOUNDING future growth, not a one-time reclaim.
 - **Disposition:** external-surface plan item (machine config — no repo diff). The
   retention CONTRACT's 3-layer drift is a KNOWN surface (§3) — N4 deliberately scopes
   to scheduling the existing tool only. Constraint if scheduling is ever
@@ -540,16 +569,23 @@ Phase 2 must not invent more.
     file's header is not in the live file — comfortably within one default Read at
     split time; ship-time appends grow it later, and the `^### `-date metric above
     stays the binding check either way).
-- **Risk:** 9 in-repo surfaces reference `.harness/decisions.md` —
+- **Risk:** exactly **7** in-repo surfaces reference the COMMITTED ledger —
+  `grep -ln '\.harness/decisions\.md' tests/contracts/*.py test/*.test.sh bin/*.sh` →
   tests/contracts/{test_drive_base_preflight_wiring, test_drive_finalize_contract,
-  test_drive_retro_contract, test_drive_retention, test_rebirth_handshake}.py,
-  test/{drive-base-preflight, drive-enforcement-e2e}.test.sh,
-  bin/{drive-base-preflight.sh, drive-conformance.sh} — all reference the live PATH
-  (unchanged) and/or append semantics; Phase 2 must verify none pins ARCHIVED entry
-  content, then run the full canonical suite.
-- **Pin exposure:** both suites (the 7 test files above); expected green without
-  migration since the pins target path/format, not pre-2026-07 entry content —
-  proven by the full `bin/run-tests.sh` run, not assumed.
+  test_drive_retro_contract}.py, test/{drive-base-preflight,
+  drive-enforcement-e2e}.test.sh, bin/{drive-base-preflight.sh,
+  drive-conformance.sh} — all reference the live PATH (unchanged) and/or append
+  semantics; Phase 2 must verify none pins ARCHIVED entry content, then run the full
+  canonical suite. (A loose `decisions\.md` grep also matches
+  tests/contracts/test_drive_retention.py and
+  tests/contracts/test_rebirth_handshake.py, but both reference ONLY the RUN-LOCAL
+  `$RUN_DIR`/run-dir `decisions.md` — fixture history lists at :872/:1511 and
+  checkpoint-source prose at :647/:667 respectively — so they are OUTSIDE the
+  committed-ledger risk surface; an earlier draft over-counted 9 from the loose
+  grep.)
+- **Pin exposure:** both suites (the 3 pytest + 2 bash files above); expected green
+  without migration since the pins target path/format, not pre-2026-07 entry
+  content — proven by the full `bin/run-tests.sh` run, not assumed.
 
 **REFUTED forecast items (E6 — Phase 2 must not build these):**
 
