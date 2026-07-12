@@ -1031,8 +1031,11 @@ def test_winner_verifies_cid_equals_pendingcid():
 # resume "Current phase" vacuous-∀ misroute: a Plan-stage rebirth with an empty
 # `phaseList` must resume into Plan, not fall through to the PAST-Execute /
 # Finalize derivation. Pins P1–P4b/P6/P7 (+ P5 atomic Gate-A transition) bind the
-# guard prose SECTION-BOUND (never a whole-file grep); every guard-arm content pin
-# (P1/P2/P3/P4/P4b) is mutation-verified by a committed `_mutation_reds` flip below.
+# guard prose SECTION-BOUND (never a whole-file grep); every load-bearing guard-arm
+# token asserted by `_assert_guard_structural` is mutation-verified by a committed
+# `_mutation_reds` flip below — the P1 route's four sub-clauses (empty+autonomous
+# Plan re-entry, Premises re-entry, do-NOT-re-enter Premises; the non-empty legitimate
+# fall-through) plus P2/P3/P4/P4b, one flip each.
 # =========================================================================== #
 def _guard_body():
     """The Pre-Execute resume guard sub-bullet's own FULL span (section-bound), or None.
@@ -1186,8 +1189,10 @@ def _assert_guard_structural(drive_md):
     assert phase is not None, "the Current-phase bullet must be enumerated"
     nb = _norm(guard)
     np = _norm(phase)
-    # P1 (positive route)
+    # P1 (positive route) — all four load-bearing sub-clauses of the autonomous arm
     assert "set `stage = plan` and **re-invoke `/drive-plan`**" in nb
+    assert "`stage == premises` → resume **Stage 0 (Premises)**" in nb
+    assert "Do **NOT** re-enter Stage 0 Premises when `task.md`/`design.md` already exist" in nb
     assert "**fall through UNCHANGED** to the Current-phase" in nb
     # P3 (parked re-present)
     assert "`state.waiting` ∈ {`gateA`, `ask:*`, `stop:*`} →" in nb
@@ -1257,6 +1262,43 @@ def test_pre_execute_guard_positive_route_mutation_reds():
     mutated = _drive_md().replace(
         "`stage = plan` and **re-invoke `/drive-plan`**",
         "(positive Plan re-entry removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_premises_reentry_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the empty+autonomous Premises re-entry sub-clause unbinds
+    the P1-arm Premises token → reds. The `old` substring is the exact Premises-re-entry token
+    now asserted in `_assert_guard_structural` (unique in drive.md, single raw line)."""
+    mutated = _drive_md().replace(
+        "`stage == premises` → resume **Stage 0 (Premises)**",
+        "(Premises re-entry removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_no_reenter_premises_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the do-NOT-re-enter-Premises guard sub-clause unbinds the
+    P1-arm do-not-re-enter token → reds. The `old` substring is the exact do-not-re-enter token
+    now asserted in `_assert_guard_structural` (unique in drive.md, single raw line)."""
+    mutated = _drive_md().replace(
+        "Do **NOT** re-enter Stage 0 Premises when `task.md`/`design.md` already exist",
+        "(do-not-re-enter Premises removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_fall_through_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the non-empty legitimate FALL-THROUGH clause unbinds the
+    P1-route fall-through token → reds. The `old` substring `**fall through UNCHANGED**` is the
+    load-bearing chunk of the fall-through token `_assert_guard_structural` asserts (unique in
+    drive.md; the full token wraps a raw newline, so the flip keys on this unique sub-token)."""
+    mutated = _drive_md().replace(
+        "**fall through UNCHANGED**",
+        "(fall-through removed)",
     )
     with pytest.raises(AssertionError):
         _assert_guard_structural(mutated)
