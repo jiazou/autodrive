@@ -273,7 +273,8 @@ $ awk 'NR>2000' .harness/decisions.md | grep -cE '^### '         → 51   (of 16
 ```
 
 The live defect is **recency (correctness)**: because the ledger is append-only, the
-default read serves the OLDEST third and misses the **51 newest entries** — the
+default read serves the oldest ~2,000 lines — a third BY LINES (2,000 of 6,064) but
+117 of 168 ENTRIES — and misses the **51 newest entries** — the
 window cut falls MID-2026-06-11 (three later same-day 2026-06-11 entries sit just
 beyond it, at lines 2013/2024/2041) plus every entry after that date — exactly the
 ones "read decisions.md to stay consistent" exists for. The 214,560 B ≈ 53.6k tokens (static proxy) of stale ingest is the rider, not the

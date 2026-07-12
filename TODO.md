@@ -9,7 +9,8 @@ dispatch re-creates a ~27k-token uncached prefix (sampled median, newest 20 of t
 1,038 measured dispatch transcripts; ~48% of it the machine-global
 OPERATING/CLAUDE/MEMORY baseline), each /drive leg carries
 ~30k tokens of drive.md spec, and the instructed task-start ledger read serves the
-OLDEST third of `.harness/decisions.md` (the 51 newest entries unread). Evidence,
+oldest ~2,000 lines of `.harness/decisions.md` (a third by lines — 117 of 168
+entries; the 51 newest unread). Evidence,
 cost denominations, and ranking: the audit doc (findings N1–N4; cites there are as-of
 phaseBaseSha ce12c42, pre-insertion of this section).
 
