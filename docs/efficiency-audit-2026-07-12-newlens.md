@@ -429,8 +429,9 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
 - **Run-level effect:** correctness (the D18-permitted label for this finding only);
   occupancy rider.
 - **Effort:** trivial–small. **Savings:** recency gap 25 days → 0 (the post-split live
-  file — 1,971 lines / 187,713 B from the first 2026-07 entry — fits ONE default
-  Read); beyond-window entry count 51 → 0.
+  file — 1,972 lines / 187,813 B from the first retained entry's provenance marker,
+  `awk 'NR>=4093' | wc -l -c` — fits ONE default Read); beyond-window entry count
+  51 → 0.
 - **Disposition:** **quick-win → §5 QW1** (Phase 2 of this run). Ledger-header
   amendment pre-declared in §4.
 
@@ -633,11 +634,17 @@ Phase 2 must not invent more.
 
 **QW1 — `.harness/decisions.md` archival split (from N2).**
 
-- **Change:** move the pre-2026-07 entries — lines 1–4093, 138 of 168 entries
-  (`awk '/^### 2026-07/{print NR; exit}'` → 4094) — VERBATIM into
-  `.harness/archive/decisions-pre-2026-07.md`; live file keeps path, entry format,
-  append discipline, gains a 2–3-line index note pointing at the archive; amend the
-  append-only header rule per §4.1. followups.md is NOT included (refuted below).
+- **Change:** move the pre-2026-07 entries — lines 1–4092, 138 of 168 entries
+  (first retained ENTRY: `awk '/^### 2026-07/{print NR; exit}'` → 4094; line 4093 is
+  that entry's `<!-- ===== promoted from ... ===== -->` provenance marker and is
+  RETAINED with it — moving 1–4093 would strand the marker in the archive) —
+  VERBATIM into `.harness/archive/decisions-pre-2026-07.md`; live file keeps path,
+  entry format, append discipline, gains a 2–3-line index note pointing at the
+  archive; amend the append-only header rule per §4.1. **General boundary rule
+  (binding for the implementation):** the split must keep each
+  `<!-- ===== promoted from ... ===== -->` marker with the entry block it precedes;
+  verify the first retained line after the split is such a marker or a `###`
+  heading whose entry is 2026-07+. followups.md is NOT included (refuted below).
   No CLAUDE.md edit needed: its instruction (CLAUDE.md:203-205) is path-based and the
   live path is unchanged.
 - **SLOC estimate:** ≤30 new/changed (index note + amended header rule + archive-file
@@ -649,11 +656,12 @@ Phase 2 must not invent more.
     measurement; later at ship).
   - *entries beyond the window* —
     `awk 'NR>2000' .harness/decisions.md | grep -cE '^### '`: before 51 → after 0
-    (post-split live file = 1,971 lines plus only the live-file share of the new
-    lines — the 2–3-line index note + amended header rule, ≤10 lines; the archive
-    file's header is not in the live file — comfortably within one default Read at
-    split time; ship-time appends grow it later, and the `^### `-date metric above
-    stays the binding check either way).
+    (post-split live file = 1,972 lines — from the retained provenance marker at
+    line 4093 — plus only the live-file share of the new lines: the 2–3-line index
+    note + amended header rule, ≤10 lines; the archive file's header is not in the
+    live file — comfortably within one default Read at split time; ship-time
+    appends grow it later, and the `^### `-date metric above stays the binding
+    check either way).
 - **Risk:** exactly **7** in-repo surfaces reference the COMMITTED ledger —
   `grep -ln '\.harness/decisions\.md' tests/contracts/*.py test/*.test.sh bin/*.sh` →
   tests/contracts/{test_drive_base_preflight_wiring, test_drive_finalize_contract,
