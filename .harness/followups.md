@@ -1142,3 +1142,64 @@ so it's a scoped tradeoff, not a free simplification. Not blocking; correct + te
   attempt in this run added them inside test_drive_notify.py where the module-level pytestmark skips them
   in lean envs (codex MAJOR) — reverted as net-negative for a de-flake-scoped run. Mutation-verified
   design exists in this run's git history (commit c81ce9f, reverted).
+
+## /drive run drive-planresume-fix-20260712-015606 — followups
+
+## F1 (detailed-design probe for Phase 1) — exact guard predicate must handle lastGate=="B"
+The high-level design's D1 proposes precondition `non-empty phaseList AND lastGate=="A"`.
+But lastGate progresses null→"A"→"B" (Gate B, drive.md:1578 / drive-ship.md:300), and
+lastGate=="B" co-occurs with stage=="done". /drive-design phase 1 MUST verify the resume
+ordering: does a stage=="done" (lastGate=="B") resume reach the "Current phase" derivation,
+or is it short-circuited by the done-teardown first? If it can reach it, the `lastGate=="A"`
+predicate (or the `OR lastGate != "A"` guard) would false-route a post-Gate-B resume to Plan.
+Cleaner anchor: `phaseList` non-empty ALONE is the necessary+sufficient "Execute-entered"
+signal (phaseList is parsed atomically at Gate A and never re-emptied). Resolve the exact
+predicate against the real code; mutation-verify the pin against the chosen predicate.
+
+## F2 (pre-existing doc-drift, OUT OF SCOPE this run) — drive.md:1024-1028 lists `designReview` as artifact-derived "(rule below)" with no matching reconstruction rule
+The run-graph counter list (drive.md:1027) tags `designReview` among the "artifact-derived
+(rule below)" round COUNTs, but `designReview` is intentionally NOT one of the six
+checkpoint-reconstructed counters — there is no matching reconstruction rule for it (it is a
+plan-stage loop hint only, per design.md D3 / decisions.md D3). This drift PREDATES this fix;
+design.md § Out of scope explicitly excludes touching the counter contract (its pins are
+fragile). design.md claimed this was "noted in followups" — recording it here so the claim is
+true. Do NOT fix in Phase 1.
+
+## P3 clarity (drive-plan.md Gate-A pause step)
+- .claude/commands/drive-plan.md:128-129 — "present Gate A and wait for approval; clear `waiting = null` on approval" could note the clear is part of the ONE atomic After-this-stage write (line 141), so it doesn't read as a separate pre-write. Non-bug (the line-129 intermediate is the legitimate plan-state); clarity only.
+
+## slop (deferred to finalize)
+- tests/contracts/test_rebirth_handshake.py:~1258 — test_pre_execute_guard_positive_route_mutation_reds docstring says the single flip "completes" the every-guard-arm-non-vacuous claim; accurate for the suite as a whole (round-2 added the sibling flips) but reads as an over-claim in isolation. Reword to reference the sibling flips.
+
+## F3 (finalize codex P1.1 — OVERRULED, pre-existing/out-of-scope) — done-resume re-derives verify/finalige from Current-phase
+Codex finalize flagged: a `stage=done` resume (non-empty phaseList, all phaseInt ancestors)
+falls through to the Current-phase derivation (drive.md:225→235), which re-derives
+`stage=verify`/`finalize`, moving a completed `lastGate=B` run backward before the
+Done-via-resume teardown bullet runs. VERIFIED PRE-EXISTING: `git show main:.claude/commands/drive.md`
+reaches the identical Current-phase bullet directly for every resume (no pre-Execute route on
+main), so a done-resume on main takes the SAME path. This fix's non-empty branch is
+"fall through UNCHANGED... exactly as today" by design; the task mandates "No behavior change
+to any other stage." NOT the reported bug class (pre-Execute→Finalize misroute); this is a
+backward move among terminal states on the out-of-scope non-empty path. A future run should add
+a `stage==done`/parseable-`completedAt` short-circuit at the top of the resume reconciliation
+(before Current-phase) so an already-done resume is a clean no-op.
+
+## F4 (finalize codex P1.3 — OVERRULED, documented fail-closed) — state-lint symmetric-corner under-policing
+Codex flagged: the guard STOPs `phaselist-malformed` on a non-empty phaseList at premises/plan
+(drive.md:229-230), but `--mode state-lint` (bin/drive-conformance.sh) does NOT flag that
+symmetric corner — so a "clean" state-lint proof can precede a resume STOP. The guard fails
+CLOSED (correct — STOP on genuine corruption, never a misroute), the spec DOCUMENTS the
+under-policing (drive.md:222-224), and design decision D4 explicitly chose NOT to edit
+drive-conformance.sh (outside the run diff; scope-creep gate). Defense-in-depth follow-up:
+add a symmetric `state-lint` check flagging non-empty phaseList at premises/plan, so the lint
+and the routing guard agree in BOTH corners. Not required (fail-closed is safe); out of scope.
+
+## F5 (finalize codex P1.2 — clarity, unreachable corner) — premises autonomous route reads contradictory
+drive.md:210-214: `stage==premises` + `waiting==null` says "resume Stage 0 (Premises)" but then
+"Do NOT re-enter Stage 0 Premises when task.md/design.md exist" — and task.md always exists
+post-premises, so codex read the two clauses as contradictory with no defined alternative. The
+state is effectively unreachable via rebirth (Stage 0 has no I1 checkpoint safe-boundary; a
+class-A pressure rebirth cannot fire at Stage 0), and BOTH readings stay in the Plan tier
+(never reach Finalize — not the bug class). Clarify (future): "re-enter the pipeline at Stage 0,
+whose own logic advances to Plan without re-asking when the premise is already captured." Not
+churned this round (converged 3-voice guard prose; Claude adversarial reviewer found lens-3 clean here).
