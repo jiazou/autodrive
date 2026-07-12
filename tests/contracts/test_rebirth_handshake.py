@@ -1031,7 +1031,8 @@ def test_winner_verifies_cid_equals_pendingcid():
 # resume "Current phase" vacuous-∀ misroute: a Plan-stage rebirth with an empty
 # `phaseList` must resume into Plan, not fall through to the PAST-Execute /
 # Finalize derivation. Pins P1–P4b/P6/P7 (+ P5 atomic Gate-A transition) bind the
-# guard prose SECTION-BOUND (never a whole-file grep) and are mutation-verified.
+# guard prose SECTION-BOUND (never a whole-file grep); every guard-arm content pin
+# (P1/P2/P3/P4/P4b) is mutation-verified by a committed `_mutation_reds` flip below.
 # =========================================================================== #
 def _guard_body():
     """The Pre-Execute resume guard sub-bullet's own FULL span (section-bound), or None.
@@ -1077,8 +1078,8 @@ def test_pre_execute_guard_positive_route():
 def test_current_phase_derivation_bound_to_nonempty_phaselist():
     """P2 (AC2): the Current-phase derivation is reached ONLY when `phaseList` is non-empty —
     the anti-vacuity precondition. Section-bound to the Current-phase bullet body. Deleting
-    the Interface-2 precondition clause reds this (mutation-verified below via P7's sibling
-    logic and manually during implement)."""
+    the Interface-2 precondition clause reds this (mutation-verified below by
+    `test_pre_execute_guard_current_phase_precondition_mutation_reds`)."""
     body = _current_phase_body_of(_resume_section())
     assert body is not None, "the Current-phase resume sub-bullet must be enumerated"
     assert "reached ONLY when `state.phaseList` is non-empty" in _norm(body), (
@@ -1220,6 +1221,42 @@ def test_pre_execute_guard_symmetric_branch_mutation_reds():
     mutated = _drive_md().replace(
         "`stage ∈ {premises, plan}` or unknown → **fail-closed STOP**",
         "(symmetric STOP removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_current_phase_precondition_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the Current-phase precondition clause (Interface 2)
+    unbinds P2 → reds. The `old` substring is the exact anti-vacuity token P2 asserts on the
+    Current-phase bullet body (unique in drive.md, single raw line)."""
+    mutated = _drive_md().replace(
+        "reached ONLY when `state.phaseList` is non-empty",
+        "(precondition removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_parked_pause_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the empty+plan parked-pause clause unbinds P3 → reds.
+    The `old` substring is the exact parked-waiting token P3 asserts on the guard body
+    (unique in drive.md, single raw line)."""
+    mutated = _drive_md().replace(
+        "`state.waiting` ∈ {`gateA`, `ask:*`, `stop:*`} →",
+        "(parked-pause clause removed)",
+    )
+    with pytest.raises(AssertionError):
+        _assert_guard_structural(mutated)
+
+
+def test_pre_execute_guard_positive_route_mutation_reds():
+    """P7 (AC8) non-vacuity: gutting the empty+autonomous Plan re-entry arm unbinds P1 → reds
+    — completes "every guard arm non-vacuous". The `old` substring is the load-bearing chunk
+    of the P1 re-invoke-`/drive-plan` token (unique in drive.md, single raw line)."""
+    mutated = _drive_md().replace(
+        "`stage = plan` and **re-invoke `/drive-plan`**",
+        "(positive Plan re-entry removed)",
     )
     with pytest.raises(AssertionError):
         _assert_guard_structural(mutated)
