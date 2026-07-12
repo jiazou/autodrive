@@ -24,10 +24,10 @@ drift comparators only):
 | Top-level session transcripts | `ls ~/.claude/projects/-Users-jiazou-workspace-autodrive/*.jsonl \| wc -l` | 69 files |
 | — bytes | `du -ch ~/.claude/projects/-Users-jiazou-workspace-autodrive/*.jsonl \| tail -1` | 120 MB |
 | Subagent transcripts (both layouts: depth-3 `<session>/subagents/agent-*.jsonl` and depth-5 `<session>/subagents/workflows/wf_*/agent-*.jsonl`) | `find ~/.claude/projects/-Users-jiazou-workspace-autodrive -path '*/subagents/*.jsonl' \| wc -l` | 1,038 files |
-| — bytes | same `find` piped through `du -ch`, last line | 280 MB |
+| — bytes | `find ~/.claude/projects/-Users-jiazou-workspace-autodrive -path '*/subagents/*.jsonl' -print0 \| xargs -0 du -ch \| tail -1` | 280 MB |
 | Run-level event logs | `ls ~/.claude/harness-runs/*/event-log.jsonl \| wc -l` | 13 logs |
 | codex-attempts files | `ls ~/.claude/harness-runs/*/codex-attempts-*.jsonl \| wc -l` | 6 files |
-| codex raw logs | `ls ~/.claude/harness-runs/*/codex-raw-*.log \| wc -l`; `du -ch … \| tail -1` | 73 files / 11 MB |
+| codex raw logs | `ls ~/.claude/harness-runs/*/codex-raw-*.log \| wc -l`; `du -ch ~/.claude/harness-runs/*/codex-raw-*.log \| tail -1` | 73 files / 11 MB |
 
 Pinning is layout-derived: under `~/.claude/harness-runs/` run-root globs ONLY (a bare
 recursive `find` ingests pytest fixture scratch under `<run>/tmp/pytest-of-*` — 41 vs 13
@@ -83,10 +83,39 @@ $ wc -c OPERATING.md CLAUDE.md ~/CLAUDE.md ~/.claude/projects/-Users-jiazou-work
 AND every Agent-subagent dispatch (the operating rules + project instructions +
 auto-memory are injected into subagent context too).
 
-Primary (transcripts): full-stratum streaming line-tolerant parse (python3,
-`json.loads` per line, skip unparseable; extract `message.usage` per record) over all
-69 top-level transcripts — the D16 threshold (≥20 usable usage records) is far
-exceeded, so the E1 static-proxy fallback was NOT taken:
+Primary (transcripts): full-stratum streaming line-tolerant parse over all 69
+top-level transcripts. **Procedure P1 (rerunnable — the output block below is P1's
+output at the audit timestamp; reruns drift per D22):**
+
+```
+python3 - <<'EOF'
+import json,glob,os,statistics as st
+fs=sorted(glob.glob(os.path.expanduser('~/.claude/projects/-Users-jiazou-workspace-autodrive/*.jsonl')))
+recs=[];per=[];side=0
+for fp in fs:
+    n=i=c=r=o=0
+    for line in open(fp,errors='replace'):
+        try:d=json.loads(line)
+        except Exception:continue
+        if not isinstance(d,dict):continue
+        if d.get('isSidechain') is True:side+=1
+        u=d.get('message');u=u.get('usage') if isinstance(u,dict) else None
+        if not isinstance(u,dict):continue
+        cr=u.get('cache_read_input_tokens') or 0
+        n+=1;i+=u.get('input_tokens') or 0;c+=u.get('cache_creation_input_tokens') or 0
+        r+=cr;o+=u.get('output_tokens') or 0;recs.append(cr)
+    if n:per.append((n,i,c,r,o))
+tot=[sum(p[k] for p in per) for k in range(5)]
+print('files',len(fs),'sessions-with-usage',len(per),'records',tot[0],'sidechain',side)
+print('input',tot[1],'cache_creation',tot[2],'cache_read',tot[3],'output',tot[4])
+print('median cache_read/record',st.median(recs),'p90',sorted(recs)[int(len(recs)*.9)])
+print('per-session medians:',st.median([p[0] for p in per]),
+      st.median([p[2] for p in per]),st.median([p[3] for p in per]))
+EOF
+```
+
+The D16 threshold (≥20 usable usage records) is far exceeded, so the E1 static-proxy
+fallback was NOT taken. P1 output at the audit timestamp:
 
 ```
 sessions with >=1 usage record: 68 / 69
@@ -108,10 +137,33 @@ per-session medians: 234 usage records; 1,400,092 cache_creation; 45,822,624 cac
   dominate the 153.6M uncached total.
 
 Baseline-rides-subagents evidence (subagent stratum — `isSidechain:true` occurs ONLY
-here; the full top-level parse found **0** top-level sidechain records, confirming the
-originally-designed top-level scan is dead): 1,038 dispatch transcripts (pinned command
-above) ≈ **15 dispatches per top-level session** (1,038/69). Newest-20-by-mtime sample,
-FIRST usage record per file (the per-dispatch prefix-creation cost):
+here; the full top-level parse found **0** top-level sidechain records (P1's
+`sidechain` counter), confirming the originally-designed top-level scan is dead):
+1,038 dispatch transcripts (pinned command above) ≈ **15 dispatches per top-level
+session** (1,038/69). Newest-20-by-mtime sample, FIRST usage record per file (the
+per-dispatch prefix-creation cost). **Procedure P2 (rerunnable; output below is P2's
+at the audit timestamp):**
+
+```
+python3 - <<'EOF'
+import json,glob,os,statistics as st
+root=os.path.expanduser('~/.claude/projects/-Users-jiazou-workspace-autodrive')
+fs=[p for p in glob.glob(root+'/**/*.jsonl',recursive=True) if '/subagents/' in p]
+fs.sort(key=os.path.getmtime,reverse=True)
+cc=[];cr=[]
+for fp in fs[:20]:
+    for line in open(fp,errors='replace'):
+        try:d=json.loads(line)
+        except Exception:continue
+        u=(d.get('message') or {}).get('usage') if isinstance(d,dict) and isinstance(d.get('message'),dict) else None
+        if isinstance(u,dict) and any(u.get(k) for k in ('input_tokens','cache_creation_input_tokens','cache_read_input_tokens')):
+            cc.append(u.get('cache_creation_input_tokens') or 0)
+            cr.append(u.get('cache_read_input_tokens') or 0);break
+print('subagent transcripts',len(fs),'sampled',len(cc))
+print('first-record cache_creation: median',st.median(cc),'min',min(cc),'max',max(cc))
+print('first-record cache_read: median',st.median(cr),'min',min(cr),'max',max(cr))
+EOF
+```
 
 ```
 first-record cache_creation_input_tokens: median 26,968  (min 20,968, max 37,552)
@@ -121,11 +173,13 @@ e.g.  agent-ac48767….jsonl  in=2      cc=28,410  cr=8,746
       agent-a531c62….jsonl  in=7,025  cc=20,968  cr=9,054
 ```
 
-Reading: **every subagent dispatch pays ~27k tokens of uncached prefix creation**, and
-the ~12.9k-token machine-global baseline is **~48% of it** (static-proxy share of the
-measured median). Extrapolated (sample median × stratum count — an estimate):
-1,038 × 26,968 ≈ **28.0M uncached tokens ≈ 18%** of the corpus's entire uncached
-consumption is dispatch prefix re-creation, roughly half of that the baseline.
+Reading (a SAMPLED median — newest 20 of 1,038 — plus extrapolation, NOT a
+per-dispatch measurement of the full stratum): **the sampled median dispatch pays
+~27k tokens of uncached prefix creation**, and the ~12.9k-token machine-global
+baseline is **~48% of it** (static-proxy share of the sampled median). Extrapolated
+(sampled median × stratum count — an estimate): 1,038 × 26,968 ≈ **28.0M uncached
+tokens ≈ 18%** of the corpus's entire uncached consumption is dispatch prefix
+re-creation, roughly half of that the baseline.
 
 **(b) Coordinator-resident spec weight.**
 
@@ -152,17 +206,39 @@ PRIMARY (era-independent durable artifact families, run-root globs):
 | review round artifacts | `ls ~/.claude/harness-runs/*/review-*-*.md \| wc -l` | 106 (each ⇒ ≥1 reviewer dispatch) |
 | harden audit artifacts | `ls ~/.claude/harness-runs/*/harden-*-*.md \| wc -l` | 18 |
 | codex-attempts files (distinct runs) | `ls ~/.claude/harness-runs/*/codex-attempts-*.jsonl \| wc -l` | 6 runs covered |
-| — attempt VOLUME (line counts; never a run count) | `wc -l` per file | 127 attempt records (9–36/run) |
-| codex raw logs | `ls ~/.claude/harness-runs/*/codex-raw-*.log \| wc -l` + `du -ch` | 73 logs / 11 MB — static proxy for codex burn (codex tokens are a SEPARATE budget) |
+| — attempt VOLUME (line counts; never a run count) | `wc -l ~/.claude/harness-runs/*/codex-attempts-*.jsonl` | 127 attempt records (9–36/run) |
+| codex raw logs | `ls ~/.claude/harness-runs/*/codex-raw-*.log \| wc -l`; `du -ch ~/.claude/harness-runs/*/codex-raw-*.log \| tail -1` | 73 logs / 11 MB — static proxy for codex burn (codex tokens are a SEPARATE budget) |
 | subagent transcripts | (§ provenance) | 1,038 — the direct dispatch count |
 
 BEST-EFFORT (event logs; coverage-bounded): one-pass vocabulary enumeration over the
-pinned glob `~/.claude/harness-runs/*/event-log.jsonl` (python3 Counter over
-`json.loads`-parseable dict lines, key `event`|`kind`) → 13 logs, 347 parseable
-records, **123 distinct event tokens** — the vocabulary is heterogeneous across run
-eras (era variants like `run_init`/`run-setup`/`run_setup`; one era logs per-slice
-tokens like `slice1.1_review_r1`). Dispatch-class tokens, reported PER TOKEN with
-coverage bounds (never a single-token grep):
+pinned glob `~/.claude/harness-runs/*/event-log.jsonl`. **Procedure P3 (rerunnable;
+the figures below are P3's output at the audit timestamp):**
+
+```
+python3 - <<'EOF'
+import json,glob,os,collections
+logs=sorted(glob.glob(os.path.expanduser('~/.claude/harness-runs/*/event-log.jsonl')))
+v=collections.Counter();pl=collections.Counter();n=any_disp=0
+D={'dispatch','subagent-started','codex-started'}
+for lg in logs:
+    seen=set()
+    for line in open(lg,errors='replace'):
+        try:d=json.loads(line)
+        except Exception:continue
+        if not isinstance(d,dict):continue
+        n+=1;e=d.get('event',d.get('kind')) or '<no-event-key>';v[e]+=1;seen.add(e)
+    for e in seen:pl[e]+=1
+    if seen & D:any_disp+=1
+print('logs',len(logs),'parseable',n,'distinct',len(v))
+for t in sorted(D):print(t,v[t],'in',f'{pl[t]}/{len(logs)}','logs')
+print('union',sum(v[t] for t in D),'; logs with >=1 dispatch-class token',f'{any_disp}/{len(logs)}')
+EOF
+```
+
+→ 13 logs, 347 parseable records, **123 distinct event tokens** — the vocabulary is
+heterogeneous across run eras (era variants like `run_init`/`run-setup`/`run_setup`;
+one era logs per-slice tokens like `slice1.1_review_r1`). Dispatch-class tokens,
+reported PER TOKEN with coverage bounds (never a single-token grep):
 
 | Token | Records | Logs containing it |
 |---|---|---|
@@ -333,9 +409,16 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
   pinned enumeration corpora honest).
 - **Effort:** trivial–small (schedule a periodic report+notify, or a confirm-gated
   `--apply`).
+- **Savings estimate:** ~0 D10-unit tokens (denomination inapplicable); up to
+  ~278 MB disk reclaimable over time, of which 11 MB of codex-raw logs is immediately
+  Tier-L-sweepable.
 - **Disposition:** external-surface plan item (machine config — no repo diff). The
   retention CONTRACT's 3-layer drift is a KNOWN surface (§3) — N4 deliberately scopes
-  to scheduling the existing tool only.
+  to scheduling the existing tool only. Constraint if scheduling is ever
+  automated/unattended `--apply`: the per-run advisory lock pre-declared at
+  followups.md:408 (anchor "If `--apply` ever becomes automated/unattended, revisit
+  with a per-run advisory lock (flock on `$RUN_DIR/.gc.lock`)") becomes mandatory;
+  the manual/confirm-gated posture needs no lock.
 
 ## 3. Already known / out of scope — dedup exclusion table
 
@@ -345,9 +428,9 @@ stable text anchor.
 **(a) Surfaces checked** (every candidate finding was cross-checked against ALL of
 these):
 
-1. **07-08 audit § Dropped components — all 10 refuted items** (docs/
-   efficiency-audit-2026-07-08.md, anchor "### Dropped components (refuted at
-   verification)"): pressure-conditional Seam A/B; reviewer-prompt narrowing to
+1. **07-08 audit § Dropped components — all 10 refuted items**
+   (docs/efficiency-audit-2026-07-08.md:104, anchor "### Dropped components (refuted
+   at verification)"): pressure-conditional Seam A/B; reviewer-prompt narrowing to
    "is-the-class-closed"; settled-scope re-audit prohibition; slice-review adoption as
    the phase review; plan+phasedesign collapse; same-invocation harden/finalize
    convergence on suite-green; 15/30-min wall-clock codex kill; blanket round-2+
@@ -361,8 +444,9 @@ these):
    TODO.md:317) · R4 codex progress-watchdog (**DONE PR #78**, TODO.md:338) · R5
    class-sweep contract (:359) · R6 delta-scoped re-reviews + suite-rerun ban (:376) ·
    R7 refutation ledger (:392) · R8 design author-verification (:414) · R9 pin-depth
-   mutation-survival standard (:434) · R10 confirm-round diet · R11
-   single-phase/single-slice fast paths · R12 phase-finding routing (07-08 doc §2).
+   mutation-survival standard (:434) · R10 confirm-round diet
+   (docs/efficiency-audit-2026-07-08.md:89) · R11 single-phase/single-slice fast paths
+   (07-08 doc:94) · R12 phase-finding routing (07-08 doc:99).
 3. **TODO whole-repo-audit items as a group** (TODO.md:5, anchor "## Whole-repo audit —
    bugs / logic / inconsistency / slop (2026-07-09)"), with the individually-collided
    items cited: `.gitignore` settings.local.json — TODO.md:158-162 (anchor
@@ -390,12 +474,12 @@ A candidate colliding with a DONE item is excluded as already-fixed.
 | finalize "Phase-2 wiring obligations" section is stale narration (lens 1.2: 3,161 B section) | TODO.md:211-214, anchor "describes long-shipped wiring … Rewrite present-tense (token-sweep pin migration)" | excluded |
 | cross-file rebirth prose duplication (drive.md I1 / checkpoint sections ↔ drive-plan.md / drive-review.md) | followups.md:303, anchor "[P3] Cross-file rebirth prose duplication … (~150-250): collapse into one authoritative section" | **extension — delta only**: N3 ranks ONLY the section-concentration delta (in-file setup/resume narration beyond the duplicated rebirth prose); the duplicated-prose portion stays excluded |
 | retention contract expressed in three drifting authority layers | TODO.md:590-599, anchor "expressed in THREE authority layers" | excluded (N4 scopes to SCHEDULING the existing tool, not its contract) |
-| duplicated statusline/JSON window table (DRY candidate, hygiene lens) | TODO.md:87-101 (DONE) + :617-621 / :695-704 anchors above | excluded — already-fixed at the executable layer; the single-source design change is a known follow-up |
-| `.claude/settings.local.json` missing from committed .gitignore (hygiene-lens classic) | TODO.md:158-162, anchor above | excluded |
-| codex re-runs the full suites inside every review round (visible across the 73 codex-raw logs) | R6's suite-rerun ban (TODO.md:376; 07-08 doc §2 R6) | excluded |
-| codex tail/outage burn (11 MB raw-log corpus; historical silent deaths) | R4 progress-watchdog — DONE PR #78 (TODO.md:338) | excluded — already-fixed |
-| bash suite (139 s) re-tests python-covered checkpoint/state-lint behavior (lens 1.3 residual) | followups.md:295, anchor above | excluded (the runtime rider is noted in the TODO item's risk-weighing only) |
-| seam/gate human-latency, round churn, review-layer cost (any form) | 07-08 audit §1 buckets A–F + § What not to touch | excluded — prior audit's entire scope |
+| duplicated statusline/JSON window table (DRY candidate, hygiene lens) | TODO.md:87-101 (DONE; anchor "restored `3bf4866`'s ordered 1M-first window-match table") + TODO.md:617-621 (anchor "duplicated window table") / TODO.md:695-704 (anchor "TWO executable model tables") | excluded — already-fixed at the executable layer; the single-source design change is a known follow-up |
+| `.claude/settings.local.json` missing from committed .gitignore (hygiene-lens classic) | TODO.md:158-162, anchor "`.gitignore:19` — `.claude/settings.local.json` is excluded only by machine-local ignores" | excluded |
+| codex re-runs the full suites inside every review round (visible across the 73 codex-raw logs) | R6's suite-rerun ban — TODO.md:376-377, anchor "Delta-scoped round-N≥2 re-reviews (class-scoped, with suite-rerun ban)"; also docs/efficiency-audit-2026-07-08.md:69, anchor "### R6. Delta-scoped round-N≥2 re-reviews" | excluded |
+| codex tail/outage burn (11 MB raw-log corpus; historical silent deaths) | R4 — TODO.md:338, anchor "DONE (PR #78, 2026-07-09). Codex progress-watchdog + outage degrade" | excluded — already-fixed |
+| bash suite (139 s) re-tests python-covered checkpoint/state-lint behavior (lens 1.3 residual) | followups.md:295, anchor "[P2] Duplicate behavioral coverage of checkpoint/state-lint" | excluded (the runtime rider is noted in the TODO item's risk-weighing only) |
+| seam/gate human-latency, round churn, review-layer cost (any form) | docs/efficiency-audit-2026-07-08.md:22, anchor "## 1. WHERE THE DAY GOES" (buckets A–F) + :118, anchor "## 3. WHAT NOT TO TOUCH" | excluded — prior audit's entire scope |
 
 ## 4. Known refutations (pre-declared review answers)
 
@@ -451,7 +535,11 @@ Phase 2 must not invent more.
     measurement; later at ship).
   - *entries beyond the window* —
     `awk 'NR>2000' .harness/decisions.md | grep -cE '^### '`: before 51 → after 0
-    (post-split live file = 1,971 lines + the ≤30 new lines, within one default Read).
+    (post-split live file = 1,971 lines plus only the live-file share of the new
+    lines — the 2–3-line index note + amended header rule, ≤10 lines; the archive
+    file's header is not in the live file — comfortably within one default Read at
+    split time; ship-time appends grow it later, and the `^### `-date metric above
+    stays the binding check either way).
 - **Risk:** 9 in-repo surfaces reference `.harness/decisions.md` —
   tests/contracts/{test_drive_base_preflight_wiring, test_drive_finalize_contract,
   test_drive_retro_contract, test_drive_retention, test_rebirth_handshake}.py,

@@ -4,9 +4,10 @@ Architectural follow-ups deferred by /drive finalize passes.
 
 ## Repo-efficiency plan (new lenses) — from docs/efficiency-audit-2026-07-12-newlens.md (2026-07-12)
 
-**Problem:** token weight, not wall clock, is the unaudited cost — every subagent
-dispatch re-creates a ~27k-token uncached prefix (~48% of it the machine-global
-OPERATING/CLAUDE/MEMORY baseline; 1,038 dispatches measured), each /drive leg carries
+**Problem:** token weight, not wall clock, is the unaudited cost — each subagent
+dispatch re-creates a ~27k-token uncached prefix (sampled median, newest 20 of the
+1,038 measured dispatch transcripts; ~48% of it the machine-global
+OPERATING/CLAUDE/MEMORY baseline), each /drive leg carries
 ~30k tokens of drive.md spec, and the instructed task-start ledger read serves the
 OLDEST third of `.harness/decisions.md` (the 51 newest entries unread). Evidence,
 cost denominations, and ranking: the audit doc (findings N1–N4; cites there are as-of
@@ -43,7 +44,10 @@ phaseBaseSha ce12c42, pre-insertion of this section).
 - [ ] **N4** — harness-runs retention scheduling — **external** (machine config; no
   repo diff): periodic `bin/drive-retention.sh` report + notify (or confirm-gated
   `--apply`); 278 MB residue at audit time (audit §1.4/§2 N4). The retention
-  contract's 3-layer drift stays a separate known follow-up (audit §3).
+  contract's 3-layer drift stays a separate known follow-up (audit §3). If `--apply`
+  is ever automated/unattended, the per-run advisory lock pre-declared at
+  followups.md:408 (as-of ce12c42) is mandatory; the confirm-gated posture needs no
+  lock.
 
 ## Whole-repo audit — bugs / logic / inconsistency / slop (2026-07-09)
 
