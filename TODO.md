@@ -14,10 +14,16 @@ entries; the 51 newest unread). Evidence,
 cost denominations, and ranking: the audit doc (findings N1–N4; cites there are as-of
 phaseBaseSha ce12c42, pre-insertion of this section).
 
-- [ ] **N2 → QW1 (Phase 2 of this run)** — `.harness/decisions.md` archival split per
+- [x] **N2 → QW1 (Phase 2 of this run)** — `.harness/decisions.md` archival split per
   audit §5 QW1: fixes the bounded-read recency defect; amends the append-only header
   per audit §4.1; before/after metrics, risk surface, and pin exposure are specified
   there. followups.md deliberately excluded (refuted — audit §5).
+  DONE (2026-07-12, Phase 2): one default Read now serves the ENTIRE live file
+  (wc -l 6,064 → 2,000). All-shape heading oracle `grep -E '^#{1,3} '`:
+  headings beyond the 2,000-line window 364 → 0; window reaches the file's
+  newest heading: NO → YES. Report-pinned legacy metric (`^### ` shape):
+  newest in-window entry 2026-06-11 → 2026-07-06 (= file newest);
+  beyond-window 51 → 0. Measured at the slice tip, pre-ship-promotion.
 - [ ] **N1** — machine-global per-dispatch baseline diet (audit §1.1a/§2 N1), three
   surfaces: (a) MEMORY.md diet — **external** (outside the repo; no repo diff);
   (b) OPERATING.md conciseness pass — **agent-authorship pending user decision
