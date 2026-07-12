@@ -1256,9 +1256,12 @@ def test_pre_execute_guard_parked_pause_mutation_reds():
 
 
 def test_pre_execute_guard_positive_route_mutation_reds():
-    """P7 (AC8) non-vacuity: gutting the empty+autonomous Plan re-entry arm unbinds P1 → reds
-    — completes "every guard arm non-vacuous". The `old` substring is the load-bearing chunk
-    of the P1 re-invoke-`/drive-plan` token (unique in drive.md, single raw line)."""
+    """P7 (AC8) non-vacuity: gutting the empty+autonomous Plan re-entry arm unbinds P1 → reds.
+    This is ONE of the P1-arm mutation flips (the empty+autonomous Plan re-entry arm); together
+    with the sibling premises / no-reenter / fall-through / parked-pause / symmetric-corner /
+    current-phase-precondition flips they make every guard arm non-vacuous. The `old` substring
+    is the load-bearing chunk of the P1 re-invoke-`/drive-plan` token (unique in drive.md,
+    single raw line)."""
     mutated = _drive_md().replace(
         "`stage = plan` and **re-invoke `/drive-plan`**",
         "(positive Plan re-entry removed)",
