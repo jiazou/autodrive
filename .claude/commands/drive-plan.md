@@ -140,7 +140,10 @@ the `/drive <runId>` resume line (its single source). No goal is emitted.
 
 - Approved → update $RUN_DIR/state.json (`stage=execute`, `lastGate="A"`,
   `waiting=null`), parse the `## Phases` breakdown into the ordered phase ids in
-  `state.phaseList`. The coordinator then runs **Seam A** — the deterministic post-Gate-A
+  `state.phaseList`. (This is ONE atomic `state.json` write — `stage=execute` +
+  `lastGate="A"` + `waiting=null` + the parsed `phaseList` committed together, per drive.md
+  § Stage 1; never a partial `{stage:execute, phaseList:[]}`.) The coordinator then runs
+  **Seam A** — the deterministic post-Gate-A
   context-clear handoff (drive.md § Stage 1 / § I1) — so the **execute half begins in a fresh
   session**, not in-context here. **Slices are NOT defined here** — `state.slices` stays
   empty; each phase's `/drive-design phase <P>` produces and records its own slices just
