@@ -273,9 +273,10 @@ $ awk 'NR>2000' .harness/decisions.md | grep -cE '^### '         → 51   (of 16
 ```
 
 The live defect is **recency (correctness)**: because the ledger is append-only, the
-default read serves the OLDEST third and misses the **51 newest entries — everything
-after 2026-06-11** — exactly the ones "read decisions.md to stay consistent" exists
-for. The 214,560 B ≈ 53.6k tokens (static proxy) of stale ingest is the rider, not the
+default read serves the OLDEST third and misses the **51 newest entries** — the
+window cut falls MID-2026-06-11 (three later same-day 2026-06-11 entries sit just
+beyond it, at lines 2013/2024/2041) plus every entry after that date — exactly the
+ones "read decisions.md to stay consistent" exists for. The 214,560 B ≈ 53.6k tokens (static proxy) of stale ingest is the rider, not the
 headline. (Window figures are stable at the frozen SHA; the gap dates are as-of this
 measurement — ship-time appends will widen the file-newest date.)
 
@@ -304,7 +305,7 @@ measured pin-migration cost (`grep -l '<tokens>' tests/contracts/*.py test/*.tes
   overall. Any trim is a token-sweep migration — never a quick win. **Vetoed passages
   INSIDE this section (binding carve-outs for N3; locations re-derived as-of
   phaseBaseSha via the pinned strings — see §4.8 on the veto entries' own historical
-  numbers):** (i) the `baseSha` write-once prose at drive.md:496-504 (anchor "Record
+  numbers):** (i) the `baseSha` write-once prose at drive.md:500-504 (anchor "Record
   `baseSha` (write-once at fresh-run setup)" / "NEVER re-derived on resume") — prose
   trims VETOED at followups.md:833 (anchor "further prose trims are VETOED: the
   wording is exact-string-pinned by tests/contracts/test_checkpoint_contract.py:1481
@@ -406,18 +407,24 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
   diff); OPERATING.md conciseness pass (**agent-authorship pending user decision,
   OQ1/D13**); plus a repo plan item: CLAUDE.md trim (12.7 kB; strings pinned by
   contract suites → its own token-sweep migration, independent of the R5–R9 batch —
-  disjoint files/pins). Veto carve-out: the trim must leave the finalize-CONVERGED
-  gate rule at CLAUDE.md:134-141 VERBATIM (re-derived as-of phaseBaseSha; the veto
-  entry's own "~L131" is its historical cite — §4.8) — one of three surfaces
-  followups.md:320 requires kept identical (anchor "D26 mandates the 3 surfaces be
-  IDENTICAL"). Never quick-wins (D5).
+  disjoint files/pins). **Overlap carve-outs (§3 matrix rows):** the OPERATING.md
+  pass must COORDINATE WITH AND EXCLUDE pre-existing TODO C5's clauses
+  (base TODO.md:553-556, anchor "\"Subagents bail ~50%\" (OPERATING.md:44) is
+  stale") — C5 owns those specific stale-rule relaxations and its AC13-pinned fenced
+  codex blocks are carve-outs for both; the CLAUDE.md trim must leave the
+  finalize-CONVERGED gate rule at CLAUDE.md:134-141 VERBATIM (re-derived as-of
+  phaseBaseSha; the veto entry's own "~L131" is its historical cite — §4.8) — one of
+  three surfaces followups.md:320 requires kept identical (anchor "D26 mandates the
+  3 surfaces be IDENTICAL") — and must not regress/preempt the open CLAUDE.md [V]
+  fixes (§3 matrix). Never quick-wins (D5).
 
 **N2 — decisions.md bounded-read recency defect → archival split**
 
 - **Lens:** 1.1d + 1.4. **Evidence:** §1.1(d).
-- **Cost denomination:** correctness primary — the 51 newest entries (post-2026-06-11)
-  are invisible to the instructed task-start read; rider: 214,560 B ≈ 53.6k tok
-  (static proxy) of stale occupancy per task-start read.
+- **Cost denomination:** correctness primary — the 51 newest entries (beyond the
+  2,000-line window; the cut falls mid-2026-06-11 — §1.1d) are invisible to the
+  instructed task-start read; rider: 214,560 B ≈ 53.6k tok (static proxy) of stale
+  occupancy per task-start read.
 - **Run-level effect:** correctness (the D18-permitted label for this finding only);
   occupancy rider.
 - **Effort:** trivial–small. **Savings:** recency gap 25 days → 0 (the post-split live
@@ -439,7 +446,7 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
   remainder (estimate, static proxy).
 - **Delta boundary (binding — veto carve-outs, §1.2; all locations re-derived as-of
   phaseBaseSha via the pinned strings, §4.8):** the trim EXCLUDES (i) the `baseSha`
-  write-once prose at drive.md:496-504 (anchor "Record `baseSha` (write-once at
+  write-once prose at drive.md:500-504 (anchor "Record `baseSha` (write-once at
   fresh-run setup)"; sibling: the harden-regress marker-placement prose at
   drive-review.md:222-225, anchor "harden-regress self-identifying marker") — prose
   trims VETOED at followups.md:833 (anchor "further prose trims are VETOED: the
@@ -537,7 +544,7 @@ A candidate colliding with a DONE item is excluded as already-fixed.
 |---|---|---|
 | finalize "Phase-2 wiring obligations" section is stale narration (lens 1.2: 3,161 B section) | TODO.md:211-214, anchor "describes long-shipped wiring … Rewrite present-tense (token-sweep pin migration)" | excluded |
 | cross-file rebirth prose duplication (drive.md I1 / checkpoint sections ↔ drive-plan.md / drive-review.md) | followups.md:303, anchor "[P3] Cross-file rebirth prose duplication … (~150-250): collapse into one authoritative section" | **extension — delta only**: N3 ranks ONLY the section-concentration delta (in-file setup/resume narration beyond the duplicated rebirth prose); the duplicated-prose portion stays excluded |
-| broad narration trim of drive.md § "Run setup & resume" (N3's unbounded first-draft form — the section CONTAINS veto-covered passages) | followups.md:833, anchor "further prose trims are VETOED: the wording is exact-string-pinned by tests/contracts/test_checkpoint_contract.py:1481 and test_state_json_shape.py:102" — protecting, as-of phaseBaseSha, the `baseSha` write-once prose at drive.md:496-504 (in-section) + the harden-regress marker prose at drive-review.md:222-225 (the entry's own :281/:139 are its historical cites — §4.8); followups.md:320, anchor "[P2 slop, VETOED] finalize-CONVERGED rule appears in 3 surfaces … D26 mandates the 3 surfaces be IDENTICAL" — protecting drive.md:194-206 (in-section), drive-ship.md:17, and CLAUDE.md:134-141 (also constrains N1's CLAUDE.md trim) | **extension — delta only**: N3 is bounded to the NON-vetoed remainder of the section (delta boundary in §2 N3); the vetoed passages stay vetoed — touching them is only a deliberate pin migration inside the R5–R9 batch, never a standalone trim |
+| broad narration trim of drive.md § "Run setup & resume" (N3's unbounded first-draft form — the section CONTAINS veto-covered passages) | followups.md:833, anchor "further prose trims are VETOED: the wording is exact-string-pinned by tests/contracts/test_checkpoint_contract.py:1481 and test_state_json_shape.py:102" — protecting, as-of phaseBaseSha, the `baseSha` write-once prose at drive.md:500-504 (in-section) + the harden-regress marker prose at drive-review.md:222-225 (the entry's own :281/:139 are its historical cites — §4.8); followups.md:320, anchor "[P2 slop, VETOED] finalize-CONVERGED rule appears in 3 surfaces … D26 mandates the 3 surfaces be IDENTICAL" — protecting drive.md:194-206 (in-section), drive-ship.md:17, and CLAUDE.md:134-141 (also constrains N1's CLAUDE.md trim) | **extension — delta only**: N3 is bounded to the NON-vetoed remainder of the section (delta boundary in §2 N3); the vetoed passages stay vetoed — touching them is only a deliberate pin migration inside the R5–R9 batch, never a standalone trim |
 | retention contract expressed in three drifting authority layers | TODO.md:590-599, anchor "expressed in THREE authority layers" | excluded (N4 scopes to SCHEDULING the existing tool, not its contract) |
 | duplicated statusline/JSON window table (DRY candidate, hygiene lens) | TODO.md:87-101 (DONE; anchor "restored `3bf4866`'s ordered 1M-first window-match table") + TODO.md:617-621 (anchor "duplicated window table") / TODO.md:695-704 (anchor "TWO executable model tables") | excluded — already-fixed at the executable layer; the single-source design change is a known follow-up |
 | `.claude/settings.local.json` missing from committed .gitignore (hygiene-lens classic) | TODO.md:158-162, anchor "`.gitignore:19` — `.claude/settings.local.json` is excluded only by machine-local ignores" | excluded |
@@ -545,6 +552,22 @@ A candidate colliding with a DONE item is excluded as already-fixed.
 | codex tail/outage burn (11 MB raw-log corpus; historical silent deaths) | R4 — TODO.md:338, anchor "DONE (PR #78, 2026-07-09). Codex progress-watchdog + outage degrade" | excluded — already-fixed |
 | bash suite (139 s) re-tests python-covered checkpoint/state-lint behavior (lens 1.3 residual) | followups.md:295, anchor "[P2] Duplicate behavioral coverage of checkpoint/state-lint" | excluded (the runtime rider is noted in the TODO item's risk-weighing only) |
 | seam/gate human-latency, round churn, review-layer cost (any form) | docs/efficiency-audit-2026-07-08.md:22, anchor "## 1. WHERE THE DAY GOES" (buckets A–F) + :118, anchor "## 3. WHAT NOT TO TOUCH" | excluded — prior audit's entire scope |
+| OPERATING.md prose edits (N1(b)'s conciseness-pass surface) | pre-existing TODO **C5** — TODO.md:553-556, anchor "\"Subagents bail ~50%\" (OPERATING.md:44) is stale; relax codex-never-in-a-subagent … relax the 150-word digest cap" | **extension — delta only**: C5 owns three SPECIFIC stale-rule relaxations with its own AC13 pin constraint (the fenced codex mkdir/TMPDIR/redirect block text must not be rewritten); N1(b) is the WHOLE-FILE token-diet conciseness pass (agent-authorship pending OQ1/D13) and must coordinate with and EXCLUDE C5's clauses — if C5 lands first the diet preserves its rewrites; C5's AC13-pinned fenced blocks are carve-outs for both |
+| CLAUDE.md prose edits (N1(c)'s trim surface) | **C4** — TODO.md:510-513, marked DONE (anchor "Prose sweep: \"Claude Code cannot self-initiate a fresh session\" … is stale"); open [V] items TODO.md:126-129 (anchor "both coordinator surfaces claim harden \"vetoes edits that would drop a criterion's coverage\"" — CLAUDE.md:127 half) and TODO.md:229-231 (anchor "the state.json run-model enumeration omits `task`, `baseSha`") | **extension — delta only**: N1(c) is size-only; it must not regress C4's landed capability-conditional rewording (already-fixed) and must not preempt or drop the prose the two OPEN [V] fixes target (semantic fixes owned by those items; the :229 item may also extend test_state_json_shape.py — the same pin suite as N3's carve-out) |
+| in-section drive.md rule edits (N3's trim surface) | **C9** — TODO.md:522-527, anchor "in-session stranded-inflight-marker rule … keep the test_checkpoint_contract.py pinned phrases" (the item's own "drive.md:437" is its historical cite; the rule lives in § Durable checkpoint contract with in-section cross-references, e.g. drive.md:364/:408 as-of phaseBaseSha); **C11** — TODO.md:549-552, anchor "Demote the per-leg" … "re-arm choreography … same AC7/AC12-pinned clauses in test_rebirth_handshake.py" (the ceremony's command token itself is deliberately not quoted here — a live-surface contract pin bans it from docs/) | **extension — delta only**: N3 is narration-size ONLY — the stranded-marker rule text + its cross-references (C9's surface, checkpoint-contract-pinned) and C11's ceremony clauses (rebirth-handshake-pinned) are EXCLUDED from the trim; semantic changes there are those items' own work |
+| per-dispatch cost levers (N1's problem space) | **C12** — TODO.md:568-572, anchor "Per-role model/effort hints … as capability-class prose" | disclosed as complementary, NOT excluded: same per-dispatch quota pool, DISJOINT levers/surfaces (C12 = dispatch model/effort routing; N1 = prefix content diet); neither re-identifies the other |
+| decisions.md same-file touch (N2/QW1's split surface) | open [V] item TODO.md:163-168, anchor "the binding SHIP ACTION (D-coord-2) to append a premise-stale annotation … log the missed ship action in decisions.md" | disclosed, no conflict: the item APPENDS (live-tail append + a followups.md:262 annotation), which QW1's split preserves; one interaction — if an annotation ever targets a pre-2026-07 decisions.md entry, it lands in the archive file per the amended header convention (QW1 §5) |
+
+**Overlap matrix — completeness note (2026-07-12):** each of {N1, N2, N3, N4, QW1}
+was checked pairwise against EVERY entry of the dedup surfaces: all 12 C-items
+(enumerated via `git show ce12c42:TODO.md | grep -n '\*\*C[0-9]\+ ('` → C1–C12), all
+R1–R12 (TODO.md:250 §; R10–R12 in the 07-08 doc §2), the 07-08 § Dropped components
+list (10 items, doc:104), the whole-repo-audit `[V]` items (token scan of base
+TODO.md:5-249 for OPERATING/CLAUDE/decisions/followups/retention/MEMORY surfaces),
+and the followups.md families swept in §4.8 (four named entries + :408 + the veto
+families). EVERY non-empty overlap — however small — is a row above or in §4.8;
+all remaining pairs are empty (C1/C2/C3/C6/C7/C8/C10 touch no surface any finding
+recommends changing; N4's only overlaps are the retention rows above + §4.8).
 
 ## 4. Known refutations (pre-declared review answers)
 
@@ -582,7 +605,7 @@ A candidate colliding with a DONE item is excluded as already-fixed.
    `:1481`) are that entry's cites from the tree it was written against — NOT
    as-of-phaseBaseSha locations. This doc's carve-outs re-derive every location at
    phaseBaseSha via the PINNED STRINGS: followups.md:833 vetoes prose trims
-   protecting the `baseSha` write-once prose at drive.md:496-504 (anchor "Record
+   protecting the `baseSha` write-once prose at drive.md:500-504 (anchor "Record
    `baseSha` (write-once at fresh-run setup)") + the harden-regress marker prose at
    drive-review.md:222-225 (anchor "harden-regress self-identifying marker"),
    pinned by test_state_json_shape.py:102 + test_checkpoint_contract.py:1483 (the

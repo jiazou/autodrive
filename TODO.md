@@ -20,12 +20,16 @@ phaseBaseSha ce12c42, pre-insertion of this section).
 - [ ] **N1** — machine-global per-dispatch baseline diet (audit §1.1a/§2 N1), three
   surfaces: (a) MEMORY.md diet — **external** (outside the repo; no repo diff);
   (b) OPERATING.md conciseness pass — **agent-authorship pending user decision
-  (OQ1/D13)**, user-voice; (c) CLAUDE.md trim — repo diff, strings pinned by contract
-  suites → own token-sweep migration; sequencing vs the R5–R9 batch below:
-  INDEPENDENT (disjoint files/pins), may land in its own window. Veto carve-out for
-  (c): the finalize-CONVERGED gate rule at CLAUDE.md:134-141 (as-of ce12c42) stays
-  VERBATIM — one of three surfaces followups.md:320 requires kept identical (audit
-  §4.8).
+  (OQ1/D13)**, user-voice; coordinates with and EXCLUDES pre-existing C5's clauses
+  (§ Fable 5 audit below, base :553-556 — C5 owns the specific stale-rule
+  relaxations incl. OPERATING.md:44, with its AC13-pinned fenced codex blocks as
+  carve-outs for both; audit §3 matrix row); (c) CLAUDE.md trim — repo diff, strings
+  pinned by contract suites → own token-sweep migration; sequencing vs the R5–R9
+  batch below: INDEPENDENT (disjoint files/pins), may land in its own window. Veto
+  carve-outs for (c): the finalize-CONVERGED gate rule at CLAUDE.md:134-141 (as-of
+  ce12c42) stays VERBATIM — one of three surfaces followups.md:320 requires kept
+  identical (audit §4.8) — and the trim must not regress C4's landed rewording or
+  preempt the open CLAUDE.md [V] fixes (audit §3 matrix).
 - [ ] **N3** — drive.md § "Run setup & resume" narration trim (39% of the per-leg
   spec weight; audit §1.2/§2 N3). Spec-trim sequencing (binding): land WITH or AFTER
   the pending R5–R9 one-batch spec edit (§ "/drive efficiency plan R1–R9" below,
@@ -34,7 +38,7 @@ phaseBaseSha ce12c42, pre-insertion of this section).
   the veto entries' own line numbers are historical, audit §4.8): in-file narration
   ONLY — beyond followups' known cross-file rebirth-prose item (audit §3 row) AND
   EXCLUDING the veto-covered passages: the `baseSha` write-once prose at
-  drive.md:496-504 (+ sibling harden-regress marker prose at drive-review.md:222-225),
+  drive.md:500-504 (+ sibling harden-regress marker prose at drive-review.md:222-225),
   whose prose trims are VETOED at followups.md:833 (exact-string-pinned by
   tests/contracts/test_state_json_shape.py:102 + test_checkpoint_contract.py:1483),
   and the finalize-CONVERGED tri-surface rule at drive.md:194-206 (followups.md:320).
