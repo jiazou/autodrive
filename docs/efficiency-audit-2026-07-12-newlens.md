@@ -35,7 +35,7 @@ event logs, 128 stray codex artifacts at design time); under the projects dir a
 root-scoped `-path` with NO depth pin (a depth pin silently drops the 125
 workflow-nested transcripts). The corpus includes this run's own live event log — counts
 taken minutes apart drift by a few records (343→347 parseable within this measurement
-session); every figure here is as-of its command's run.
+session).
 
 **Divergence notes (design-time figure/claim vs measured — the measured value wins):**
 
@@ -49,8 +49,8 @@ session); every figure here is as-of its command's run.
    vocabulary across run eras (123 distinct event tokens; §1.1c). Per-token drift vs
    design-time: `subagent-started` 11→12, `codex-started` 34→39 (two more runs logged
    since).
-4. Subagent stratum: **1,038** transcripts / **280 MB** (design-time reference ~1,033 /
-   278 MB — live drift, expected).
+4. Subagent stratum: **1,038** transcripts / **280 MB** (design-time reference
+   ~1,033 / 278 MB).
 5. The high-level design's D6 mis-attributed two dedup surfaces to
    `.harness/followups.md`; both are TODO whole-repo-audit surfaces (corrected per D21;
    see §3 rows — surface SET unchanged, only the attribution moved).
@@ -304,24 +304,13 @@ measured pin-migration cost (`grep -l '<tokens>' tests/contracts/*.py test/*.tes
   **4 suites**; `checkpoint-complete.marker` tokens by **3**; run-graph tokens by
   **3**; drive.md is referenced by **10 pytest contract files + 1 bash suite**
   overall. Any trim is a token-sweep migration — never a quick win. **Vetoed passages
-  INSIDE this section (binding carve-outs for N3; locations re-derived as-of
-  phaseBaseSha via the pinned strings — see §4.8 on the veto entries' own historical
-  numbers):** (i) the `baseSha` write-once prose at drive.md:500-504 (anchor "Record
-  `baseSha` (write-once at fresh-run setup)" / "NEVER re-derived on resume") — prose
-  trims VETOED at followups.md:833 (anchor "further prose trims are VETOED: the
-  wording is exact-string-pinned by tests/contracts/test_checkpoint_contract.py:1481
-  and test_state_json_shape.py:102; trimming reds those pins"; the pinning tests
-  as-of phaseBaseSha: test_state_json_shape.py:102 and
-  test_checkpoint_contract.py:1483); the same veto covers the harden-regress
-  marker-placement prose at drive-review.md:222-225 (anchor "harden-regress
-  self-identifying marker", outside this section); (ii) the finalize-CONVERGED rule
-  at drive.md:194-206 (anchor "all three finalize-CONVERGED surfaces use the
-  IDENTICAL criterion"), one of THREE surfaces (drive-ship.md:17, CLAUDE.md:134-141)
-  that followups.md:320 (anchor "[P2 slop, VETOED] finalize-CONVERGED rule appears
-  in 3 surfaces … D26 mandates the 3 surfaces be IDENTICAL") requires kept
-  identical — collapse/trim vetoed. New delta only (finding N3): the *concentration
-  measurement* over the NON-vetoed remainder; the cross-file rebirth-prose portion
-  of this section is a KNOWN surface (§3 row, followups.md:303).
+  INSIDE this section (binding carve-outs for N3):** (i) the `baseSha` write-once
+  prose at drive.md:500-504 (sibling: the harden-regress marker-placement prose at
+  drive-review.md:222-225, outside this section); (ii) the finalize-CONVERGED rule
+  at drive.md:194-206 — carve-outs per §4.8 (full anchors, veto entries, and pinning
+  tests there). New delta only (finding N3): the *concentration measurement* over
+  the NON-vetoed remainder; the cross-file rebirth-prose portion of this section is
+  a KNOWN surface (§3 row, followups.md:303).
 - Known-item exclusions (§3): finalize "Phase-2 wiring obligations" stale section
   (TODO.md:211); cross-file rebirth-prose duplication (followups.md:303); retention
   3-layer authority drift (TODO.md:590).
@@ -392,12 +381,12 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
 **N1 — Machine-global baseline diet (biggest uncached-quota lever)**
 
 - **Lens:** 1.1a. **Evidence:** §1.1(a) — 51,698 B ≈ 12.9k tok (static proxy) baseline;
-  measured median 26,968 uncached cache-creation tokens per subagent dispatch
-  (newest-20 sample); 1,038 dispatches in corpus; extrapolation ≈ 28.0M uncached
+  median 26,968 uncached cache-creation tokens per subagent dispatch (sampled
+  median — §1.1a); 1,038 dispatches in corpus; extrapolation ≈ 28.0M uncached
   tokens ≈ 18% of total uncached consumption (estimate).
-- **Cost denomination:** quota — the baseline is ~48% of the sampled-median
-  dispatch's ~27k uncached prefix creation (static-proxy share; newest-20 sample of
-  1,038); occupancy — ~12.9k tokens of every window, all sessions machine-wide.
+- **Cost denomination:** quota — the baseline is ~48% of the median dispatch's ~27k
+  uncached prefix creation (sampled median — §1.1a); occupancy — ~12.9k tokens of
+  every window, all sessions machine-wide.
 - **Run-level effect:** fan-out quota burn.
 - **Effort:** medium (three surfaces; two live outside the repo diff or are
   user-voice).
@@ -428,10 +417,11 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
   occupancy per task-start read.
 - **Run-level effect:** correctness (the D18-permitted label for this finding only);
   occupancy rider.
-- **Effort:** trivial–small. **Savings:** recency gap 25 days → 0 (the post-split live
-  file — 1,972 lines / 187,813 B from the first retained entry's provenance marker,
-  `awk 'NR>=4093' | wc -l -c` — fits ONE default Read); beyond-window entry count
-  51 → 0.
+- **Effort:** trivial–small. **Savings:** recency gap 25 days → 0 (retained tail,
+  pre-header — 1,972 lines / 187,813 B from the first retained entry's provenance
+  marker, `awk 'NR>=4093' | wc -l -c`; shipped live file = 2,000 lines / 189,074 B
+  incl. the 28-line amended header — fits ONE default Read); beyond-window entry
+  count 51 → 0.
 - **Disposition:** **quick-win → §5 QW1** (Phase 2 of this run). Ledger-header
   amendment pre-declared in §4.
 
@@ -446,20 +436,12 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
   file reference drive.md; 4 suites pin the section heading's tokens).
 - **Savings estimate:** ~2–3k tok/leg for a narration-only trim of the NON-vetoed
   remainder (estimate, static proxy).
-- **Delta boundary (binding — veto carve-outs, §1.2; all locations re-derived as-of
-  phaseBaseSha via the pinned strings, §4.8):** the trim EXCLUDES (i) the `baseSha`
-  write-once prose at drive.md:500-504 (anchor "Record `baseSha` (write-once at
-  fresh-run setup)"; sibling: the harden-regress marker-placement prose at
-  drive-review.md:222-225, anchor "harden-regress self-identifying marker") — prose
-  trims VETOED at followups.md:833 (anchor "further prose trims are VETOED: the
-  wording is exact-string-pinned"; the pinning tests as-of phaseBaseSha:
-  test_state_json_shape.py:102 + test_checkpoint_contract.py:1483 — trimming reds
-  them), and (ii) the finalize-CONVERGED rule at drive.md:194-206 (anchor "all three
-  finalize-CONVERGED surfaces use the IDENTICAL criterion"), one of three surfaces
-  followups.md:320 requires kept IDENTICAL (anchor "D26 mandates the 3 surfaces be
-  IDENTICAL"). Bounded recommendation: **trim the section's narration EXCEPT the
-  pinned/vetoed passages; touching those is permissible only as a deliberate pin
-  migration paid inside the R5–R9 one-batch spec edit — never a standalone trim.**
+- **Delta boundary (binding):** the trim EXCLUDES the vetoed passages — (i) the
+  `baseSha` write-once prose at drive.md:500-504 (sibling: drive-review.md:222-225)
+  and (ii) the finalize-CONVERGED rule at drive.md:194-206 — carve-outs per §4.8.
+  Bounded recommendation: **trim the section's narration EXCEPT the pinned/vetoed
+  passages; touching those is permissible only as a deliberate pin migration paid
+  inside the R5–R9 one-batch spec edit — never a standalone trim.**
 - **Disposition:** plan item; **sequence with/after TODO's pending R5–R9 one-batch
   spec edit** so the pin-suite migration window is paid once (D11). Extension — delta
   only vs the known rebirth-prose item AND the two veto entries (§3 rows state the
@@ -467,11 +449,10 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
 
 **N4 — harness-runs retention is manual (report-only default)**
 
-- **Lens:** 1.4. **Evidence:** §1.4 — 278 MB corpus total (not all reclaimable);
-  `bin/drive-retention.sh` report-only without `--apply`; MEASURED eligibility via
-  the real classifier in report mode: 0 bytes eligible today in either tier (5
-  not-aged / 7 waiting / 1 inflight-open); tool-reclaimable universe = heavy logs
-  ~15.2 MiB + `wt/` worktrees ~12 MiB, gated quiet+done+≥14-day per run.
+- **Lens:** 1.4. **Evidence:** §1.4 — `bin/drive-retention.sh` is report-only
+  without `--apply`; residue shrinks only when a human runs it. Measured
+  eligibility and the tool's bounded reclaim universe: full measurement in §1.4;
+  figures under Savings below.
 - **Cost denomination:** cost only — disk bytes, zero tokens (static proxy
   denomination inapplicable; no window/quota component).
 - **Run-level effect:** cost only (plus corpus hygiene: bounded residue keeps the
@@ -479,12 +460,12 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
 - **Effort:** trivial–small (schedule a periodic report+notify, or a confirm-gated
   `--apply`).
 - **Savings estimate:** ~0 D10-unit tokens (denomination inapplicable). Disk,
-  measured: **0 B eligible today**; upper bound of what the tool can EVER reclaim at
-  the current corpus ≈ **27 MiB** (15.2 MiB heavy logs + 12 MiB worktrees) as runs
-  age past the quiet+done+≥14-day gates. The ~278 MB corpus total is a SIZE, not a
-  reclaimable figure — the bulk (per-run `tmp/` scratch + history
-  `.md`/`.json`/`.jsonl`) is outside both tiers by design (§1.4). The scheduling
-  value is BOUNDING future growth, not a one-time reclaim.
+  measured: **0 B eligible today** (5 not-aged / 7 waiting / 1 inflight-open);
+  upper bound of what the tool can EVER reclaim at the current corpus ≈ **27 MiB**
+  (15.2 MiB heavy logs + 12 MiB `wt/` worktrees) as runs age past the
+  quiet+done+≥14-day gates. The ~278 MB corpus total is a SIZE, not a reclaimable
+  figure — the bulk is outside both tiers by design (§1.4). The scheduling value is
+  BOUNDING future growth, not a one-time reclaim.
 - **Disposition:** external-surface plan item (machine config — no repo diff). The
   retention CONTRACT's 3-layer drift is a KNOWN surface (§3) — N4 deliberately scopes
   to scheduling the existing tool only. Constraint if scheduling is ever
@@ -558,7 +539,7 @@ A candidate colliding with a DONE item is excluded as already-fixed.
 | CLAUDE.md prose edits (N1(c)'s trim surface) | **C4** — TODO.md:510-513, marked DONE (anchor "Prose sweep: \"Claude Code cannot self-initiate a fresh session\" … is stale"); open [V] items TODO.md:126-129 (anchor "both coordinator surfaces claim harden \"vetoes edits that would drop a criterion's coverage\"" — CLAUDE.md:127 half) and TODO.md:229-231 (anchor "the state.json run-model enumeration omits `task`, `baseSha`") | **extension — delta only**: N1(c) is size-only; it must not regress C4's landed capability-conditional rewording (already-fixed) and must not preempt or drop the prose the two OPEN [V] fixes target (semantic fixes owned by those items; the :229 item may also extend test_state_json_shape.py — the same pin suite as N3's carve-out) |
 | in-section drive.md rule edits (N3's trim surface) | **C9** — TODO.md:522-527, anchor "in-session stranded-inflight-marker rule … keep the test_checkpoint_contract.py pinned phrases" (the item's own "drive.md:437" is its historical cite; the rule lives in § Durable checkpoint contract with in-section cross-references, e.g. drive.md:364/:408 as-of phaseBaseSha); **C11** — TODO.md:549-552, anchor "Demote the per-leg" … "re-arm choreography … same AC7/AC12-pinned clauses in test_rebirth_handshake.py" (the ceremony's command token itself is deliberately not quoted here — a live-surface contract pin bans it from docs/) | **extension — delta only**: N3 is narration-size ONLY — the stranded-marker rule text + its cross-references (C9's surface, checkpoint-contract-pinned) and C11's ceremony clauses (rebirth-handshake-pinned) are EXCLUDED from the trim; semantic changes there are those items' own work |
 | per-dispatch cost levers (N1's problem space) | **C12** — TODO.md:568-572, anchor "Per-role model/effort hints … as capability-class prose" | disclosed as complementary, NOT excluded: same per-dispatch quota pool, DISJOINT levers/surfaces (C12 = dispatch model/effort routing; N1 = prefix content diet); neither re-identifies the other |
-| decisions.md same-file touch (N2/QW1's split surface) | open [V] item TODO.md:163-168, anchor "the binding SHIP ACTION (D-coord-2) to append a premise-stale annotation … log the missed ship action in decisions.md" | disclosed, no conflict: the item APPENDS (live-tail append + a followups.md:262 annotation), which QW1's split preserves; one interaction — if an annotation ever targets a pre-2026-07 decisions.md entry, it lands in the archive file per the amended header convention (QW1 §5) |
+| decisions.md same-file touch (N2/QW1's split surface) | open [V] item TODO.md:163-168, anchor "the binding SHIP ACTION (D-coord-2) to append a premise-stale annotation … log the missed ship action in decisions.md" | disclosed, no conflict: the item APPENDS (live-tail append + a followups.md:262 annotation), which QW1's split preserves; one interaction — if an annotation/supersede ever targets a pre-2026-07 decisions.md entry, it is APPENDED to the LIVE `.harness/decisions.md` as a new entry referencing the archive location (`.harness/archive/decisions-pre-2026-07.md:<line>`); the archive is APPEND-FROZEN (its preamble wins) and is never edited |
 
 **Overlap matrix — completeness note (2026-07-12):** each of {N1, N2, N3, N4, QW1}
 was checked pairwise against EVERY entry of the dedup surfaces: all 12 C-items
@@ -656,12 +637,12 @@ Phase 2 must not invent more.
     measurement; later at ship).
   - *entries beyond the window* —
     `awk 'NR>2000' .harness/decisions.md | grep -cE '^### '`: before 51 → after 0
-    (post-split live file = 1,972 lines — from the retained provenance marker at
-    line 4093 — plus only the live-file share of the new lines: the 2–3-line index
-    note + amended header rule, ≤10 lines; the archive file's header is not in the
-    live file — comfortably within one default Read at split time; ship-time
-    appends grow it later, and the `^### `-date metric above stays the binding
-    check either way).
+    (shipped live file = 2,000 lines / 189,074 B: the 1,972-line / 187,813 B
+    retained tail — from the retained provenance marker at line 4093 — plus the
+    28-line amended header; the archive file's header is not in the live file —
+    one default Read serves the whole file at split time; ship-time appends grow
+    it later, and the `^### `-date metric above stays the binding check either
+    way).
 - **Risk:** exactly **7** in-repo surfaces reference the COMMITTED ledger —
   `grep -ln '\.harness/decisions\.md' tests/contracts/*.py test/*.test.sh bin/*.sh` →
   tests/contracts/{test_drive_base_preflight_wiring, test_drive_finalize_contract,

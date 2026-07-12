@@ -4,15 +4,11 @@ Architectural follow-ups deferred by /drive finalize passes.
 
 ## Repo-efficiency plan (new lenses) — from docs/efficiency-audit-2026-07-12-newlens.md (2026-07-12)
 
-**Problem:** token weight, not wall clock, is the unaudited cost — each subagent
-dispatch re-creates a ~27k-token uncached prefix (sampled median, newest 20 of the
-1,038 measured dispatch transcripts; ~48% of it the machine-global
-OPERATING/CLAUDE/MEMORY baseline), each /drive leg carries
-~30k tokens of drive.md spec, and the instructed task-start ledger read serves the
-oldest ~2,000 lines of `.harness/decisions.md` (a third by lines — 117 of 168
-entries; the 51 newest unread). Evidence,
-cost denominations, and ranking: the audit doc (findings N1–N4; cites there are as-of
-phaseBaseSha ce12c42, pre-insertion of this section).
+**Problem:** token weight, not wall clock, is the unaudited cost — per-dispatch
+uncached prefix re-creation, per-leg drive.md spec weight, and the stale task-start
+ledger read. Figures, evidence, cost denominations, and ranking: the audit doc
+(findings N1–N4; cites there are as-of phaseBaseSha ce12c42, pre-insertion of this
+section).
 
 - [x] **N2 → QW1 (Phase 2 of this run)** — `.harness/decisions.md` archival split per
   audit §5 QW1: fixes the bounded-read recency defect; amends the append-only header
@@ -34,23 +30,19 @@ phaseBaseSha ce12c42, pre-insertion of this section).
   pinned by contract suites → own token-sweep migration; sequencing vs the R5–R9
   batch below: INDEPENDENT (disjoint files/pins), may land in its own window. Veto
   carve-outs for (c): the finalize-CONVERGED gate rule at CLAUDE.md:134-141 (as-of
-  ce12c42) stays VERBATIM — one of three surfaces followups.md:320 requires kept
-  identical (audit §4.8) — and the trim must not regress C4's landed rewording or
-  preempt the open CLAUDE.md [V] fixes (audit §3 matrix).
+  ce12c42) stays VERBATIM — carve-outs per audit §4.8 — and the trim must not
+  regress C4's landed rewording or preempt the open CLAUDE.md [V] fixes (audit §3
+  matrix).
 - [ ] **N3** — drive.md § "Run setup & resume" narration trim (39% of the per-leg
   spec weight; audit §1.2/§2 N3). Spec-trim sequencing (binding): land WITH or AFTER
   the pending R5–R9 one-batch spec edit (§ "/drive efficiency plan R1–R9" below,
   global constraint 2) so the overlapping pin-suite migration is paid once. Delta
-  boundary (binding; locations as-of ce12c42, re-derived from the pinned strings —
-  the veto entries' own line numbers are historical, audit §4.8): in-file narration
-  ONLY — beyond followups' known cross-file rebirth-prose item (audit §3 row) AND
-  EXCLUDING the veto-covered passages: the `baseSha` write-once prose at
-  drive.md:500-504 (+ sibling harden-regress marker prose at drive-review.md:222-225),
-  whose prose trims are VETOED at followups.md:833 (exact-string-pinned by
-  tests/contracts/test_state_json_shape.py:102 + test_checkpoint_contract.py:1483),
-  and the finalize-CONVERGED tri-surface rule at drive.md:194-206 (followups.md:320).
-  Trim only outside those pins, or pay their migration deliberately INSIDE the R5–R9
-  batch — never as a standalone trim (audit §2 N3 delta boundary, §4.8).
+  boundary (binding; locations as-of ce12c42): in-file narration ONLY — beyond
+  followups' known cross-file rebirth-prose item (audit §3 row) AND EXCLUDING the
+  veto-covered passages at drive.md:500-504 (+ sibling drive-review.md:222-225) and
+  drive.md:194-206 — carve-outs per audit §4.8. Trim only outside those pins, or pay
+  their migration deliberately INSIDE the R5–R9 batch — never as a standalone trim
+  (audit §2 N3 delta boundary, §4.8).
 - [ ] **CI workflow `concurrency:` cancel-in-progress** (demoted from quick-win by D8;
   audit §1.3). Full constraint list (binding): per-ref group key; cancellation on
   PR events ONLY (never push-to-main); validate with `actionlint` PLUS one observed
@@ -65,13 +57,12 @@ phaseBaseSha ce12c42, pre-insertion of this section).
   it weakens the gate; ceiling ≈ 1 min saved. LOW priority.
 - [ ] **N4** — harness-runs retention scheduling — **external** (machine config; no
   repo diff): periodic `bin/drive-retention.sh` report + notify (or confirm-gated
-  `--apply`); 278 MB corpus at audit time, but the TOOL-reclaimable universe is
-  bounded — ~27 MiB (heavy logs + `wt/` worktrees), 0 B eligible on the audit-day
-  classifier run; the value is bounding future growth, not a one-time reclaim (audit
-  §1.4/§2 N4). The retention contract's 3-layer drift stays a separate known
-  follow-up (audit §3). If `--apply` is ever automated/unattended, the per-run
-  advisory lock pre-declared at followups.md:408 (as-of ce12c42) is mandatory; the
-  confirm-gated posture needs no lock.
+  `--apply`); the tool-reclaimable universe is bounded and the value is bounding
+  future growth, not a one-time reclaim — measurement and figures in audit §1.4/§2
+  N4. The retention contract's 3-layer drift stays a separate known follow-up
+  (audit §3). If `--apply` is ever automated/unattended, the per-run advisory lock
+  pre-declared at followups.md:408 (as-of ce12c42) is mandatory; the confirm-gated
+  posture needs no lock.
 
 ## Whole-repo audit — bugs / logic / inconsistency / slop (2026-07-09)
 

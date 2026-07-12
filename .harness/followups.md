@@ -710,7 +710,7 @@ correctness bug on an advisory pass).
 - [P2] docs/trellis-analysis.md:330 still calls `/drive-retro` "v1 manual … automatic wiring … a deferred follow-on" — now FALSE after this run wired retro into drive.md Completion. Unpinned, outside the four owned files. Refresh in a separate doc-consistency pass (finalize may route to TODO.md).
 
 ## AC13 decisions.md ledger internal-consistency (phase-1 review P2, for finalize sweep)
-- [P2] .harness/decisions.md:3198,:3205 still cite `REVIEWED_OVERAGE_LINES = 183` / `n==183` (harden-2 historical entries), while this run's entry (:3180) and the live pin moved to 184. Append-only ledger, so no history rewrite — add a one-line supersede pointer on the AC13 entries (→ 184; see the SLOC-overage update) during the finalize consistency sweep so a top-down reader isn't misled.
+- [P2] .harness/archive/decisions-pre-2026-07.md:3885,:3892 still cite `REVIEWED_OVERAGE_LINES = 183` / `n==183` (the harden-2 r2 guard entry and the finalize-r2 overrule — historical, archived by the QW1 split), while the SLOC-overage update line (archive :3867, under the `### drive-retro SLOC overage` heading at :3852) and the live pin moved to 184. The archive is APPEND-FROZEN and the live ledger append-only, so no history rewrite — instead APPEND a NEW supersede-pointer entry to the LIVE `.harness/decisions.md` referencing the AC13 guard entries at `.harness/archive/decisions-pre-2026-07.md:3884-3885` (→ 184; see the SLOC-overage update at archive :3867) so a top-down reader isn't misled.
 
 ## slop (deferred to finalize)
 .claude/commands/drive.md:1203-1215 — hook-protected-window explanation restated ~3x in Completion (DRY candidate; some redundancy is deliberate P2-softening nuance)
@@ -718,12 +718,12 @@ correctness bug on an advisory pass).
 .claude/commands/drive.md:1208 — (codex) slop note in Completion gate region
 tests/contracts/test_drive_retro_contract.py:71 — (codex) slop note
 tests/contracts/test_drive_retro_contract.py:91 — (codex) slop note
-.harness/decisions.md:3180 — (codex) slop note in SLOC ledger line
+.harness/archive/decisions-pre-2026-07.md:3867 — (codex) slop note in SLOC ledger line
 tests/contracts/test_drive_retro_contract.py:87 — verbose mutation-explainer comment block (codex harden r2)
 tests/contracts/test_drive_retro_contract.py:114 — verbose mutation-explainer comment block (codex harden r2)
 
 ## AC9 ledger-update entry unpinned (harden r2 P2)
-- [P2] .harness/decisions.md:3180 `drive-retro SLOC overage` update not asserted by a test; the exact `REVIEWED_OVERAGE_LINES==184` pin forces re-review on drift, and a decisions.md substring pin is CI-unreachable/vacuous-post-promotion (prior decision 3198-3200). Left unpinned by design.
+- [P2] .harness/archive/decisions-pre-2026-07.md:3867 `drive-retro SLOC overage` update not asserted by a test; the exact `REVIEWED_OVERAGE_LINES==184` pin forces re-review on drift, and a decisions.md substring pin is CI-unreachable/vacuous-post-promotion (prior decision, archive :3885-3887). Left unpinned by design.
 
 ## Contract-pin brittleness to rewording (harden-regress r2 codex P2)
 - [P2] The AC5/AC6 (and role-paragraph) substring pins in tests/contracts/test_drive_retro_contract.py red on benign semantic rewording, not just phrase removal. By-design for string-pin contracts on load-bearing status claims (a reword should trigger re-review), but noted as a known brittleness property of the pin battery.
