@@ -23,18 +23,21 @@ phaseBaseSha ce12c42, pre-insertion of this section).
   (OQ1/D13)**, user-voice; (c) CLAUDE.md trim — repo diff, strings pinned by contract
   suites → own token-sweep migration; sequencing vs the R5–R9 batch below:
   INDEPENDENT (disjoint files/pins), may land in its own window. Veto carve-out for
-  (c): the finalize-CONVERGED gate rule at CLAUDE.md ~L131 stays VERBATIM — one of
-  three surfaces followups.md:320 (as-of ce12c42) requires kept identical (audit §4.8).
+  (c): the finalize-CONVERGED gate rule at CLAUDE.md:134-141 (as-of ce12c42) stays
+  VERBATIM — one of three surfaces followups.md:320 requires kept identical (audit
+  §4.8).
 - [ ] **N3** — drive.md § "Run setup & resume" narration trim (39% of the per-leg
   spec weight; audit §1.2/§2 N3). Spec-trim sequencing (binding): land WITH or AFTER
   the pending R5–R9 one-batch spec edit (§ "/drive efficiency plan R1–R9" below,
   global constraint 2) so the overlapping pin-suite migration is paid once. Delta
-  boundary (binding): in-file narration ONLY — beyond followups' known cross-file
-  rebirth-prose item (audit §3 row) AND EXCLUDING the veto-covered passages:
-  drive.md:281 (+ sibling drive-review.md:139), whose prose trims are VETOED at
-  followups.md:833 (as-of ce12c42; exact-string-pinned by
-  tests/contracts/test_checkpoint_contract.py:1481 + test_state_json_shape.py:102),
-  and the finalize-CONVERGED tri-surface rule at drive.md ~L113 (followups.md:320).
+  boundary (binding; locations as-of ce12c42, re-derived from the pinned strings —
+  the veto entries' own line numbers are historical, audit §4.8): in-file narration
+  ONLY — beyond followups' known cross-file rebirth-prose item (audit §3 row) AND
+  EXCLUDING the veto-covered passages: the `baseSha` write-once prose at
+  drive.md:496-504 (+ sibling harden-regress marker prose at drive-review.md:222-225),
+  whose prose trims are VETOED at followups.md:833 (exact-string-pinned by
+  tests/contracts/test_state_json_shape.py:102 + test_checkpoint_contract.py:1483),
+  and the finalize-CONVERGED tri-surface rule at drive.md:194-206 (followups.md:320).
   Trim only outside those pins, or pay their migration deliberately INSIDE the R5–R9
   batch — never as a standalone trim (audit §2 N3 delta boundary, §4.8).
 - [ ] **CI workflow `concurrency:` cancel-in-progress** (demoted from quick-win by D8;

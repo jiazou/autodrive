@@ -302,18 +302,24 @@ measured pin-migration cost (`grep -l '<tokens>' tests/contracts/*.py test/*.tes
   **4 suites**; `checkpoint-complete.marker` tokens by **3**; run-graph tokens by
   **3**; drive.md is referenced by **10 pytest contract files + 1 bash suite**
   overall. Any trim is a token-sweep migration — never a quick win. **Vetoed passages
-  INSIDE this section (binding carve-outs for N3):** (i) drive.md:281 — prose trims
-  there are VETOED at followups.md:833 (anchor "further prose trims are VETOED: the
+  INSIDE this section (binding carve-outs for N3; locations re-derived as-of
+  phaseBaseSha via the pinned strings — see §4.8 on the veto entries' own historical
+  numbers):** (i) the `baseSha` write-once prose at drive.md:496-504 (anchor "Record
+  `baseSha` (write-once at fresh-run setup)" / "NEVER re-derived on resume") — prose
+  trims VETOED at followups.md:833 (anchor "further prose trims are VETOED: the
   wording is exact-string-pinned by tests/contracts/test_checkpoint_contract.py:1481
-  and test_state_json_shape.py:102; trimming reds those pins"; the same entry also
-  vetoes drive-review.md:139, outside this section); (ii) drive.md ~L113 — the
-  finalize-CONVERGED rule, one of THREE surfaces (with drive-ship.md ~L17,
-  CLAUDE.md ~L131) that followups.md:320 (anchor "[P2 slop, VETOED]
-  finalize-CONVERGED rule appears in 3 surfaces … D26 mandates the 3 surfaces be
-  IDENTICAL") requires kept identical — collapse/trim vetoed. New delta only
-  (finding N3): the *concentration measurement* over the NON-vetoed remainder; the
-  cross-file rebirth-prose portion of this section is a KNOWN surface (§3 row,
-  followups.md:303).
+  and test_state_json_shape.py:102; trimming reds those pins"; the pinning tests
+  as-of phaseBaseSha: test_state_json_shape.py:102 and
+  test_checkpoint_contract.py:1483); the same veto covers the harden-regress
+  marker-placement prose at drive-review.md:222-225 (anchor "harden-regress
+  self-identifying marker", outside this section); (ii) the finalize-CONVERGED rule
+  at drive.md:194-206 (anchor "all three finalize-CONVERGED surfaces use the
+  IDENTICAL criterion"), one of THREE surfaces (drive-ship.md:17, CLAUDE.md:134-141)
+  that followups.md:320 (anchor "[P2 slop, VETOED] finalize-CONVERGED rule appears
+  in 3 surfaces … D26 mandates the 3 surfaces be IDENTICAL") requires kept
+  identical — collapse/trim vetoed. New delta only (finding N3): the *concentration
+  measurement* over the NON-vetoed remainder; the cross-file rebirth-prose portion
+  of this section is a KNOWN surface (§3 row, followups.md:303).
 - Known-item exclusions (§3): finalize "Phase-2 wiring obligations" stale section
   (TODO.md:211); cross-file rebirth-prose duplication (followups.md:303); retention
   3-layer authority drift (TODO.md:590).
@@ -401,7 +407,8 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
   OQ1/D13**); plus a repo plan item: CLAUDE.md trim (12.7 kB; strings pinned by
   contract suites → its own token-sweep migration, independent of the R5–R9 batch —
   disjoint files/pins). Veto carve-out: the trim must leave the finalize-CONVERGED
-  gate rule at CLAUDE.md ~L131 VERBATIM — it is one of three surfaces
+  gate rule at CLAUDE.md:134-141 VERBATIM (re-derived as-of phaseBaseSha; the veto
+  entry's own "~L131" is its historical cite — §4.8) — one of three surfaces
   followups.md:320 requires kept identical (anchor "D26 mandates the 3 surfaces be
   IDENTICAL"). Never quick-wins (D5).
 
@@ -430,16 +437,20 @@ Ordered by savings/effort in the D10 units. Every finding is new (N-namespace);
   file reference drive.md; 4 suites pin the section heading's tokens).
 - **Savings estimate:** ~2–3k tok/leg for a narration-only trim of the NON-vetoed
   remainder (estimate, static proxy).
-- **Delta boundary (binding — veto carve-outs, §1.2):** the trim EXCLUDES
-  (i) drive.md:281 (and its sibling drive-review.md:139) — prose trims VETOED at
-  followups.md:833 (anchor "further prose trims are VETOED: the wording is
-  exact-string-pinned"; pins: tests/contracts/test_checkpoint_contract.py:1481 +
-  test_state_json_shape.py:102 — trimming reds them), and (ii) the
-  finalize-CONVERGED rule at drive.md ~L113, one of three surfaces followups.md:320
-  requires kept IDENTICAL (anchor "D26 mandates the 3 surfaces be IDENTICAL").
-  Bounded recommendation: **trim the section's narration EXCEPT the pinned/vetoed
-  passages; touching those is permissible only as a deliberate pin migration paid
-  inside the R5–R9 one-batch spec edit — never a standalone trim.**
+- **Delta boundary (binding — veto carve-outs, §1.2; all locations re-derived as-of
+  phaseBaseSha via the pinned strings, §4.8):** the trim EXCLUDES (i) the `baseSha`
+  write-once prose at drive.md:496-504 (anchor "Record `baseSha` (write-once at
+  fresh-run setup)"; sibling: the harden-regress marker-placement prose at
+  drive-review.md:222-225, anchor "harden-regress self-identifying marker") — prose
+  trims VETOED at followups.md:833 (anchor "further prose trims are VETOED: the
+  wording is exact-string-pinned"; the pinning tests as-of phaseBaseSha:
+  test_state_json_shape.py:102 + test_checkpoint_contract.py:1483 — trimming reds
+  them), and (ii) the finalize-CONVERGED rule at drive.md:194-206 (anchor "all three
+  finalize-CONVERGED surfaces use the IDENTICAL criterion"), one of three surfaces
+  followups.md:320 requires kept IDENTICAL (anchor "D26 mandates the 3 surfaces be
+  IDENTICAL"). Bounded recommendation: **trim the section's narration EXCEPT the
+  pinned/vetoed passages; touching those is permissible only as a deliberate pin
+  migration paid inside the R5–R9 one-batch spec edit — never a standalone trim.**
 - **Disposition:** plan item; **sequence with/after TODO's pending R5–R9 one-batch
   spec edit** so the pin-suite migration window is paid once (D11). Extension — delta
   only vs the known rebirth-prose item AND the two veto entries (§3 rows state the
@@ -526,7 +537,7 @@ A candidate colliding with a DONE item is excluded as already-fixed.
 |---|---|---|
 | finalize "Phase-2 wiring obligations" section is stale narration (lens 1.2: 3,161 B section) | TODO.md:211-214, anchor "describes long-shipped wiring … Rewrite present-tense (token-sweep pin migration)" | excluded |
 | cross-file rebirth prose duplication (drive.md I1 / checkpoint sections ↔ drive-plan.md / drive-review.md) | followups.md:303, anchor "[P3] Cross-file rebirth prose duplication … (~150-250): collapse into one authoritative section" | **extension — delta only**: N3 ranks ONLY the section-concentration delta (in-file setup/resume narration beyond the duplicated rebirth prose); the duplicated-prose portion stays excluded |
-| broad narration trim of drive.md § "Run setup & resume" (N3's unbounded first-draft form — the section CONTAINS veto-covered passages) | followups.md:833, anchor "further prose trims are VETOED: the wording is exact-string-pinned by tests/contracts/test_checkpoint_contract.py:1481 and test_state_json_shape.py:102" (covers drive.md:281, in-section, + drive-review.md:139); followups.md:320, anchor "[P2 slop, VETOED] finalize-CONVERGED rule appears in 3 surfaces … D26 mandates the 3 surfaces be IDENTICAL" (covers drive.md ~L113, in-section; also constrains N1's CLAUDE.md trim at ~L131) | **extension — delta only**: N3 is bounded to the NON-vetoed remainder of the section (delta boundary in §2 N3); the vetoed passages stay vetoed — touching them is only a deliberate pin migration inside the R5–R9 batch, never a standalone trim |
+| broad narration trim of drive.md § "Run setup & resume" (N3's unbounded first-draft form — the section CONTAINS veto-covered passages) | followups.md:833, anchor "further prose trims are VETOED: the wording is exact-string-pinned by tests/contracts/test_checkpoint_contract.py:1481 and test_state_json_shape.py:102" — protecting, as-of phaseBaseSha, the `baseSha` write-once prose at drive.md:496-504 (in-section) + the harden-regress marker prose at drive-review.md:222-225 (the entry's own :281/:139 are its historical cites — §4.8); followups.md:320, anchor "[P2 slop, VETOED] finalize-CONVERGED rule appears in 3 surfaces … D26 mandates the 3 surfaces be IDENTICAL" — protecting drive.md:194-206 (in-section), drive-ship.md:17, and CLAUDE.md:134-141 (also constrains N1's CLAUDE.md trim) | **extension — delta only**: N3 is bounded to the NON-vetoed remainder of the section (delta boundary in §2 N3); the vetoed passages stay vetoed — touching them is only a deliberate pin migration inside the R5–R9 batch, never a standalone trim |
 | retention contract expressed in three drifting authority layers | TODO.md:590-599, anchor "expressed in THREE authority layers" | excluded (N4 scopes to SCHEDULING the existing tool, not its contract) |
 | duplicated statusline/JSON window table (DRY candidate, hygiene lens) | TODO.md:87-101 (DONE; anchor "restored `3bf4866`'s ordered 1M-first window-match table") + TODO.md:617-621 (anchor "duplicated window table") / TODO.md:695-704 (anchor "TWO executable model tables") | excluded — already-fixed at the executable layer; the single-source design change is a known follow-up |
 | `.claude/settings.local.json` missing from committed .gitignore (hygiene-lens classic) | TODO.md:158-162, anchor "`.gitignore:19` — `.claude/settings.local.json` is excluded only by machine-local ignores" | excluded |
@@ -566,18 +577,30 @@ A candidate colliding with a DONE item is excluded as already-fixed.
    discipline — a finding refuted with executed evidence in the faithful env is
    overruled WITH that evidence, never silently dropped.
 8. **Vetoed-trim interaction (pre-declared for N3/N1).** followups.md carries
-   veto/declined records that INTERSECT the spec-trim findings: followups.md:833
-   vetoes prose trims at drive.md:281 + drive-review.md:139 (exact-string-pinned by
-   tests/contracts/test_checkpoint_contract.py:1481 + test_state_json_shape.py:102),
-   and followups.md:320 vetoes collapsing/trimming the finalize-CONVERGED rule
-   (drive.md ~L113 / drive-ship.md ~L17 / CLAUDE.md ~L131 — kept IDENTICAL per D26).
-   N3 and N1's CLAUDE.md item are bounded to EXCLUDE those passages (§2 delta
-   boundaries; §3 row). Sweep result: the remaining veto/declined followups entries
-   (:312 harden vestigial Veto wording, :427 conformance banner, :541 MCP host-blind
-   limitation, :832 retained rationale blocks, :838 AppliedEdits literal, :901
-   combine-prose de-dup across the three review specs) touch surfaces NO ranked
-   finding or TODO item recommends changing — N2/QW1 (ledger split) and N4
-   (retention scheduling) collide with none of them.
+   veto/declined records that INTERSECT the spec-trim findings. **Historical-cite
+   rule:** a followups entry's own line numbers (`:281`, `:139`, `~L113`, `~L131`,
+   `:1481`) are that entry's cites from the tree it was written against — NOT
+   as-of-phaseBaseSha locations. This doc's carve-outs re-derive every location at
+   phaseBaseSha via the PINNED STRINGS: followups.md:833 vetoes prose trims
+   protecting the `baseSha` write-once prose at drive.md:496-504 (anchor "Record
+   `baseSha` (write-once at fresh-run setup)") + the harden-regress marker prose at
+   drive-review.md:222-225 (anchor "harden-regress self-identifying marker"),
+   pinned by test_state_json_shape.py:102 + test_checkpoint_contract.py:1483 (the
+   entry's :1481 is the adjacent comment block); followups.md:320 vetoes
+   collapsing/trimming the finalize-CONVERGED rule across drive.md:194-206 (anchor
+   "all three finalize-CONVERGED surfaces use the IDENTICAL criterion") /
+   drive-ship.md:17 / CLAUDE.md:134-141 — kept IDENTICAL per D26. N3 and N1's
+   CLAUDE.md item are bounded to EXCLUDE those passages (§2 delta boundaries; §3
+   row). Sweep result (token sweep `grep -in 'VETOED\|declined\|RETAINED\|refuted'`
+   plus the loose veto-family remainder): the other veto/declined entries — :312
+   harden vestigial Veto wording, :427 conformance banner, :542 MCP host-blind
+   limitation (the entry line; :541 is its section heading), :832 retained
+   rationale blocks, :838 AppliedEdits literal, :901 combine-prose de-dup across
+   the three review specs, and the loose-family :58 (DECLINED skip-loop factor),
+   :555 (not-applied trim), :652 (retro bullet-prose note), :667 (DEFERRED
+   micro-opt), :733 (NOT-applied per r3 mandate), :967 (adjudicated de-slop
+   heading) — touch surfaces NO ranked finding or TODO item recommends changing;
+   N2/QW1 (ledger split) and N4 (retention scheduling) collide with none of them.
 
 ## 5. Quick-win shortlist (Phase-2 input)
 
