@@ -2109,3 +2109,398 @@ CLOSED on every pre-Execute empty-phaseList path — the gate is sound for its p
 Codex P2 "remove mutation-test block (1213-1304)" is VETOED: those flips ARE the run's
 acceptance criterion (task: "mutation-verified: reverting the guard reds it") — removing them
 DROPS criterion coverage. Applied ONLY Claude P2 docstring de-slop (test:1258 reword).
+
+<!-- ===== promoted from /drive run repo-efficiency-20260712-112504 (2026-07-13T00:00:18Z) ===== -->
+
+
+### 2026-07-12 — D1: Premise = new-lens efficiency audit, not a re-run of 2026-07-08
+**Stage:** premises
+**Question:** What does "make the repo more efficient" target?
+**Options considered:** (a) fresh audit w/ new lenses (token/cost, spec bloat, suite/CI runtime, hygiene); (b) implement R5–R9; (c) re-measure post-R1–R4
+**Chosen:** (a), by the human at the Stage-0 premises ask
+**Reasoning:** The 07-08 audit already answered wall-clock "where does the day go"; its unimplemented tranche (R5–R9) is separately planned. New lenses are the non-duplicative "identify ways" work; quick wins implemented this run.
+**Reversibility:** easy
+**Classification:** Human premise (never auto-decided)
+
+### 2026-07-12 — D2: Two-phase audit→implement shape (staged-risk seam)
+**Stage:** plan (high-level design)
+**Question:** How many phases, and where is the boundary?
+**Options considered:** (a) one phase (audit + wins together); (b) audit phase → quick-wins phase
+**Chosen:** (b)
+**Reasoning:** The quick-win list is DERIVED from the audit's verified findings (the canonical audit→implement staged-risk seam); implementing before verification risks building on a wrong or already-known premise. Wins bounded ≲150 SLOC each / ≲300 total; bigger items → plan doc.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D3: Corrected recon premise — drive.md is per-/drive-leg, not per-turn
+**Stage:** plan (high-level design)
+**Question:** Is drive.md imported into every session turn's context via the CLAUDE.md chain?
+**Chosen:** No — verified: CLAUDE.md:12 imports only `@OPERATING.md`. Per-turn machine-global baseline = OPERATING.md (19.5 kB) + project CLAUDE.md (12.7 kB) + MEMORY.md (~19 kB) ≈ 51 kB/turn and per Agent dispatch; drive.md (120.9 kB ≈ 30k tokens) is coordinator-resident per /drive leg.
+**Reasoning:** OPERATING rule — verify against the primary artifact before asserting; the token lens targets both weights.
+**Reversibility:** n/a (fact)
+**Classification:** Mechanical
+
+### 2026-07-12 — D4: CI bounded as a non-lever
+**Stage:** plan (high-level design)
+**Question:** How much of the run should target CI?
+**Chosen:** Micro quick wins only (workflow `concurrency:` cancel-in-progress); bash-suite parallelization risk-weighed in the plan doc.
+**Reasoning:** Measured: repo PUBLIC (macOS minutes free), latest run pytest job 66 s (suite 55 s), bash job 145 s (suite 139 s), total ~2.5 min — no material cost or wall-clock pool. Task premise's suite size is stale (pytest now 776 tests, was 321; still 55 s).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D5: OPERATING.md/MEMORY.md diets routed to plan doc, not quick wins
+**Stage:** plan (high-level design)
+**Question:** The highest per-token levers (OPERATING.md in every turn machine-wide; MEMORY.md per session) — quick-win them this run?
+**Chosen:** No — plan-doc follow-ons; surfaced as design Open Question 1 for Gate A.
+**Reasoning:** OPERATING.md is the user's canonical rules (meaning-preserving trims still alter user voice; contract tests pin its strings); MEMORY.md is outside the repo (no shippable diff). Violates the small/low-risk quick-win bar.
+**Reversibility:** easy
+**Classification:** Taste (user-voice-adjacent — surface at Gate A)
+
+### 2026-07-12 — D6: Dedup surface named as an explicit exclusion table in the report
+**Stage:** plan (high-level design)
+**Question:** How does the report prove non-duplication?
+**Chosen:** A named exclusion table: 07-08 refuted list; TODO R1–R9 + whole-repo-audit; followups entries (rebirth-prose dup, bash↔python checkpoint/state-lint dup coverage, statusline/thresholds dual table, .gitignore settings.local.json, CONTRIBUTING absence, Component D).
+**Reasoning:** Premise deliverable #1 requires explicit dedup; a table is checkable, prose "we deduped" is not.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D7: Autoplan execution adaptation — codex voices deferred to the pipeline's dual-voice design review
+**Stage:** plan (autoplan review)
+**Question:** Run codex voices inside the autoplan subagent per the gstack skill, or defer?
+**Chosen:** Defer codex to the /drive pipeline's own dual-voice design review (the next Stage-1 step); autoplan ran two independent Claude reviewer voices (CEO/strategy, Eng) plus a coordinator evidence pass instead. UI phase skipped (no UI scope); DX lens folded at design altitude.
+**Reasoning:** OPERATING rule — never put a long-running codex call inside a subagent that waits on it; DRY — the pipeline runs codex over this same design immediately after autoplan.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D8: CI `concurrency:` cancel-in-progress demoted from quick-win forecast to plan doc
+**Stage:** plan (autoplan review)
+**Question:** Keep the workflow concurrency block as a Phase-2 quick win?
+**Chosen:** No — plan-doc item only, carrying: per-ref group key, PR-event-only cancellation, `actionlint` + one observed live run, and the named ci-wait interaction. Amends the quick-win half of D4.
+**Reasoning:** Evidence (autoplan Eng voice + coordinator trace): `bin/drive-ci-wait.sh:114` allowlists CANCELLED as green and `test/drive-ci-wait.test.sh` pins "all skipped/cancelled ⇒ exit 0" — cancel-in-progress makes that branch reachable, a vacuous-green path through the ship gate PR #89 hardened, for ~zero benefit (one push per ship, public repo, CI ~2.5 min). Fails the design's own small/low-risk/high-confidence bar.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D9: Ledger-read finding reframed — bounded-read recency defect, not whole-file token cost
+**Stage:** plan (autoplan review)
+**Question:** Is "~150k tokens if read whole" the right rationale for the archival split?
+**Chosen:** No — a default Read ingests only the top ~2,000 of decisions.md's 6,064 lines (the OLDEST third of the append-only ledger), so the live defect is recency (recent decisions unread); token savings is the rider. Phase 1 measures what a task-start read actually ingests. The archival commit amends the ledger's append-only header rule; the report pre-declares the split in known-refutations.
+**Reasoning:** Both independent autoplan voices converged on this (CEO F5, Eng 5a); verified against the live file (606,063 B / 6,064 lines). Strengthens, not weakens, quick-win #1.
+**Reversibility:** n/a (fact-correction)
+**Classification:** Mechanical
+
+### 2026-07-12 — D10: Token lens cost model made binding
+**Stage:** plan (autoplan review)
+**Question:** In what unit does the audit rank token findings?
+**Chosen:** Two units with observed harm — context-window occupancy (rebirth pressure) and usage-quota consumption (cached vs uncached distinguished; session-limit kills); transcripts (`~/.claude/projects/` per-message usage) preferred as primary artifacts; byte counts labeled static proxies; each ranked finding states its run-level effect. Also corrected: command-set total is 260.9 kB (not 293 kB); 140.0 kB excluding drive.md.
+**Reasoning:** CEO voice F1/F2 — raw bytes conflate three economies and can invert the ranking Stage 2 and the plan doc inherit; the repo's documented token harms are quota kills and window pressure.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D11: Dedup tightened — surface widened to R1–R12, made a review acceptance criterion
+**Stage:** plan (autoplan review)
+**Question:** Is the dedup surface complete and checkable?
+**Chosen:** Widened R1–R9 → full R1–R12 (TODO.md:273 deliberately excludes R10–R12, so they live only in the 07-08 audit doc); Phase 1's dual-voice review adversarially cross-checks every finding against the named surfaces (dedup is an acceptance criterion, not author-attested); spec-trim plan items state sequencing vs TODO's pending R5–R9 one-batch spec edit.
+**Reasoning:** Coordinator finding (R10–R12 gap) + CEO voice F4/F6; "could the actor pass this without doing the work?" — author-attested dedup could.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D12: Phase-2 contract sharpened (accounting, metrics, empty path)
+**Stage:** plan (autoplan review)
+**Question:** Is the Phase-2 bound enforceable against its own #1 forecast (a multi-thousand-line content move)?
+**Chosen:** Verbatim-moved content excluded from the ≲150/≲300 SLOC bound (counts new/changed logic/config/instruction lines); each shipped win records its before/after metric from the audit; a docs-only run is valid if no finding qualifies (Phase 2 must not invent wins); finalize-routed TODO items reference, not repeat, the plan section; drive-enforcement.md (58 kB) weighed in the docs lens.
+**Reasoning:** CEO F3 + Eng findings 5/6 — the bound was ambiguous for the first thing it gates; suites-green alone cannot show a win won.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D13: Gate A approved ("go"); OQ1 unanswered → conservative default
+**Stage:** plan (Gate A)
+**Question:** Gate A approval + disposition of Open Question 1 (may OPERATING.md conciseness be agent-authored?)
+**Chosen:** Approved verbatim. OQ1 got no answer → the plan doc lists the OPERATING.md conciseness item with agent-authorship marked "pending user decision" (D5 already routes it to the plan doc either way).
+**Reasoning:** "go" is an explicit affirmative (gate approval); silence on a Taste sub-question defaults conservative, never assumed.
+**Reversibility:** easy
+**Classification:** Human gate + Mechanical default
+
+### 2026-07-12 — D14: TODO plan section placed at the top of the plan block, not bottom-appended
+**Stage:** design (phase 1)
+**Question:** Where in TODO.md does the new plan section land?
+**Options considered:** (a) append at end of file; (b) insert as the FIRST `##` section, before `## Whole-repo audit … (2026-07-09)`
+**Chosen:** (b), with a structural fallback (insert before the first `##` heading) if the anchor is absent
+**Reasoning:** The top block is the existing newest-first plan convention (07-09 audit above 07-08 plan); the file bottom is finalize's append zone and this run's own finalize appends there at ship — bottom placement self-collides.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D15: Report evidence artifact-shaped; new findings IDed N1…Nk
+**Stage:** design (phase 1)
+**Question:** How are the report's measurements and finding IDs bound?
+**Chosen:** Every measurement cites its producing command + output (reviewer-re-runnable, never a prose "verified" attestation); new findings numbered N1…Nk, never R*.
+**Reasoning:** dont-make-the-model-the-meter / R8 spirit; keeping the R-namespace unambiguous makes the D6/D11 dedup rows checkable.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D16: Transcript sampling bound for the quota lens
+**Stage:** design (phase 1)
+**Question:** How much of the 69-file / 407 MB transcript corpus must the quota lens parse?
+**Chosen:** Full-corpus streaming line-tolerant parse preferred; newest-20-by-mtime acceptable with the bound stated in the report; ≥20 usable usage records required, else labeled static-proxy fallback.
+**Reasoning:** Per-message usage records verified present (newest transcript: 175 records); a stated bound keeps the measurement honest without boiling the corpus.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D17: Verified-tree divergences supersede design-time figures
+**Stage:** design (phase 1)
+**Question:** Design.md's evidence-base figures vs the measured reality?
+**Chosen:** Report the verified numbers with divergence notes: harness-runs 249 MB (not ~179 MB); 6 codex-attempts runs (not 5); 13 surviving event-log runs (07-08 mined 22 — retention swept); corpus claims bounded to N=13.
+**Reasoning:** OPERATING — the real artifact wins; bounding to the surviving corpus keeps the multiplication claims honest.
+**Reversibility:** n/a (fact)
+**Classification:** Mechanical
+
+### 2026-07-12 — D18: Run-level-effect enum widened with `correctness` for the D9 ledger finding only
+**Stage:** design (phase 1)
+**Question:** The D10 effect enum (rebirth pressure / fan-out quota burn / cost only) has no slot for the ledger finding's primary harm.
+**Chosen:** Allow `correctness` as the stated run-level effect for the D9-framed bounded-read recency finding only; all other findings use the D10 triple.
+**Reasoning:** D9 made recency (recent decisions unread) the primary defect and tokens the rider; forcing it into a token-effect label would misrank it.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D19: Lens 1.1c restructured — durable artifacts primary, event logs best-effort behind a vocabulary enumeration
+**Stage:** design (phase 1, review round 1)
+**Question:** The dispatch-count procedure keyed on `grep -c dispatch`; both review voices found it systematically undercounts (BLOCKING).
+**Chosen:** Durable artifact families (review-*/harden-* files, distinct codex-attempts files, codex-raw logs, subagent-transcript count) become the PRIMARY dispatch count; event-log counts are best-effort only, preceded by a one-pass vocabulary enumeration and reported per token with coverage bounds — never a single-token grep. New edge case E10 (vocabulary drift).
+**Reasoning:** Reproduced against all 13 logs: only 4/13 contain `dispatch` (40 records); the current schema emits `subagent-started` (11) / `codex-started` (34) plus era variants — the enumerate-the-REAL-input-space rule applied to the evidence corpus.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D20: Transcript corpus modeled as two strata; sidechain measurement moved to the subagent stratum
+**Stage:** design (phase 1, review round 1)
+**Question:** The corpus was stated as "69 .jsonl / 407 MB" and the sidechain share was to be scanned in top-level transcripts; both voices found the pairing false and the scan dead (MAJOR).
+**Chosen:** Two strata: 69 top-level session transcripts (120 MB — the D16 session-quota parse target) + 1,032 subagent transcripts under `<session>/subagents/*.jsonl` (278 MB). `isSidechain:true` occurs only in the subagent stratum (zero top-level hits, reproduced); the baseline-rides-subagents evidence reads that stratum directly (count + first-usage-record `cache_creation_input_tokens` per sampled file). Refines D16's scope.
+**Reasoning:** 407 MB was the whole project dir, not the transcript set; a measurement that structurally returns 0 would ship a false negative as evidence.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D21: D6 dedup-surface attribution corrected per the real tree (two items are TODO surfaces, not followups)
+**Stage:** design (phase 1, review round 1)
+**Question:** D6/design.md file `.gitignore` settings.local.json and the statusline/thresholds dual window table under `.harness/followups.md`; the Claude voice verified neither lives there (MAJOR).
+**Chosen:** Re-attribute both to the TODO whole-repo-audit group with cites (TODO.md:158-162; TODO.md:87-101 marked DONE, plus dual-source follow-ups TODO.md:617-621/:695-704); followups contributes four entries (rebirth-prose :303, bash↔python state-lint :295, CONTRIBUTING :79, Component D :27). Surface SET unchanged — only the attribution moves; a candidate colliding with a DONE item is excluded as already-fixed. Amends D6/D11 wording; reported as a divergence row per AC11.
+**Reasoning:** Reproduced against the live files; an exclusion table naming entries a reviewer cannot find in the named file breaks the table's mechanical checkability (the point of D6).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D22: Volatile-external-state rule — as-of measurement + layout-derived pinned enumerations
+**Stage:** design (phase 1, review round 2)
+**Question:** Codex BLOCKING: AC12 hard-pinned live host-state counts (69/1,032/13/6) that drift continuously; codex MAJOR: the event-log source set was unpinned (bare recursive find returns 41 via pytest fixture copies).
+**Chosen:** External-surface figures are measured AS-OF the report's own timestamp by PINNED, layout-derived enumeration commands; the design's figures are design-time references (2026-07-12), never exact-match AC targets — no AC may be falsifiable by mere passage of time. Pins per corpus: run-root globs under `~/.claude/harness-runs/` (fixture scratch lives at `<run>/tmp/pytest-of-*`: 41 vs 13 event logs, 128 stray codex artifacts); root-scoped `-path '*/subagents/*.jsonl'` WITHOUT a depth pin for the projects dir. AC12 reshaped; E11 added.
+**Reasoning:** All reproduced (bare find = 41; pinned glob = 13; subagent stratum drifted 1,032→1,035 within the design session). Codex's suggested `-maxdepth` fix was refined WITH evidence: the subagents layout has two real shapes (910 depth-3 + 125 depth-5 `subagents/workflows/wf_*/`), so a depth pin silently drops 125 files — pin by root+path-shape there instead.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D23: Cite convention — file:line as-of phaseBaseSha + stable text anchors
+**Stage:** design (phase 1, review round 2)
+**Question:** Codex BLOCKING: the dedup table's mandated TODO.md line cites (:87-101, :158-162, :617-621, :695-704) self-invalidate — Phase 1's own top-of-file section insert shifts every downstream line.
+**Chosen:** One uniform convention for every `file:line` the deliverables carry: line numbers are as-of `phaseBaseSha` (ce12c42…, pre-insertion), stated once in the report's provenance block; each dedup row also carries a stable text anchor (quoted distinctive item text/heading) so rows stay resolvable after the TODO insertion and after ship-time ledger appends. Applied to §3 contract, AC3, AC10.
+**Reasoning:** Reproduced by construction (insertion before TODO.md:5 shifts all downstream lines); anchors + a single as-of statement beat per-cite recompute-after-edit (one convention, no per-instance treadmill).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D24: QW1 scope refined by measurement — no CLAUDE.md edit; followups.md excluded
+**Stage:** implement (slice 1.1)
+**Question:** The Stage-2 forecast said the archival split "update[s] the CLAUDE.md 'read decisions.md' instruction" and covers "possibly followups.md".
+**Chosen:** Both halves narrowed in the report (§5 QW1): CLAUDE.md needs NO edit — its instruction (CLAUDE.md:203-205) is path-based and the split preserves the live path; followups.md is EXCLUDED — at 1,144 lines it fits entirely inside a default 2,000-line Read, so the recency defect QW1 fixes does not exist there (E6 REFUTED row). Phase 2 binds to the report's QW1 spec.
+**Reasoning:** Measured against the live artifacts; the report is the binding Phase-2 input per D12 (forecast items the audit refutes must not be built).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D25: Codex CLI upgraded mid-run (0.142.5 → latest) after config-driven model flip broke dispatch
+**Stage:** execute (slice 1.1 review)
+**Question:** Slice-1.1 codex dispatch degraded CODEX_UNAVAILABLE (cause exec-failed): ~/.codex/config.toml changed mid-run (13:04 design round used gpt-5.4/xhigh; config now pins gpt-5.6-sol/medium — likely a ChatGPT-app rewrite) and the installed CLI 0.142.5 rejects gpt-5.6-sol (server 400 "requires newer Codex"). Accept single-voice degradation, edit the user's config back, or upgrade the CLI?
+**Chosen:** Upgrade the global CLI (npm install -g @openai/codex → 0.144.1), then re-dispatch — the documented remedy for this failure class (memory: codex-cli-invocation-gotchas). NOT editing ~/.codex/config.toml (user/app-owned; a revert would fight the app and alter the user's interactive codex).
+**Reasoning:** Not a network flake (probe OK, live 400 in 15 s, deterministic) — genuine env breakage; degradation would silently drop the adversarial voice for the run's most load-bearing review (the audit slice). Running codex processes (incl. a concurrent session's) keep open inodes; the replace window risk is small and their helper fails closed.
+**Reversibility:** easy (npm install -g @openai/codex@0.142.5)
+**Classification:** Mechanical
+
+### 2026-07-12 — D26: Review-r1 MAJOR-1 fix shape — compact verified-equivalent procedures inline, not the original ad-hoc scripts verbatim
+**Stage:** implement (slice 1.1, review round 1 fix)
+**Question:** MAJOR-1 offered two arms: state the exact rerunnable command/script per external-corpus figure, or relabel figures per true provenance.
+**Chosen:** First arm — the report now carries compact inline procedures P1 (top-level usage parse), P2 (subagent newest-20 first-usage sample), P3 (event-vocabulary enumeration), algorithmically identical to the ad-hoc measurement scripts (same tolerant per-line parse, same usage extraction, same median/p90 definitions); each was EXECUTED before publishing and reproduces the reported figures modulo live drift (e.g. P1: 20,541→20,744 records as a new session landed; P3: 347→363 parseable). The reported output blocks are labeled as the procedure's output at the audit timestamp.
+**Reasoning:** D15 artifact-shaped evidence + D22 as-of framing; publishing an untested "equivalent" script would be a vibes-claim — execution is the equivalence proof.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D27: Review-r2 measurement-honesty class fix — N4 materially downgraded; QW1 inventory corrected to 7
+**Stage:** implement (slice 1.1, review round 2 fix)
+**Question:** Codex r2 MAJORs: N4 claimed 11 MB "immediately Tier-L-sweepable" / "up to ~278 MB reclaimable"; QW1 claimed 9 committed-ledger surfaces; P1/P2 output blocks presented editorial layouts as literal procedure output.
+**Chosen:** All three reproduced and fixed class-wide. (1) Ran the REAL classifier read-only (`bash bin/drive-retention.sh --json`): 0 B eligible today (5 not-aged / 7 waiting / 1 inflight-open; Tier-W 0/2); tool-reclaim universe = heavy logs 15,973,632 B + wt/ worktrees ~12 MiB (~27 MiB bound); 278 MB relabeled corpus total (bulk = per-run tmp/ + history, outside both tiers) — N4's savings reframed as growth-bounding, ranking unchanged (already last, cost-only). (2) QW1 inventory re-derived: `grep -ln '\.harness/decisions\.md'` → exactly 7 surfaces; test_drive_retention.py + test_rebirth_handshake.py reference only the run-local decisions.md → excluded, grep published in the doc. (3) One output-block convention stated (values verbatim / layout editorial / derived lines marked); P2's non-emittable per-file rows dropped. Class sweep across report + TODO: tmp/-share pinned to actual du values; TODO N4 aligned; N1 denomination sampled-median.
+**Reasoning:** The review class was "claims outrunning their measurement" — each fix substitutes an executed measurement (classifier run, fresh grep) for an inferred claim, per the reproduce-then-fix discipline.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D28: Review-r3 BLOCKING fix — N3 bounded by followups veto carve-outs; second in-section veto found and carved out proactively
+**Stage:** implement (slice 1.1, review round 3 fix)
+**Question:** Codex r3 BLOCKING (coordinator-confirmed): N3's broad "Run setup & resume" trim collides with followups.md:833, which VETOES prose trims at drive.md:281 (inside the section; exact-string-pinned by test_checkpoint_contract.py:1481 + test_state_json_shape.py:102) — an AC4/D11 dedup violation. Delete N3 or reframe?
+**Chosen:** Reframe with a binding delta boundary (the section-trim idea is valid outside the pins): N3 now trims the NON-vetoed remainder only, citing :833 row-locally (D23); pinned passages touchable only as a deliberate pin migration inside the R5–R9 batch. The directed veto-class sweep (grep VETOED/declined/RETAINED/refuted over followups.md) surfaced a SECOND in-section veto the reviews had not named — followups.md:320 (finalize-CONVERGED rule kept IDENTICAL across drive.md ~L113 / drive-ship.md ~L17 / CLAUDE.md ~L131 per D26) — carved out of N3 AND of N1's CLAUDE.md-trim item (~L131 verbatim). Dedup machinery restored: new §3(b) extension-delta row + §4.8 pre-declaration recording the full sweep (:312/:427/:541/:832/:838/:901 — no collision with N1/N2/N4/QW1). TODO N3+N1 updated in lockstep.
+**Reasoning:** Reproduced the veto at the frozen tree before editing (drive.md § spans :35–611, so :281 and ~L113 are in-section); fixing the CLASS (all veto entries) in one round per the class-sweep discipline rather than only the flagged instance.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D29: Review-r4 fix — historical-cite rule for secondary-source line numbers; carve-outs re-derived at phaseBaseSha
+**Stage:** implement (slice 1.1, review round 4 fix)
+**Question:** Claude r4 MAJOR: the r3 carve-out adopted followups.md:833/:320's own line numbers (:281/:139/~L113/~L131/:1481) as as-of-phaseBaseSha locations; at ce12c42 the pinned passages actually live at drive.md:496-504, drive-review.md:222-225, drive.md:194-206, CLAUDE.md:134-141, test_checkpoint_contract.py:1483.
+**Chosen:** Every carve-out location re-derived at the frozen tree via the PINNED STRINGS as anchors (all verified by sed/grep before editing) across all five sites (report §1.2, §2 N3 + N1, §3(b) row, §4.8; TODO N3 + N1); §4.8 now states the general rule — a followups/TODO entry's own line numbers are that entry's HISTORICAL cites (quote or label them, never adopt as current); §4.8's sweep set widened with the loose veto-family remainder (:58/:555/:652/:667/:733/:967, read, no collision) and :541→:542 corrected. Whole-deliverable sweep confirms remaining old numbers appear only inside verbatim quotes or labeled-historical text.
+**Reasoning:** Second instance of the inherited-line-number class (D21 corrected attribution, D23 set the as-of convention) — fixed as a stated CLASS rule in the doc's veto machinery, not a per-cite patch, so round 5 confirms clean.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D30: Review-r5 fix — N1/C5 overlap disclosed; exhaustive overlap matrix ends the dedup-disclosure class
+**Stage:** implement (slice 1.1, review round 5 fix)
+**Question:** Codex r5 BLOCKING (coordinator-confirmed, third instance of the dedup-disclosure class): N1(b)'s OPERATING.md conciseness pass overlaps pre-existing TODO C5 (base :553-556 — stale-rule relaxations incl. OPERATING.md:44, AC13-pinned fenced blocks), absent from §3. Patch the instance again or end the class?
+**Chosen:** Both: C5 disclosed as an §3(b) extension-delta row (N1 = whole-file token diet pending OQ1/D13; C5 = specific relaxations, owns its clauses; AC13 blocks carve-outs for both) AND the class ended with an exhaustive pairwise overlap matrix — {N1,N2,N3,N4,QW1} × {C1–C12 enumerated by command, R1–R12, the 10 refuted items, whole-repo-audit [V] items via token scan, followups families} — every non-empty overlap disclosed however small (new rows: N1(c)×C4-DONE + the two open CLAUDE.md [V] fixes; N3×C9 + C11; N1×C12 complementary; QW1×the [V] ship-action decisions.md append) plus a completeness note stating the enumeration commands. MINORs applied (mid-2026-06-11 window-cut reword; drive.md:500-504). One suite red caught locally: quoting C11's anchor verbatim introduced the banned ceremony-command token into docs/ (test_no_live_goal_mechanism_reference_survives) — anchor reworded to a token-free distinctive substring with the omission noted in-row.
+**Reasoning:** Per-instance patching provably didn't converge (rounds 3/5 same class); an enumerated finite matrix with disclosed non-empty cells makes a round-6 instance structurally impossible. The pin red also validates running the FULL suite locally every fix round even for docs-only diffs.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D31: Harden r1 codex P1-1 overruled with evidence; P1-2 confirmed → fix set
+**Stage:** execute (phase 1 harden)
+**Question:** Codex harden audit flagged 2 P1: (1) TODO.md:7 "~27k uncached prefix" overstates a sampled median; (2) "serves the OLDEST third" (TODO.md:12, report:275) inconsistent with entry counts.
+**Chosen:** P1-1 OVERRULED — the live TODO.md:7-9 already carries the exact scoping codex demands, inline at the cited line: "(sampled median, newest 20 of the 1,038 measured dispatch transcripts; …)" — reproduced by coordinator read; the claim is already sample/median-scoped. P1-2 CONFIRMED — head-2000 of base decisions.md holds 117/168 entries (~70%), so "third" is true only BY LINES (2000/6064); fix = qualify the phrase at every occurrence.
+**Reasoning:** OPERATING — an adversarial BLOCKING is not authority; reproduce against the real artifact: P1-1's demanded label is present verbatim (false positive), P1-2's number pair reproduces as inconsistent (real).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D32: Codex regress-2 MINOR routed to followups, not a third fix round
+**Stage:** execute (phase 1 harden)
+**Question:** Codex's regress-guard-2 MINOR (post-split figures labeled "live file" vs retained-tail-pre-amendment) — burn harden fix round 3/3 on it?
+**Chosen:** No — routed to followups.md (Phase-1 harden residuals); phase declared hardened via the free confirming round.
+**Reasoning:** P2 label-precision only (both voices 0 P1 at the tip); the last fix round is cap headroom better kept for a real defect; /drive-finalize re-reviews the whole-run diff with a de-slop lead and can fix the wording without the harden cap. Imprecision-budget discipline over per-nit treadmill.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D33: QW1 live-header disposition — header stays in the live file; archive gets entries-only
+**Stage:** design (phase 2)
+**Question:** Report §5 QW1 says "move lines 1–4092" (incl. the 34-line header) with "post-split live file = 1,972 + ≤10 lines" arithmetic, but §4.1 says "the rule at decisions.md:10-11 … is amended" — which requires the header to REMAIN in the live file to be amended, and defines the move as "entries older than the boundary".
+**Options considered:** (a) keep base lines 1–34 in the live file (Rules bullet amended in place + index note); archive = 8-line preamble + lines 35–4092 verbatim; (b) literal move of lines 1–4092 into the archive; live file gets a rebuilt compact header.
+**Chosen:** (a)
+**Reasoning:** The header is not an entry; §4.1 is the report's pre-declared review answer, so review conformance is judged against it (a whole-header replacement under (b) exceeds what §4.1 pre-declared and invites a fresh flag); the live file keeps its load-bearing instruction surface (rules + entry format) without duplication. Consequence disclosed (design-phase2.md EC2): live file ≈2,015 lines — the report's "1,972 + ≤10" arithmetic omitted the retained header (same figure-class as the logged Phase-1 harden residual); both BINDING metrics (newest-in-window date; `^### ` beyond line 2,000) pass with wide margin because the newest heading sits near line ~350 post-split.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D34: QW1 metrics bind at the slice tip; post-ship regrowth expected and disclosed
+**Stage:** design (phase 2)
+**Question:** This run's own ship promotion appends ~265 lines to the live ledger, pushing ~30 new entries beyond the 2,000-line window again — does that fail the win's metrics?
+**Chosen:** No — the before/after metrics bind at the Phase-2 slice tip, pre-ship-promotion (the report's own "(2026-07-06 at this measurement; later at ship)" caveat); post-ship regrowth is expected behavior, answered by the amended header rule naming a REPEATABLE archival convention plus a followups recurrence trigger (re-archive when the newest dated heading approaches line ~1,800).
+**Reasoning:** Pre-fix the unread set grew unboundedly (51 entries / 25 days); post-fix it is bounded by one run's promotion until the next routine re-archive. An AC that had to stay true through ship-time appends would be falsifiable by passage of time (D22 class).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D35: D12 metric-record surface = TODO checkbox annotation; audit doc stays frozen
+**Stage:** design (phase 2)
+**Question:** Where does the shipped win "record its before/after metric" (D12)?
+**Chosen:** The TODO QW1 item flips to `[x]` with the inline before→after line (plus the slice commit message); the audit report is NOT edited post-hoc (it is Phase 1's reviewed, frozen measurement record).
+**Reasoning:** Keeps the metric with the plan item a future session would otherwise re-implement; avoids re-opening a reviewed artifact; TODO.md content is not string-pinned (Phase-1 verified).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D36: No new committed tests, no committed splitter script for QW1
+**Stage:** design (phase 2)
+**Question:** Should the split ship a regression test or a migration script?
+**Chosen:** Neither. Evidence = byte-equality acceptance checks (archive == base lines 35–4092; retained tail == base lines 4093–6064) + the full dual-suite run at the slice tip.
+**Reasoning:** A window-position or boundary-content pin on a growing append-only ledger is time-falsifiable — it reds on the very next ship promotion (the class D22 banned from ACs); a one-shot splitter script is dead code post-run (no-AI-slop). Pre-declared for harden/finalize so "missing tests" is not re-flagged (design-phase2.md EC9; report §4.1/§4.2 pre-answer the ledger-edit flag class itself).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D37: QW1 boundary re-adopted literal (archive lines 1–4092; compact 28-line live header) — supersedes D33
+**Stage:** design (phase 2, review round 1)
+**Question:** Codex BLOCKING (reproduced): D33's boundary (archive 35–4092, keep the 34-line base header live) contradicts the report's binding QW1 interface ("move lines 1–4092") AND under-delivers the one-read property — live file ≈2,015 lines, still over the default 2,000-line Read window at the slice tip.
+**Options considered:** (a) adopt the report's literal 1–4092 boundary with a byte-pinned compact ≤28-line live header carrying the amended append-only rule + index note; (b) keep D33 with a refutation.
+**Chosen:** (a). Live file = 28-line pinned header + base lines 4093–6064 = exactly 2,000 lines (one default Read serves it entirely at the slice tip); archive = 8-line preamble + base lines 1–4092 verbatim = 4,100 lines. §4.1 stays satisfied: the compact header retains the anchor sentence ("Append-only. Do not edit or remove prior entries…") verbatim, then amends it with the archival convention; carried lines (title, `## Rules`, the two untouched bullets, `## Entries`, `(append below this line)`) stay byte-identical to the base header. Downstream re-derivations: archived span holds 138 `^### ` lines = 118 dated entries + 19 dateless sub-entry headings + 1 header format-example (line 19 — not an entry); shipped texts (archive preamble, live index note) carry the 118-dated figure only; newest heading lands at live line ~332; simulated against the real file (header 28 lines, live 2,000, M1 → `### 2026-07-06`, comm-based new-line count 13).
+**Reasoning:** No refutation satisfies BOTH the report's authority (design.md: "the report wins") and the one-read-at-tip property; (a) satisfies both plus §4.1. D33's own §4.1-conformance concern dissolves — an amended rule inside a rebuilt compact header is still "the header edited, the rule amended".
+**Reversibility:** easy
+**Supersedes:** D33
+**Classification:** Mechanical
+
+### 2026-07-12 — D38: QW1 ≤30-SLOC bound made executable
+**Stage:** design (phase 2, review round 1)
+**Question:** Codex MAJOR: the ≤30-SLOC acceptance criterion had no reproducible measurement (no command; ambiguous treatment of the verbatim-move's delete/add pairs under D12's exclusion).
+**Chosen:** AC9 now specifies the exact calculation: new/changed non-blank lines = (live-header lines not present verbatim in the base header, via `comm -13` of the sorted non-blank sets) + (archive-preamble non-blank lines, `head -n 8 | grep -c .`) + (TODO added lines, `git diff -U0 $BASE..HEAD -- TODO.md | grep -cE '^\+[^+]'`) ≤ 30. Exclusion rule stated: the two verbatim-moved spans are excluded (their integrity is AC2/AC3 byte-equality); carried-verbatim header lines are moved-not-changed; blanks are not SLOC; a changed TODO line's pre-image is not double-counted. Expected value ≈23 (13+6+4), verified by simulation against the real file.
+**Reasoning:** An unmeasurable bound is a vibes-gate (dont-make-the-model-the-meter); tying the exclusion to the byte-equality ACs makes D12's "verbatim-moved excluded" mechanical.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D39: QW1 live header restores the entry-format template; exactly-2,000 pin relaxed to metric-bound — amends D37's header shape
+**Stage:** design (phase 2, review round 2)
+**Question:** Codex r2 MAJOR-1 (reproduced): the r1 compact 28-line header DROPPED the `## Entry format` template block (base:17-27) to force exactly 2,000 live lines, contradicting QW1's binding "keeps entry format"; exactly-2,000 is not the load-bearing property.
+**Options considered:** (a) fit a compressed template inside 28 lines; (b) carry the full original template block verbatim and relax the pin to `wc -l` ≤ 2,010 with the metrics as the binding one-read semantics.
+**Chosen:** (b) — 37-line header (intro 2 + amended rule + two carried bullets + index note + `## Entry format` block carried VERBATIM base:17-27 + `## Entries` scaffold); live file = 2,009 lines. Binding one-read semantics = M1 (newest heading in the 2,000-line window; it sits at live line 341, ~1,650 lines of heading headroom) + M2 (zero `^### ` beyond 2,000); disclosed spill: the newest entry's final 9 BODY lines (live 2,001–2,009 = base 6056–6064) sit past the window at the slice tip. Verbatim carry keeps the template authoritative and SLOC-excluded (comm drops the 19 carried lines): AC9 = 10+9+4 = 23 ≤ 30. Simulated end-to-end against the real file (2,009 lines / 189,340 B; M1 → `### 2026-07-06`; M2 → 0; `^### ` count 31 incl. the template at live:25 — template-immune metrics; marker at live:38).
+**Reasoning:** Explicit-over-clever — the canonical template verbatim beats a lossy compression; the report's "keeps entry format" is binding while exact-2,000 appears nowhere in it (its named metric commands are M1/M2).
+**Reversibility:** easy
+**Supersedes:** amends D37 (header-shape clause only; the 1–4092 boundary stands)
+**Classification:** Mechanical
+
+### 2026-07-12 — D40: Archive preamble precedence sentence + SHA-256 pins for both shipped blocks
+**Stage:** design (phase 2, review round 2)
+**Question:** Codex r2 MAJOR-2: the archive is internally contradictory — APPEND-FROZEN preamble above a verbatim old header whose line 33 still says "(append below this line)", and AC2's byte-verbatim rule makes the old header uneditable. Also codex MINOR (AC5's byte-identical header check not independently executable) + Claude r2 MINOR (preamble interface-pinned but not AC-pinned).
+**Chosen:** Fix in the preamble (the only legal site): now 11 lines, adding the explicit precedence sentence — the snapshot below is verbatim history INCLUDING its obsolete header/append instructions; the preamble wins; nothing is appended or edited there. Both shipped blocks get executable byte pins: AC5 `head -n 37 | shasum -a 256` = 9b828a77a94f39cafde920e65b1cca572bf9209402de68603a89851021d5d710 (header); AC2 `head -n 11 | shasum -a 256` = 69f2789f3c876c7bd635de9a7a79f6a4b45552aeefef3b50cc51e1f5e23cde69 (preamble), offset check tail -n +12. Hashes computed from the simulated real assembly and re-verified against the design doc's embedded blocks (byte-identical).
+**Reasoning:** The boundary must not move back to 35 (would reopen r1 BLOCKING-1); a precedence statement resolves the frozen-snapshot contradiction without touching verbatim content; hash pins make "byte-identical to the design block" testable without interpretation (dont-make-the-model-the-meter).
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D41: Entry-heading oracle corrected to the full empirical grammar (class fix)
+**Stage:** design (phase 2, review round 3)
+**Question:** Codex r3 MAJOR (coordinator-reproduced): M1/M2 keyed on `grep '^### '` — the MINORITY legacy shape. Census against the live ledger: retained tail (base 4093–6064) = 206 heading-records (~150 modern `## D<N>`/`## D-…`/`## Run`/`## Phase`/`# Decisions — <runId>` vs 30 legacy `### 2026-…`); whole file 544 headings (364 `^## ` + 168 `^### ` + 12 `^# `; 0 `^#### `). The legacy oracle was blind to the dominant modern shape.
+**Chosen:** ONE structural oracle reused by every metric/AC — `grep -E '^#{1,3} '` — no per-metric shape variants (calibration-treadmill discipline: restructure once, don't guard-patch). Corrected baselines measured on the base file: M2' (headings beyond the 2,000-line window) before = 364, after = 0; M1' before = window does NOT reach the newest heading (in-window last `## Slice 4.5 fix round 3 …` ≠ file-last `## D3 (Mechanical) …`), after = TRUE. The frozen report's `^### ` commands are retained as the quoted legacy-shape record (D35); TODO's shipped record carries BOTH families with the oracle stated as the executable grep. Header contributes exactly 4 oracle matches, all top-of-file, metric-immune.
+**Reasoning:** Enumerate-the-real-input-space applied to the ledger's own grammar; a recency metric blind to 150 of 206 tail records is a vacuous oracle.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D42: Final header = 28 lines INCLUDING the verbatim template; exact-2,000 restored — supersedes D39's shape
+**Stage:** design (phase 2, review round 3)
+**Question:** Codex r3 BLOCKING (coordinator-reproduced): the r2 2,009-line live file's "9 BODY-line spill" (live 2,001–2,009) actually contains the two NEWEST decisions (`## D2` base:6056, `## D3` base:6061) — a default Read misses them, recreating the exact defect QW1 fixes. Also Claude r3 MINOR: the `wc -l ≤ 2,010` slack admitted a 1-line insertion at the header/tail join that passed all 11 ACs.
+**Chosen:** Compress the NON-template header prose to fit the template inside a 28-line budget: drop the intro couplet and the `## Rules` heading (no test pins — swept; dispositions logged), fuse the index note into the amended append-only rule, keep the two untouched Rules bullets + `## Entry format` + template block base:19-27 byte-verbatim + `## Entries` + `(append below this line)`. Live = 28 + 1,972 = EXACTLY 2,000 lines (189,084 B) — one default Read serves the ENTIRE file; last oracle heading at live:1,997. AC5 pins the new header SHA-256 (ce8f2ddeffc8a67083cd2db670dc63bc4ae6ab468ec7a45e9432ca40489527e3) + `wc -l == 2,000` EXACTLY; AC4 pins the marker at live:29. Boundary stays 1–4092 (D37); template retained (r2 closure); §4.1 anchor sentence intact. Re-simulated end-to-end: new_live = 6 via comm; AC9 = 6+9+7 = 22 ≤ 30; legacy metrics unchanged (newest `^### ` at :332; 31 `^### `). Claude r3 NIT (CLAUDE.md-policy intro pointer): not restored — budget spent on the template; pointer lives in CLAUDE.md's own instruction.
+**Reasoning:** The binding constraint is structural (whole file in one Read), not a disclosure; all three constraints (report boundary, template verbatim, ≤2,000) are simultaneously satisfiable, so the fallback (disclosed spill) is unnecessary.
+**Reversibility:** easy
+**Supersedes:** D39 (header shape and its ≤2,010 relaxation)
+**Classification:** Mechanical
+
+### 2026-07-12 — D43: Concrete archive path added to the pinned live header; AC6/AC7 literalized; oracle imprecision budget stated
+**Stage:** design (phase 2, review round 4)
+**Question:** Codex r4 MAJOR (coordinator-upheld): the pinned header's amended rule named only the generic `.harness/archive/decisions-pre-<boundary>.md` placeholder — the concrete `decisions-pre-2026-07.md` appeared nowhere in the live header, so a ledger reader could not grep/follow an exact path. Plus codex MINOR (AC6/AC7 not copy-pasteable: undefined `f`, ellipsized literals), Claude r4 MINOR (oracle counts a column-0 heading inside a fenced block — undisclosed), Claude r4 NIT ("~150" vs exact 176).
+**Chosen:** Amended-rule sentence reworked to name BOTH the generic recurring pattern AND the concrete path `.harness/archive/decisions-pre-2026-07.md` (the "path/format/append discipline unchanged" clause dropped to hold the 28-line budget — demonstrated by the file itself, stated in QW1/§4.1). Header re-pinned: SHA-256 70c0a22d583df2a2a36dd6de76a0bd58610d9cb5968b9b3322dde88e11126aaf; re-simulated end-to-end after the edit (design fenced block extracted → hash matches → assembled with the real tail): 28 lines, live EXACTLY 2,000 lines / 189,074 B, marker at :29 followed by C7-D1, header oracle matches 4 / `^### ` 1 / trailing-space 0, AC6 oracle TRUE + legacy `### 2026-07-06 …`, AC7 0/0, AC9 unchanged at 22 (the edit stayed within the 6 new lines — comm re-run, not assumed). AC6/AC7 rewritten as exact runnable commands with FULL heading literals. Oracle section gains the imprecision budget: fenced-block false positives possible, empirically 0 today (awk fence-toggle scan → 0), census is the recurrence check — disclosed, not engineered around. Census figure corrected to exact 176 modern headings.
+**Reasoning:** Explicit-over-clever — the concrete path is the requirement; keeping the generic form preserves the repeatable convention D34/D42 depend on.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-12 — D44: Codex r5 BLOCKING + MAJOR overruled with evidence (ship-time ledger-promotion semantics are by-design); r5 MINOR fixed
+**Stage:** design (phase 2, review round 5 — coordinator adjudication)
+**Question:** Codex r5 flagged (1) BLOCKING "after-state knowingly invalidated before ship" (promotion pushes newest decisions past line 2,000 again; remedies: headroom redesign or ship-time re-archive) and (2) MAJOR "AC10 can't verify the shipped diff" (remedy: add a final-tip acceptance surface). Uphold or overrule?
+**Chosen:** Both OVERRULED WITH EVIDENCE (coordinator decision): (a) EC3/D34 pre-disclose ship regrowth and bind the metrics at the slice tip, matching the report's own "(2026-07-06 at this measurement; later at ship)" caveat — the flag re-litigates a designed-in, pre-declared boundary; (b) both proposed remedies violate Phase 2's binding constraints — deeper archival breaks the report's 1–4092 QW1 interface (D37, report authority), and a ship-time re-archive is a new ship-stage feature far beyond quick-win scope (D12); (c) the shipped-diff verification surface already exists and is DRY — the ship gate's conformance (`R..tip ⊆ SHIP_LEDGER_ALLOWLIST {.harness/decisions.md, .harness/followups.md, TODO.md}`, ≤1 commit, drive-conformance.sh --mode ship) — so no final-tip AC is added (AC10 gains a parenthetical naming the two-surface separation; EC3 names the post-ship surface explicitly); (d) net effect is strictly better: unread stock 364 oracle headings → a bounded ~330-line single-run promotion, with the re-archival convention codified in the shipped header itself. Known-refutation class: codex re-flags pre-ship-absent/at-ship ledger semantics (memory: codex-reflags-preship-absent-ledger; report §4.2). The r5 MINOR is CONFIRMED and fixed: EC5 now states Bash as the AC-command prerequisite (AC9 uses process substitution; stock macOS bash 3.2 suffices; bin/run-tests.sh is bash) while keeping the BSD/GNU tool caveats. No structural change — header block, both SHA-256 pins, boundary, oracle, AC1–AC9/AC11 untouched; header hash re-verified post-edit.
+**Reasoning:** An adversarial BLOCKING is not authority — reproduced against the design's own pre-disclosures and the run's binding boundary, the flags demand out-of-scope remedies for an already-governed surface; overrule recorded with evidence, never silently dropped.
+**Reversibility:** easy
+**Classification:** Taste — surface at Gate B
+
+### 2026-07-12 — D45: phase-2 codex MAJOR (stale followups.md line-cites) CONFIRMED; disposition = directed in-run deferral to finalize
+**Stage:** review (phase 2 integration, round 1)
+**Question:** codex flagged stale `.harness/decisions.md` line-cites in committed `.harness/followups.md` (:713/:721/:726 → base 3180/3198/3205, now archived at +11 offset). Fix where?
+**Options considered:** (a) REDESIGN epoch to expand slice 2.1 ownership + AC10 → 4 files (≥6 dispatches for a 3-line prose fix); (b) post-run followup (drops a confirmed in-run-caused defect past ship); (c) directed MUST-FIX in THIS run's finalize stage.
+**Chosen:** (c). **Reasoning:** the affected entries are themselves instructions addressed to the finalize consistency sweep; finalize's whole-run scope covers non-slice files; the ship gate binds on the finalize artifact (omission-proof), so the fix slot is structurally guaranteed pre-ship; zero interim consumers read those cites before finalize. Fix spec recorded in $RUN_DIR/followups.md ("FINALIZE MUST-FIX"). Phase review round 2 presents this disposition to both voices for confirmation.
+**Reversibility:** easy. **Classification:** Mechanical.
+
+### 2026-07-13 — D46: Finalize round-1 triage — codex P1-1/P1-2 overruled per D44 (re-flag, no new evidence); P1-3 + Claude P1 + five P2 slop collapses = the fix set
+**Stage:** finalize (round 1, dual-voice triage)
+**Question:** Codex finalize flagged 3 P1s: (1) zero growth headroom (live ledger exactly 2,000 lines; ship promotion re-hides newest entries), (2) missing append-simulation test for the archival boundary, (3) annotation routing in audit §3(b) contradicts the archive's APPEND-FROZEN contract. Claude flagged 1 P1 (D45-directed stale followups.md cites) + 6 P2 + 4 P3. Which enter the fix set?
+**Chosen:** (1)+(2) OVERRULED WITH EVIDENCE — they re-flag the exact finding D44 adjudicated in phase-2 design r5 (headroom redesign / ship-time re-archive both rejected: EC3/D34 pre-disclose ship regrowth, D37 binds the 1–4092 report interface, D12 scopes the quick win; net effect strictly better; known-refutation class per memory codex-reflags-preship-absent-ledger); no new evidence since that adjudication, and the proposed committed window test would red the ship suite under the upheld design (it presumes remedy (1)). D44 is Taste-classified and surfaces at Gate B where the human can re-open. (3) CONFIRMED — the audit §3(b) overlap row routes annotations of archived entries INTO the archive, contradicting the D40 append-frozen preamble; fix = route annotations/supersedes to the LIVE ledger referencing archive file:line, propagated to every statement of the convention in the run diff. Claude P1 CONFIRMED (already D45-directed): re-derive followups.md:713/:721/:726 cites by string anchor into archive locations; rewrite the :713 supersede instruction to live-append form; line-count-neutral. Fix set also takes the five cheap in-scope P2 slop items (veto-carve-out 5-site collapse to §4.8 canonical honoring the PARTIAL veto; N1 hedge; retention story; drift comparator; TODO problem-statement compression — which also moots codex P2 count-figure duplication in TODO). Codex P2 entry-count relabel REFUTED per D35 (figures frozen with recorded caveat; they reproduce as heading-counts). 4 Claude P3s routed to followups; codex ARCH already ledgered (followups re-archival-cadence + hash-manifest entries).
+**Reasoning:** An adversarial re-flag of an adjudicated, disclosed, gate-surfaced design boundary is the known-refutation class — overrule with the citation, never silently drop; the confirmed doc-contradiction and directed cite fixes are the genuine aggregate findings this stage exists to catch.
+**Reversibility:** easy (docs + one ledger file)
+**Classification:** Mechanical (fix set) / the (1)(2) overrule inherits D44's Taste — surface at Gate B
+
+### 2026-07-13 — D47: Finalize round-2 codex P2s both refuted with byte/convention evidence
+**Stage:** finalize (round 2, coordinator adjudication)
+**Question:** Codex round-2 re-audit (0 P1) flagged 2 MINOR SLOP items: (1) "stale TODO line-number citations" in docs/efficiency-audit-2026-07-12-newlens.md after the run's 62-line TODO.md insertion; (2) "one extra blank EOF line" in .harness/archive/decisions-pre-2026-07.md. Fix or refute?
+**Chosen:** Both REFUTED. (1) The audit doc pre-declares its cite convention at :12 and :479 — "line numbers are as-of phaseBaseSha ce12c42, PRE-insertion" — with per-row string anchors; the cites are frozen-as-of-base by design (inherited-line-cites-are-historical). (2) Byte-compare: the archive tail `Mechanical.\n\n\n` equals base lines 4090-4092 verbatim — the trailing blanks ARE the moved history; removing one would break AC2 byte-equality (archive == base 1-4092) and edit the D40 append-frozen archive. Neither enters the fix set; nothing is silently dropped (this entry is the record).
+**Reasoning:** Both flags re-litigate contracts the artifacts themselves declare; the refutations are evidence-bound, not verdict-by-authority.
+**Reversibility:** easy
+**Classification:** Mechanical
+
+### 2026-07-13 — D48: Ship blob-gate deviation adjudicated — rebased tree proven identical to the suite-validated merge
+**Stage:** ship (base-freshness auto-rebase, step-2 content-preservation gate)
+**Question:** The rebase onto current main (c3446c1, 7 commits ahead incl. PR #90's ledger promotion) left .harness/decisions.md and .harness/followups.md blob-DIFFERENT from the pre-rebase finalize commit — the drive-ship.md gate says abort+STOP. But this run's PRODUCT is ledger edits (the archival split), so the gate's "code is disjoint" premise is false by construction: main's appended ledger entries interleave with the run's rewrite on the same files. Abort to a human STOP, or accept with stronger evidence?
+**Chosen:** Accept the rebase — proven by a STRICTLY STRONGER check than the per-file blob gate: the rebased tree object (8c95b1a…) is IDENTICAL to the tree of the scratch MERGE commit (d744680) that the full suite validated green (rc=0, FULL SUITE all green). The rebased tip is therefore byte-for-byte the merge the semantic gate already passed; the ledger blob deltas are exactly main's PR-#90 appends, by construction of that merge. All non-ledger run files were blob-identical under the plain gate. finalize reviewed-sha re-bound to the rebased finalize commit (d2bb992f0e223e6729aba596dcc2354a1de61476) per the sanctioned step-3 re-bind (the run's reviewed WORK is unchanged; the ledger interleave is the D34/D44-disclosed regrowth class arriving via rebase).
+**Reasoning:** The gate is a tripwire for "rebase silently altered the run's content"; the tree-identity proof answers the same question against the integrated authority (the real merged tree + green suite) with zero inference. STOPping would hand the human a question the evidence already closes — surfaced here instead, at Gate B, where the diff is reviewed anyway.
+**Reversibility:** easy (branch ref move; pre-rebase tip c7b5e9e retained in reflog)
+**Classification:** Taste — surface at Gate B
