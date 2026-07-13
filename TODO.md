@@ -2,6 +2,68 @@
 
 Architectural follow-ups deferred by /drive finalize passes.
 
+## Repo-efficiency plan (new lenses) — from docs/efficiency-audit-2026-07-12-newlens.md (2026-07-12)
+
+**Problem:** token weight, not wall clock, is the unaudited cost — per-dispatch
+uncached prefix re-creation, per-leg drive.md spec weight, and the stale task-start
+ledger read. Figures, evidence, cost denominations, and ranking: the audit doc
+(findings N1–N4; cites there are as-of phaseBaseSha ce12c42, pre-insertion of this
+section).
+
+- [x] **N2 → QW1 (Phase 2 of this run)** — `.harness/decisions.md` archival split per
+  audit §5 QW1: fixes the bounded-read recency defect; amends the append-only header
+  per audit §4.1; before/after metrics, risk surface, and pin exposure are specified
+  there. followups.md deliberately excluded (refuted — audit §5).
+  DONE (2026-07-12, Phase 2): one default Read now serves the ENTIRE live file
+  (wc -l 6,064 → 2,000). All-shape heading oracle `grep -E '^#{1,3} '`:
+  headings beyond the 2,000-line window 364 → 0; window reaches the file's
+  newest heading: NO → YES. Report-pinned legacy metric (`^### ` shape):
+  newest in-window entry 2026-06-11 → 2026-07-06 (= file newest);
+  beyond-window 51 → 0. Measured at the slice tip, pre-ship-promotion.
+- [ ] **N1** — machine-global per-dispatch baseline diet (audit §1.1a/§2 N1), three
+  surfaces: (a) MEMORY.md diet — **external** (outside the repo; no repo diff);
+  (b) OPERATING.md conciseness pass — **agent-authorship pending user decision
+  (OQ1/D13)**, user-voice; coordinates with and EXCLUDES pre-existing C5's clauses
+  (§ Fable 5 audit below, base :553-556 — C5 owns the specific stale-rule
+  relaxations incl. OPERATING.md:44, with its AC13-pinned fenced codex blocks as
+  carve-outs for both; audit §3 matrix row); (c) CLAUDE.md trim — repo diff, strings
+  pinned by contract suites → own token-sweep migration; sequencing vs the R5–R9
+  batch below: INDEPENDENT (disjoint files/pins), may land in its own window. Veto
+  carve-outs for (c): the finalize-CONVERGED gate rule at CLAUDE.md:134-141 (as-of
+  ce12c42) stays VERBATIM — carve-outs per audit §4.8 — and the trim must not
+  regress C4's landed rewording or preempt the open CLAUDE.md [V] fixes (audit §3
+  matrix).
+- [ ] **N3** — drive.md § "Run setup & resume" narration trim (39% of the per-leg
+  spec weight; audit §1.2/§2 N3). Spec-trim sequencing (binding): land WITH or AFTER
+  the pending R5–R9 one-batch spec edit (§ "/drive efficiency plan R1–R9" below,
+  global constraint 2) so the overlapping pin-suite migration is paid once. Delta
+  boundary (binding; locations as-of ce12c42): in-file narration ONLY — beyond
+  followups' known cross-file rebirth-prose item (audit §3 row) AND EXCLUDING the
+  veto-covered passages at drive.md:500-504 (+ sibling drive-review.md:222-225) and
+  drive.md:194-206 — carve-outs per audit §4.8. Trim only outside those pins, or pay
+  their migration deliberately INSIDE the R5–R9 batch — never as a standalone trim
+  (audit §2 N3 delta boundary, §4.8).
+- [ ] **CI workflow `concurrency:` cancel-in-progress** (demoted from quick-win by D8;
+  audit §1.3). Full constraint list (binding): per-ref group key; cancellation on
+  PR events ONLY (never push-to-main); validate with `actionlint` PLUS one observed
+  live run; named interaction — `bin/drive-ci-wait.sh:114` allowlists CANCELLED as
+  green (pinned by test/drive-ci-wait.test.sh), so a cancelled-in-progress run must
+  never be what satisfies the ship gate's CI-wait. Measured benefit ~zero today
+  (public repo, CI ~2.5 min, one push per ship) — implement only with demonstrated
+  need.
+- [ ] **bash-suite parallel driver** (audit §1.3 residual; suite 139 s of a ~2.5-min
+  total). Risk-weighed: the canonical `bin/run-tests.sh` guarantees no-early-exit
+  full-suite execution — any parallel driver must preserve fail-at-end aggregation or
+  it weakens the gate; ceiling ≈ 1 min saved. LOW priority.
+- [ ] **N4** — harness-runs retention scheduling — **external** (machine config; no
+  repo diff): periodic `bin/drive-retention.sh` report + notify (or confirm-gated
+  `--apply`); the tool-reclaimable universe is bounded and the value is bounding
+  future growth, not a one-time reclaim — measurement and figures in audit §1.4/§2
+  N4. The retention contract's 3-layer drift stays a separate known follow-up
+  (audit §3). If `--apply` is ever automated/unattended, the per-run advisory lock
+  pre-declared at followups.md:408 (as-of ce12c42) is mandatory; the confirm-gated
+  posture needs no lock.
+
 ## Whole-repo audit — bugs / logic / inconsistency / slop (2026-07-09)
 
 Multi-agent adversarial audit over the whole tree (10 lens auditors → per-finding

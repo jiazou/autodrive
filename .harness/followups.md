@@ -710,7 +710,7 @@ correctness bug on an advisory pass).
 - [P2] docs/trellis-analysis.md:330 still calls `/drive-retro` "v1 manual … automatic wiring … a deferred follow-on" — now FALSE after this run wired retro into drive.md Completion. Unpinned, outside the four owned files. Refresh in a separate doc-consistency pass (finalize may route to TODO.md).
 
 ## AC13 decisions.md ledger internal-consistency (phase-1 review P2, for finalize sweep)
-- [P2] .harness/decisions.md:3198,:3205 still cite `REVIEWED_OVERAGE_LINES = 183` / `n==183` (harden-2 historical entries), while this run's entry (:3180) and the live pin moved to 184. Append-only ledger, so no history rewrite — add a one-line supersede pointer on the AC13 entries (→ 184; see the SLOC-overage update) during the finalize consistency sweep so a top-down reader isn't misled.
+- [P2] .harness/archive/decisions-pre-2026-07.md:3885,:3892 still cite `REVIEWED_OVERAGE_LINES = 183` / `n==183` (the harden-2 r2 guard entry and the finalize-r2 overrule — historical, archived by the QW1 split), while the SLOC-overage update line (archive :3867, under the `### drive-retro SLOC overage` heading at :3852) and the live pin moved to 184. The archive is APPEND-FROZEN and the live ledger append-only, so no history rewrite — instead APPEND a NEW supersede-pointer entry to the LIVE `.harness/decisions.md` referencing the AC13 guard entries at `.harness/archive/decisions-pre-2026-07.md:3884-3885` (→ 184; see the SLOC-overage update at archive :3867) so a top-down reader isn't misled.
 
 ## slop (deferred to finalize)
 .claude/commands/drive.md:1203-1215 — hook-protected-window explanation restated ~3x in Completion (DRY candidate; some redundancy is deliberate P2-softening nuance)
@@ -718,12 +718,12 @@ correctness bug on an advisory pass).
 .claude/commands/drive.md:1208 — (codex) slop note in Completion gate region
 tests/contracts/test_drive_retro_contract.py:71 — (codex) slop note
 tests/contracts/test_drive_retro_contract.py:91 — (codex) slop note
-.harness/decisions.md:3180 — (codex) slop note in SLOC ledger line
+.harness/archive/decisions-pre-2026-07.md:3867 — (codex) slop note in SLOC ledger line
 tests/contracts/test_drive_retro_contract.py:87 — verbose mutation-explainer comment block (codex harden r2)
 tests/contracts/test_drive_retro_contract.py:114 — verbose mutation-explainer comment block (codex harden r2)
 
 ## AC9 ledger-update entry unpinned (harden r2 P2)
-- [P2] .harness/decisions.md:3180 `drive-retro SLOC overage` update not asserted by a test; the exact `REVIEWED_OVERAGE_LINES==184` pin forces re-review on drift, and a decisions.md substring pin is CI-unreachable/vacuous-post-promotion (prior decision 3198-3200). Left unpinned by design.
+- [P2] .harness/archive/decisions-pre-2026-07.md:3867 `drive-retro SLOC overage` update not asserted by a test; the exact `REVIEWED_OVERAGE_LINES==184` pin forces re-review on drift, and a decisions.md substring pin is CI-unreachable/vacuous-post-promotion (prior decision, archive :3885-3887). Left unpinned by design.
 
 ## Contract-pin brittleness to rewording (harden-regress r2 codex P2)
 - [P2] The AC5/AC6 (and role-paragraph) substring pins in tests/contracts/test_drive_retro_contract.py red on benign semantic rewording, not just phrase removal. By-design for string-pin contracts on load-bearing status claims (a reword should trigger re-review), but noted as a known brittleness property of the pin battery.
@@ -1203,3 +1203,68 @@ class-A pressure rebirth cannot fire at Stage 0), and BOTH readings stay in the 
 (never reach Finalize — not the bug class). Clarify (future): "re-enter the pipeline at Stage 0,
 whose own logic advances to Plan without re-asking when the premise is already captured." Not
 churned this round (converged 3-voice guard prose; Claude adversarial reviewer found lens-3 clean here).
+
+<!-- ===== promoted from /drive run repo-efficiency-20260712-112504 (2026-07-13T00:00:18Z) ===== -->
+
+
+## 2026-07-12 — autoplan (plan stage)
+- [P2] `bin/drive-ci-wait.sh:114` green-allowlists CANCELLED (pinned by `test/drive-ci-wait.test.sh` "all skipped/cancelled ⇒ exit 0"). Unreachable today (nothing cancels runs), but ANY future change introducing run cancellation (workflow `concurrency:`, manual cancels during a ship wait) opens a vacuous-green path through the ship gate. Re-examine whether CANCELLED belongs in the allowlist, or require ≥1 actual pass among concluded checks. Surfaced while demoting the CI concurrency quick win (D8).
+
+## slop (deferred to finalize)
+
+- docs/efficiency-audit-2026-07-12-newlens.md:299-323 — followups:833/:320 veto carve-out restated near-fully at five sites (§1.2, §2 N3 :447-464, §3(b) :547, §4.8 :602-626, TODO.md:32-46); reference-collapse would cut ~40-60 lines.
+- docs/efficiency-audit-2026-07-12-newlens.md:393-399 — N1 restates the identical sampling hedge three times inside one finding.
+- docs/efficiency-audit-2026-07-12-newlens.md:367-384 + :467-485 + TODO.md:59-68 — the 278-MB-corpus/27-MiB-universe/0-B-eligible point stated in full three times beyond the reference-not-repeat structure.
+- docs/efficiency-audit-2026-07-12-newlens.md:17-20 + :36-38 + :52-53 — drift-comparator framing repeated three times within the front matter.
+- docs/efficiency-audit-2026-07-12-newlens.md:599-601 — §4.7 'none arose' placeholder row is dead weight as a numbered refutation.
+- TODO.md:7-14 — plan problem statement is 8 lines vs the one-line contract and duplicates four audit-§2 headline figures that can stale independently.
+- docs/efficiency-audit-2026-07-12-newlens.md:561 — all-caps 'EVERY non-empty overlap' defensive narration. (codex)
+- docs/efficiency-audit-2026-07-12-newlens.md:599 — WARN/pathological-input 'standing discipline' boilerplate; no finding. (codex)
+- docs/efficiency-audit-2026-07-12-newlens.md:630 — 'empty-adjacent shortlist' awkward phrasing; redundant. (codex)
+- TODO.md:24 — '§ Fable 5 audit below' opaque legacy label. (codex)
+
+- docs/efficiency-audit-2026-07-12-newlens.md §§3-4 — repetitive defensive/refutation narration (repeated N3 veto explanation at :548, :603-627, and the earlier recommendation text). (codex harden r2)
+- docs/efficiency-audit-2026-07-12-newlens.md — excessive uppercase contract signaling (PRIMARY/EVERY/VERBATIM/VETOED/IDENTICAL) throughout, reducing scanability. (codex harden r2)
+- docs/efficiency-audit-2026-07-12-newlens.md:176-191 + :392-420 — over-elaborate precision/qualification around sampled/extrapolated token figures. (codex harden r2)
+- TODO.md:21-47 — TODO section substantially duplicates the audit's recommendation and carve-out prose instead of remaining a concise pointer. (codex harden r2)
+
+## Phase-1 harden residuals (P2, non-blocking — finalize sweep candidates)
+- docs/efficiency-audit-2026-07-12-newlens.md:431 + :659 — post-split figures (1,972 lines / 187,813 B) labeled "post-split live file" but describe the retained tail BEFORE the split's index/header amendments; reword as "retained tail pre-amendment" or give inclusive post-edit figures. (codex regress-2 MINOR; routed here at hardenRound 2/3 rather than burning the last fix round on a label nit — finalize re-reviews this diff.)
+
+## 2026-07-12 — phase-2 design (QW1 archival split)
+- [P3] decisions.md re-archival cadence: after this run's ship promotion, its promoted headings sit beyond the default 2,000-line Read window again (live file EXACTLY 2,000 lines at the slice tip per D42 + ~330 promoted lines and growing). The amended header rule makes the next split routine — re-archive (move the oldest promoted blocks to `.harness/archive/decisions-pre-<boundary>.md`) when the LAST oracle heading (`grep -E '^#{1,3} '`, D41) approaches line ~1,800. Candidate for a cheap preflight/gate check later (behavioral-memory-is-not-a-check).
+- [P3] Ledger metric fidelity — RESOLVED IN-DESIGN r3 (D41) for this run's deliverables: the design/TODO metrics now use the shape-agnostic oracle `grep -E '^#{1,3} '` (census: tail = 206 headings, only 30 legacy `^### `; corrected baselines M2' 364→0). REMAINDER still open: the FROZEN report §1.1d/§5 QW1 metric commands are `^### `-only (legacy-shape record, D35 — do not edit); a future audit should adopt the oracle, and promotion-time heading normalization remains a candidate.
+- [P3] Frozen-report count fidelity (out-of-scope for phase-2 design review; report frozen per D35): audit §5 QW1's "138 of 168 entries" counts `^### ` lines over lines 1–4092 / file-wide, which includes the header's format-example heading (`### YYYY-MM-DD HH:MM -- Short title`, decisions.md:19 — not an entry) plus dateless sub-entry headings; true dated entries = 118 archived of 148 file-wide (137 content `^### ` headings in 35–4092, 167 file-wide). Same figure-class as the 1,972+≤10 residual above. Do not propagate the 138 into shipped artifacts (flagged MAJOR in review-phasedesign2-1).
+
+## 2026-07-12 — slice-2.1 review (QW1 archival split)
+- [P2] Flaky negative-control assertion (pre-existing; NOT this slice's surface): `tests/hooks/test_drive_notify.py::test_concurrent_same_waiting_tip_exactly_one_send` can red under machine load — its RACY-variant leg asserts `racy_sends > 1`, but the injected 0.3 s TOCTOU window still serialized on a loaded box (observed in slice 2.1's first AC8 full-suite run: `got 1`; passes 3/3 isolated re-runs and the full-suite re-run is all-green at 9abdb1f). The slice diff touches no test/bin file. Fix candidates: widen the injected window, raise the racer count, or retry the negative-control leg before asserting.
+
+## 2026-07-12 — phase-2 integration review (QW1 archival split)
+- [P3] Pre-split `.harness/decisions.md` line cites in prose surfaces now need the split's offset mapping (base line N ≤ 4092 → archive line N+11; base N ≥ 4093 → live N−4064; recipe recoverable from the archive preamble's as-of-ce12c42 provenance): `.harness/followups.md:713/:726` (cites :3180/:3198/:3205 → archive :3191/:3209/:3216), `docs/efficiency-audit-2026-07-08.md:46` (:4269 → live :205), live `decisions.md:1698`'s internal cite (:2900/:3001-3006 → archive +11). None executable (design's pin sweep correct — tests/bin are path/allowlist-only); known inherited-line-cites-are-historical class. Actionable nuance for the followups:713 executor: its target AC13 entries now live in the APPEND-FROZEN archive, so the planned supersede pointer must be a NEW entry appended to the LIVE ledger referencing the archive locations — never an archive edit.
+
+## FINALIZE MUST-FIX — stale decisions.md line-cites in committed .harness/followups.md (phase-2 codex MAJOR, confirmed)
+- [P1→finalize] The QW1 archival split moved base lines 1–4092 of `.harness/decisions.md` into
+  `.harness/archive/decisions-pre-2026-07.md`. CAUTION (phase-2 review r2): the three cites below were
+  stale even PRE-split — do NOT map them with the mechanical +11 offset; the intended content actually
+  sits at archive :3852 (SLOC-overage heading), :3867 (183→184 update), :3884-3885 (AC13 entries). The
+  STRING anchors below are the binding recipe. Three LIVE, actionable
+  entries in the committed `.harness/followups.md` still cite pre-split live line numbers for archived
+  content: :713 (`.harness/decisions.md:3198,:3205` + `:3180`), :721 (`.harness/decisions.md:3180` slop
+  note), :726 (`.harness/decisions.md:3180` + "prior decision 3198-3200"). Fix in the finalize pass:
+  re-derive each cite by its pinned STRING anchor (e.g. `REVIEWED_OVERAGE_LINES = 183`, `n==183`,
+  `drive-retro SLOC overage`) against the archive file and rewrite as
+  `.harness/archive/decisions-pre-2026-07.md:<new-line>` (or label "as of ce12c42 pre-split numbering");
+  ALSO note the :713 entry's own instruction ("add a one-line supersede pointer on the AC13 entries")
+  now targets the ARCHIVE file — a frozen snapshot — so the supersede pointer belongs in the LIVE ledger
+  as a new entry instead. Frozen/historical cites (inside the archive itself, dated audit docs) are NOT
+  in scope — do not rewrite history. Class swept 2026-07-12: rg --hidden over the phase-2 tree found no
+  other live actionable cite.
+
+## 2026-07-12 — phase-2 harden audit (QW1 archival split)
+- [P3] Archive append-frozen invariant is behavioral-only (preamble precedence sentence, D40): the one durable, non-vacuous pin candidate that ESCAPES D36's time-falsifiability rationale is a hash-manifest contract test over `.harness/archive/*.md` (an archive never legitimately changes; the pin survives ship promotions and future splits, which only ADD files; mutation-verifiable). Not applied at harden — evidence-gated right-sizing: zero observed occurrences (file is new this phase), git history makes corruption trivially recoverable, and the identical unguarded-history exposure covers the live ledger's retained entries (pre-existing, repo-wide) — a one-file pin is partial coverage. Concrete misdirection vector such a pin would catch: archive:44 carries the snapshot's embedded stale `(append below this line)` anchor. Pairs with the re-archival-cadence gate-check candidate above; fold both into any future ledger-integrity preflight.
+
+## finalize round-1 routings (2026-07-13)
+- [P3] audit §4.7 empty placeholder refutation row (docs/efficiency-audit-2026-07-12-newlens.md:601-603): "none arose" boilerplate — delete/reduce if the file is touched for other reasons later.
+- [P3] audit :632 "empty-adjacent shortlist" phrasing — suggested rewrite "a one-item (or empty) shortlist is a valid outcome (D12)".
+- [P3] TODO.md:31 shorthand "§ Fable 5 audit below" — resolves today; quote the heading's distinctive text if the line is ever touched.
+- [P3] audit all-caps contract-signaling density (e.g. :570) — a whole-doc tone pass over a converged, dated record is churn-prone; deliberately not done in-run (finalize round-1 Claude P3).
