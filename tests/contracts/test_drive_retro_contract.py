@@ -267,11 +267,8 @@ def test_dedup_references_read_only_and_paths():
     assert "`not checked (<file> unavailable)`" in sec
     assert "`not checked (repoRoot unknown)`" in sec
     assert "no cwd fallback" in sec
-    # Re-point (guard-repoint run): the dedup must compare the linked memory FILE's CONTENT,
-    # not the lossy MEMORY.md index line — mirroring /decant's memory-file-content dedup. The
-    # MEMORY.md index path (asserted above) is RETAINED as the candidate enumerator; the
-    # per-slug memory FILE is the NEW content-comparison reference. Mutation-verify: revert the
-    # §3 addition (restore the pre-re-point paragraph) ⇒ both of these RED.
+    # Re-point (guard-repoint): §3 adds the per-slug memory FILE as the CONTENT-comparison
+    # reference; the MEMORY.md index (asserted above) is retained only as the candidate enumerator.
     assert "`~/.claude/projects/<proj>/memory/<slug>.md`" in sec, (
         "§3 must add the linked per-slug memory FILE as the CONTENT-comparison reference "
         "(the index only enumerates candidates)"
