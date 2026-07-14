@@ -60,43 +60,34 @@ def _section(text, header_re, *, stop_re=r"^#{1,2}\s"):
     return "\n".join(lines[start:end])
 
 
-def _first_bullet(section_text):
-    """The RAW text of the FIRST top-level (`- `) bullet in the section — from its `- ` opener up
-    to (exclusive) the next `- ` opener — joined byte-faithfully with newlines. In Step 3 this is
-    the destructive dedup bullet; the SECOND bullet is the marker-grep one (never returned).
-    Two-space continuation lines are not `- ` openers, so they stay inside the first bullet."""
-    lines = section_text.splitlines()
-    starts = [i for i, ln in enumerate(lines) if ln.startswith("- ")]
-    assert len(starts) >= 2, (
-        f"Step 3 must contain >=2 top-level bullets (destructive-dedup + marker-grep); "
-        f"found {len(starts)} — the extraction would be ambiguous"
-    )
-    return "\n".join(lines[starts[0]:starts[1]])
+def _first_bullet_bytes(raw):
+    """The RAW BYTES of the FIRST top-level (`- `) bullet under `## Step 3` — byte-delimited from the
+    section header, NOT via read_text()/splitlines() (which universal-newline-normalize) and NOT a
+    whole-file search. From the `- ` opener up to (exclusive) the next `- ` opener, so the bytes are
+    exactly the deployed first bullet: a CRLF bullet keeps its `\\r`s, a decoy copy elsewhere is out of
+    scope, and the `\\n- ` bound requires the marker-grep 2nd bullet to exist (extraction unambiguous)."""
+    hdr = raw.find(b"\n## Step 3")
+    assert hdr != -1, "## Step 3 header not found in decant/SKILL.md (raw bytes)"
+    b_start = raw.find(b"\n- ", hdr)
+    assert b_start != -1, "no top-level `- ` bullet found under Step 3 (raw bytes)"
+    b_start += 1  # start at the `- ` opener, past the leading newline
+    b_end = raw.find(b"\n- ", b_start)
+    assert b_end != -1, "expected a SECOND Step-3 bullet (the marker-grep bullet) to bound the first"
+    return raw[b_start:b_end]
 
 
 def test_destructive_dedup_bullet_is_byte_identical():
-    """AC-12 GATE: the first Step-3 bullet is byte-identical to the reviewed replacement block.
-    RAW BYTE comparison — indentation and the one-physical-line sentinel are the point. Uses
-    `read_bytes()` (NOT `read_text()`) so a line-ending/encoding change that universal-newline
-    translation would hide still REDs. Mutation-verify (see $RUN_DIR/repoint-mutation.md): restore
-    the OLD bullet ⇒ REDs; convert the file to CRLF ⇒ REDs."""
-    # Structure (section-bound): the FIRST Step-3 bullet is the destructive one and text-matches.
-    step3 = _section(_text(), r"^## Step 3")
-    bullet = _first_bullet(step3)
-    assert bullet == EXPECTED_BULLET, (
-        "decant Step-3 destructive-dedup bullet is NOT byte-identical to the reviewed replacement "
-        "block — a sibling DIET run greps its sentinel byte-for-byte, so any drift parks that run."
-        f"\n--- expected ---\n{EXPECTED_BULLET!r}\n--- actual ---\n{bullet!r}"
-    )
-    # Byte-exactness: the reviewed block must appear VERBATIM in the file's RAW bytes. `read_text()`
-    # + `splitlines()` normalize \r\n / \r to \n, so a CRLF (or other line-ending) drift would slip
-    # past the structure check above while changing the DEPLOYED bytes the sibling run greps.
-    # `read_bytes()` closes that hole: the LF-delimited expected bytes are absent from a CRLF file.
-    raw = SKILL_MD.read_bytes()
-    assert EXPECTED_BULLET.encode("utf-8") in raw, (
-        "decant Step-3 destructive-dedup bullet is not byte-identical at the RAW-BYTE level (a "
-        "line-ending / whitespace / encoding change that read_text() would normalize away) — the "
-        "sibling DIET run greps the deployed bytes byte-for-byte."
+    """AC-12 GATE: the FIRST Step-3 bullet is byte-identical to the reviewed replacement block.
+    BYTE-DELIMITED, SECTION-BOUND extraction from RAW bytes — no read_text()/splitlines()
+    newline-normalization and no whole-file substring — so a CRLF bullet, a decoy copy of the block
+    elsewhere, or any whitespace/encoding drift in the DEPLOYED first Step-3 bullet REDs (the sibling
+    DIET run greps the deployed bytes byte-for-byte). Mutation-verify ($RUN_DIR/repoint-mutation.md):
+    old bullet ⇒ RED; CRLF bullet ⇒ RED; CRLF-bullet + LF-decoy ⇒ RED."""
+    bullet_bytes = _first_bullet_bytes(SKILL_MD.read_bytes())
+    assert bullet_bytes == EXPECTED_BULLET.encode("utf-8"), (
+        "decant Step-3 FIRST bullet is NOT byte-identical (raw bytes) to the reviewed replacement "
+        "block — a line-ending / whitespace / encoding drift the sibling DIET run greps byte-for-byte.\n"
+        f"--- expected ---\n{EXPECTED_BULLET.encode('utf-8')!r}\n--- actual ---\n{bullet_bytes!r}"
     )
 
 
