@@ -73,8 +73,11 @@ Lead with the English meaning of each rule, NOT its filename.
 Two checks:
 
 - `ls` the project memory directory for files with overlapping concepts.
-  Duplicate filenames or near-duplicate descriptions = the user (or another
-  subagent) already saved it; delete one.
+  A duplicate FILENAME = the user (or another subagent) already saved it; delete one.
+  For CONTENT overlap, never compare `MEMORY.md` index lines — under the hook format they
+  are deliberately lossy TRIGGERS, not descriptions. Open BOTH linked memory FILES and
+  compare their CONTENT before deleting anything.
+  Dedup input contract (do not reword): `decant-dedup-input: memory-file-content (v1)`
 - `grep` MEMORY.md for promotion markers (the
   `**promoted to canonical autodrive/OPERATING.md** YYYY-MM-DD` line in the
   index is the authoritative signal). If an entry already shows that marker, it's

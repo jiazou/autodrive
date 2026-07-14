@@ -1,5 +1,5 @@
 ---
-description: RETRO pass — trace-mining over ONE completed run's $RUN_DIR artifacts (event log, review/harden rounds, decisions, markers), emitting classified harness-lesson PROPOSALS to $RUN_DIR/retro-<runId>.md. Auto-invoked by /drive at the true run-wrap (before the wrap-/decant); still operator-invocable, completed-run-only, single-run. Consults OPERATING.md / memory index / TODO.md READ-ONLY for proposal dedup. Never mutates rules, memory, or run state.
+description: RETRO pass — trace-mining over ONE completed run's $RUN_DIR artifacts (event log, review/harden rounds, decisions, markers), emitting classified harness-lesson PROPOSALS to $RUN_DIR/retro-<runId>.md. Auto-invoked by /drive at the true run-wrap (before the wrap-/decant); still operator-invocable, completed-run-only, single-run. Consults OPERATING.md / memory index + linked files / TODO.md READ-ONLY for proposal dedup. Never mutates rules, memory, or run state.
 argument-hint: <runId>
 ---
 You are running the RETRO pass over **one completed `/drive` run**: mine its durable `$RUN_DIR`
@@ -54,7 +54,10 @@ field** (never mined for stats or findings, never written). With `REPO_ROOT = st
 (absolute): `$REPO_ROOT/OPERATING.md`, `$REPO_ROOT/TODO.md`, `$REPO_ROOT/.harness/decisions.md`,
 `$REPO_ROOT/.harness/followups.md`; plus the auto-memory index
 `~/.claude/projects/<proj>/memory/MEMORY.md` where `<proj>` = the absolute repoRoot with every `/`
-and `.` replaced by `-`. A missing/unreadable reference ⇒ that Overlap entry renders `not checked
+and `.` replaced by `-`. The MEMORY.md index only ENUMERATES candidates — under the hook format its
+lines are deliberately lossy TRIGGERS, not descriptions — so for any candidate overlap OPEN the linked
+memory FILE `~/.claude/projects/<proj>/memory/<slug>.md` and compare its CONTENT (mirroring `/decant`'s
+memory-file-content dedup, never the MEMORY.md index line). A missing/unreadable reference ⇒ that Overlap entry renders `not checked
 (<file> unavailable)`; unknown repoRoot ⇒ `not checked (repoRoot unknown)`, no cwd fallback —
 never a STOP.
 
@@ -165,8 +168,10 @@ order: the `# Retro <runId>` header block (`generated:` / `completed:` / `source
   (proposal only)** OPERATING.md | project CLAUDE.md/docs | skill/command file <name> |
   auto-memory | TODO.md (OPERATING.md §Self-Improvement's matrix + process-signal → TODO.md);
   **Draft** ≤2 sentences, absolute-directive form; **Overlap** the existing rule / memory entry /
-  TODO item / ledger entry it extends or duplicates, filled from the step-3 dedup references —
-  "none" only after checking the available references; extend > new. Emit ≥1 proposal when the
+  TODO item / ledger entry it extends or duplicates, filled from the step-3 dedup references (a
+  memory-entry overlap is declared only after OPENING the linked memory FILE and comparing its
+  CONTENT, never from the lossy MEMORY.md index line) — "none" only after checking the available
+  references; extend > new. Emit ≥1 proposal when the
   run shows signal: ≥1 P1-mapped finding under Rule U; any scope round/reviewCount > 1; ≥1
   harden/finalize FIX round (`hardenRound ≥ 1` or `finalizeRound ≥ 1`, or `## AppliedEdits: yes`
   artifacts when state is unreadable); ≥1 redesign marker; a stranded inflight marker; non-null
