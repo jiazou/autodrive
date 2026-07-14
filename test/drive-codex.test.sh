@@ -284,6 +284,34 @@ check_absent "AC-H12b absent --prior-codex path ⇒ FULL (reads the EXACT file)"
 : > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv e8 slice "$WORK/codex-review-e8.md" --poll-secs 0.05 --prior-codex "$PRIOR_CLEAN"
 check_absent "AC-H12c no --confirmation-class (re-dispatch) ⇒ FULL (no -c)" "$(cat "$WORK/argv.log")" "model_reasoning_effort"
 
+echo "=== AC-H12d: per-scope model tier (-m) — gate-enforced ⇒ sol, else terra ==="
+# gate-enforced scopes (phase / finalize / --security-diff) get the frontier model.
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv m1 phase "$WORK/codex-review-m1.md" --poll-secs 0.05
+check_contains "AC-H12d phase scope ⇒ -m gpt-5.6-sol (frontier)" "$(cat "$WORK/argv.log")" "-m gpt-5.6-sol"
+check_absent "AC-H12d phase scope is NOT balanced (forbids a duplicate/wrong -m)" "$(cat "$WORK/argv.log")" "gpt-5.6-terra"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv m2 finalize "$WORK/codex-review-m2.md" --poll-secs 0.05
+check_contains "AC-H12d finalize scope ⇒ -m gpt-5.6-sol (frontier)" "$(cat "$WORK/argv.log")" "-m gpt-5.6-sol"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv m3 slice "$WORK/codex-review-m3.md" --poll-secs 0.05 --security-diff
+check_contains "AC-H12d --security-diff slice ⇒ -m gpt-5.6-sol (frontier)" "$(cat "$WORK/argv.log")" "-m gpt-5.6-sol"
+# every other scope gets the balanced model (slice AND design both take the non-gate-enforced branch).
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv m4 slice "$WORK/codex-review-m4.md" --poll-secs 0.05
+check_contains "AC-H12d plain slice scope ⇒ -m gpt-5.6-terra (balanced)" "$(cat "$WORK/argv.log")" "-m gpt-5.6-terra"
+check_absent "AC-H12d plain slice is NOT frontier" "$(cat "$WORK/argv.log")" "gpt-5.6-sol"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv m7 design "$WORK/codex-review-m7.md" --poll-secs 0.05
+check_contains "AC-H12d design scope ⇒ -m gpt-5.6-terra (balanced)" "$(cat "$WORK/argv.log")" "-m gpt-5.6-terra"
+# tiering off ⇒ vanilla codex: the `-m` token must be ABSENT entirely (asserting only the model VALUE
+# absent would leave a `-m ""` regression — guard `[ -n "$MODEL_SEL" ]` dropped — green). PROMPT text
+# ("Review the scope.") carries no "-m", so an absent "-m" token is unambiguous.
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" disp fake_argv m5 phase "$WORK/codex-review-m5.md" --poll-secs 0.05 --no-tiering
+check_absent "AC-H12d --no-tiering ⇒ no -m token at all (not even -m \"\")" "$(cat "$WORK/argv.log")" "-m"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" DRIVE_CODEX_EFFORT_TIER=off disp fake_argv m5b phase "$WORK/codex-review-m5b.md" --poll-secs 0.05
+check_absent "AC-H12d DRIVE_CODEX_EFFORT_TIER=off ⇒ no -m token at all" "$(cat "$WORK/argv.log")" "-m"
+# env override repoints each tier independently.
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" DRIVE_CODEX_MODEL_HARD=gpt-5.5 disp fake_argv m6 phase "$WORK/codex-review-m6.md" --poll-secs 0.05
+check_contains "AC-H12d DRIVE_CODEX_MODEL_HARD override ⇒ -m gpt-5.5" "$(cat "$WORK/argv.log")" "-m gpt-5.5"
+: > "$WORK/argv.log"; ARGVLOG="$WORK/argv.log" DRIVE_CODEX_MODEL_DEFAULT=gpt-5.4 disp fake_argv m8 slice "$WORK/codex-review-m8.md" --poll-secs 0.05
+check_contains "AC-H12d DRIVE_CODEX_MODEL_DEFAULT override ⇒ -m gpt-5.4" "$(cat "$WORK/argv.log")" "-m gpt-5.4"
+
 echo "=== AC-H13: usage/exit-2 guard + charset + env hatches ==="
 "$HELPER" --mode dispatch --scope h13 --scope-class slice --attempt-log "$ALOG" --bogus-flag 2>/dev/null; check "AC-H13 unknown flag ⇒ exit 2" "$?" "2"
 "$HELPER" --mode dispatch --scope 2>/dev/null; check "AC-H13 valueless --scope ⇒ exit 2" "$?" "2"
@@ -313,7 +341,7 @@ with open(sys.argv[1]) as f:
             print(f"  UNPARSEABLE line: {e}"); bad += 1; continue
         if o.get("op") not in ok_ops:
             print(f"  BAD op: {o.get('op')}"); bad += 1
-        for k in ("ts","scope","op","effort","sandbox","stall_secs","backstop_secs"):
+        for k in ("ts","scope","op","effort","sandbox","model","stall_secs","backstop_secs"):
             if k not in o:
                 print(f"  MISSING field {k}"); bad += 1
 sys.exit(1 if (bad or n == 0) else 0)

@@ -50,7 +50,10 @@
 #   DRIVE_CODEX_BACKSTOP_HOURS backstop_secs = hours*3600 (default backstop 10800s = 3h per attempt)
 #   DRIVE_CODEX_WATCHDOG=off   disable the STALL detector ONLY (the per-attempt backstop stays)
 #   DRIVE_CODEX_SANDBOX=<rung|off>  override the scope-class sandbox rung, or `off` = pass no flag
-#   DRIVE_CODEX_EFFORT_TIER=off     never down-tier codex effort (always full)
+#   DRIVE_CODEX_EFFORT_TIER=off     never down-tier codex effort (always full); ALSO disables the
+#                             per-scope model tier (no -m ⇒ codex config default model)
+#   DRIVE_CODEX_MODEL_HARD    -m model on gate-enforced scopes (security-diff/phase/finalize; default gpt-5.6-sol)
+#   DRIVE_CODEX_MODEL_DEFAULT -m model on every other scope (design/slice; default gpt-5.6-terra)
 #   DRIVE_CODEX_CMD            the codex binary (default `codex`) — the dep-independent TEST SEAM
 #                             (tests inject a simulated log-writer, cf. RETENTION_TRASH_CMD).
 #   DRIVE_CODEX_INJECT_INTERNAL_FAULT=1  TEST knob: force a POST-launch internal fault (proves it
@@ -78,7 +81,8 @@
 #     former command-injection hole).
 #   Numeric values reach awk ONLY via `awk -v var=value` (parameterized), never program interpolation.
 #   Trusted-by-contract, NOT eval'd by the helper: --raw-log/--marker (quoted paths), the prompt
-#     CONTENT (a quoted argv handed to codex), DRIVE_CODEX_CMD (the binary to exec — a test seam).
+#     CONTENT (a quoted argv handed to codex), DRIVE_CODEX_CMD (the binary to exec — a test seam),
+#     DRIVE_CODEX_MODEL_HARD / DRIVE_CODEX_MODEL_DEFAULT (the `-m "$MODEL_SEL"` array arg — never eval'd).
 #     Boolean env compared literally (`= off` / `= 1`): DRIVE_CODEX_WATCHDOG, DRIVE_CODEX_EFFORT_TIER,
 #     DRIVE_CODEX_INJECT_INTERNAL_FAULT.
 #   REQUIRED-FILE READS fail CLOSED on a read error (not just an existence/`-s` check): --prompt-file
@@ -109,6 +113,8 @@
 SANDBOX_RUNG_DESIGN="read-only"        # design/phasedesign scope   (spike fail-branch, §D)
 SANDBOX_RUNG_CODE="workspace-write"    # slice/phase/finalize scope (spike fail-branch, §D)
 EFFORT_TIER_LOW="medium"               # -c model_reasoning_effort=<low> on a clean confirmation (§F)
+MODEL_TIER_HARD="${DRIVE_CODEX_MODEL_HARD:-gpt-5.6-sol}"          # -m on gate-enforced scopes (security-diff/phase/finalize): frontier (§F)
+MODEL_TIER_DEFAULT="${DRIVE_CODEX_MODEL_DEFAULT:-gpt-5.6-terra}"  # -m on every other scope (design/slice): balanced (§F)
 PROBE_TIMEOUT_SECS_DEFAULT=10          # bounded health probe — the ONE un-watchdogged codex call
 POLL_SECS_DEFAULT=15                   # watchdog poll granularity (prod)
 GRACE_SECS=2                           # TERM→KILL grace on a group kill
@@ -411,15 +417,17 @@ _jnum() {   # JSON number, or `null` for empty. $1 = value.
   if [ -z "$1" ]; then printf 'null'; else printf '%s' "$1"; fi
 }
 # log_attempt op attempt outcome cause effort sandbox max_gap killed_log probe_rc rc
+# `model` mirrors effort/sandbox for audit parity, read from the $MODEL_SEL global (empty ⇒ "default",
+# i.e. no -m ⇒ codex config default model); probe-only mode never sets it, so it reads "default" there.
 log_attempt() {
   [ -n "$ATTEMPT_LOG" ] || return 0
   local ts rid
   ts="$(date +%s 2>/dev/null)"
   rid="$(_runid_from_attempt_log)"
   {
-    printf '{"ts":%s,"runId":%s,"scope":%s,"op":%s,"attempt":%s,"outcome":%s,"cause":%s,"effort":%s,"sandbox":%s,"max_gap_secs":%s,"stall_secs":%s,"backstop_secs":%s,"killed_log":%s,"probe_rc":%s,"rc":%s}\n' \
+    printf '{"ts":%s,"runId":%s,"scope":%s,"op":%s,"attempt":%s,"outcome":%s,"cause":%s,"effort":%s,"sandbox":%s,"model":%s,"max_gap_secs":%s,"stall_secs":%s,"backstop_secs":%s,"killed_log":%s,"probe_rc":%s,"rc":%s}\n' \
       "$(_jnum "$ts")" "$(_jstr "$rid")" "$(_jstr "$SCOPE")" "$(_jstr "$1")" "$(_jnum "$2")" \
-      "$(_jstr "$3")" "$(_jstr "$4")" "$(_jstr "$5")" "$(_jstr "$6")" "$(_jnum "$7")" \
+      "$(_jstr "$3")" "$(_jstr "$4")" "$(_jstr "$5")" "$(_jstr "$6")" "$(_jstr "${MODEL_SEL:-default}")" "$(_jnum "$7")" \
       "$(_jnum "$STALL_SECS")" "$(_jnum "$BACKSTOP_SECS")" "$(_jstr "$8")" "$(_jnum "$9")" "$(_jnum "${10}")"
   } >> "$ATTEMPT_LOG" 2>/dev/null
   return 0
@@ -503,6 +511,7 @@ run_attempt() {
   local -a cmd=("$DRIVE_CODEX_CMD" exec)
   [ "$SANDBOX_FLAG_ON" = 1 ] && cmd+=(--sandbox "$RUNG")
   [ "$EFFORT_LOW" = 1 ] && cmd+=(-c "model_reasoning_effort=$EFFORT_TIER_LOW")
+  [ -n "$MODEL_SEL" ] && cmd+=(-m "$MODEL_SEL")
   # $PROMPT_TEXT was read + validated PRE-LAUNCH (FIX B) — reuse it, never a second cat that could
   # read-fail to "" and slip a degenerate empty prompt past the pre-launch guard.
   # `< /dev/null`: the prompt is passed as ARGV, so codex needs no stdin. Without this, a helper
@@ -667,6 +676,14 @@ do_dispatch() {
   local gate_enforced=0
   [ "$SECURITY_DIFF" = 1 ] && gate_enforced=1
   case "$SCOPE_CLASS" in phase|finalize) gate_enforced=1 ;; esac
+
+  # model tier (§F): gate-enforced scopes (security-diff / phase / finalize) get the frontier model
+  # ($MODEL_TIER_HARD); every other scope the balanced model ($MODEL_TIER_DEFAULT). Off entirely when
+  # tiering is disabled (--no-tiering / DRIVE_CODEX_EFFORT_TIER=off) ⇒ no -m ⇒ codex config default.
+  MODEL_SEL=""
+  if [ "$TIERING_ON" = 1 ]; then
+    if [ "$gate_enforced" = 1 ]; then MODEL_SEL="$MODEL_TIER_HARD"; else MODEL_SEL="$MODEL_TIER_DEFAULT"; fi
+  fi
 
   # effort carve-out (§F): down-tier IFF confirmation-class AND NOT security-diff AND the
   # --prior-codex scan is clean (non-degraded first line AND zero severity tags) AND tiering on.
