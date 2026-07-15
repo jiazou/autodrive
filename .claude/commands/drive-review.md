@@ -420,7 +420,9 @@ records the adjudication so a later re-flag replays the evidence instead of reli
   adjudication is DURABLE-qualifying (recurring-class evidence + hermetic repo-relative
   repro + non-secret manifest), the coordinator ALSO appends the entry here in the
   committed format. Ship promotes exactly this file; it is not created when nothing
-  qualifies.
+  qualifies. Entry ids in this file are PROVISIONAL — ship's promotion RE-DERIVES each
+  `CR-<n>` from the live committed ledger's max at promotion time (a rebase may land
+  base-appended entries first), so a pending id never collides by construction.
 - `.harness/codex-refutations.md` — the committed durable cross-run ledger (its purpose
   header carries the entry schema; promoted at ship by drive-ship.md's activation-aware
   step).

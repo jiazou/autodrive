@@ -146,8 +146,14 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
   is non-empty (`[ -s … ]` — durable refutation adjudications staged for promotion),
   probe the LIVE gate for the 4th allowlist entry —
   `grep -qF '.harness/codex-refutations.md' ~/.claude/drive-enforcement-worktree/bin/drive-conformance.sh`.
-  Admitted (the grep succeeds) ⇒ append the pending entries to
-  `.harness/codex-refutations.md` and `git add` it so they ride the SAME single ledger
+  Admitted (the grep succeeds) ⇒ promote the pending entries into
+  `.harness/codex-refutations.md`, RE-DERIVING each entry's `CR-<n>` id from the LIVE
+  committed ledger at promotion time: next id = (the ledger's current max `## CR-<n>`,
+  via grep) + 1, assigned sequentially in pending-file order. The pending file's ids are
+  PROVISIONAL by contract — a post-rebase base append may already occupy them (the
+  base-preflight auto-rebases when the base advanced this ledger), so NEVER append a
+  staged/remembered number verbatim; renumber, then `git add` the file so the
+  renumbered entries ride the SAME single ledger
   commit below. Absent, or the probe fails (e.g. the enforcement worktree is missing) ⇒
   leave the entries run-local and surface the pending-activation followup at Gate B
   (graceful degrade — never a push false-block). Then,

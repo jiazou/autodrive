@@ -24,6 +24,8 @@ mutation-verified at implement (delete the clause -> red; restore -> green).
 import re
 import subprocess
 
+import pytest
+
 from _helpers import REPO_ROOT
 
 CMDS = REPO_ROOT / ".claude" / "commands"
@@ -676,7 +678,13 @@ def _lint_ledger_schema(text):
         declaration (`-- expected:` / `– expected:` (en-dash) / `- expected:`) are
         REJECTED loudly, never silently tolerated — a declaring-but-misspelled entry
         reds HERE and never reaches the executor's parse (closes the silent rc-only
-        degradation by construction)."""
+        degradation by construction).
+    (d) Entry ids are UNIQUE — a duplicate `CR-<n>` reds loudly. This is the BACKSTOP
+        for the phase-r1 collision class (reproduced: a post-rebase base append and a
+        verbatim-promoted pending entry both numbered CR-3): pending-file ids are
+        PROVISIONAL and ship's promotion RE-DERIVES them from the live ledger's max
+        (drive-ship.md § Ship worktree + ledger promotion), so a duplicate reaching
+        this lint means the promotion contract was violated."""
     # (a) + (b): line-wise, with CommonMark fence tracking.
     inside_fence = False
     for ln in text.splitlines():
@@ -691,11 +699,18 @@ def _lint_ledger_schema(text):
                 f"column-0 B-3 schema `## CR-<n> — ` — a deviant heading would "
                 f"silently escape per-entry validation"
             )
-    # (c): per entry body (splitting is sound now that (b) passed).
+    # (c) + (d): per entry body (splitting is sound now that (b) passed).
     entries = list(_LEDGER_ENTRY_RE.finditer(text))
     assert entries, "schema-lint: no `## CR-<n> — ` entries found in the ledger"
+    seen_ids = set()
     for m in entries:
         entry_id, body = m.group(1), m.group(0)
+        assert entry_id not in seen_ids, (
+            f"duplicate ledger entry id {entry_id} (schema-lint (d)) — pending-file ids "
+            f"are PROVISIONAL; ship's promotion must re-derive CR-<n> from the live "
+            f"ledger's max at promotion time"
+        )
+        seen_ids.add(entry_id)
         assert re.search(r"^- repro \(hermetic\): `env -i [^`]+`", body, re.MULTILINE), (
             f"{entry_id}: committed entries must ALWAYS carry an executable hermetic "
             f"`env -i` repro line (bound 1; schema-lint (c))"
@@ -730,7 +745,6 @@ def _ledger_repro_commands():
         repro = re.search(r"^- repro \(hermetic\): `(env -i [^`]+)`", body, re.MULTILINE)
         decl = re.search(r"^\s*— expected:\s*(.+?)\s*$", body, re.MULTILINE)
         assert repro and decl, f"{entry_id}: lint-guaranteed forms missing (internal)"
-        assert entry_id not in cmds, f"duplicate ledger entry id {entry_id}"
         cmds[entry_id] = (repro.group(1), decl.group(1))
     assert "CR-1" in cmds and "CR-2" in cmds, (
         f"the two D-27 seed entries (CR-1, CR-2) must be present; found {sorted(cmds)}"
@@ -803,10 +817,11 @@ def test_committed_ledger_repros_execute_green():
     line is EXECUTED from the repo root and validated against its DECLARED `— expected:`
     oracle — exit code and/or exact quoted output (codex r3 #3, IMPLEMENT arm; the B-3
     schema declares `— expected: <exact output/exit>` and voids on "A differing result
-    (output/exit)"). Entries without a parseable declaration fall back to rc==0. The
-    entries are replayable as written (a drift in any anchored token reds the suite here
-    rather than at replay time), and a future promotion joins the coverage
-    automatically."""
+    (output/exit)"). The schema-lint requires a declaration per entry and the executor
+    fails CLOSED on an unrecognized serialization (round 4 — no silent rc-only
+    fallback). The entries are replayable as written (a drift in any anchored token reds
+    the suite here rather than at replay time), and a future promotion joins the
+    coverage automatically."""
     for entry_id, (cmd, expected) in _ledger_repro_commands().items():
         proc = subprocess.run(
             cmd, shell=True, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=60
@@ -850,6 +865,94 @@ def test_committed_seed_repros_red_direction(tmp_path):
             f"{entry_id}: repro must RED once its guarded clause is deleted "
             f"(vacuity probe): {cmd!r}"
         )
+
+
+# =========================================================================== #
+# Phase-r1 — promotion re-derives CR-<n> from the live ledger (collision class)
+# =========================================================================== #
+# Two schema-valid entries that BOTH carry the id CR-3: the first simulates another
+# run's refutation landing on the base FIRST (present in the rebased committed ledger),
+# the second is this run's pending entry promoted VERBATIM (the reproduced bug — only
+# the ids collide; each entry is individually schema-clean).
+_BASE_APPENDED_CR3 = """
+## CR-3 — "another run's refutation (landed on base first)" — REFUTED (other-run, 2026-07-15)
+- recurrence: collision fixture.
+- finding (specific): the base-appended entry occupying CR-3 after the auto-rebase.
+- evidence: collision fixture.
+- repro (hermetic): `env -i PATH=/usr/bin:/bin sh -c 'true'`
+    — expected: exit 0
+- scope qualifiers: collision fixture.
+"""
+_PENDING_PROVISIONAL_CR3 = """
+## CR-3 — "this run's pending entry (provisional id)" — REFUTED (this-run, 2026-07-15)
+- recurrence: collision fixture.
+- finding (specific): the staged entry whose provisional id must be re-derived.
+- evidence: collision fixture.
+- repro (hermetic): `env -i PATH=/usr/bin:/bin sh -c 'true'`
+    — expected: exit 0
+- scope qualifiers: collision fixture.
+"""
+
+
+def _renumber_pending_per_promotion_contract(ledger_text, pending_text):
+    """drive-ship.md's promotion rule, EXECUTED (the reference implementation of the
+    contract this test pins): next id = (the live committed ledger's current max
+    `## CR-<n>`, via grep) + 1, assigned sequentially in pending-file order — the
+    pending file's ids are PROVISIONAL and are never appended verbatim."""
+    live_max = max(
+        int(m.group(1)) for m in re.finditer(r"^## CR-(\d+) — ", ledger_text, re.MULTILINE)
+    )
+    counter = {"next": live_max}
+
+    def _sub(m):
+        counter["next"] += 1
+        return f"## CR-{counter['next']} — "
+
+    return re.sub(r"^## CR-\d+ — ", _sub, pending_text, flags=re.MULTILINE)
+
+
+def test_promotion_rederivation_contract_pinned():
+    """[M] phase-r1: the provisional/renumber contract is stated at BOTH read sites —
+    drive-ship.md's activation-aware promotion step (RE-DERIVE from the live ledger's
+    max, +1 sequential, pending ids PROVISIONAL, never a staged number verbatim) and
+    drive-review.md's R7 pending-file bullet. Mutation-verified: deleting either
+    clause reds."""
+    promo = _norm(_section(_text(SHIP), r"^##\s+Ship worktree \+ ledger promotion\b"))
+    assert "RE-DERIVING each entry's `CR-<n>` id from the LIVE committed ledger" in promo
+    assert "next id = (the ledger's current max `## CR-<n>`, via grep) + 1" in promo
+    assert "assigned sequentially in pending-file order" in promo
+    assert "PROVISIONAL by contract" in promo
+    assert "NEVER append a staged/remembered number verbatim" in promo
+    r7 = _norm(_r7_section())
+    assert "Entry ids in this file are PROVISIONAL" in r7
+    assert "RE-DERIVES each `CR-<n>` from the live committed ledger's max at promotion time" in r7
+    assert "never collides by construction" in r7
+
+
+def test_promotion_renumbering_prevents_ledger_id_collision():
+    """[M] phase-r1 codex MAJOR (REPRODUCED before fixing: rc=1, `duplicate ledger
+    entry id CR-3`): after the base-preflight's auto-rebase, the committed ledger can
+    already hold the id a pending entry staged — a verbatim append trips the schema
+    lint at ship time with no normal-resume repair (promotion commits before the suite;
+    resume SKIPs an existing ledger commit). Both directions, executed:
+    - BACKSTOP: the naive verbatim append (the reproduced bug) => the lint reds loudly
+      with the duplicate-id message;
+    - CONTRACT: applying drive-ship.md's re-derivation rule => unique ids, lint green,
+      the promoted entry's content preserved (only its id changes)."""
+    rebased_ledger = _text(LEDGER) + _BASE_APPENDED_CR3
+    # backstop direction: verbatim append of the provisional id ⇒ duplicate ⇒ loud red
+    with pytest.raises(AssertionError, match=r"duplicate ledger entry id CR-3"):
+        _lint_ledger_schema(rebased_ledger + _PENDING_PROVISIONAL_CR3)
+    # contract direction: re-derive from the live max (3) ⇒ CR-4; no collision
+    promoted = rebased_ledger + _renumber_pending_per_promotion_contract(
+        rebased_ledger, _PENDING_PROVISIONAL_CR3
+    )
+    _lint_ledger_schema(promoted)
+    ids = [m.group(1) for m in _LEDGER_ENTRY_RE.finditer(promoted)]
+    assert ids == ["CR-1", "CR-2", "CR-3", "CR-4"], f"expected unique sequential ids, got {ids}"
+    assert "this run's pending entry (provisional id)" in promoted, (
+        "renumbering must preserve the promoted entry's content — only the id changes"
+    )
 
 
 # =========================================================================== #
