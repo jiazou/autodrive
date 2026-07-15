@@ -650,52 +650,88 @@ def test_no_refutation_tokens_inside_harden_finalize_prompts():
 # =========================================================================== #
 # AC7 — the committed ledger: header, seeds, and EXECUTED hermetic repros
 # =========================================================================== #
-def _ledger_repro_commands():
-    """Every `## CR-<n>` entry's hermetic repro line, keyed by entry id — GROWTH-TOLERANT
-    (codex r1 MAJOR-1): a future CR-3 promotion EXTENDS the executed coverage instead of
-    redding AC7. Asserts the two D-27 seeds (CR-1/CR-2) are present and that EVERY entry
-    carries an executable `env -i` repro (bound 1's committed-always-executable half,
-    applied per entry). The entry-schema TEMPLATE in the header's fenced example is not
-    an entry (extraction anchors on the `## CR-<n> — ` headings)."""
-    text = _text(LEDGER)
-    # Fence-aware heading COMPLETENESS guard (round-2 Claude MINOR-1; widened round 3
-    # per codex r3 #2): every rendered h2 heading OUTSIDE the fenced schema template —
-    # including CommonMark's up-to-3-space INDENTED form (`^ {0,3}## `) — must match the
-    # COLUMN-0 B-3 entry form `## CR-<n> — ` (space em-dash space). Without it, a
-    # deviant heading (en-dash, `CR-3a`, missing spaces, or an indented heading the
-    # column-0 extractor cannot split on) starts no entry match — its body would be
-    # absorbed into the PREVIOUS entry and its bound-1 repro obligation silently
-    # skipped. An indented heading reds even in otherwise-valid form: the promotion
-    # step writes column-0, and loud beats silent.
+_LEDGER_ENTRY_RE = re.compile(
+    r"^## (CR-\d+) — .*?(?=^## CR-\d+ — |\Z)", re.MULTILINE | re.DOTALL
+)
+
+
+def _lint_ledger_schema(text):
+    """The ONE canonical ledger-schema grammar (round-4 RESTRUCTURE — the accumulating
+    per-element drift guards folded into a single validator; class boundary: ledger
+    structural drift). Validates ALL structural elements OUTSIDE the fenced schema
+    template:
+
+    (a) CommonMark-correct fence tracking: an up-to-3-space-indented ``` line IS a
+        fence toggle; a 4+-space-indented backtick line is an indented CODE BLOCK and
+        toggles NOTHING (codex r4 #2, reproduced: a 4-space ``` desynced the old
+        tracker and exempted a deviant heading).
+    (b) Every unfenced heading-shaped line (`^ {0,3}#{2,4} `) that mentions `CR-` must
+        be the EXACT column-0 h2 schema form `## CR-<n> — ` — one rule closes the
+        en-dash / `CR-3a` / missing-space / indented / h3 / h4 deviants together
+        (heading drift red loudly; a deviant heading starts no entry match, so its
+        body would otherwise be absorbed into the previous entry and its obligations
+        silently skipped).
+    (c) Every entry body must contain the bound-1 hermetic repro line AND a
+        schema-form `— expected:` declaration line. Dash-variant spellings of the
+        declaration (`-- expected:` / `– expected:` (en-dash) / `- expected:`) are
+        REJECTED loudly, never silently tolerated — a declaring-but-misspelled entry
+        reds HERE and never reaches the executor's parse (closes the silent rc-only
+        degradation by construction)."""
+    # (a) + (b): line-wise, with CommonMark fence tracking.
     inside_fence = False
     for ln in text.splitlines():
-        if ln.strip().startswith("```"):
+        if re.match(r" {0,3}```", ln):
             inside_fence = not inside_fence
             continue
-        if not inside_fence and re.match(r" {0,3}## ", ln):
+        if inside_fence:
+            continue
+        if re.match(r" {0,3}#{2,4} ", ln) and "CR-" in ln:
             assert re.match(r"## CR-\d+ — ", ln), (
-                f"ledger heading drift (fence-aware completeness guard): {ln!r} does "
-                f"not match the column-0 B-3 schema `## CR-<n> — ` — a deviant or "
-                f"indented heading would silently escape per-entry bound-1 validation"
+                f"ledger heading drift (schema-lint (b)): {ln!r} does not match the "
+                f"column-0 B-3 schema `## CR-<n> — ` — a deviant heading would "
+                f"silently escape per-entry validation"
             )
+    # (c): per entry body (splitting is sound now that (b) passed).
+    entries = list(_LEDGER_ENTRY_RE.finditer(text))
+    assert entries, "schema-lint: no `## CR-<n> — ` entries found in the ledger"
+    for m in entries:
+        entry_id, body = m.group(1), m.group(0)
+        assert re.search(r"^- repro \(hermetic\): `env -i [^`]+`", body, re.MULTILINE), (
+            f"{entry_id}: committed entries must ALWAYS carry an executable hermetic "
+            f"`env -i` repro line (bound 1; schema-lint (c))"
+        )
+        deviant = re.search(r"^\s*(?:--|–|-)\s*expected:", body, re.MULTILINE)
+        assert not deviant, (
+            f"{entry_id}: deviant `expected:` spelling {deviant.group(0).strip()!r} — "
+            f"the schema form is the em-dash `— expected: <exact output/exit>`; "
+            f"deviants are rejected loudly, never silently degraded to rc-only "
+            f"(schema-lint (c))"
+        )
+        assert re.search(r"^\s*— expected: \S", body, re.MULTILINE), (
+            f"{entry_id}: missing the schema-form `— expected: <exact output/exit>` "
+            f"declaration line (schema-lint (c))"
+        )
+
+
+def _ledger_repro_commands():
+    """Every `## CR-<n>` entry's (repro command, declared oracle) pair, keyed by entry
+    id — GROWTH-TOLERANT (codex r1 MAJOR-1): a future CR-3 promotion EXTENDS the
+    executed coverage instead of redding AC7. Runs `_lint_ledger_schema` FIRST (the
+    single grammar guarantees each form exists); this extractor then keeps its
+    exact-form parse. Asserts the two D-27 seeds (CR-1/CR-2) are present. The
+    entry-schema TEMPLATE in the header's fenced example is not an entry (extraction
+    anchors on the column-0 `## CR-<n> — ` headings; the template heading's `<n>` is
+    non-digit and it sits inside the fence)."""
+    text = _text(LEDGER)
+    _lint_ledger_schema(text)
     cmds = {}
-    for m in re.finditer(
-        r"^## (CR-\d+) — .*?(?=^## CR-\d+ — |\Z)", text, re.MULTILINE | re.DOTALL
-    ):
+    for m in _LEDGER_ENTRY_RE.finditer(text):
         entry_id, body = m.group(1), m.group(0)
         repro = re.search(r"^- repro \(hermetic\): `(env -i [^`]+)`", body, re.MULTILINE)
-        assert repro, (
-            f"{entry_id}: committed entries must ALWAYS carry an executable hermetic "
-            f"`env -i` repro line (bound 1)"
-        )
-        # The declared oracle (codex r3 #3, IMPLEMENT arm): the B-3 schema line reads
-        # `— expected: <exact output/exit>` (.harness/codex-refutations.md:31) and the
-        # replay rule voids on "A differing result (output/exit)" (:16) — an entry MAY
-        # therefore declare expected OUTPUT beyond an exit code. Parse the declaration
-        # when present; rc-only stays the fallback for entries without one.
         decl = re.search(r"^\s*— expected:\s*(.+?)\s*$", body, re.MULTILINE)
+        assert repro and decl, f"{entry_id}: lint-guaranteed forms missing (internal)"
         assert entry_id not in cmds, f"duplicate ledger entry id {entry_id}"
-        cmds[entry_id] = (repro.group(1), decl.group(1) if decl else None)
+        cmds[entry_id] = (repro.group(1), decl.group(1))
     assert "CR-1" in cmds and "CR-2" in cmds, (
         f"the two D-27 seed entries (CR-1, CR-2) must be present; found {sorted(cmds)}"
     )
@@ -705,32 +741,43 @@ def _ledger_repro_commands():
 def _assert_declared_result(entry_id, cmd, expected, proc):
     """Compare an executed repro against its declared `— expected:` oracle (B-3 schema:
     `— expected: <exact output/exit>`; replay rule: "A differing result (output/exit)
-    ⇒ the entry is VOID"). Recognized declaration forms, both optional and combinable:
-    `exit <N>` binds the exit code; a double-quoted "literal" binds the exact (stripped)
-    stdout. A declaration with neither form — and an entry with no declaration — falls
-    back to the conservative rc==0."""
-    checked = False
-    if expected is not None:
-        m_exit = re.search(r"\bexit\s+(\d+)\b", expected)
-        if m_exit:
-            want_rc = int(m_exit.group(1))
-            assert proc.returncode == want_rc, (
-                f"{entry_id}: declared `exit {want_rc}` but got rc={proc.returncode} "
-                f"(a differing result VOIDS the entry): {cmd!r} stderr={proc.stderr!r}"
-            )
-            checked = True
-        m_out = re.search(r'"([^"]*)"', expected)
-        if m_out:
-            assert proc.stdout.strip() == m_out.group(1), (
-                f"{entry_id}: declared output {m_out.group(1)!r} but got "
-                f"{proc.stdout.strip()!r} (a differing result VOIDS the entry): {cmd!r}"
-            )
-            checked = True
-    if not checked:
+    ⇒ the entry is VOID"). Recognized serializations (combinable):
+    - `exit <N>` binds the exit code;
+    - a double-quoted "literal" binds stdout EXACTLY: stdout must equal the literal,
+      tolerating exactly ONE trailing newline (the shell convention) — never a
+      whitespace-insensitive strip (codex r4 #1, reproduced: ` X ` vs "X" passed
+      under .strip(); it now REDS). An output-only declaration also requires exit 0
+      (an entry wanting a nonzero exit must declare it).
+    A declaration matching NEITHER form fails CLOSED — loud red, never a silent
+    rc-only fallback (codex r4 #1, reproduced: bare-word `— expected: READY` fell
+    through to rc==0 and `stdout=WRONG` passed; it now REDS)."""
+    assert expected is not None, (
+        f"{entry_id}: no declaration reached the executor (the schema-lint requires one)"
+    )
+    m_exit = re.search(r"\bexit\s+(\d+)\b", expected)
+    m_out = re.search(r'"([^"]*)"', expected)
+    assert m_exit or m_out, (
+        f"{entry_id}: unrecognized declared-oracle serialization {expected!r} — "
+        f"recognized forms: `exit <N>` and/or a double-quoted stdout literal "
+        f"(failing CLOSED; no silent rc-only fallback)"
+    )
+    if m_exit:
+        want_rc = int(m_exit.group(1))
+        assert proc.returncode == want_rc, (
+            f"{entry_id}: declared `exit {want_rc}` but got rc={proc.returncode} "
+            f"(a differing result VOIDS the entry): {cmd!r} stderr={proc.stderr!r}"
+        )
+    else:
         assert proc.returncode == 0, (
-            f"{entry_id}: repro must exit 0 from the repo root (no parseable declared "
-            f"oracle — rc-only fallback): {cmd!r} (rc={proc.returncode}, "
-            f"stderr={proc.stderr!r})"
+            f"{entry_id}: output-only declaration implies exit 0, got "
+            f"rc={proc.returncode}: {cmd!r} stderr={proc.stderr!r}"
+        )
+    if m_out:
+        lit = m_out.group(1)
+        assert proc.stdout in (lit, lit + "\n"), (
+            f"{entry_id}: declared output {lit!r} but got {proc.stdout!r} — the "
+            f"comparison is EXACT (one trailing newline tolerated), and a differing "
+            f"result VOIDS the entry: {cmd!r}"
         )
 
 
