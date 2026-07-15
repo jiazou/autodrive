@@ -690,9 +690,14 @@ def _lint_ledger_schema(text):
         verbatim-promoted pending entry both numbered CR-3): pending-file ids are
         PROVISIONAL and ship's promotion RE-DERIVES them from the live ledger's max
         (drive-ship.md § Ship worktree + ledger promotion), so a duplicate reaching
-        this lint means the promotion contract was violated."""
-    # (a) + (b): line-wise, with CommonMark fence tracking.
+        this lint means the promotion contract was violated.
+    (e) Every unfenced VOID annotation line carries the id-carrying form
+        `> **VOID CR-<n> (<runId>, <date>):** …` AND its id matches an existing entry
+        id — association is CHECKED, never inferred from position (harden-2, D-46; an
+        id-less or dangling-id VOID reds loudly)."""
+    # (a) + (b): line-wise, with CommonMark fence tracking; collect VOID lines for (e).
     inside_fence = False
+    void_lines = []
     for ln in text.splitlines():
         if re.match(r" {0,3}```", ln):
             inside_fence = not inside_fence
@@ -705,6 +710,8 @@ def _lint_ledger_schema(text):
                 f"column-0 B-3 schema `## CR-<n> — ` — a deviant heading would "
                 f"silently escape per-entry validation"
             )
+        if re.match(r" {0,3}> \*\*VOID\b", ln):
+            void_lines.append(ln)
     # (c) + (d): per entry body (splitting is sound now that (b) passed).
     entries = list(_LEDGER_ENTRY_RE.finditer(text))
     assert entries, "schema-lint: no `## CR-<n> — ` entries found in the ledger"
@@ -731,6 +738,18 @@ def _lint_ledger_schema(text):
         assert re.search(r"^\s*— expected: \S", body, re.MULTILINE), (
             f"{entry_id}: missing the schema-form `— expected: <exact output/exit>` "
             f"declaration line (schema-lint (c))"
+        )
+    # (e): every VOID annotation is id-carrying and names an existing entry.
+    for ln in void_lines:
+        m = re.match(r" {0,3}> \*\*VOID CR-(\d+) \(", ln)
+        assert m, (
+            f"VOID annotation {ln!r} lacks the id-carrying form "
+            f"`> **VOID CR-<n> (<runId>, <date>):** …` (schema-lint (e))"
+        )
+        vid = f"CR-{m.group(1)}"
+        assert vid in seen_ids, (
+            f"VOID annotation names {vid}, which matches no `## CR-<n>` entry in this "
+            f"ledger (schema-lint (e)) — the id must reference the voided entry"
         )
 
 
@@ -812,9 +831,10 @@ def test_committed_ledger_header_and_seed_entries():
     assert "the entry is VOID" in norm
     assert "executed red in the faithful env ALWAYS defeats an entry" in norm
     assert "repro timeout refutes nothing and voids nothing" in norm
-    # harden-1 void-recording mechanics: append-only annotation, never a heading
+    # harden-1/2 void-recording mechanics: id-carrying append-only annotation, never a
+    # heading (the id makes any mis-placement self-describing and greppable — D-46)
     assert "Record a void by appending" in norm
-    assert "`> **VOID (<runId>, <date>):** <observed differing result>`" in norm
+    assert "`> **VOID CR-<n> (<runId>, <date>):** <observed differing result>`" in norm
     assert "never a new `## CR-<n>` heading" in norm
     assert re.search(r"^## CR-1 — ", text, re.MULTILINE), "seed CR-1 missing"
     assert re.search(r"^## CR-2 — ", text, re.MULTILINE), "seed CR-2 missing"
@@ -1034,7 +1054,32 @@ def test_ledger_lint_heading_trigger_covers_all_heading_forms():
         with pytest.raises(AssertionError, match="heading drift"):
             _lint_ledger_schema(clean + "\n" + deviant + "\n")
     # the mandated void-recording form is an annotation line INSIDE the entry — green
-    _lint_ledger_schema(clean + "\n> **VOID (someRun, 2026-07-16):** repro exited 1 at re-flag\n")
+    # (EOF-appended = inside the LAST entry, CR-2; id-carrying form per D-46)
+    _lint_ledger_schema(clean + "\n> **VOID CR-2 (someRun, 2026-07-16):** repro exited 1 at re-flag\n")
+
+
+def test_void_annotation_id_binding():
+    """[M] harden-2 (D-46; the codex void finding's actionable residual — the
+    append-only-contradiction half is REFUTED, RF-2): the VOID annotation form carries
+    the target entry id (`> **VOID CR-<n> (<runId>, <date>):** …`) and lint rule (e)
+    makes the association CHECKED, not position-implied. Executed probes:
+    - mid-file: a VOID line inside CR-1 BEFORE the `## CR-2` heading ⇒ lint GREEN
+      (annotating a non-terminal entry is rule-conformant — no rewrite forced);
+    - dangling id: a VOID naming CR-9 on the clean 2-entry ledger ⇒ red loudly;
+    - stale id-less r1 form: `> **VOID (<runId>…` ⇒ red loudly (cannot dodge (e))."""
+    clean = _text(LEDGER)
+    void_cr1 = "> **VOID CR-1 (someRun, 2026-07-16):** repro exited 1 at re-flag\n\n"
+    mid = clean.replace("## CR-2 — ", void_cr1 + "## CR-2 — ", 1)
+    assert mid != clean, "mid-file fixture: the ## CR-2 anchor must exist"
+    _lint_ledger_schema(mid)  # green: id-carrying VOID inside a non-terminal entry
+    with pytest.raises(AssertionError, match=r"schema-lint \(e\)"):
+        _lint_ledger_schema(
+            clean + "\n> **VOID CR-9 (someRun, 2026-07-16):** repro exited 1\n"
+        )
+    with pytest.raises(AssertionError, match=r"schema-lint \(e\)"):
+        _lint_ledger_schema(
+            clean + "\n> **VOID (someRun, 2026-07-16):** repro exited 1\n"
+        )
 
 
 def test_fenced_blocks_tracker_is_commonmark():
@@ -1196,6 +1241,9 @@ def test_r8_design_transcript_and_revision_leg():
     scope = _norm(_scope_blocks(text)[0])
     assert "verify-design-claims-phase<P>.md" in scope
     assert "ALWAYS" in scope and "rewritten in place on revision legs" in scope
+    # harden-2 (D-46): the author-side coverage mandate — the callee half of the
+    # pre-round check's coverage arm (caller/callee symmetry; delete it => red)
+    assert "re-affirming its coverage statement against the revised design" in scope
     assert "no citations / no quoted snippets / no empirical claims" in scope
     assert "calibration script" in scope and "imprecision budget" in scope
     step2 = _norm(_section(text, r"^## Step 2\b"))

@@ -54,7 +54,8 @@ Write `$RUN_DIR/design-phase<P>.md` covering, for phase `<P>` ONLY:
   enumeration).
 - ALSO write `$RUN_DIR/verify-design-claims-phase<P>.md` (a separate file, ALWAYS
   written — even when there is nothing to verify — and rewritten in place on revision
-  legs): an ARTIFACT-shaped transcript (the commands run + their outputs) verifying
+  legs, re-affirming its coverage statement against the revised design): an
+  ARTIFACT-shaped transcript (the commands run + their outputs) verifying
   EVERY citation, quoted snippet, and empirical claim this design makes; if it makes
   none, state that explicitly ("no citations / no quoted snippets / no empirical
   claims"). A classifier/matcher rule proposed by the design requires a runnable

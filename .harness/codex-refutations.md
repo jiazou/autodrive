@@ -16,9 +16,10 @@ Usage + replay rules (binding):
   repo root at the reviewed tip. A differing result (output/exit) ⇒ the entry is VOID
   and the finding stands, adjudicated fresh. An executed red in the faithful env ALWAYS
   defeats an entry, whatever this ledger says. Record a void by appending a
-  `> **VOID (<runId>, <date>):** <observed differing result>` annotation line INSIDE
-  the voided entry — never a new `## CR-<n>` heading, never a delete/rewrite of the
-  entry (the ledger stays append-only).
+  `> **VOID CR-<n> (<runId>, <date>):** <observed differing result>` annotation line
+  INSIDE the voided entry (`CR-<n>` = the voided entry's own id) — never a new
+  `## CR-<n>` heading, never a delete/rewrite of the entry (the ledger stays
+  append-only).
 - **Hermeticity:** the recorded env IS the complete env by construction (`env -i` +
   explicitly set vars; repo-relative cwd). Entries that cannot run hermetically are
   INELIGIBLE here and stay run-local in `$RUN_DIR/codex-refuted-<scope>.md`.
