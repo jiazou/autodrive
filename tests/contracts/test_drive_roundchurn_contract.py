@@ -89,10 +89,12 @@ def _scope_blocks(text):
 
 
 def _fenced_blocks(text):
-    """Every ``` fenced block's content (the PROMPT-heredoc dispatch blocks live here)."""
+    """Every ``` fenced block's content (the PROMPT-heredoc dispatch blocks live here).
+    CommonMark fence tracking — same tracker as `_lint_ledger_schema` (a): a 4+-space-
+    indented ``` line is indented CODE, never a toggle."""
     blocks, cur, inside = [], [], False
     for ln in text.splitlines():
-        if ln.strip().startswith("```"):
+        if re.match(r" {0,3}```", ln):
             if inside:
                 blocks.append("\n".join(cur))
                 cur = []
@@ -587,6 +589,10 @@ def test_r7_five_bounds_present():
     assert "NEVER injected into harden/finalize auditor prompts" in r7
     assert "prior-round enrichment" in r7
     assert "EXTENDS, and does not reword" in r7
+    # harden-1 (codex #1 actionable half): the applicable-entries discovery binding
+    assert "Applicable entries = those in" in r7
+    assert "whose Finding/Qualifier matches the re-flagged finding" in r7
+    assert "greps BOTH files before composing a re-audit prompt" in r7
     # bound 3
     assert "finding-specific" in r7
     assert 'never class-level "X-like findings are settled"' in r7
@@ -667,12 +673,12 @@ def _lint_ledger_schema(text):
         fence toggle; a 4+-space-indented backtick line is an indented CODE BLOCK and
         toggles NOTHING (codex r4 #2, reproduced: a 4-space ``` desynced the old
         tracker and exempted a deviant heading).
-    (b) Every unfenced heading-shaped line (`^ {0,3}#{2,4} `) that mentions `CR-` must
-        be the EXACT column-0 h2 schema form `## CR-<n> — ` — one rule closes the
-        en-dash / `CR-3a` / missing-space / indented / h3 / h4 deviants together
-        (heading drift red loudly; a deviant heading starts no entry match, so its
-        body would otherwise be absorbed into the previous entry and its obligations
-        silently skipped).
+    (b) Every unfenced heading-shaped line (`^ {0,3}#{1,6}[ \\t]`) that mentions `CR-`
+        must be the EXACT column-0 h2 schema form `## CR-<n> — ` — one rule closes the
+        en-dash / `CR-3a` / missing-space / indented / h1–h6 / tab-after-hash deviants
+        together (heading drift red loudly; a deviant heading starts no entry match, so
+        its body would otherwise be absorbed into the previous entry and its
+        obligations silently skipped).
     (c) Every entry body must contain the bound-1 hermetic repro line AND a
         schema-form `— expected:` declaration line. Dash-variant spellings of the
         declaration (`-- expected:` / `– expected:` (en-dash) / `- expected:`) are
@@ -693,7 +699,7 @@ def _lint_ledger_schema(text):
             continue
         if inside_fence:
             continue
-        if re.match(r" {0,3}#{2,4} ", ln) and "CR-" in ln:
+        if re.match(r" {0,3}#{1,6}[ \t]", ln) and "CR-" in ln:
             assert re.match(r"## CR-\d+ — ", ln), (
                 f"ledger heading drift (schema-lint (b)): {ln!r} does not match the "
                 f"column-0 B-3 schema `## CR-<n> — ` — a deviant heading would "
@@ -806,6 +812,10 @@ def test_committed_ledger_header_and_seed_entries():
     assert "the entry is VOID" in norm
     assert "executed red in the faithful env ALWAYS defeats an entry" in norm
     assert "repro timeout refutes nothing and voids nothing" in norm
+    # harden-1 void-recording mechanics: append-only annotation, never a heading
+    assert "Record a void by appending" in norm
+    assert "`> **VOID (<runId>, <date>):** <observed differing result>`" in norm
+    assert "never a new `## CR-<n>` heading" in norm
     assert re.search(r"^## CR-1 — ", text, re.MULTILINE), "seed CR-1 missing"
     assert re.search(r"^## CR-2 — ", text, re.MULTILINE), "seed CR-2 missing"
     assert "codex-reflags-preship-absent-ledger" in norm  # CR-1 recurrence evidence
@@ -892,15 +902,26 @@ _PENDING_PROVISIONAL_CR3 = """
     — expected: exit 0
 - scope qualifiers: collision fixture.
 """
+_PENDING_PROVISIONAL_CR4 = """
+## CR-4 — "this run's SECOND pending entry (order fixture)" — REFUTED (this-run, 2026-07-15)
+- recurrence: order fixture.
+- finding (specific): the second staged entry — takes the NEXT re-derived id after the first.
+- evidence: order fixture.
+- repro (hermetic): `env -i PATH=/usr/bin:/bin sh -c 'true'`
+    — expected: exit 0
+- scope qualifiers: order fixture.
+"""
 
 
 def _renumber_pending_per_promotion_contract(ledger_text, pending_text):
     """drive-ship.md's promotion rule, EXECUTED (the reference implementation of the
     contract this test pins): next id = (the live committed ledger's current max
     `## CR-<n>`, via grep) + 1, assigned sequentially in pending-file order — the
-    pending file's ids are PROVISIONAL and are never appended verbatim."""
+    pending file's ids are PROVISIONAL and are never appended verbatim. An absent or
+    entry-less ledger has max 0 (first promoted entry = CR-1)."""
     live_max = max(
-        int(m.group(1)) for m in re.finditer(r"^## CR-(\d+) — ", ledger_text, re.MULTILINE)
+        (int(m.group(1)) for m in re.finditer(r"^## CR-(\d+) — ", ledger_text, re.MULTILINE)),
+        default=0,
     )
     counter = {"next": live_max}
 
@@ -953,6 +974,94 @@ def test_promotion_renumbering_prevents_ledger_id_collision():
     assert "this run's pending entry (provisional id)" in promoted, (
         "renumbering must preserve the promoted entry's content — only the id changes"
     )
+
+
+# =========================================================================== #
+# Harden-1 — promotion base cases, lint trigger ring, fence-tracker alignment
+# =========================================================================== #
+def test_promotion_two_pending_entries_sequential_in_file_order():
+    """[M] harden-1: with TWO pending entries, re-derived ids are assigned sequentially
+    in PENDING-FILE ORDER — live max 3 ⇒ the FIRST pending entry becomes CR-4 and the
+    SECOND CR-5 (order preservation, not just uniqueness); the promoted ledger lints
+    green."""
+    rebased_ledger = _text(LEDGER) + _BASE_APPENDED_CR3
+    promoted = rebased_ledger + _renumber_pending_per_promotion_contract(
+        rebased_ledger, _PENDING_PROVISIONAL_CR3 + _PENDING_PROVISIONAL_CR4
+    )
+    _lint_ledger_schema(promoted)
+    entries = {m.group(1): m.group(0) for m in _LEDGER_ENTRY_RE.finditer(promoted)}
+    assert list(entries) == ["CR-1", "CR-2", "CR-3", "CR-4", "CR-5"], (
+        f"expected unique sequential ids, got {sorted(entries)}"
+    )
+    assert "this run's pending entry (provisional id)" in entries["CR-4"], (
+        "the FIRST pending entry must take live_max+1 (pending-file order preserved)"
+    )
+    assert "this run's SECOND pending entry (order fixture)" in entries["CR-5"], (
+        "the SECOND pending entry must take live_max+2 (pending-file order preserved)"
+    )
+
+
+def test_promotion_first_entry_on_absent_or_entryless_ledger():
+    """[M] harden-1: the promotion formula is bound at the empty base — an absent or
+    entry-less committed ledger has max 0, so a driven repo's FIRST-ever promotion mints
+    CR-1 (drive-ship.md creates the missing file with the B-3 schema header before
+    appending). Executed: pre-fix the reference impl raised ValueError on the empty
+    max(); the drive-ship.md clause is pinned AFTER the formula sentence."""
+    promo = _norm(_section(_text(SHIP), r"^##\s+Ship worktree \+ ledger promotion\b"))
+    assert "An absent or entry-less ledger has max 0" in promo
+    assert "the first promoted entry = CR-1" in promo
+    assert "create the missing file with the B-3 schema header" in promo
+    # behavioral half: an entry-less ledger promotes the first pending entry as CR-1
+    renumbered = _renumber_pending_per_promotion_contract("", _PENDING_PROVISIONAL_CR3)
+    ids = re.findall(r"^## (CR-\d+) — ", renumbered, re.MULTILINE)
+    assert ids == ["CR-1"], f"first promotion on an entry-less ledger must mint CR-1, got {ids}"
+
+
+def test_ledger_lint_heading_trigger_covers_all_heading_forms():
+    """[M] harden-1 (F-8(a)): lint (b)'s trigger covers the WHOLE heading permutation
+    ring — h1..h6 and tab-after-hash forms — since each also starts no entry, so its
+    body would absorb silently into the previous entry. Executed probes: each deviant
+    form REDS on a scratch ledger; the clean ledger (and the lint-safe `> **VOID`
+    annotation form inside an entry) stays green."""
+    clean = _text(LEDGER)
+    _lint_ledger_schema(clean)  # green baseline
+    for deviant in (
+        "# CR-9 — x",       # h1 (pre-widening: silently absorbed)
+        "##### CR-9 — x",   # h5 (pre-widening: silently absorbed)
+        "##\tCR-9 — x",     # tab-after-hash (pre-widening: silently absorbed)
+        "## CR-1 VOID (someRun, 2026-07-16)",  # the void-HEADING anti-form (P2-1 probe)
+    ):
+        with pytest.raises(AssertionError, match="heading drift"):
+            _lint_ledger_schema(clean + "\n" + deviant + "\n")
+    # the mandated void-recording form is an annotation line INSIDE the entry — green
+    _lint_ledger_schema(clean + "\n> **VOID (someRun, 2026-07-16):** repro exited 1 at re-flag\n")
+
+
+def test_fenced_blocks_tracker_is_commonmark():
+    """[M] harden-1 (F-8(c) sharpened): `_fenced_blocks` must NOT toggle on a 4+-space-
+    indented ``` line (CommonMark: indented code, not a fence) — pre-fix the fence TAIL
+    escaped the AC17 leak scan (a NARROWING, fail-unsafe direction). Executed both ways:
+    the indented line stays inside the block; an up-to-3-space-indented ``` still
+    toggles (aligned with the ledger lint's tracker)."""
+    text = "\n".join(
+        [
+            "prose before",
+            "```",
+            "inside line",
+            "    ```",  # CommonMark: indented CODE, not a fence toggle
+            "fence tail",  # pre-fix this ESCAPED the block (leak-scan narrowing)
+            "```",
+            "prose after",
+        ]
+    )
+    joined = "\n".join(_fenced_blocks(text))
+    assert "fence tail" in joined, (
+        "a 4-space-indented ``` line ended fence tracking early — the fence tail "
+        "escaped the block (pre-CommonMark toggle)"
+    )
+    assert "prose after" not in joined
+    # an up-to-3-space-indented ``` IS a toggle (CommonMark), same as the lint tracker
+    assert _fenced_blocks("\n".join(["   ```", "in2", "   ```"])) == ["in2"]
 
 
 # =========================================================================== #
@@ -1097,6 +1206,30 @@ def test_r8_design_transcript_and_revision_leg():
     assert "CONSUMES a `phaseDesign[<P>].round` tick" in step2
     assert "mints NO new artifact family" in step2
     assert "FULL fresh dual-voice round" in step2
+
+
+def test_r8_pre_round_check_is_revision_bound():
+    """[M] harden-1 (codex #3): the coordinator's pre-round transcript check verifies
+    existence + non-emptiness + CURRENT-REVISION coverage at BOTH sites — the coverage
+    arm sits INSIDE the check clause (the D-42 check half; pre-fix it landed
+    existence-only, so a stale transcript survived a design revision), and a
+    stale-coverage transcript fails the check exactly as a missing file does.
+    Mutation-verified: deleting the revision-coverage arm at either site reds (the
+    author-side revalidation narration alone cannot satisfy these pins)."""
+    for md, transcript in (
+        (PLAN, r"verify-design-claims-design\.md"),
+        (DESIGN, r"verify-design-claims-phase<P>\.md"),
+    ):
+        step2 = _norm(_section(_text(md), r"^## Step 2\b"))
+        assert re.search(
+            rf"CHECK `\$RUN_DIR/{transcript}` exists non-empty AND[^;]*"
+            rf"coverage statement is re-affirmed at the CURRENT revision",
+            step2,
+        ), f"{md.name}: the pre-round check must bind coverage INSIDE the check clause"
+        assert (
+            "missing, empty, or coverage not re-affirmed at the current revision "
+            "⇒ send the author back" in step2
+        ), f"{md.name}: the check's failure branch must include the stale-coverage case"
 
 
 def test_r8_reviewer_calibration_and_conditional_transcript_duty():

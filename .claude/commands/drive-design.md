@@ -85,8 +85,11 @@ Decision protocol (overrides any "ask the human" reflex) — apply the 6 Decisio
 ## Step 2 — Dual-voice review (converge; no human gate)
 
 BEFORE dispatching round 1 (and again before every later round), CHECK
-`$RUN_DIR/verify-design-claims-phase<P>.md` exists non-empty; missing ⇒ send the author
-back to write it first (a pre-round-1 gate, not a review round — it consumes no counter).
+`$RUN_DIR/verify-design-claims-phase<P>.md` exists non-empty AND — on every round after
+a revision leg — that its coverage statement is re-affirmed at the CURRENT revision
+(the rewritten-in-place transcript re-affirms coverage against the revised design);
+missing, empty, or coverage not re-affirmed at the current revision ⇒ send the author
+back first (a pre-round-1 gate, not a review round — it consumes no counter).
 Then run `/drive-review` scoped `phase <P> design` (`~/.claude/commands/drive-review.md`): a
 Claude reviewer subagent AND `codex exec` both audit `$RUN_DIR/design-phase<P>.md` for P1s
 (BLOCKING/MAJOR — an unbuildable interface, a slice dependency cycle, overlapping slice

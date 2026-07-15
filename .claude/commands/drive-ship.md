@@ -149,7 +149,10 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
   Admitted (the grep succeeds) ⇒ promote the pending entries into
   `.harness/codex-refutations.md`, RE-DERIVING each entry's `CR-<n>` id from the LIVE
   committed ledger at promotion time: next id = (the ledger's current max `## CR-<n>`,
-  via grep) + 1, assigned sequentially in pending-file order. The pending file's ids are
+  via grep) + 1, assigned sequentially in pending-file order. An absent or entry-less
+  ledger has max 0 (the first promoted entry = CR-1; create the missing file with the
+  B-3 schema header — the ledger's purpose/usage header + entry-schema block — before
+  appending). The pending file's ids are
   PROVISIONAL by contract — a post-rebase base append may already occupy them (the
   base-preflight auto-rebases when the base advanced this ledger), so NEVER append a
   staged/remembered number verbatim; renumber, then `git add` the file so the

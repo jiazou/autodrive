@@ -105,8 +105,11 @@ a) **autoplan** — run gstack `autoplan` on it (the rich CEO → Design → Eng
 
 b) **Dual-voice design-review convergence** — BEFORE dispatching round 1 (and again
    before every later round), CHECK `$RUN_DIR/verify-design-claims-design.md` exists
-   non-empty; missing ⇒ send the author back to write it first (a pre-round-1 gate, not
-   a review round — it consumes no counter). Then run `/drive-review` scoped `design`
+   non-empty AND — on every round after a post-P1 `design.md` revision — that its
+   coverage statement is re-affirmed at the CURRENT revision (the re-affirmation names
+   the revised text, per the revalidation rule below); missing, empty, or coverage not
+   re-affirmed at the current revision ⇒ send the author back first (a pre-round-1
+   gate, not a review round — it consumes no counter). Then run `/drive-review` scoped `design`
    (`/drive-review` — `~/.claude/commands/drive-review.md`): a Claude reviewer subagent AND `codex exec`
    both audit `$RUN_DIR/design.md` for P1s **at the high-level altitude** (BLOCKING/MAJOR
    — e.g. a phase dependency cycle, an unsound phase boundary, an approach that can't

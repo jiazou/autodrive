@@ -15,7 +15,10 @@ Usage + replay rules (binding):
 - **Replay rule:** on a re-flag, re-execute the recorded `env -i` line verbatim from the
   repo root at the reviewed tip. A differing result (output/exit) ⇒ the entry is VOID
   and the finding stands, adjudicated fresh. An executed red in the faithful env ALWAYS
-  defeats an entry, whatever this ledger says.
+  defeats an entry, whatever this ledger says. Record a void by appending a
+  `> **VOID (<runId>, <date>):** <observed differing result>` annotation line INSIDE
+  the voided entry — never a new `## CR-<n>` heading, never a delete/rewrite of the
+  entry (the ledger stays append-only).
 - **Hermeticity:** the recorded env IS the complete env by construction (`env -i` +
   explicitly set vars; repo-relative cwd). Entries that cannot run hermetically are
   INELIGIBLE here and stay run-local in `$RUN_DIR/codex-refuted-<scope>.md`.
@@ -45,10 +48,13 @@ Entry schema:
   entry is absent pre-ship BY DESIGN, not by omission.
 - repro (hermetic): `env -i PATH=/usr/bin:/bin sh -c 'grep -q "Promote the run ledgers" .claude/commands/drive-ship.md && grep -q "promoted at ship" CLAUDE.md'`
     — expected: exit 0
-- scope qualifiers: applies ONLY while the referenced entry exists in the active run's
-  `$RUN_DIR` ledgers awaiting ship (the replayer confirms that half in-run); a citation
-  matching nothing in the run's `$RUN_DIR` ledgers either is a genuine finding, not
-  covered here.
+- scope qualifiers: binds ONLY to findings of the SAME pre-existing-contract class this
+  entry refutes — a citation whose referenced entry EXISTS in the active run's
+  `$RUN_DIR` ledgers awaiting ship promotion; the replayer confirms that existence
+  in-run BEFORE treating the grep as an overrule (the repro's green proves the
+  promotion contract, never any particular citation). A re-flag citing a
+  D-number/followup line absent from BOTH the committed ledgers AND the run's
+  `$RUN_DIR` ledgers is a GENUINE finding — this entry never overrules it.
 
 ## CR-2 — "the R6 delta-focused round skips the mandated full-scope re-audit after logic-bearing fixes" — REFUTED (r5r9-roundchurn-20260714-084250, 2026-07-14)
 - recurrence: raised at this run's design-review round 1 (decisions.md D-15 / RF-1)

@@ -163,7 +163,8 @@ check "ledger allowlist is the 4-entry set" "$cf_al" ".harness/codex-refutations
 #      $RUN_DIR/codex-refutations-pending.md is non-empty (mirrors the (8)
 #      finalize-todo/TODO.md conditional). Base appends to the refutation ledger; feat has
 #      no ledger commit yet: without the pending file ⇒ NOT a pending conflict
-#      (ship-as-is); WITH it non-empty ⇒ auto-rebase.
+#      (ship-as-is); empty-but-present ⇒ `-s` false ⇒ still NOT pending (ship-as-is;
+#      design edge case 10); WITH it non-empty ⇒ auto-rebase.
 CR="$WORK/refut"; mkdir -p "$CR"; cd "$CR"
 git init -q -b main; git config user.email t@t; git config user.name t
 mkdir -p .harness
@@ -174,6 +175,8 @@ git checkout -q main; printf '%s\n' '## CR-new — main appended' >> .harness/co
 git add -A; git commit -qm 'main touches codex-refutations'
 D_NO="$(mk_state "$CR" "$CRBASE")"
 check "base touches codex-refutations.md, no pending file ⇒ ship-as-is" "$(j "$D_NO" | jq -r '.recommendation')" "ship-as-is"
+D_EMPTY="$(mk_state "$CR" "$CRBASE")"; : > "$D_EMPTY/codex-refutations-pending.md"
+check "base touches codex-refutations.md, EMPTY pending file ⇒ ship-as-is" "$(j "$D_EMPTY" | jq -r '.recommendation')" "ship-as-is"
 D_YES="$(mk_state "$CR" "$CRBASE")"; printf '## CR-pending entry\n' > "$D_YES/codex-refutations-pending.md"
 check "base touches codex-refutations.md WITH pending ⇒ auto-rebase" "$(j "$D_YES" | jq -r '.recommendation')" "auto-rebase"
 cd "$FX"

@@ -440,7 +440,10 @@ records the adjudication so a later re-flag replays the evidence instead of reli
 2. Refutation content is NEVER injected into harden/finalize auditor prompts (voice
    independence). REVIEW-scope re-audit prompts MAY carry applicable entries as
    prior-round enrichment — this EXTENDS, and does not reword, the existing enrichment
-   rule (PRIOR rounds only, never the same-round Claude reviewer output).
+   rule (PRIOR rounds only, never the same-round Claude reviewer output). Applicable
+   entries = those in `$RUN_DIR/codex-refuted-<scope>.md` and
+   `.harness/codex-refutations.md` whose Finding/Qualifier matches the re-flagged
+   finding — the coordinator greps BOTH files before composing a re-audit prompt.
 3. Entries are finding-specific, with evidence + run-scope qualifiers — never
    class-level "X-like findings are settled".
 4. A P1→P2 downgrade requires the coordinator's OWN executed reproduction of the
