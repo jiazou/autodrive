@@ -373,11 +373,13 @@ def _is_directory_or_glob_mention(path):
 
 def _normalize_rooted(tok):
     """Placeholder-segment normalization, shared by the scan and the frozen baseline
-    (same-function symmetry): sentence-final periods stripped;
-    `<scope>`/`<P>`/`<sliceId>`/`<N>`/`<runId>`-style placeholders and the `*` glob
-    collapse to `@`; the bare `-N.` round placeholder likewise — placeholder
-    RESPELLINGS of one family test as one name."""
-    tok = tok.rstrip(".")
+    (same-function symmetry): `<scope>`/`<P>`/`<sliceId>`/`<N>`/`<runId>`-style
+    placeholders and the `*` glob collapse to `@`; the bare `-N.` round placeholder
+    likewise — placeholder RESPELLINGS of one family test as one name. NON-LOSSY
+    otherwise (D-44, codex r3 #1): sentence punctuation is NOT stripped here — the
+    membership helper below tests the raw form and the single-final-period-stripped
+    form EXPLICITLY, never silently collapsing a deviant spelling (`completedAt..`)
+    onto a baseline name."""
     tok = re.sub(r"<[A-Za-z][A-Za-z0-9]*>", "@", tok)
     tok = tok.replace("*", "@")
     tok = re.sub(r"-N(?=\.)", "-@", tok)
@@ -386,7 +388,8 @@ def _normalize_rooted(tok):
 
 def _rooted_artifact_names(text):
     """Every rooted artifact-name literal in `text`, root-canonicalized (`${RUN_DIR}` →
-    `$RUN_DIR`) + normalized; directory/glob mentions removed by the one named filter."""
+    `$RUN_DIR`) + placeholder-normalized (otherwise raw); directory/glob mentions
+    removed by the one named filter."""
     out = set()
     for root, path in _ROOTED_CAPTURE_RE.findall(text):
         if _is_directory_or_glob_mention(path):
@@ -394,6 +397,17 @@ def _rooted_artifact_names(text):
         root = "$RUN_DIR" if root.startswith("$") else ".harness"
         out.add(_normalize_rooted(f"{root}/{path}"))
     return out
+
+
+def _is_known_artifact_name(tok):
+    """Membership under the D-44 non-lossy rule: a capture passes iff its
+    (placeholder-normalized) RAW form is a member, OR — for a sentence-final-period
+    spelling only — the form with exactly ONE trailing period removed is.
+    `$RUN_DIR/followups.md.` (prose sentence end) passes via the stripped form;
+    `$RUN_DIR/completedAt..` strips to `completedAt.`, which is no member ⇒ RED —
+    the two forms are membership-tested separately, never silently collapsed."""
+    known = _ROOTED_BASELINE_NORM | _ROOTED_ALLOWLIST_NORM
+    return tok in known or (tok.endswith(".") and tok[:-1] in known)
 
 
 # The rooted NORMALIZED spellings of the batch's four allowlisted shapes (codex-refuted's
@@ -408,15 +422,21 @@ _ROOTED_ALLOWLIST_NORM = {
     ".harness/codex-refutations.md",
 }
 
-# The PRE-BATCH baseline inventory: _rooted_artifact_names() over the seven command specs
-# at d41b73e (the batch's base), frozen so the test needs no git at runtime (a shallow CI
-# clone has no d41b73e object). Round-2 re-derivation executed at implement: 46/46 exact
-# (zero missing, zero extra; baseline ∩ allowlist = ∅). Any rooted literal the CURRENT
-# specs name that is neither here nor an allowlisted shape is a NEW artifact name and
-# reds — whatever its stem, spelling, or (non-)extension. Maintenance path: a later batch
-# that LEGITIMATELY introduces an artifact extends the allowlist above (or, once shipped
-# and baseline, this inventory) in the same reviewed commit.
+# The PRE-BATCH baseline inventory: _rooted_artifact_names() over ALL ELEVEN owned prose
+# surfaces (the seven drive-*.md specs + drive.md + README.md + CLAUDE.md +
+# docs/drive-enforcement.md — D-44 extended set) at d41b73e (the batch's base), frozen so
+# the test needs no git at runtime (a shallow CI clone has no d41b73e object). Round-3
+# re-derivation executed at implement: 56/56 exact (zero missing, zero extra; baseline ∩
+# allowlist = ∅). Maintenance path: a later batch that LEGITIMATELY introduces an
+# artifact extends the allowlist above (or, once shipped and baseline, this inventory)
+# in the same reviewed commit.
 _ROOTED_BASELINE_NORM = {
+    "$RUN_DIR/.tmp.@",
+    "$RUN_DIR/.tmp.state.json.$$",
+    "$RUN_DIR/auto-resume-scheduled-@.marker",
+    "$RUN_DIR/checkpoint-claimed-<$CLAUDE_CODE_SESSION_ID>-@.marker",
+    "$RUN_DIR/checkpoint-claimed-@-@.marker",
+    "$RUN_DIR/checkpoint-complete.marker",
     "$RUN_DIR/codex-attempts-@.jsonl",
     "$RUN_DIR/codex-harden-@.log",
     "$RUN_DIR/codex-harden-@.log.stranded",
@@ -438,9 +458,12 @@ _ROOTED_BASELINE_NORM = {
     "$RUN_DIR/finalize-todo.md",
     "$RUN_DIR/followups.md",
     "$RUN_DIR/harden-@-@.md",
+    "$RUN_DIR/inflight-@-@.marker",
+    "$RUN_DIR/inflight-@.marker",
     "$RUN_DIR/inflight-review-@.marker",
     "$RUN_DIR/inflight-review-finalize.marker",
     "$RUN_DIR/redesign-@-r@.marker",
+    "$RUN_DIR/retention-gc.log",
     "$RUN_DIR/review-@-@.md",
     "$RUN_DIR/review-finalize-@.md",
     "$RUN_DIR/review-phase@-@.md",
@@ -461,6 +484,7 @@ _ROOTED_BASELINE_NORM = {
     "$RUN_DIR/tmp/helper-finalize.$x.stranded",
     "$RUN_DIR/tmp/helper-finalize.err",
     "$RUN_DIR/tmp/helper-finalize.out",
+    "$RUN_DIR/verify.md",
     ".harness/decisions.md",
     ".harness/followups.md",
 }
@@ -476,27 +500,41 @@ _R6_BASELINE = {
 }
 
 
+# The D-44 scanned surface set: ALL owned prose surfaces — the seven stage specs plus
+# drive.md, README.md, CLAUDE.md, and docs/drive-enforcement.md.
+_SCAN_SURFACES = (REVIEW, IMPLEMENT, FINALIZE, HARDEN, PLAN, DESIGN, SHIP,
+                  DRIVE, README, CLAUDE_MD, ENFORCE)
+
+
 def test_new_artifact_names_stay_within_the_allowlist():
-    """AC5(a), ROOT-ANCHORED + SHAPE-AGNOSTIC (the round-2 restructure — extraction
-    blindness closed by construction): every `$RUN_DIR/`-, `${RUN_DIR}/`-, or
-    `.harness/`-rooted artifact literal across the seven specs — with or without an
-    extension, placeholder or concrete, however spelled — must be in the frozen d41b73e
-    baseline inventory or the batch's four-shape allowlist. Executed probes:
+    """AC5(a), root-anchored + shape-agnostic, RE-BOUND by D-44 (the pre-announced
+    descope fired on the 3rd extraction-blindness finding). Best-effort inventory:
+    exotic future spellings may evade this scan; the LOAD-BEARING allowlist enforcement
+    is the executed behavioral suites (AC9/AC10), the four-shape allowlist scan, and
+    dual-voice review. Completeness findings against this scan route to followups, not
+    P1s (D-44).
+
+    What it checks: every `$RUN_DIR/`-, `${RUN_DIR}/`-, or `.harness/`-rooted artifact
+    literal across ALL ELEVEN owned prose surfaces — with or without an extension,
+    placeholder or concrete — must be in the frozen d41b73e baseline inventory or the
+    batch's four-shape allowlist, with the raw and sentence-period-stripped forms
+    membership-tested SEPARATELY (non-lossy, D-44). Standing executed probes:
     extensionless `$RUN_DIR/refutation-cache` => RED; brace-form `${RUN_DIR}/x.md` =>
-    RED; the r1 probes (`$RUN_DIR/refutation-cache.md`, `$RUN_DIR/bogus-artifact.md`)
-    stay RED; the unmodified seven specs => GREEN, run twice (deterministic — no
-    network, no git at runtime). Supplementary: unrooted mentions of the two new
-    families must still match an allowlisted shape exactly."""
+    RED; the r1 pair (`$RUN_DIR/refutation-cache.md`, `$RUN_DIR/bogus-artifact.md`)
+    stay RED; r3's `$RUN_DIR/completedAt..` (lossy-collapse) => RED; r3's
+    `$RUN_DIR/rogue-round3` in drive.md (omitted surface) => RED; the clean tree =>
+    GREEN twice (deterministic — no network, no git at runtime). Supplementary:
+    unrooted mentions of the two new families must still match an allowlisted shape."""
     unrooted_re = re.compile(r"(?:codex-refut|verify-design-claims)[A-Za-z0-9<>*().-]*\.\w+")
-    for md in (REVIEW, IMPLEMENT, FINALIZE, HARDEN, PLAN, DESIGN, SHIP):
+    for md in _SCAN_SURFACES:
         text = _text(md)
         # the root-anchored inverted check: rooted names ⊆ baseline ∪ allowlist
         for tok in sorted(_rooted_artifact_names(text)):
-            assert tok in _ROOTED_BASELINE_NORM or tok in _ROOTED_ALLOWLIST_NORM, (
+            assert _is_known_artifact_name(tok), (
                 f"{md.name}: rooted artifact literal {tok!r} (normalized) is neither in "
                 f"the frozen pre-batch baseline nor the batch's four-shape allowlist "
-                f"(AC5 is ABSOLUTE; a batch legitimately introducing an artifact must "
-                f"consciously extend the allowlist here)"
+                f"(a batch legitimately introducing an artifact must consciously extend "
+                f"the allowlist here; scan completeness gaps route to followups per D-44)"
             )
         # supplementary shape validation for unrooted family mentions
         for tok in unrooted_re.findall(text):
@@ -620,21 +658,25 @@ def _ledger_repro_commands():
     applied per entry). The entry-schema TEMPLATE in the header's fenced example is not
     an entry (extraction anchors on the `## CR-<n> — ` headings)."""
     text = _text(LEDGER)
-    # Fence-aware heading COMPLETENESS guard (round-2 Claude MINOR-1): every `## `
-    # heading OUTSIDE the fenced schema template must match the B-3 entry form
-    # `## CR-<n> — ` (space em-dash space). Without it, a deviant heading (en-dash,
-    # `CR-3a`, missing spaces) starts no entry match — its body would be absorbed into
-    # the PREVIOUS entry and its bound-1 repro obligation silently skipped.
+    # Fence-aware heading COMPLETENESS guard (round-2 Claude MINOR-1; widened round 3
+    # per codex r3 #2): every rendered h2 heading OUTSIDE the fenced schema template —
+    # including CommonMark's up-to-3-space INDENTED form (`^ {0,3}## `) — must match the
+    # COLUMN-0 B-3 entry form `## CR-<n> — ` (space em-dash space). Without it, a
+    # deviant heading (en-dash, `CR-3a`, missing spaces, or an indented heading the
+    # column-0 extractor cannot split on) starts no entry match — its body would be
+    # absorbed into the PREVIOUS entry and its bound-1 repro obligation silently
+    # skipped. An indented heading reds even in otherwise-valid form: the promotion
+    # step writes column-0, and loud beats silent.
     inside_fence = False
     for ln in text.splitlines():
         if ln.strip().startswith("```"):
             inside_fence = not inside_fence
             continue
-        if not inside_fence and ln.startswith("## "):
+        if not inside_fence and re.match(r" {0,3}## ", ln):
             assert re.match(r"## CR-\d+ — ", ln), (
                 f"ledger heading drift (fence-aware completeness guard): {ln!r} does "
-                f"not match the B-3 schema `## CR-<n> — ` — a deviant heading would "
-                f"silently escape per-entry bound-1 validation"
+                f"not match the column-0 B-3 schema `## CR-<n> — ` — a deviant or "
+                f"indented heading would silently escape per-entry bound-1 validation"
             )
     cmds = {}
     for m in re.finditer(
@@ -646,12 +688,50 @@ def _ledger_repro_commands():
             f"{entry_id}: committed entries must ALWAYS carry an executable hermetic "
             f"`env -i` repro line (bound 1)"
         )
+        # The declared oracle (codex r3 #3, IMPLEMENT arm): the B-3 schema line reads
+        # `— expected: <exact output/exit>` (.harness/codex-refutations.md:31) and the
+        # replay rule voids on "A differing result (output/exit)" (:16) — an entry MAY
+        # therefore declare expected OUTPUT beyond an exit code. Parse the declaration
+        # when present; rc-only stays the fallback for entries without one.
+        decl = re.search(r"^\s*— expected:\s*(.+?)\s*$", body, re.MULTILINE)
         assert entry_id not in cmds, f"duplicate ledger entry id {entry_id}"
-        cmds[entry_id] = repro.group(1)
+        cmds[entry_id] = (repro.group(1), decl.group(1) if decl else None)
     assert "CR-1" in cmds and "CR-2" in cmds, (
         f"the two D-27 seed entries (CR-1, CR-2) must be present; found {sorted(cmds)}"
     )
     return cmds
+
+
+def _assert_declared_result(entry_id, cmd, expected, proc):
+    """Compare an executed repro against its declared `— expected:` oracle (B-3 schema:
+    `— expected: <exact output/exit>`; replay rule: "A differing result (output/exit)
+    ⇒ the entry is VOID"). Recognized declaration forms, both optional and combinable:
+    `exit <N>` binds the exit code; a double-quoted "literal" binds the exact (stripped)
+    stdout. A declaration with neither form — and an entry with no declaration — falls
+    back to the conservative rc==0."""
+    checked = False
+    if expected is not None:
+        m_exit = re.search(r"\bexit\s+(\d+)\b", expected)
+        if m_exit:
+            want_rc = int(m_exit.group(1))
+            assert proc.returncode == want_rc, (
+                f"{entry_id}: declared `exit {want_rc}` but got rc={proc.returncode} "
+                f"(a differing result VOIDS the entry): {cmd!r} stderr={proc.stderr!r}"
+            )
+            checked = True
+        m_out = re.search(r'"([^"]*)"', expected)
+        if m_out:
+            assert proc.stdout.strip() == m_out.group(1), (
+                f"{entry_id}: declared output {m_out.group(1)!r} but got "
+                f"{proc.stdout.strip()!r} (a differing result VOIDS the entry): {cmd!r}"
+            )
+            checked = True
+    if not checked:
+        assert proc.returncode == 0, (
+            f"{entry_id}: repro must exit 0 from the repo root (no parseable declared "
+            f"oracle — rc-only fallback): {cmd!r} (rc={proc.returncode}, "
+            f"stderr={proc.stderr!r})"
+        )
 
 
 def test_committed_ledger_header_and_seed_entries():
@@ -673,17 +753,18 @@ def test_committed_ledger_header_and_seed_entries():
 
 def test_committed_ledger_repros_execute_green():
     """[M] AC7 (green direction): EVERY committed entry's recorded `env -i ... sh -c ...`
-    line is EXECUTED from the repo root and exits 0 — the entries are replayable as
-    written (a drift in any anchored token reds the suite here rather than at replay
-    time), and a future promotion joins the executed coverage automatically."""
-    for entry_id, cmd in _ledger_repro_commands().items():
+    line is EXECUTED from the repo root and validated against its DECLARED `— expected:`
+    oracle — exit code and/or exact quoted output (codex r3 #3, IMPLEMENT arm; the B-3
+    schema declares `— expected: <exact output/exit>` and voids on "A differing result
+    (output/exit)"). Entries without a parseable declaration fall back to rc==0. The
+    entries are replayable as written (a drift in any anchored token reds the suite here
+    rather than at replay time), and a future promotion joins the coverage
+    automatically."""
+    for entry_id, (cmd, expected) in _ledger_repro_commands().items():
         proc = subprocess.run(
             cmd, shell=True, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=60
         )
-        assert proc.returncode == 0, (
-            f"{entry_id}: repro must exit 0 from the repo root: {cmd!r} "
-            f"(rc={proc.returncode}, stderr={proc.stderr!r})"
-        )
+        _assert_declared_result(entry_id, cmd, expected, proc)
 
 
 def test_committed_seed_repros_red_direction(tmp_path):
@@ -713,13 +794,14 @@ def test_committed_seed_repros_red_direction(tmp_path):
         dst.write_text(_text(REPO_ROOT / rel), encoding="utf-8")
     cmds = _ledger_repro_commands()
     for entry_id in ("CR-1", "CR-2"):
+        cmd = cmds[entry_id][0]
         proc = subprocess.run(
-            cmds[entry_id], shell=True, cwd=str(tmp_path), capture_output=True, text=True,
+            cmd, shell=True, cwd=str(tmp_path), capture_output=True, text=True,
             timeout=60,
         )
         assert proc.returncode != 0, (
             f"{entry_id}: repro must RED once its guarded clause is deleted "
-            f"(vacuity probe): {cmds[entry_id]!r}"
+            f"(vacuity probe): {cmd!r}"
         )
 
 
