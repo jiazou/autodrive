@@ -108,6 +108,37 @@ def test_helper_composes_sandbox_and_effort_flags():
     )
 
 
+def test_helper_composes_per_scope_model_tier():
+    """§F model tier: gate-enforced scopes (security-diff/phase/finalize) get the frontier model
+    ($MODEL_TIER_HARD, default gpt-5.6-sol); every other scope the balanced model
+    ($MODEL_TIER_DEFAULT, default gpt-5.6-terra); disabled when tiering is off. Mutation-verify:
+    swap the two tier defaults, or delete the `-m` cmd += line → the bash argv pins red."""
+    txt = _text(HELPER)
+    # tier constants + their frontier/balanced defaults (env-overridable).
+    assert re.search(r'MODEL_TIER_HARD="\$\{DRIVE_CODEX_MODEL_HARD:-gpt-5\.6-sol\}"', txt), (
+        "gate-enforced scopes must default to the frontier model gpt-5.6-sol"
+    )
+    assert re.search(r'MODEL_TIER_DEFAULT="\$\{DRIVE_CODEX_MODEL_DEFAULT:-gpt-5\.6-terra\}"', txt), (
+        "every other scope must default to the balanced model gpt-5.6-terra"
+    )
+    # routed on gate_enforced, and only when tiering is on.
+    assert re.search(r'MODEL_SEL="\$MODEL_TIER_HARD".*MODEL_SEL="\$MODEL_TIER_DEFAULT"', txt, re.S), (
+        "MODEL_SEL must pick HARD on gate_enforced, else DEFAULT"
+    )
+    assert re.search(r'if \[ "\$TIERING_ON" = 1 \]; then\s*\n\s*if \[ "\$gate_enforced" = 1 \]', txt), (
+        "the model tier must be gated by TIERING_ON (off ⇒ no -m)"
+    )
+    # composed onto the ONE codex exec construction, GUARDED so an empty selector emits NO -m
+    # (a bare `cmd+=(-m "$MODEL_SEL")` would emit `-m ""` when tiering is off — the vacuity codex flagged).
+    assert re.search(r'\[ -n "\$MODEL_SEL" \] && cmd\+=\(-m "\$MODEL_SEL"\)', txt), (
+        "the `-m \"$MODEL_SEL\"` compose must be guarded by `[ -n \"$MODEL_SEL\" ]` (off ⇒ no -m)"
+    )
+    # audit parity: the selected model is recorded in the attempt-log JSONL beside effort/sandbox.
+    assert re.search(r'"model":%s', txt) and re.search(r'_jstr "\$\{MODEL_SEL:-default\}"', txt), (
+        "log_attempt must emit a `model` field from $MODEL_SEL (parity with effort/sandbox)"
+    )
+
+
 # =========================================================================== #
 # AC1 — codex dispatch precedes the FIRST (Step-1) reviewer subagent scope
 # =========================================================================== #
