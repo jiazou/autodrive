@@ -345,68 +345,118 @@ _NEW_ARTIFACT_ALLOWLIST_RE = re.compile(
     r"|verify-design-claims-(design|phase<P>|\*)\.md"
 )
 
-# The rooted spellings of the same four shapes (as the specs write them).
-_ROOTED_ALLOWLIST_RE = re.compile(
-    r"\$RUN_DIR/codex-refuted-(<scope>|\*)\.md"
-    r"|\$RUN_DIR/codex-refutations-pending\.md"
-    r"|\$RUN_DIR/verify-design-claims-(design|phase<P>|\*)\.md"
-    r"|\.harness/codex-refutations\.md"
-)
+# ROOT-ANCHORED BOUNDARY CAPTURE (round-2 RESTRUCTURE of the extraction-blindness class
+# — codex r1 #2 `.md`-stem bypass, codex r2 #1 extensionless bypass; closed by
+# CONSTRUCTION, never another token-pattern patch): every occurrence of a run/repo
+# artifact ROOT (`$RUN_DIR/`, `${RUN_DIR}/`, `.harness/`) captures the ENTIRE following
+# path token up to a hard boundary (whitespace, backtick, quote, paren, brace, comma) —
+# extension or not, placeholder or not. An artifact literal cannot be spelled past this
+# capture without leaving the roots where run/repo artifacts live (the pre-existing
+# EXTENSIONLESS `$RUN_DIR/completedAt` lands in the BASELINE below, not a blind spot).
+# The `${RUN_DIR}` alternation subsumes round-2 Claude MINOR-2; bare-name mentions (an
+# artifact named without its root) stay OUT of scope per that reviewer's false-red
+# rationale — a general bare-name grammar would false-red ordinary prose; that direction
+# is covered by the R6 section pins + review.
+_ROOTED_CAPTURE_RE = re.compile(r"(\$RUN_DIR|\$\{RUN_DIR\}|\.harness)/([^\s`'\"(){},]*)")
 
-# Extraction grammar for artifact-filename-shaped literals at the roots where run/repo
-# artifacts live ($RUN_DIR/... and .harness/...). Shared by the current scan and the
-# frozen baseline below (same-function symmetry keeps the comparison normalization-free).
-_ROOTED_TOKEN_RE = re.compile(r"(?:\$RUN_DIR|\.harness)/[A-Za-z0-9_<>*(){}$./-]*\.[A-Za-z0-9$]+")
 
-# The PRE-BATCH baseline inventory: _ROOTED_TOKEN_RE over the seven command specs at
-# d41b73e (the batch's base), frozen so the test needs no git at runtime (a shallow CI
-# clone has no d41b73e object). Derived + executed-verified at implement; any token the
-# CURRENT specs name that is neither here nor an allowlisted shape is a NEW artifact
-# name and reds — whatever its stem (name-agnostic; codex r1 MAJOR-2).
-_ROOTED_BASELINE = {
-    "$RUN_DIR/codex-attempts-<runId>.jsonl",
-    "$RUN_DIR/codex-harden-<P>.log",
-    "$RUN_DIR/codex-harden-<P>.log.stranded",
-    "$RUN_DIR/codex-harden-<P>.md",
-    "$RUN_DIR/codex-harden-<P>.md.stranded",
-    "$RUN_DIR/codex-raw-<scope>.log",
-    "$RUN_DIR/codex-raw-<scope>.log.stranded",
+def _is_directory_or_glob_mention(path):
+    """The ONE explicit non-file filter (named, per the round-2 directive): a rooted
+    mention whose tail is the root itself (``), the bare scratch dir (`tmp`/`tmp/`), a
+    worktree dir path (`wt`/`wt/...` — worktrees hold repo files, not run artifacts), or
+    the dir-glob `*` (drive-ship.md's "other `.harness/*`"). Corpus-verified: these are
+    the ONLY non-file rooted mentions across the seven specs; the directive's
+    anticipated state-json-key context has ZERO rooted occurrences, so no filter is
+    minted for it (a dead filter would be untestable; the scan stays strictly tighter)."""
+    return path in ("", "*", "tmp", "tmp/", "wt") or path.startswith("wt/")
+
+
+def _normalize_rooted(tok):
+    """Placeholder-segment normalization, shared by the scan and the frozen baseline
+    (same-function symmetry): sentence-final periods stripped;
+    `<scope>`/`<P>`/`<sliceId>`/`<N>`/`<runId>`-style placeholders and the `*` glob
+    collapse to `@`; the bare `-N.` round placeholder likewise — placeholder
+    RESPELLINGS of one family test as one name."""
+    tok = tok.rstrip(".")
+    tok = re.sub(r"<[A-Za-z][A-Za-z0-9]*>", "@", tok)
+    tok = tok.replace("*", "@")
+    tok = re.sub(r"-N(?=\.)", "-@", tok)
+    return tok
+
+
+def _rooted_artifact_names(text):
+    """Every rooted artifact-name literal in `text`, root-canonicalized (`${RUN_DIR}` →
+    `$RUN_DIR`) + normalized; directory/glob mentions removed by the one named filter."""
+    out = set()
+    for root, path in _ROOTED_CAPTURE_RE.findall(text):
+        if _is_directory_or_glob_mention(path):
+            continue
+        root = "$RUN_DIR" if root.startswith("$") else ".harness"
+        out.add(_normalize_rooted(f"{root}/{path}"))
+    return out
+
+
+# The rooted NORMALIZED spellings of the batch's four allowlisted shapes (codex-refuted's
+# `<scope>`/`*` respellings collapse to one `@` form; the `verify-design-claims-*` family
+# form is included for a future rooted glob spelling).
+_ROOTED_ALLOWLIST_NORM = {
+    "$RUN_DIR/codex-refuted-@.md",
+    "$RUN_DIR/codex-refutations-pending.md",
+    "$RUN_DIR/verify-design-claims-design.md",
+    "$RUN_DIR/verify-design-claims-phase@.md",
+    "$RUN_DIR/verify-design-claims-@.md",
+    ".harness/codex-refutations.md",
+}
+
+# The PRE-BATCH baseline inventory: _rooted_artifact_names() over the seven command specs
+# at d41b73e (the batch's base), frozen so the test needs no git at runtime (a shallow CI
+# clone has no d41b73e object). Round-2 re-derivation executed at implement: 46/46 exact
+# (zero missing, zero extra; baseline ∩ allowlist = ∅). Any rooted literal the CURRENT
+# specs name that is neither here nor an allowlisted shape is a NEW artifact name and
+# reds — whatever its stem, spelling, or (non-)extension. Maintenance path: a later batch
+# that LEGITIMATELY introduces an artifact extends the allowlist above (or, once shipped
+# and baseline, this inventory) in the same reviewed commit.
+_ROOTED_BASELINE_NORM = {
+    "$RUN_DIR/codex-attempts-@.jsonl",
+    "$RUN_DIR/codex-harden-@.log",
+    "$RUN_DIR/codex-harden-@.log.stranded",
+    "$RUN_DIR/codex-harden-@.md",
+    "$RUN_DIR/codex-harden-@.md.stranded",
+    "$RUN_DIR/codex-raw-@.log",
+    "$RUN_DIR/codex-raw-@.log.stranded",
     "$RUN_DIR/codex-raw-finalize.log",
     "$RUN_DIR/codex-raw-finalize.log.stranded",
-    "$RUN_DIR/codex-review-<scope>.md",
-    "$RUN_DIR/codex-review-<scope>.md.stranded",
+    "$RUN_DIR/codex-review-@.md",
+    "$RUN_DIR/codex-review-@.md.stranded",
     "$RUN_DIR/codex-review-finalize.md",
     "$RUN_DIR/codex-review-finalize.md.stranded",
+    "$RUN_DIR/completedAt",
     "$RUN_DIR/decisions.md",
-    "$RUN_DIR/design-phase<P>.md",
+    "$RUN_DIR/design-phase@.md",
     "$RUN_DIR/design.md",
     "$RUN_DIR/event-log.jsonl",
     "$RUN_DIR/finalize-todo.md",
     "$RUN_DIR/followups.md",
-    "$RUN_DIR/harden-<P>-*.md",
-    "$RUN_DIR/harden-<P>-N.md",
-    "$RUN_DIR/inflight-review-<scope>.marker",
+    "$RUN_DIR/harden-@-@.md",
+    "$RUN_DIR/inflight-review-@.marker",
     "$RUN_DIR/inflight-review-finalize.marker",
-    "$RUN_DIR/redesign-<P>-r*.marker",
-    "$RUN_DIR/review-<scope>-<N>.md",
-    "$RUN_DIR/review-<scope>-N.md",
-    "$RUN_DIR/review-<sliceId>-N.md",
-    "$RUN_DIR/review-finalize-*.md",
-    "$RUN_DIR/review-finalize-N.md",
-    "$RUN_DIR/review-phase<P>-*.md",
+    "$RUN_DIR/redesign-@-r@.marker",
+    "$RUN_DIR/review-@-@.md",
+    "$RUN_DIR/review-finalize-@.md",
+    "$RUN_DIR/review-phase@-@.md",
     "$RUN_DIR/state.json",
     "$RUN_DIR/task.md",
-    "$RUN_DIR/tmp/codex-harden-<P>.md.tmp.$$",
-    "$RUN_DIR/tmp/codex-prior-<scope>.md",
+    "$RUN_DIR/tmp/codex-harden-@.md.tmp.$$",
+    "$RUN_DIR/tmp/codex-prior-@.md",
     "$RUN_DIR/tmp/codex-prior-finalize.md",
-    "$RUN_DIR/tmp/codex-prompt-<scope>.txt",
+    "$RUN_DIR/tmp/codex-prompt-@.txt",
     "$RUN_DIR/tmp/codex-prompt-finalize.txt",
-    "$RUN_DIR/tmp/codex-review-<scope>.md.tmp.$$",
+    "$RUN_DIR/tmp/codex-review-@.md.tmp.$$",
     "$RUN_DIR/tmp/codex-review-finalize.md.tmp.$$",
-    "$RUN_DIR/tmp/helper-<scope>.$x",
-    "$RUN_DIR/tmp/helper-<scope>.$x.stranded",
-    "$RUN_DIR/tmp/helper-<scope>.err",
-    "$RUN_DIR/tmp/helper-<scope>.out",
+    "$RUN_DIR/tmp/helper-@.$x",
+    "$RUN_DIR/tmp/helper-@.$x.stranded",
+    "$RUN_DIR/tmp/helper-@.err",
+    "$RUN_DIR/tmp/helper-@.out",
     "$RUN_DIR/tmp/helper-finalize.$x",
     "$RUN_DIR/tmp/helper-finalize.$x.stranded",
     "$RUN_DIR/tmp/helper-finalize.err",
@@ -427,24 +477,26 @@ _R6_BASELINE = {
 
 
 def test_new_artifact_names_stay_within_the_allowlist():
-    """AC5(a), INVERTED to bite on ANY name (codex r1 MAJOR-2): across ALL seven touched
-    command specs, every $RUN_DIR/- or .harness/-rooted artifact-filename literal is
-    EITHER in the frozen PRE-BATCH baseline inventory OR one of the batch's four
-    allowlisted shapes — {codex-refuted-<scope>.md (family), codex-refutations-pending.md,
-    verify-design-claims-*.md (family), .harness/codex-refutations.md}. A fifth artifact
-    under ANY other stem (e.g. `$RUN_DIR/refutation-cache.md`) reds. Mutation-verified:
-    inserting `$RUN_DIR/bogus-artifact.md` into a landed section reds; removing it
-    restores green. Deterministic — no network, no git at runtime (the baseline is
-    frozen above). Supplementary: unrooted mentions of the two new families must still
-    match an allowlisted shape exactly."""
+    """AC5(a), ROOT-ANCHORED + SHAPE-AGNOSTIC (the round-2 restructure — extraction
+    blindness closed by construction): every `$RUN_DIR/`-, `${RUN_DIR}/`-, or
+    `.harness/`-rooted artifact literal across the seven specs — with or without an
+    extension, placeholder or concrete, however spelled — must be in the frozen d41b73e
+    baseline inventory or the batch's four-shape allowlist. Executed probes:
+    extensionless `$RUN_DIR/refutation-cache` => RED; brace-form `${RUN_DIR}/x.md` =>
+    RED; the r1 probes (`$RUN_DIR/refutation-cache.md`, `$RUN_DIR/bogus-artifact.md`)
+    stay RED; the unmodified seven specs => GREEN, run twice (deterministic — no
+    network, no git at runtime). Supplementary: unrooted mentions of the two new
+    families must still match an allowlisted shape exactly."""
     unrooted_re = re.compile(r"(?:codex-refut|verify-design-claims)[A-Za-z0-9<>*().-]*\.\w+")
     for md in (REVIEW, IMPLEMENT, FINALIZE, HARDEN, PLAN, DESIGN, SHIP):
         text = _text(md)
-        # the name-agnostic inverted check: rooted tokens ⊆ baseline ∪ allowlist
-        for tok in _ROOTED_TOKEN_RE.findall(text):
-            assert tok in _ROOTED_BASELINE or _ROOTED_ALLOWLIST_RE.fullmatch(tok), (
-                f"{md.name}: {tok!r} is neither in the pre-batch baseline nor the "
-                f"batch's four-shape new-artifact allowlist (AC5 is ABSOLUTE)"
+        # the root-anchored inverted check: rooted names ⊆ baseline ∪ allowlist
+        for tok in sorted(_rooted_artifact_names(text)):
+            assert tok in _ROOTED_BASELINE_NORM or tok in _ROOTED_ALLOWLIST_NORM, (
+                f"{md.name}: rooted artifact literal {tok!r} (normalized) is neither in "
+                f"the frozen pre-batch baseline nor the batch's four-shape allowlist "
+                f"(AC5 is ABSOLUTE; a batch legitimately introducing an artifact must "
+                f"consciously extend the allowlist here)"
             )
         # supplementary shape validation for unrooted family mentions
         for tok in unrooted_re.findall(text):
@@ -568,6 +620,22 @@ def _ledger_repro_commands():
     applied per entry). The entry-schema TEMPLATE in the header's fenced example is not
     an entry (extraction anchors on the `## CR-<n> — ` headings)."""
     text = _text(LEDGER)
+    # Fence-aware heading COMPLETENESS guard (round-2 Claude MINOR-1): every `## `
+    # heading OUTSIDE the fenced schema template must match the B-3 entry form
+    # `## CR-<n> — ` (space em-dash space). Without it, a deviant heading (en-dash,
+    # `CR-3a`, missing spaces) starts no entry match — its body would be absorbed into
+    # the PREVIOUS entry and its bound-1 repro obligation silently skipped.
+    inside_fence = False
+    for ln in text.splitlines():
+        if ln.strip().startswith("```"):
+            inside_fence = not inside_fence
+            continue
+        if not inside_fence and ln.startswith("## "):
+            assert re.match(r"## CR-\d+ — ", ln), (
+                f"ledger heading drift (fence-aware completeness guard): {ln!r} does "
+                f"not match the B-3 schema `## CR-<n> — ` — a deviant heading would "
+                f"silently escape per-entry bound-1 validation"
+            )
     cmds = {}
     for m in re.finditer(
         r"^## (CR-\d+) — .*?(?=^## CR-\d+ — |\Z)", text, re.MULTILINE | re.DOTALL
@@ -609,7 +677,9 @@ def test_committed_ledger_repros_execute_green():
     written (a drift in any anchored token reds the suite here rather than at replay
     time), and a future promotion joins the executed coverage automatically."""
     for entry_id, cmd in _ledger_repro_commands().items():
-        proc = subprocess.run(cmd, shell=True, cwd=str(REPO_ROOT), capture_output=True, text=True)
+        proc = subprocess.run(
+            cmd, shell=True, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=60
+        )
         assert proc.returncode == 0, (
             f"{entry_id}: repro must exit 0 from the repo root: {cmd!r} "
             f"(rc={proc.returncode}, stderr={proc.stderr!r})"
@@ -644,7 +714,8 @@ def test_committed_seed_repros_red_direction(tmp_path):
     cmds = _ledger_repro_commands()
     for entry_id in ("CR-1", "CR-2"):
         proc = subprocess.run(
-            cmds[entry_id], shell=True, cwd=str(tmp_path), capture_output=True, text=True
+            cmds[entry_id], shell=True, cwd=str(tmp_path), capture_output=True, text=True,
+            timeout=60,
         )
         assert proc.returncode != 0, (
             f"{entry_id}: repro must RED once its guarded clause is deleted "
