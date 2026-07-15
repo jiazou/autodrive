@@ -345,6 +345,76 @@ _NEW_ARTIFACT_ALLOWLIST_RE = re.compile(
     r"|verify-design-claims-(design|phase<P>|\*)\.md"
 )
 
+# The rooted spellings of the same four shapes (as the specs write them).
+_ROOTED_ALLOWLIST_RE = re.compile(
+    r"\$RUN_DIR/codex-refuted-(<scope>|\*)\.md"
+    r"|\$RUN_DIR/codex-refutations-pending\.md"
+    r"|\$RUN_DIR/verify-design-claims-(design|phase<P>|\*)\.md"
+    r"|\.harness/codex-refutations\.md"
+)
+
+# Extraction grammar for artifact-filename-shaped literals at the roots where run/repo
+# artifacts live ($RUN_DIR/... and .harness/...). Shared by the current scan and the
+# frozen baseline below (same-function symmetry keeps the comparison normalization-free).
+_ROOTED_TOKEN_RE = re.compile(r"(?:\$RUN_DIR|\.harness)/[A-Za-z0-9_<>*(){}$./-]*\.[A-Za-z0-9$]+")
+
+# The PRE-BATCH baseline inventory: _ROOTED_TOKEN_RE over the seven command specs at
+# d41b73e (the batch's base), frozen so the test needs no git at runtime (a shallow CI
+# clone has no d41b73e object). Derived + executed-verified at implement; any token the
+# CURRENT specs name that is neither here nor an allowlisted shape is a NEW artifact
+# name and reds — whatever its stem (name-agnostic; codex r1 MAJOR-2).
+_ROOTED_BASELINE = {
+    "$RUN_DIR/codex-attempts-<runId>.jsonl",
+    "$RUN_DIR/codex-harden-<P>.log",
+    "$RUN_DIR/codex-harden-<P>.log.stranded",
+    "$RUN_DIR/codex-harden-<P>.md",
+    "$RUN_DIR/codex-harden-<P>.md.stranded",
+    "$RUN_DIR/codex-raw-<scope>.log",
+    "$RUN_DIR/codex-raw-<scope>.log.stranded",
+    "$RUN_DIR/codex-raw-finalize.log",
+    "$RUN_DIR/codex-raw-finalize.log.stranded",
+    "$RUN_DIR/codex-review-<scope>.md",
+    "$RUN_DIR/codex-review-<scope>.md.stranded",
+    "$RUN_DIR/codex-review-finalize.md",
+    "$RUN_DIR/codex-review-finalize.md.stranded",
+    "$RUN_DIR/decisions.md",
+    "$RUN_DIR/design-phase<P>.md",
+    "$RUN_DIR/design.md",
+    "$RUN_DIR/event-log.jsonl",
+    "$RUN_DIR/finalize-todo.md",
+    "$RUN_DIR/followups.md",
+    "$RUN_DIR/harden-<P>-*.md",
+    "$RUN_DIR/harden-<P>-N.md",
+    "$RUN_DIR/inflight-review-<scope>.marker",
+    "$RUN_DIR/inflight-review-finalize.marker",
+    "$RUN_DIR/redesign-<P>-r*.marker",
+    "$RUN_DIR/review-<scope>-<N>.md",
+    "$RUN_DIR/review-<scope>-N.md",
+    "$RUN_DIR/review-<sliceId>-N.md",
+    "$RUN_DIR/review-finalize-*.md",
+    "$RUN_DIR/review-finalize-N.md",
+    "$RUN_DIR/review-phase<P>-*.md",
+    "$RUN_DIR/state.json",
+    "$RUN_DIR/task.md",
+    "$RUN_DIR/tmp/codex-harden-<P>.md.tmp.$$",
+    "$RUN_DIR/tmp/codex-prior-<scope>.md",
+    "$RUN_DIR/tmp/codex-prior-finalize.md",
+    "$RUN_DIR/tmp/codex-prompt-<scope>.txt",
+    "$RUN_DIR/tmp/codex-prompt-finalize.txt",
+    "$RUN_DIR/tmp/codex-review-<scope>.md.tmp.$$",
+    "$RUN_DIR/tmp/codex-review-finalize.md.tmp.$$",
+    "$RUN_DIR/tmp/helper-<scope>.$x",
+    "$RUN_DIR/tmp/helper-<scope>.$x.stranded",
+    "$RUN_DIR/tmp/helper-<scope>.err",
+    "$RUN_DIR/tmp/helper-<scope>.out",
+    "$RUN_DIR/tmp/helper-finalize.$x",
+    "$RUN_DIR/tmp/helper-finalize.$x.stranded",
+    "$RUN_DIR/tmp/helper-finalize.err",
+    "$RUN_DIR/tmp/helper-finalize.out",
+    ".harness/decisions.md",
+    ".harness/followups.md",
+}
+
 # Baseline path shapes (pre-existing families) the R6 section may name.
 _R6_BASELINE = {
     "codex-review-<scope>.md",
@@ -357,13 +427,27 @@ _R6_BASELINE = {
 
 
 def test_new_artifact_names_stay_within_the_allowlist():
-    """AC5(a): across ALL seven touched command specs, every refutation/claims-transcript
-    filename any landed clause names is one of the batch's four allowlisted shapes —
-    {codex-refuted-<scope>.md (family), codex-refutations-pending.md,
-    verify-design-claims-*.md (family), .harness/codex-refutations.md} — no fifth shape."""
-    token_re = re.compile(r"(?:codex-refut|verify-design-claims)[A-Za-z0-9<>*().-]*\.\w+")
+    """AC5(a), INVERTED to bite on ANY name (codex r1 MAJOR-2): across ALL seven touched
+    command specs, every $RUN_DIR/- or .harness/-rooted artifact-filename literal is
+    EITHER in the frozen PRE-BATCH baseline inventory OR one of the batch's four
+    allowlisted shapes — {codex-refuted-<scope>.md (family), codex-refutations-pending.md,
+    verify-design-claims-*.md (family), .harness/codex-refutations.md}. A fifth artifact
+    under ANY other stem (e.g. `$RUN_DIR/refutation-cache.md`) reds. Mutation-verified:
+    inserting `$RUN_DIR/bogus-artifact.md` into a landed section reds; removing it
+    restores green. Deterministic — no network, no git at runtime (the baseline is
+    frozen above). Supplementary: unrooted mentions of the two new families must still
+    match an allowlisted shape exactly."""
+    unrooted_re = re.compile(r"(?:codex-refut|verify-design-claims)[A-Za-z0-9<>*().-]*\.\w+")
     for md in (REVIEW, IMPLEMENT, FINALIZE, HARDEN, PLAN, DESIGN, SHIP):
-        for tok in token_re.findall(_text(md)):
+        text = _text(md)
+        # the name-agnostic inverted check: rooted tokens ⊆ baseline ∪ allowlist
+        for tok in _ROOTED_TOKEN_RE.findall(text):
+            assert tok in _ROOTED_BASELINE or _ROOTED_ALLOWLIST_RE.fullmatch(tok), (
+                f"{md.name}: {tok!r} is neither in the pre-batch baseline nor the "
+                f"batch's four-shape new-artifact allowlist (AC5 is ABSOLUTE)"
+            )
+        # supplementary shape validation for unrooted family mentions
+        for tok in unrooted_re.findall(text):
             assert _NEW_ARTIFACT_ALLOWLIST_RE.fullmatch(tok), (
                 f"{md.name}: {tok!r} is outside the batch's new-artifact allowlist"
             )
@@ -476,18 +560,29 @@ def test_no_refutation_tokens_inside_harden_finalize_prompts():
 # =========================================================================== #
 # AC7 — the committed ledger: header, seeds, and EXECUTED hermetic repros
 # =========================================================================== #
-def _seed_repro_commands():
-    """The two seed entries' repro lines — extracted from the `## CR-<n>` entry bodies
-    (the entry-schema TEMPLATE in the header's fenced example is not a seed)."""
+def _ledger_repro_commands():
+    """Every `## CR-<n>` entry's hermetic repro line, keyed by entry id — GROWTH-TOLERANT
+    (codex r1 MAJOR-1): a future CR-3 promotion EXTENDS the executed coverage instead of
+    redding AC7. Asserts the two D-27 seeds (CR-1/CR-2) are present and that EVERY entry
+    carries an executable `env -i` repro (bound 1's committed-always-executable half,
+    applied per entry). The entry-schema TEMPLATE in the header's fenced example is not
+    an entry (extraction anchors on the `## CR-<n> — ` headings)."""
     text = _text(LEDGER)
-    entries = re.split(r"^## CR-\d+ — ", text, flags=re.MULTILINE)[1:]
-    cmds = [
-        m.group(1)
-        for e in entries
-        for m in [re.search(r"^- repro \(hermetic\): `(env -i [^`]+)`", e, re.MULTILINE)]
-        if m
-    ]
-    assert len(cmds) == 2, f"expected exactly the two D-27 seed repros, found {len(cmds)}"
+    cmds = {}
+    for m in re.finditer(
+        r"^## (CR-\d+) — .*?(?=^## CR-\d+ — |\Z)", text, re.MULTILINE | re.DOTALL
+    ):
+        entry_id, body = m.group(1), m.group(0)
+        repro = re.search(r"^- repro \(hermetic\): `(env -i [^`]+)`", body, re.MULTILINE)
+        assert repro, (
+            f"{entry_id}: committed entries must ALWAYS carry an executable hermetic "
+            f"`env -i` repro line (bound 1)"
+        )
+        assert entry_id not in cmds, f"duplicate ledger entry id {entry_id}"
+        cmds[entry_id] = repro.group(1)
+    assert "CR-1" in cmds and "CR-2" in cmds, (
+        f"the two D-27 seed entries (CR-1, CR-2) must be present; found {sorted(cmds)}"
+    )
     return cmds
 
 
@@ -508,23 +603,26 @@ def test_committed_ledger_header_and_seed_entries():
     assert "anywhere in scope" in norm  # CR-2 anchors the landed R6 clause
 
 
-def test_committed_seed_repros_execute_green():
-    """[M] AC7 (green direction): each seed's recorded `env -i ... sh -c '...'` line is
-    EXECUTED from the repo root and exits 0 — the entries are replayable as written, and
-    a drift in any anchored token reds the suite here rather than at replay time."""
-    for cmd in _seed_repro_commands():
+def test_committed_ledger_repros_execute_green():
+    """[M] AC7 (green direction): EVERY committed entry's recorded `env -i ... sh -c ...`
+    line is EXECUTED from the repo root and exits 0 — the entries are replayable as
+    written (a drift in any anchored token reds the suite here rather than at replay
+    time), and a future promotion joins the executed coverage automatically."""
+    for entry_id, cmd in _ledger_repro_commands().items():
         proc = subprocess.run(cmd, shell=True, cwd=str(REPO_ROOT), capture_output=True, text=True)
         assert proc.returncode == 0, (
-            f"seed repro must exit 0 from the repo root: {cmd!r} "
+            f"{entry_id}: repro must exit 0 from the repo root: {cmd!r} "
             f"(rc={proc.returncode}, stderr={proc.stderr!r})"
         )
 
 
 def test_committed_seed_repros_red_direction(tmp_path):
-    """[M] AC7 (red direction — anti-vacuity): each seed's grep chain FAILS against a
+    """[M] AC7 (red direction — anti-vacuity): each SEED's grep chain FAILS against a
     mutated tree whose guarded clause is deleted, proving the repro binds the real clause
     (green-at-HEAD is not vacuous). CR-1: strip the ship promotion clause; CR-2: strip
-    the landed full-scope license."""
+    the landed full-scope license. Bound to the two D-27 SEEDS by id — a future CR-3's
+    repro is exercised by the green-direction test, not force-fit into this mutated
+    tree."""
     mutations = {
         # seed 1: the promotion contract clause is deleted from drive-ship.md
         ".claude/commands/drive-ship.md": ("Promote the run ledgers", ""),
@@ -543,10 +641,14 @@ def test_committed_seed_repros_red_direction(tmp_path):
         dst = tmp_path / rel
         dst.parent.mkdir(parents=True, exist_ok=True)
         dst.write_text(_text(REPO_ROOT / rel), encoding="utf-8")
-    for cmd in _seed_repro_commands():
-        proc = subprocess.run(cmd, shell=True, cwd=str(tmp_path), capture_output=True, text=True)
+    cmds = _ledger_repro_commands()
+    for entry_id in ("CR-1", "CR-2"):
+        proc = subprocess.run(
+            cmds[entry_id], shell=True, cwd=str(tmp_path), capture_output=True, text=True
+        )
         assert proc.returncode != 0, (
-            f"seed repro must RED once its guarded clause is deleted (vacuity probe): {cmd!r}"
+            f"{entry_id}: repro must RED once its guarded clause is deleted "
+            f"(vacuity probe): {cmds[entry_id]!r}"
         )
 
 
