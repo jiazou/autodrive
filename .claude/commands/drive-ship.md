@@ -8,8 +8,31 @@ main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR
 
 ## Preconditions (non-decision STOPs)
 
-1. **Gate A passed:** `$RUN_DIR/state.json` has `lastGate == "A"`. Do NOT infer it
-   from a review file existing.
+1. **Gate A passed:** `$RUN_DIR/state.json` has `lastGate == "A"` (the fast path). When
+   `lastGate` is absent/`null` (NOT a skipped approval — e.g. a write that failed to
+   persist the field despite § Stage 1's atomic-write PRESCRIPTION, a crash mid-write, or a
+   legacy run predating the field; guard-repoint D-9 observed exactly this), Gate A is
+   instead PROVEN by the actor-independent artifact chain (a run cannot reach ship without
+   the human-approved Gate-A transition having run), requiring ALL of:
+   - (a) **[load-bearing]** `state.phaseList` is NON-EMPTY **and** `state.stage` ∈
+     {`execute`, `finalize`, `verify`, `ship`}. The Gate-A transition (drive.md § Stage 1)
+     is the SOLE writer of a non-empty `phaseList` and runs ONLY after the human approves
+     Gate A, so a populated `phaseList` at an Execute-or-later stage proves that transition
+     ran; the dropped `lastGate` is the same atomic write's un-persisted field. (An empty
+     `phaseList`, or a pre-Execute `stage`, means the transition never ran → Gate A NOT
+     passed.)
+   - (b) the highest-N `$RUN_DIR/review-design-N.md` is `## Verdict: CONVERGED` with a
+     non-empty `$RUN_DIR/codex-review-design.md` sibling; and (c) precondition #2 holds
+     (every phase `hardened`). (b)/(c) CORROBORATE — do NOT infer Gate A from a review
+     file ALONE (a converged design can exist pre-approval); the load-bearing signal is
+     (a).
+   When Gate A is DERIVED (not the fast path): repair `state.lastGate = "A"`, LOG the
+   derivation to `$RUN_DIR/decisions.md` (evidence-cited — recording an established fact a
+   dropped write failed to persist, NOT a forge), and surface it at Gate B. Neither
+   `lastGate == "A"` NOR a sound derivation (an empty `phaseList`, or a pre-Execute
+   `stage`) → STOP: "Gate A not provable — no recorded approval and the artifact chain
+   does not establish it." This mirrors the resume router, which already refuses to key on
+   the droppable `lastGate` scalar (drive.md D1).
 2. **All phases hardened:** every `state.phaseReview[*].status == "hardened"` (the
    terminal per-phase state — a phase reaches it only after its review converged AND
    its harden pass completed) and no slice left non-`converged` in `state.slices`.
