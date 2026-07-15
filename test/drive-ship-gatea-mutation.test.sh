@@ -58,6 +58,17 @@ else
     || fail "stage-set widening (+plan) did NOT red the exact-set pin (VACUOUS)"
 fi
 
+# 3) ALL -> ANY aggregation: clause (b) alone (a pre-approval design) would prove Gate A — MUST red the corroboration pin
+M3="$WORK/all-to-any.md"
+sed 's/requiring ALL of:/requiring ANY of:/' "$SHIP" > "$M3"
+if cmp -s "$SHIP" "$M3"; then
+  fail "ALL->ANY sed did not change the file (pattern drift — aggregation pin unverifiable)"
+else
+  [ "$(run_k "$M3" corroboration)" = red ] \
+    && pass "ALL->ANY aggregation mutation REDs the corroboration pin" \
+    || fail "ALL->ANY aggregation mutation did NOT red the corroboration pin (VACUOUS)"
+fi
+
 echo ""
 echo "===================================================================="
 printf 'drive-ship-gatea-mutation.test.sh: %d passed, %d failed\n' "$PASS" "$FAIL"

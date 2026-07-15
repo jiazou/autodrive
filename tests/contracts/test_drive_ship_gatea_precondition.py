@@ -108,13 +108,18 @@ def test_gatea_both_negative_cases_stop():
 
 def test_gatea_corroboration_requires_all_of_abc():
     """(b)/(c) corroborate — the derivation requires the CONVERGED high-level design + its
-    codex sibling AND precondition #2 (hardened); a review file is never sufficient ALONE."""
+    codex sibling AND precondition #2 (hardened); a review file is never sufficient ALONE.
+    Crucially the clauses AGGREGATE with ALL, never ANY: under ANY, clause (b) alone — a
+    converged design, which legitimately exists PRE-approval — would derive Gate-A-passed."""
     low = _precondition_1().lower()
     assert "converged" in low and "codex-review-design" in low, \
         "(b) must require the CONVERGED high-level design + its non-empty codex sibling"
     assert "hardened" in low, "(c) must require precondition #2 (every phase hardened)"
     assert re.search(r"review\s+file\s+alone", low), \
         "a converged design (review file) must NOT be sufficient ALONE to prove Gate A"
+    # AGGREGATION connective: require ALL of (a)/(b)/(c), never ANY (pins the ALL→ANY bypass)
+    assert re.search(r"requiring\s+all\s+of", low) and not re.search(r"requiring\s+any\s+of", low), \
+        "the derivation must require ALL of (a)/(b)/(c) — never ANY (clause (b) alone can exist pre-approval)"
 
 
 def test_gatea_derivation_repairs_logs_surfaces():
