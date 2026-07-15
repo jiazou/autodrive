@@ -9,10 +9,11 @@ main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR
 ## Preconditions (non-decision STOPs)
 
 1. **Gate A passed:** `$RUN_DIR/state.json` has `lastGate == "A"` (the fast path). When
-   `lastGate` is absent/`null` — a Gate-A atomic write that persisted `stage`/`phaseList`
-   but DROPPED the `lastGate` field, NOT a skipped approval — Gate A is instead PROVEN by
-   the actor-independent artifact chain (a run cannot reach ship without the
-   human-approved Gate-A transition having run), requiring ALL of:
+   `lastGate` is absent/`null` (NOT a skipped approval — e.g. a write that failed to
+   persist the field despite § Stage 1's atomic-write PRESCRIPTION, a crash mid-write, or a
+   legacy run predating the field; guard-repoint D-9 observed exactly this), Gate A is
+   instead PROVEN by the actor-independent artifact chain (a run cannot reach ship without
+   the human-approved Gate-A transition having run), requiring ALL of:
    - (a) **[load-bearing]** `state.phaseList` is NON-EMPTY **and** `state.stage` ∈
      {`execute`, `finalize`, `verify`, `ship`}. The Gate-A transition (drive.md § Stage 1)
      is the SOLE writer of a non-empty `phaseList` and runs ONLY after the human approves

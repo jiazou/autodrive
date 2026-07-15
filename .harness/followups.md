@@ -1278,3 +1278,6 @@ churned this round (converged 3-voice guard prose; Claude adversarial reviewer f
 
 ## finalize residuals (non-blocking; P3)
 - tests/contracts/test_decant_dedup_contract.py — the "sibling DIET greps the sentinel byte-for-byte" rationale still appears ~3x across the module docstring / byte-identity test docstring / assertion message. Reviewer=P3 cosmetic; codex deems it load-bearing byte+mutation-contract documentation (kept per OPERATING "comments keep the non-obvious why"). Not fixed in-run.
+
+## 2026-07-15 — RL-1b (from fix/ship-gatea-derive-from-artifacts)
+- [P2] drive-ship.md precondition #1 derives "Gate A passed" from the artifact chain in PROSE (coordinator-followed). Robust follow-up: move the derivation into an EXECUTABLE check (e.g. a `bin/drive-conformance.sh` gate-A-passed computation over state.json + review-design/finalize artifacts) with table-tested inputs→outputs, so the AND-conjunction + exact stage set + negative cases are pinned by execution, not prose-grep. The current contract pin (test_drive_ship_gatea_precondition.py) + its mutation-verify (test/drive-ship-gatea-mutation.test.sh) are best-effort until then; the load-bearing runtime guards remain the resume matrix's fail-closed on both malformed {phaseList×stage} corners + Gate B. (RL-1 retro; codex adversarial review of the RL-1 pin.)
