@@ -201,6 +201,7 @@ wt/                          -- per-slice + integration + ship worktrees
 ```
 
 The **committed** cross-task ledgers stay in the repo: `.harness/decisions.md`,
-`.harness/followups.md`. Read `.harness/decisions.md` at the start of a task to
+`.harness/followups.md`, `.harness/codex-refutations.md` (durable codex-refutation
+adjudications). Read `.harness/decisions.md` at the start of a task to
 stay consistent; the coordinator promotes a run's `$RUN_DIR` ledgers into them at
 ship.

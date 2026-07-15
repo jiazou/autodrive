@@ -207,6 +207,7 @@ Full details, the expected vault layout, and `MC_VAULT_NAME` are in
 - `docs/flow.md` -- annotated execution-flow diagram (design tiers, phases, slices, every command)
 - `.harness/decisions.md` -- append-only autonomous-decision ledger
 - `.harness/followups.md` -- append-only out-of-scope discoveries
+- `.harness/codex-refutations.md` -- append-only durable codex-refutation ledger (hermetic cross-run adjudications)
 - `mission-control/` -- separate, optional personal operating harness (session tracking +
   daily standup); macOS + Obsidian-specific, see `mission-control/README.md`
 - `LICENSE` -- MIT
@@ -215,7 +216,8 @@ Full details, the expected vault layout, and `MC_VAULT_NAME` are in
 
 Per-run state — design, `state.json`, review files, worktrees — lives in an
 external run dir `~/.claude/harness-runs/<run-id>/`. The committed `.harness/`
-holds only the cross-task ledgers (`decisions.md`, `followups.md`).
+holds only the cross-task ledgers (`decisions.md`, `followups.md`,
+`codex-refutations.md`).
 
 ## Testing
 

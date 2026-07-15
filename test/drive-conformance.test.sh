@@ -359,7 +359,7 @@ run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC4.ii ship code
                                                     case "$OUT" in *'no-phase-review'*) echo "FAIL: AC4.ii must NOT be no-phase-review ((a)(b)(c) skipped) :: $OUT"; FAIL=$((FAIL+1));; *) echo "PASS: AC4.ii reached (a)(b)(c) (not no-phase-review)"; PASS=$((PASS+1));; esac
 
 # AC4.iii — (b) allowlist tightness: R = phase1 code (HEAD^); R..tip = the single `.harness/foo.md`
-# commit. (a) ✓, (c) ✓ (1 commit), (b) FAILS (.harness/foo.md ∉ the 3-file allowlist — the WHOLE
+# commit. (a) ✓, (c) ✓ (1 commit), (b) FAILS (.harness/foo.md ∉ the 4-file allowlist — the WHOLE
 # .harness/ dir is NOT blanket-allowed). MUTATION: widen the allowlist to a `.harness/` prefix and
 # foo.md passes subset -> ship CLEAN -> rc 0 (reds this — guards the per-file tightness).
 read -r repo rd < <(mk_ship other_harness_past_r)
@@ -377,6 +377,21 @@ seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD~2')"
 run_conf "$repo" "$rd" --mode ship;                 assert_rc  "AC4.iv(≤1) ship two ledger commits blocked at (c) commit-count" 1 "$RC"
                                                     assert_out "AC4.iv reason is no-review (reached (a)(b)(c) commit-count)" '"reason":"no-review"'
                                                     case "$OUT" in *'no-phase-review'*) echo "FAIL: AC4.iv must NOT be no-phase-review :: $OUT"; FAIL=$((FAIL+1));; *) echo "PASS: AC4.iv reached (a)(b)(c) (not no-phase-review)"; PASS=$((PASS+1));; esac
+
+echo "=== AC-R7 (D-9): ship-mode admits the 4-file ledger commit (incl codex-refutations) ==="
+# R..tip = ONE ledger commit touching .harness/codex-refutations.md alongside the other
+# ledgers ⇒ clean rc 0. Fixture built INLINE on an mk_ship-produced repo at R == tip via the
+# sourced _gitc helper (mkfixture.sh byte-unchanged — the AC5 proof; no new mk_ship variant).
+# RED against the pre-batch 3-file allowlist ((b) subset fails on codex-refutations -> block);
+# AC4.iii above still guards per-file tightness (.harness/foo.md stays denied).
+read -r repo rd < <(mk_ship none ac-r7-ship)   # unmatched variant: no extra commit -> tip == R
+mkdir -p "$repo/.harness"
+printf 'd\n' > "$repo/.harness/decisions.md"
+printf 'f\n' > "$repo/.harness/followups.md"
+printf '## CR-1 seed\n' > "$repo/.harness/codex-refutations.md"
+_gitc "$repo" add -A; _gitc "$repo" commit -q -m "ledger incl codex-refutations"
+seed_finalize "$rd" 1 "$(git -C "$repo" rev-parse 'HEAD^')"
+run_conf "$repo" "$rd" --mode ship;                 assert_rc "AC-R7 ship 4-file ledger commit (incl codex-refutations) clean" 0 "$RC"
 
 echo "=== AC4b: multi-phase existential R (no highest-N false-block) ==="
 # The terminal tip-binding R is now the finalize artifact (not a phase R); the multi-phase

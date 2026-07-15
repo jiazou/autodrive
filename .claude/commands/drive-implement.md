@@ -56,7 +56,14 @@ its owned files** (in this worktree). Do NOT touch files outside your ownership 
 parallel slices own them; if you need one, the phase design's slice boundaries are wrong
 → return `STATUS: REDESIGN — <reason>`, do not reach in. Write ≥1 test per acceptance
 criterion and **run the slice-local tests** until green. If a review exists, fix
-every P1 (BLOCKING/MAJOR) from BOTH the review and codex files. **Commit your work
+every P1 (BLOCKING/MAJOR) from BOTH the review and codex files. **Class-sweep fix
+rounds (R5):** when a P1 is a parser/validator/regex/classifier/reader/wording-class
+defect, grep-enumerate every sibling site of the same input shape ACROSS YOUR OWNED
+FILES and fix ALL in-ownership members in this one round; state the class boundary (the
+grep pattern + the file:line member list) in the commit message, and mutation-verify per
+fixed site. Out-of-ownership class members: RECORD them to `$RUN_DIR/followups.md` plus
+a note on your STATUS line — NEVER edit them; escalate `STATUS: REDESIGN` ONLY when your
+own fix requires editing those files. **Commit your work
 to the slice branch** (`git add -A && git commit`) before returning.
 
 **Test-presence is ENFORCED (fail-closed) at the slice merge.** The slice's diff MUST

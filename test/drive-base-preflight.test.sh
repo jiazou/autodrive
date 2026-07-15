@@ -150,10 +150,33 @@ contains "no baseSha ⇒ reason names baseSha"    "$(echo "$OUT" | jq -r '.reaso
 "$PF" >/dev/null 2>&1;             check "no-arg ⇒ exit 2"    "$?" "2"
 "$PF" "$WORK/nope" >/dev/null 2>&1; check "no-state ⇒ exit 2" "$?" "2"
 
-# (11) SHIP_LEDGER_ALLOWLIST must not drift from bin/drive-conformance.sh.
-pf_al="$(grep -oE '"[^"]+"' "$PF" | sed -n '/harness\/decisions\|harness\/followups\|TODO\.md/p' | tr -d '"' | sort -u | tr '\n' ' ')"
-cf_al="$(grep -oE '"[^"]+"' "$REPO_DIR/bin/drive-conformance.sh" | sed -n '/harness\/decisions\|harness\/followups\|TODO\.md/p' | tr -d '"' | sort -u | tr '\n' ' ')"
+# (11) SHIP_LEDGER_ALLOWLIST must not drift from bin/drive-conformance.sh. SITE-PRECISE
+#      (D-28/D-41): each extraction reads ONLY its array's own declaration line — a
+#      whole-file quoted-string sweep would also match the pendingLedgers conditional and
+#      mask a one-array drift — and the expected 4-entry contents are pinned explicitly.
+pf_al="$(sed -n 's/^LEDGER_ALLOWLIST=(\(.*\))$/\1/p' "$PF" | grep -oE '"[^"]+"' | tr -d '"' | LC_ALL=C sort -u | tr '\n' ' ')"
+cf_al="$(sed -n 's/^SHIP_LEDGER_ALLOWLIST=(\(.*\))$/\1/p' "$REPO_DIR/bin/drive-conformance.sh" | grep -oE '"[^"]+"' | tr -d '"' | LC_ALL=C sort -u | tr '\n' ' ')"
 check "ledger allowlist matches drive-conformance.sh" "$pf_al" "$cf_al"
+check "ledger allowlist is the 4-entry set" "$cf_al" ".harness/codex-refutations.md .harness/decisions.md .harness/followups.md TODO.md "
+
+# (12) .harness/codex-refutations.md is a pending ledger ONLY when
+#      $RUN_DIR/codex-refutations-pending.md is non-empty (mirrors the (8)
+#      finalize-todo/TODO.md conditional). Base appends to the refutation ledger; feat has
+#      no ledger commit yet: without the pending file ⇒ NOT a pending conflict
+#      (ship-as-is); WITH it non-empty ⇒ auto-rebase.
+CR="$WORK/refut"; mkdir -p "$CR"; cd "$CR"
+git init -q -b main; git config user.email t@t; git config user.name t
+mkdir -p .harness
+printf '# d\n' > .harness/decisions.md; printf '# cr\n' > .harness/codex-refutations.md; printf 'x\n' > c.txt
+git add -A; git commit -qm base; CRBASE="$(git rev-parse HEAD)"
+git checkout -q -b feat; printf 'run\n' > r.txt; git add -A; git commit -qm 'feat code'
+git checkout -q main; printf '%s\n' '## CR-new — main appended' >> .harness/codex-refutations.md
+git add -A; git commit -qm 'main touches codex-refutations'
+D_NO="$(mk_state "$CR" "$CRBASE")"
+check "base touches codex-refutations.md, no pending file ⇒ ship-as-is" "$(j "$D_NO" | jq -r '.recommendation')" "ship-as-is"
+D_YES="$(mk_state "$CR" "$CRBASE")"; printf '## CR-pending entry\n' > "$D_YES/codex-refutations-pending.md"
+check "base touches codex-refutations.md WITH pending ⇒ auto-rebase" "$(j "$D_YES" | jq -r '.recommendation')" "auto-rebase"
+cd "$FX"
 
 echo "----------------------------------------"
 echo "PASS: $PASS  FAIL: $FAIL"

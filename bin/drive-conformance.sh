@@ -35,7 +35,7 @@ set -euo pipefail
 # --- Ship-ledger allowlist: the EXACT files SHIP commits AFTER the last review.
 #     Kept in sync with drive-ship.md (NOT the whole .harness/ dir — D12). Repo-root
 #     TODO.md is promoted from finalize-todo.md in the same single ledger commit (D10). ---
-SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md" "TODO.md")
+SHIP_LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md" "TODO.md" ".harness/codex-refutations.md")
 
 usage() {
   echo "usage: drive-conformance.sh <RUN_DIR> --mode plan-gate|phasedesign-gate:<P>|slice-merge:<id>|phase-merge:<P>|impl-presence:<id>|ship|audit|checkpoint|state-lint" >&2

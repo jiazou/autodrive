@@ -84,6 +84,84 @@ conformance `phaseReview[<P>].round`. The harden loop already bounds the number 
 these passes (its 3-fix-round cap), so there is no N>8 STOP here; just run the review
 and report CONVERGED/FINDINGS.
 
+## Round form on eligible re-reviews (delta-focused prompt)
+
+On an ELIGIBLE round (below), the CODEX voice's prompt leads with the prior round's fix
+delta instead of the full-scope-first framing. Everything else about the round is
+byte-identical to any other round: ONE codex dispatch per round via the unchanged Step-1
+block, the same gate-visible `--marker` path `codex-review-<scope>.md`, the same
+snapshot → quarantine → dispatch ordering, Step-3 post-process, degradation tiers, and
+Adopt/recovery mechanics. This form changes PROMPT CONTENT ONLY — no artifact, marker,
+counter, or gate text changes anywhere, and it names NO new filename of any kind.
+
+**Eligibility (ALL must hold; anything else ⇒ the normal full prompt):**
+- The scope is a CODE scope — `slice <id>` or `phase <P>` — at round N≥2, immediately
+  following a FIX of this scope's prior-round findings. `design`/`phasedesign<P>` scopes
+  are ineligible by construction (doc reviews, no code diff — the fresh design-scope
+  re-read is a sole-catcher); a `phase <P> harden-regress` invocation is ineligible;
+  `finalize` is not a drive-review scope.
+- NOT a stranded-marker recovery re-dispatch — i.e. this `/drive-review` unit was
+  re-dispatched by drive.md's Stranded-marker recovery (step 2) at resume, which the
+  coordinator knows from its own context (equivalently: the marker the recovery found
+  open AT RESUME — before this re-dispatch minted its own — carried a PRIOR session's
+  `sessionId`; recovery step 2 clears it, so the test binds at the recovery ADJUDICATION
+  point). The round's OWN `inflight-review-<scope>.marker`, written by this session
+  immediately before this dispatch unit, does NOT make the round a recovery re-dispatch
+  — else every round would classify as recovery and this form would be inert.
+- The scope's diff (`git diff --name-only <diffBase|phaseBaseSha>..<tip>`, the scope's
+  refs above) touches NO security-sensitive path: **any** file under `bin/`, any
+  gate-hook/installer script, any settings/hook config, or any matcher/parser/classifier
+  implementation ⇒ the WHOLE round is INELIGIBLE — full-scope codex every round, however
+  small the sensitive fraction of the diff (diff-content-based, independent of the
+  `--security-diff` effort flag).
+- `deltaBase` resolves: `deltaBase` = the `reviewed-sha:` of `review-<scope>-(N-1).md`.
+  A missing file, or a missing/non-40-hex sha ⇒ NOT eligible — fail closed to the
+  normal full prompt.
+
+**The delta-focused codex prompt (eligible rounds only).** The coordinator appends a
+delta block to `$RUN_DIR/tmp/codex-prompt-<scope>.txt` AFTER writing the base heredoc
+(`cat >>`); the Step-1 dispatch block itself stays byte-identical. The appended block
+binds to ALL of the prior round's P1s, never a singular "the prior finding":
+- (a) it LEADS with the delta focus: "review FIRST the fix delta
+  `git diff <deltaBase>..<tip>` (`git log <deltaBase>..<tip>` for the fix commits), and
+  FOR EACH prior-round P1: its fix's changed surface and consumer surface
+  (callers/readers of the changed symbols), PLUS — where that P1's fix commit DECLARED a
+  class boundary (the R5 contract: parser/validator/regex/classifier/reader/wording-class
+  fixes declare one; other fixes legitimately do not) — that P1's full class."
+- (b) a CONDITIONAL class-closure checklist item, included only when ≥1 prior-round fix
+  declared a boundary: "for each declared class boundary, verify it is closed (re-run
+  that boundary grep)." A P1 whose fix declared no class gets the delta +
+  consumer-surface treatment and NO boundary grep.
+- (c) the suite-rerun ban: "do NOT re-run the full test suites — spot-run only the tests
+  pinning your prior findings" (the suites already ran green in the implement step). The
+  ban applies ONLY on eligible rounds — ineligible/security rounds keep today's prompt,
+  with no ban.
+- (d) the full-scope license VERBATIM: "you MAY flag any P1 anywhere in scope" — where
+  'scope' = the FULL reviewed diff of the scope (`<diffBase|phaseBaseSha>..<tip>`), never
+  the delta focus's slice of it (the narrow reading would revive the refuted
+  settled-scope prohibition).
+Enrichment is unchanged: the prompt names `review-<scope>-(N-1).md` and the step-0
+snapshot `tmp/codex-prior-<scope>.md` (PRIOR-round only), which is always current because
+every completed round writes the gate-visible sibling exactly as today.
+
+**The Claude voice runs FULL-scope every round** — the Step-2 reviewer prompt is the
+normal full prompt (plus the R5 class-boundary checklist item), and it writes the round's
+`review-<scope>-N.md` exactly as today. **Terminal invariant:** the terminal full-scope
+pass is the CLAUDE voice's — full-scope every round, including the round that records
+CONVERGED. The codex voice follows today's tier-table semantics UNCHANGED (a degraded
+pass contributes zero P1); a delta-focused CLEAN codex pass on a CONVERGED round is
+strictly MORE codex coverage than the already-gate-accepted degraded-round CONVERGED
+(zero codex).
+
+**Accounting (unchanged consumers):** ONE dispatch, one `review-<scope>-N.md`, one
+counter tick per round, counted INSIDE cap-8 — never excluded, reset, or bypassed. Every
+post-fix round remains a FRESH dual-voice dispatch: the delta form narrows the codex
+PROMPT's focus, not the round's freshness, and the Claude voice re-reads the full scope
+every round. A crash mid-round is today's seam exactly (an open marker with a complete
+pair adopts; an incomplete pair re-dispatches) — and the recovery re-dispatch is
+ineligible by the rule above, so a redo round runs the normal full prompt (the delta
+focus is dropped on redo, never the artifact discipline).
+
 ## Step 1 — Cross-model codex pass FIRST (background helper, per-scope log)
 
 **R2 (codex-first, overlap-reliable).** Dispatch codex FIRST as a background helper, then spawn
@@ -130,12 +208,23 @@ carries an atomicity justification + heightened-review note, or an absent Size e
 $RUN_DIR/design-phase<P>.md (buildable interfaces, testable criteria, sound Slices — no slice
 cycle, disjoint owns, no contract contradicting real prior-phase code; FLAG a slice beyond the
 first with no why:, a test-only slice, two slices sharing a new co-authored contract instead of
-being one, or a slice bundling a must-verify-first foundation with its dependents). For a slice:
+being one, or a slice bundling a must-verify-first foundation with its dependents).
+For BOTH 'design' and 'phasedesign<P>': where the design ships a classifier/matcher rule, RUN
+its calibration script against its corpus (precision) AND run your own independent recall probe
+(shape enumeration the author didn't prescribe — the author's script inherits the rule's blind
+spots); verify the claims transcript verify-design-claims-*.md exists, then: a claims-bearing
+transcript => spot-check >=1 claim against it; a transcript declaring 'no citations / no quoted
+snippets / no empirical claims' => VERIFY THAT DECLARATION against the design doc itself (any
+citation, quoted snippet, or empirical claim found falsifies it — P1 against the transcript).
+For 'phasedesign<P>' also flag P2 when the ACs lack the 'Pin depth per AC' assignments.
+For a slice:
 git diff <phaseBaseSha>..slice/<runId>/<id>, only its acceptance criteria + owned files. For
 a phase: git diff <diffBase>..phaseInt/<runId>/<P>, integration; AND reconcile size — actual
 production SLOC (excl tests/comments/blanks) crossing into a higher band than the plan's Size
 estimate claimed with no heightened-review note is P2. Flag BLOCKING/MAJOR/
 MINOR with file:line. Prioritized.
+For any finding that is one instance of a class (parser/validator/regex/classifier/reader/
+wording), enumerate ALL members of the class with file:line.
 PROMPT
 # --confirmation-class is a CONDITIONAL BRANCH, not an always-present flag: down-tier eligible ONLY
 # on a clean FIRST dispatch of THIS round; OMIT on a RE-DISPATCH ⇒ FULL effort (the step-0 snapshot
@@ -192,12 +281,27 @@ Audit the <scope>:
   new-in-this-phase + co-authored (helper mirrored in both, writer/reader pair,
   produced-then-consumed value) rather than being one slice; P2 = one slice bundling a
   must-verify-first foundation with its dependents. No code diff.
+- `design` / `phasedesign<P>` (BOTH, additionally): where the design ships a
+  classifier/matcher rule, RUN its calibration script against its corpus (precision) AND
+  run your own independent recall probe (shape enumeration the author didn't prescribe) —
+  the author's script inherits the rule's blind spots. Also verify the claims transcript
+  `verify-design-claims-*.md` exists, then CONDITIONALLY: a claims-bearing transcript ⇒
+  spot-check ≥1 claim against it; a transcript declaring 'no citations / no quoted
+  snippets / no empirical claims' ⇒ VERIFY THAT DECLARATION against the design doc itself
+  (scan it for citations, quoted snippets, and empirical claims — any found falsifies the
+  declaration and is a P1 against the transcript) instead of spot-checking. For
+  `phasedesign<P>`: flag P2 a phase design whose ACs lack the `Pin depth per AC`
+  assignments.
 - a slice: audit `git diff <phaseBaseSha>..slice/<runId>/<id>` against THAT slice's
   acceptance criteria, restricted to its owned files.
 - a phase: audit `git diff <diffBase>..phaseInt/<runId>/<P>` for integration correctness.
   Size reconciliation: measure actual production SLOC (exclude tests/comments/blanks); if it
   crosses into a higher band than the plan's `Size estimate` claimed with no `heightened-review:`
   note, flag P2.
+- Round-N≥2 checklist (slice/phase scopes): when any prior-round fix declared a class
+  boundary (the fix commit's stated grep pattern + file:line member list), VERIFY each
+  stated class is closed — re-run its boundary grep — IN ADDITION TO, never instead of,
+  your unchanged open-ended adversarial hunt.
 Spec + prior decisions: the phase's detailed design `$RUN_DIR/design-phase<P>.md` (for a
 slice/phase scope — the slice acceptance criteria live there; `$RUN_DIR/design.md` is the
 high-level context), and `$RUN_DIR/decisions.md`. Derive the diff authoritatively from git
@@ -209,6 +313,12 @@ Severity (P-levels) — pick one, don't ask:
 - MAJOR (P1): clear bug, missing edge case the design listed, test gap on a criterion
 - MINOR (P2): code quality / readability / perf with no spec impact
 - NIT (P3): style; usually omit
+For test-pin findings, "a pin exists" is defined by MUTATION SURVIVAL, not textual
+presence: a pin counts only if it reds on deletion/partial-revert of the exact clause it
+guards; a vacuous pin = NO pin = stays P1. "Could be stronger" (reds on the core mutation
+but lacks permutation/exclusivity/composed-order coverage) = P2, logged for
+harden/finalize — EXCEPT on fail-closed gate surfaces (drive-conformance contracts, gate
+hooks, drive-retention safety clauses), where exclusivity/composed-order gaps STAY P1.
 Out-of-scope real bugs → `$RUN_DIR/followups.md`.
 
 Write `$RUN_DIR/review-<scope>-N.md`:
@@ -284,12 +394,58 @@ first-line `CODEX_UNAVAILABLE` / `CODEX_KILLED_TIMEOUT` are the human-readable c
 tokens.
 
 Compare: both-flagged = high confidence; **codex-only = scrutinize hardest** (bugs Claude missed);
-reviewer-only = claude-only. **Converged** when NEITHER voice has an open **P1** (BLOCKING/MAJOR); a
+reviewer-only = claude-only. **Count tags, not prose:** the codex verdict is derived by COUNTING
+the BLOCKING/MAJOR severity tags in `codex-review-<scope>.md`, never its prose summary line; on a
+tag-vs-prose conflict, fail closed to the tags. Demoting a codex BLOCKING/MAJOR on pin depth
+requires SHOWING the executed core-mutation red (an executed artifact in the round's record, not
+an assertion). **Converged** when NEITHER voice has an open **P1** (BLOCKING/MAJOR); a
 degraded token contributes zero P1; P2/P3 logged, not blocking. Record to `$RUN_DIR/state.json`:
 this scope's verdict + increment its counter — `state.designReview` for `design`,
 `state.slices[<id>].reviewCount` for a slice, `state.phaseReview[<P>].round` for a `phase <P>`
 review, `state.phaseDesign[<P>].round` for a `phase <P> design` review.
 **Exception — `harden-regress`:** increment nothing (the harden loop's 3-fix-round cap bounds it).
+
+## Refutation ledger (R7)
+
+When the coordinator OVERRULES a codex P1 with evidence (overrule-with-evidence), it
+records the adjudication so a later re-flag replays the evidence instead of relitigating.
+
+**Artifacts:**
+- `$RUN_DIR/codex-refuted-<scope>.md` — the per-scope in-run family (one file per scope,
+  appended per entry): the run's read surface for re-flag replay and review-scope
+  enrichment. Per entry: the finding (verbatim substance), refutation evidence, `Repro:`
+  (an executable check, or run-local doc-anchored cites-as-replay), `Env:` (a bounded
+  non-secret manifest), a scope qualifier, and a voiding condition.
+- `$RUN_DIR/codex-refutations-pending.md` — the promotion staging file: when an
+  adjudication is DURABLE-qualifying (recurring-class evidence + hermetic repo-relative
+  repro + non-secret manifest), the coordinator ALSO appends the entry here in the
+  committed format. Ship promotes exactly this file; it is not created when nothing
+  qualifies.
+- `.harness/codex-refutations.md` — the committed durable cross-run ledger (its purpose
+  header carries the entry schema; promoted at ship by drive-ship.md's activation-aware
+  step).
+
+**Five hard bounds (each binding):**
+1. Every entry records a REPLAYABLE check — an executable repro command + a bounded env
+   manifest where the refutation is behavioral, OR (run-local `codex-refuted-<scope>.md`
+   entries only) doc-anchored artifact cites (file:line at a named SHA) whose re-reading
+   IS the replay. COMMITTED entries ALWAYS carry an executable hermetic `env -i` line
+   (doc-anchored ones encode their cites as repo-relative greps). On any re-flag the
+   coordinator RE-EXECUTES the recorded check — runs the command verbatim from the repo
+   root at the reviewed tip, or re-reads the cites; a differing result (changed
+   output/exit, or cited text that no longer supports the refutation) VOIDS the entry,
+   and an executed red in the faithful env ALWAYS defeats the ledger.
+2. Refutation content is NEVER injected into harden/finalize auditor prompts (voice
+   independence). REVIEW-scope re-audit prompts MAY carry applicable entries as
+   prior-round enrichment — this EXTENDS, and does not reword, the existing enrichment
+   rule (PRIOR rounds only, never the same-round Claude reviewer output).
+3. Entries are finding-specific, with evidence + run-scope qualifiers — never
+   class-level "X-like findings are settled".
+4. A P1→P2 downgrade requires the coordinator's OWN executed reproduction of the
+   fail-safe direction; the threat-model arm applies only to verbatim
+   `docs/drive-enforcement.md` exclusions.
+5. A repro timeout leaves the finding UN-refuted — it mints nothing and voids nothing
+   (the finding is adjudicated on its merits this round).
 
 After this stage:
 - **FINDINGS** → `/drive` loops `/drive-implement` on this scope (it owns the cap-8).
