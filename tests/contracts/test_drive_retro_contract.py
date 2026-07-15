@@ -174,7 +174,7 @@ def test_drive_md_wires_retro_into_completion_before_decant():
 # --------------------------------------------------------------------------- #
 # AC13 — SLOC cap: ≤150 lines, or exactly the reviewed overage size (exact pin)
 # --------------------------------------------------------------------------- #
-REVIEWED_OVERAGE_LINES = 184  # the dual-voice-reviewed size logged in decisions.md
+REVIEWED_OVERAGE_LINES = 189  # reviewed size after the decant/drive-retro dedup re-point (was 184); logged in decisions.md
 
 
 def test_sloc_cap_or_exact_reviewed_overage():
@@ -267,6 +267,15 @@ def test_dedup_references_read_only_and_paths():
     assert "`not checked (<file> unavailable)`" in sec
     assert "`not checked (repoRoot unknown)`" in sec
     assert "no cwd fallback" in sec
+    # Re-point (guard-repoint): §3 adds the per-slug memory FILE as the CONTENT-comparison
+    # reference; the MEMORY.md index (asserted above) is retained only as the candidate enumerator.
+    assert "`~/.claude/projects/<proj>/memory/<slug>.md`" in sec, (
+        "§3 must add the linked per-slug memory FILE as the CONTENT-comparison reference "
+        "(the index only enumerates candidates)"
+    )
+    assert "compare its CONTENT" in sec, (
+        "§3 must instruct comparing the memory FILE's CONTENT, not the lossy index line"
+    )
 
 
 def test_mining_inputs_durable_only():

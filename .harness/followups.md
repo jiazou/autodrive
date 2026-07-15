@@ -1268,3 +1268,13 @@ churned this round (converged 3-voice guard prose; Claude adversarial reviewer f
 - [P3] audit :632 "empty-adjacent shortlist" phrasing — suggested rewrite "a one-item (or empty) shortlist is a valid outcome (D12)".
 - [P3] TODO.md:31 shorthand "§ Fable 5 audit below" — resolves today; quote the heading's distinctive text if the line is ever touched.
 - [P3] audit all-caps contract-signaling density (e.g. :570) — a whole-doc tone pass over a converged, dated record is churn-prone; deliberately not done in-run (finalize round-1 Claude P3).
+
+## 2026-07-14 — Run G (PR-A) guard-repoint-20260714-112718 followups
+(The `## slop (deferred to finalize)` items below were RESOLVED in finalize round 1 — folded into the byte-identity pin + condensed narration; retained as the record. The `## finalize residuals` P3 is the one deliberately-kept item.)
+## slop (deferred to finalize)
+- tests/contracts/test_decant_dedup_contract.py — module docstring + the byte-identity test docstring + inline comments restate the "sibling DIET run greps the sentinel byte-for-byte" rationale ~3x; state it once.
+- tests/contracts/test_decant_dedup_contract.py — test_sentinel_present_on_one_physical_line + test_old_lossy_index_clause_is_gone partly overlap the (now byte-delimited) byte-identity pin; finalize decides keep-as-diagnostic-granularity vs fold-in.
+- tests/contracts/test_drive_retro_contract.py (~§3 migrated pin) — 5-line mutation-history comment overwhelms two assertions; trim.
+
+## finalize residuals (non-blocking; P3)
+- tests/contracts/test_decant_dedup_contract.py — the "sibling DIET greps the sentinel byte-for-byte" rationale still appears ~3x across the module docstring / byte-identity test docstring / assertion message. Reviewer=P3 cosmetic; codex deems it load-bearing byte+mutation-contract documentation (kept per OPERATING "comments keep the non-obvious why"). Not fixed in-run.
