@@ -456,6 +456,7 @@ _ROOTED_BASELINE_NORM = {
     "$RUN_DIR/codex-raw-finalize.log.stranded",
     "$RUN_DIR/codex-review-@.md",
     "$RUN_DIR/codex-review-@.md.stranded",
+    "$RUN_DIR/codex-review-design.md",  # post-base main 97ff2bb (Gate-A derivation) names the design-scope siblings
     "$RUN_DIR/codex-review-finalize.md",
     "$RUN_DIR/codex-review-finalize.md.stranded",
     "$RUN_DIR/completedAt",
@@ -473,6 +474,7 @@ _ROOTED_BASELINE_NORM = {
     "$RUN_DIR/redesign-@-r@.marker",
     "$RUN_DIR/retention-gc.log",
     "$RUN_DIR/review-@-@.md",
+    "$RUN_DIR/review-design-@.md",  # ditto (97ff2bb)
     "$RUN_DIR/review-finalize-@.md",
     "$RUN_DIR/review-phase@-@.md",
     "$RUN_DIR/state.json",
