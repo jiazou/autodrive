@@ -764,3 +764,7 @@ promoted to repo-root TODO.md at ship).
   pins). Out of this run's blast radius (a design change: collapsing to a single runtime
   source, e.g. generating the inline `case` from the JSON at install, or making the installed
   statusline resolve the JSON by absolute path).
+
+## /drive run r5r9-roundchurn-20260714-084250 — architectural follow-ups (2026-07-15T23:54:10Z)
+- .claude/commands/drive-ship.md:118-140 (§ Ship worktree + ledger promotion) + tests/contracts/test_drive_roundchurn_contract.py:936-952 — the refutation-promotion contract (`-s` pending gate, live-gate probe, CR-id re-derivation from the live ledger's max, renumber-then-single-commit, and now the voided-pending skip) is prose executed by the coordinator; its only executable mirror is the TEST-LOCAL reference impl, so the tests pin a model of the contract rather than the production path (both finalize voices; D-46 routed the same subject). Out of scope for this run: an executable promotion helper is ship-gate-adjacent logic needing its own reviewed run with the security-review discipline. Pairs with F-5 (conformance-side tag counting) and F-6 (audit-strong invariants need an executable consumer).
+  - (finalize r2 extension, D-49): the helper must also SCHEMA-VALIDATE the pending file pre-promotion (malformed input today no-ops/absorbs silently — probe-executed) and implement the voided-pending skip + renumber as code, replacing the coordinator-prose execution of both.

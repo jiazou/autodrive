@@ -1281,3 +1281,114 @@ churned this round (converged 3-voice guard prose; Claude adversarial reviewer f
 
 ## 2026-07-15 — RL-1b (from fix/ship-gatea-derive-from-artifacts)
 - [P2] drive-ship.md precondition #1 derives "Gate A passed" from the artifact chain in PROSE (coordinator-followed). Robust follow-up: move the derivation into an EXECUTABLE check (e.g. a `bin/drive-conformance.sh` gate-A-passed computation over state.json + review-design/finalize artifacts) with table-tested inputs→outputs, so the AND-conjunction + exact stage set + negative cases are pinned by execution, not prose-grep. The current contract pin (test_drive_ship_gatea_precondition.py) + its mutation-verify (test/drive-ship-gatea-mutation.test.sh) are best-effort until then; the load-bearing runtime guards remain the resume matrix's fail-closed on both malformed {phaseList×stage} corners + Gate B. (RL-1 retro; codex adversarial review of the RL-1 pin.)
+
+## /drive run r5r9-roundchurn-20260714-084250 — followups (2026-07-16T01:42:45Z)
+
+# Followups — r5r9-roundchurn-20260714-084250
+
+## F-1 — ABSORBED INTO THE BATCH (D-9, 2026-07-14): ship-time auto-promotion of durable refutations
+Originally deferred per D-4; the autoplan codex voice showed the deferral guts R7's
+cross-run value (tail-of-run refutations strand in `$RUN_DIR`), so D-9 supersedes D-4
+and the `SHIP_LEDGER_ALLOWLIST` extension + drive-ship.md promotion step land IN this
+run's batch. No follow-up work remains here; entry kept as the decision trace.
+
+## F-2 — drive-harden.md fix-loop class-sweep parity (R5 analog)
+The audit scopes R5's class-sweep fix contract to drive-implement.md/drive-finalize.md
+fix prompts; harden's find→fix loop shares the shape (a parser-class P1 found by the
+harden audit gets the same one-instance-per-round risk). Evaluate extending the
+class-sweep clause to drive-harden.md's fix dispatch after R5 lands — kept out of the
+batch (the premise scopes R5's fix contract to implement/finalize; drive-harden.md
+gains ONLY the D-11 no-injection clause in this batch — D-7's broader
+untouched-entirely posture was superseded by D-11, but the class-sweep-parity deferral
+itself stands).
+
+## F-3 — POST-MERGE ACTIVATION action for the D-9 allowlist extension (operator-executed; surfaced at Gate B)
+After this run's PR merges to main: advance `~/.claude/drive-enforcement-worktree` to the
+merged main and re-run `bin/install-drive-hooks.sh` FROM INSIDE that worktree (the
+procedure docs/drive-enforcement.md:443-448 prescribes — "merging to main does NOT
+activate gate changes"). Until executed, the live ship gate still enforces the old
+3-file allowlist; the activation-aware promotion step degrades gracefully (refutations
+stay run-local; a pending-activation note surfaces at each Gate B). Recorded per D-16.
+
+## F-4 — Pre-existing R2/R4 spec ambiguity: inflight-marker write ordering vs the REDISPATCH probe (out of the r5r9 batch's boundary)
+drive.md §In-flight dispatch markers has the coordinator write `inflight-review-<scope>.marker` BEFORE the dispatch unit (write-before-dispatch, bracketing the whole dual-voice chain), while drive-review.md:147's `REDISPATCH=0; [ -e ...marker ] && REDISPATCH=1` treats an existing marker as "a prior crashed attempt of THIS round". On the literal reading every normal dispatch sees its own round's open marker ⇒ `CONF=()` always ⇒ R4's `--confirmation-class` effort tiering never engages (review, harden, and finalize blocks alike). Found during r5r9 phase-1 design (design-phase1.md DV-3); the batch does not touch the dispatch blocks and R6 does not depend on either reading (pass 2's full effort is stated explicitly in the two-pass clause). Needs an R2/R4-owner clarification: probe before the coordinator writes the round's marker, or a distinct first-dispatch token.
+
+> **D-38 ANNOTATION (2026-07-15):** this entry's closing sentence pre-dates the descope — 'pass 2's full effort is stated explicitly in the two-pass clause' referenced machinery RETIRED by D-38 (design-phase1.md § A-R6 supersession block). The shipped R6 is delta-focused PROMPT CONTENT ONLY: one dispatch per round, no pass 2, and it does not interact with the CONF/--confirmation-class flag at all. The F-4 ambiguity itself (marker write ordering vs the REDISPATCH probe) STANDS unchanged — it is an R2/R4 spec issue independent of R6.
+
+## F-5 — Pre-existing gate confusion-window: {Claude-CONVERGED review + codex sibling with P1 tags} passes every gate's artifact test (evidence in D-34)
+`bin/drive-conformance.sh::check_scope_counts` (~:322–345 at d41b73e) gates on the Claude `## Verdict:` line + `reviewed-sha` + `codex_present` non-emptiness — no gate mode parses codex severity tags — so the pair minted by EVERY codex-only-P1 round today passes plan-gate/phasedesign-gate/slice-merge/phase-merge/ship's artifact tests if a confused (not forging) coordinator attempts the gated action without combining. Protection today: the coordinator's Step-3 count-tags combine (codified by the r5r9 batch) + the omission-proof threat model (docs/drive-enforcement.md — explicitly NOT confusion/forgery-proof). The r5r9 batch's A-R6-W keeps eligible R6 rounds STRICTLY safer (no gate-visible pair exists pre-verdict); the residue is normal full-scope rounds. Candidate tightening: a conformance-side severity-tag count on the codex sibling within `check_scope_counts` (gate-LOGIC — needs its own run with the security-review discipline; out of the r5r9 spec-batch boundary by design).
+
+> **D-38 ANNOTATION (2026-07-15):** 'The r5r9 batch's A-R6-W keeps eligible R6 rounds STRICTLY safer (no gate-visible pair exists pre-verdict)' pre-dates the descope — A-R6-W was RETIRED by D-38. The shipped (descoped) R6 leaves this surface EXACTLY as today's: one standard dispatch per round, no new pair shapes. The pre-existing residue and the conformance-side tag-counting candidate STAND unchanged.
+
+## F-6 — D-38 descope residual: the audit-strong R6 two-pass invariant is DROPPED (surface at Gate B)
+The r5r9 batch ships R6 as delta-focused PROMPT CONTENT ONLY (D-38). Dropped: D-8's two-pass form of the invariant — "a CONVERGED round's codex contribution is full-scope-backed by construction". Under the shipped R6 an eligible round can record CONVERGED with the codex voice having reviewed a delta-focused prompt; the terminal full-scope pass is the CLAUDE voice's (full-scope every round), and the codex voice follows today's tier-table semantics — strictly MORE codex coverage than the already-gate-accepted degraded-round CONVERGED (zero codex; 15/178 historical summaries; trash-dash-convert shipped fully degraded). Evidence trail for the drop: FIVE consecutive design-review rounds of P1s in the pass-1 artifact-lifecycle class (r1: codex#1 ≡ Claude MAJOR-1 crash-window adopt; r2: codex#1–#3 — post-process target, tmp freshness, FINDINGS-branch pair; r3: Claude MAJOR template half + codex#1–#2 durability/staleness; r4: both voices — contradictory promotion condition, untraced Claude-only-P1 ∧ codex-clean branch), each mechanism iteration (widest-pass mv → A-R6-W single-writer → terminal promotion) spawning the next same-class hole — the D-33 treadmill signature; per the pre-announced rung, no re-litigation. If the strong invariant is ever wanted back it needs a mechanism with an EXECUTABLE consumer (e.g. a conformance-side severity-tag/coverage check), not spec prose — pairs with F-5's tag-counting candidate.
+
+## F-7 — CLAUDE.md $RUN_DIR tree diagram omits the batch's three new run-local artifact families
+Claude slice-1.1 r1 P3: the run-state tree (CLAUDE.md:165-198) doesn't list codex-refuted-<scope>.md / codex-refutations-pending.md / verify-design-claims-*.md. Out of the slice's bounded CLAUDE.md ownership (:203-204) by design; actors' own specs document them fully. Candidate for phase-1 harden (one-line diagram additions) or ship-time doc touch.
+
+## F-8 — Ledger schema-lint residual permutation ring + one stale docstring (slice-1.1 r5 P2s; harden/finalize candidates)
+From review-1.1-5.md (post-fix confirmation; all shapes empirically confirmed, none load-bearing at HEAD):
+(a) lint (b)'s trigger `^ {0,3}#{2,4} ` misses h1/h5/h6 and CommonMark tab-after-hash
+heading forms (`# CR-9 — ` / `##### CR-9 — ` / `##\tCR-9 — `) — each also starts no
+entry, so its body would absorb into the previous entry like the closed h3 case; widen
+to `^ {0,3}#{1,6}[ \t]`. (b) fence tracking knows backtick fences only — a future
+tilde-fenced (`~~~`) example with a heading-shaped `CR-` line would false-RED (loud,
+fail-safe). (c) sibling `_fenced_blocks` (:93) still uses the old
+`strip().startswith("```")` tracker on the command-spec surfaces (pre-existing;
+over-toggle only widens AC17's leak scan — fail-safe). (d) one-liner: the
+test_committed_ledger_repros_execute_green docstring (:806) still says "Entries
+without a parseable declaration fall back to rc==0" — retired by the r5 fail-closed
+executor + lint-required declaration; reword. (e) NIT: the `\bexit\s+(\d+)\b` scan can
+bind a number inside the quoted stdout literal (`— expected: "exit 2 done"` binds
+rc==2 too) — over-constrains only, never a silent pass.
+
+## F-9 — Residual crash-window race: renumbered-but-unpushed ledger commit vs a colliding base CR append (fail-closed, manual recovery; slice-1.1 r6)
+The phase-r1 fix re-derives `CR-<n>` at promotion time, which closes the forward path.
+Narrow residual traced at r6: ship crashes AFTER the renumbered ledger commit but before
+push, AND another run promotes a colliding `CR-<n>` to the base in that window. On resume
+the preflight classifies auto-rebase; its step-1 scratch `git merge` CONFLICTS at the
+ledger tail (or, were the merge ever clean, the merged-tree suite reds at schema-lint (d))
+→ STOP `stop:base-diverged-suite-red` BEFORE any rebase — loud and fail-closed, never a
+silent duplicate. But the resume-idempotency SKIP means promotion never re-derives on
+resume, so recovery is MANUAL (renumber/amend the run's ledger commit, re-enter ship).
+Two pre-existing wording surfaces (both at d41b73e, out of the r5r9 batch): the auto-rebase
+step 1 doesn't state the failed-merge (vs red-suite) path, and no SKIP-path uniqueness
+re-check exists. Candidate: on the SKIP path, grep the rebased ledger for duplicate ids and,
+on collision, re-derive by amending the (unpushed) ledger commit — needs its own reviewed
+run (drive-ship gate logic).
+
+## slop (deferred to finalize)
+- tests/contracts/test_drive_roundchurn_contract.py:1180 — dead disjunct: regex match implies the substring; keep one form
+- tests/contracts/test_drive_roundchurn_contract.py:95 vs :691 — two inconsistent fence-tracking idioms in one module (discharged if harden P2 alignment lands)
+- tests/contracts/test_drive_roundchurn_contract.py:343-348 vs :418-425 — four new-artifact families encoded twice in different grammars (DRY/drift candidate)
+- .harness/codex-refutations.md:50 — strained wording: dangling 'either' reads as a typo; reword at finalize
+- .claude/commands/drive-ship.md:131-134 — mid-sentence hard-wrap + orphan '— i.e.' line at :22-23 — formatting only
+- tests/contracts/test_drive_roundchurn_contract.py:1 — codex: 1,196-line self-narrating suite; 'mutation-verified' claims mostly unperformed (narration de-slop candidate)
+- tests/contracts/test_drive_roundchurn_contract.py:350 — codex: bespoke artifact-name scanner, disproportionate
+- tests/contracts/test_drive_roundchurn_contract.py:660 — codex: test-only ledger parser + promotion reference impl duplicating production prose
+- .claude/commands/drive-review.md:87 — codex: repetitive R6 restatement
+- .claude/commands/drive-ship.md:122 — codex: pseudo-code promotion contract, no executable impl
+- .harness/codex-refutations.md:35 — codex: self-referential seed adjudications, weak grep-based proofs
+
+## F-10 — codex harden P2: R5 out-of-ownership/REDESIGN edge branches are phrase-pinned only
+No behavioral mixed-ownership/REDESIGN scenario exercises drive-implement.md:60's routes (needs harness-run fixtures — not cheap). Phrase pins + dual-voice review remain the guard. Candidate: a future conformance-fixture run.
+
+## F-11 — finalize wording candidates from phase-1 harden (P3s)
+drive-review.md:143 optional parenthetical "(R7's bound 2 may additionally carry applicable refutation entries)"; drive-design.md:96-99 clarifier "the tick IS the re-entered round's own increment — never two". Both fail-safe; finalize's de-slop/wording pass.
+- .claude/commands/drive-ship.md:129-132 — triple-nested interruption in one sentence (parenthetical → em-dash appositive → second clause); carried from harden-1-2 (not in followups' slop list); readability only.
+- tests/contracts/test_drive_roundchurn_contract.py:694-697, :831-832, :1058-1070 — the round-2 additions extend the module's self-narration/fix-history-docstring pattern (RF-2/D-46 adjudication ids in committed comments); same item as followups' standing ":1 self-narrating suite" entry — pointer to the new lines only, not a new item.
+
+## F-12 — Stop-hook nudge churn while the coordinator awaits background dispatches
+Observed this leg: ~30 hook-nudge turns, each a one-poll cycle, while dual-voice units ran in background (the hook cannot distinguish "idle" from "awaiting an in-flight dispatch"). The bias is deliberate (fail-open toward driving; open markers on a CRASHED coordinator must not silence it), so any fix must not let a dead coordinator idle — candidate: the hook tolerates turn-end when an inflight-*.marker is OPEN AND its startedAt is fresh (<N min), re-blocking once stale. Input for the next efficiency audit; costs tokens, not correctness.
+
+## F-13 — R8 transcript revision-identity binding (strictly-stronger enhancement)
+Finalize codex P1-1 (overruled as P1, D-48): the pre-round coverage re-affirmation is wording-anchored ("names the revised text"); a content-identity binding (e.g. the design doc's git blob sha or a revision-counter line embedded in the transcript header, checked mechanically by the coordinator) would make staleness detection mechanical instead of semantic. Cheap-ish but touches drive-plan.md + drive-design.md + the transcript schema + AC13 pins — a follow-on run's slice, not finalize slop. (Finalize r3, D-50: the same binding also closes the autoplan-leg gap codex flagged — a transcript written pre-autoplan can go stale when step (a) rewrites design.md before round 1; a content-identity check catches any revision source.)
+
+## F-14 — Negative-test parametrization: mis-id'd VOID pending entry
+Finalize r2 codex #1 residual (D-49, probe-executed fail-safe): add a parametrized case to test_promotion_skips_voided_pending_entries pinning that a pending entry carrying a VOID whose id names a DIFFERENT entry is also skipped (today true by the any-VOID rule; the pin makes the conservative direction durable). 3 lines, next run.
+
+## F-15 — Pending-file pre-promotion schema validation
+Finalize r2 codex #2 residual (D-49, probe-executed no-crash/silent-absorb): the promotion step trusts the pending file's B-3 shape; a malformed pending file would append unheaded text absorbed into the prior entry (lint-silent). Belongs to the executable-promotion-helper ARCH item (finalize-todo.md) — validate schema before promotion, fail to run-local + Gate-B surfacing on violation.
+
+## F-16 — CR-2 seed entry: add the full-scope-invariant replay leg
+Finalize r3 codex #6 (D-50): CR-2's recorded hermetic repro anchors the descoped clause but not the Claude full-scope-invariant leg of the original refutation. Add a second repo-relative grep leg to the committed entry in a future run (moving the tip for it now would force another finalize re-bind). D-32's in-suite executed green/red repros remain the binding guard.
