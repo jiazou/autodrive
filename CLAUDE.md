@@ -196,11 +196,18 @@ inflight-<kind>-<scope>.marker -- open = a dispatch unit in flight (write-before
 checkpoint-complete.marker   -- single-use checkpoint proof record (tip-bound; consumed
                                 at resume; never an authorization)
 decisions.md / followups.md  -- run-local ledgers (promoted to the repo at ship)
+codex-refuted-<scope>.md     -- per-scope in-run refutation records (R7; replay +
+                                review-enrichment surface)
+codex-refutations-pending.md -- durable-qualifying refutations staged for ship promotion
+                                (ids PROVISIONAL; promoted to .harness/codex-refutations.md)
+verify-design-claims-*.md    -- R8 author claims transcripts (design/phase<P>; input-side,
+                                rewritten in place on revision legs)
 verify.md                    -- verify-stage evidence
 wt/                          -- per-slice + integration + ship worktrees
 ```
 
 The **committed** cross-task ledgers stay in the repo: `.harness/decisions.md`,
-`.harness/followups.md`. Read `.harness/decisions.md` at the start of a task to
+`.harness/followups.md`, `.harness/codex-refutations.md` (durable codex-refutation
+adjudications). Read `.harness/decisions.md` at the start of a task to
 stay consistent; the coordinator promotes a run's `$RUN_DIR` ledgers into them at
 ship.

@@ -99,14 +99,28 @@ def test_degraded_fetch_check_is_surfaced(ship_md):
 
 
 def test_ledger_allowlist_does_not_drift(repo_root):
-    """The detector's SHIP_LEDGER_ALLOWLIST must match bin/drive-conformance.sh's (the append-only
-    ledger files the single ship commit may touch). A drift would misclassify a conflict."""
-    def ledger_paths(path):
-        text = path.read_text(encoding="utf-8")
-        return sorted(set(re.findall(r'"(\.harness/decisions\.md|\.harness/followups\.md|TODO\.md)"', text)))
+    """The detector's LEDGER_ALLOWLIST must match bin/drive-conformance.sh's
+    SHIP_LEDGER_ALLOWLIST (the append-only ledger files the single ship commit may touch).
+    A drift would misclassify a conflict.
 
-    pf = ledger_paths(repo_root / "bin" / "drive-base-preflight.sh")
-    cf = ledger_paths(repo_root / "bin" / "drive-conformance.sh")
-    assert pf == cf == [".harness/decisions.md", ".harness/followups.md", "TODO.md"], (
-        f"ledger allowlist drift: preflight={pf} conformance={cf}"
+    SITE-PRECISE extraction (D-28/D-41): each capture is anchored to ITS OWN array
+    DECLARATION — only the `SHIP_LEDGER_ALLOWLIST=(...)` assignment in drive-conformance.sh
+    and only the `LEDGER_ALLOWLIST=(...)` assignment in drive-base-preflight.sh. A
+    whole-file capture would ALSO match the ledger path inside the preflight's
+    `pendingLedgers` conditional, so a one-array drift could still extract all four paths
+    and stay green (default-masked vacuity). Executed probes: drift either array alone ->
+    this reds; edit only the `pendingLedgers` conditional -> neither drift pin fires (that
+    surface is the behavioral bash pair, check (12))."""
+    def declared_paths(path, decl):
+        text = path.read_text(encoding="utf-8")
+        m = re.search(rf"^{decl}=\((.*?)\)\s*$", text, re.MULTILINE)
+        assert m, f"{path.name}: `{decl}=(...)` declaration not found"
+        return sorted(re.findall(r'"([^"]+)"', m.group(1)))
+
+    pf = declared_paths(repo_root / "bin" / "drive-base-preflight.sh", "LEDGER_ALLOWLIST")
+    cf = declared_paths(repo_root / "bin" / "drive-conformance.sh", "SHIP_LEDGER_ALLOWLIST")
+    expected = sorted(
+        [".harness/decisions.md", ".harness/followups.md", "TODO.md",
+         ".harness/codex-refutations.md"]
     )
+    assert pf == cf == expected, f"ledger allowlist drift: preflight={pf} conformance={cf}"

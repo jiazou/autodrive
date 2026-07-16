@@ -75,7 +75,14 @@ Steps:
    - Decisions (high-level choices made autonomously)
    - Out of scope
    - Open questions (zero to two — genuine close calls only)
-5. Return the design path and a 3-line summary.
+5. Write `$RUN_DIR/verify-design-claims-design.md` — an ARTIFACT-shaped transcript (the
+   commands run + their outputs) verifying EVERY citation, quoted snippet, and empirical
+   claim the design makes. If the design makes none, the file states that explicitly
+   ("no citations / no quoted snippets / no empirical claims in this design") — the file
+   is ALWAYS written, never skipped. Where the design proposes a classifier/matcher rule,
+   ship a runnable calibration script + its corpus + a stated imprecision budget as
+   design INPUT (paths named in the design). Never a prose "verified" attestation.
+6. Return the design path and a 3-line summary.
 
 Decision protocol (overrides any "ask the human" reflex) — apply the 6 Decision
 Principles (see the harness `CLAUDE.md`). For design choices with a clear best option, TAKE IT and record
@@ -96,13 +103,25 @@ a) **autoplan** — run gstack `autoplan` on it (the rich CEO → Design → Eng
    load ~/.claude/skills/gstack/autoplan/SKILL.md and follow it. Ensure the
    reviewed design lands back in $RUN_DIR/design.md.
 
-b) **Dual-voice design-review convergence** — run `/drive-review` scoped `design`
+b) **Dual-voice design-review convergence** — BEFORE dispatching round 1 (and again
+   before every later round), CHECK `$RUN_DIR/verify-design-claims-design.md` exists
+   non-empty AND — on every round after a post-P1 `design.md` revision — that its
+   coverage statement is re-affirmed at the CURRENT revision (the re-affirmation names
+   the revised text, per the revalidation rule below); missing, empty, or coverage not
+   re-affirmed at the current revision ⇒ send the author back first (a pre-round-1
+   gate, not a review round — it consumes no counter). Then run `/drive-review` scoped `design`
    (`/drive-review` — `~/.claude/commands/drive-review.md`): a Claude reviewer subagent AND `codex exec`
    both audit `$RUN_DIR/design.md` for P1s **at the high-level altitude** (BLOCKING/MAJOR
    — e.g. a phase dependency cycle, an unsound phase boundary, an approach that can't
    deliver the goal). They do NOT demand slice/interface detail — that is each phase's
    own design. If either flags a P1, the planner subagent revises design.md and you
    re-run — loop until **converged** (neither voice has an open P1), capped at 8 rounds.
+   On every post-P1 `design.md` revision the planner RE-VERIFIES the transcript BEFORE
+   the next round: claims added/changed by the revision are verified and appended,
+   unchanged claims stand, and the transcript's coverage statement is re-affirmed against
+   the REVISED text — the coordinator's pre-round check re-fires each round (existence +
+   non-emptiness + the coverage re-affirmation naming the current revision), so the
+   whole-design transcript can never go stale across review rounds.
 
 **Rebirth checkpoint at the planning safe boundaries.** Detection is stage-agnostic, so a
 `rebirth_pending` may be set during planning (author / autoplan / a design-review round).

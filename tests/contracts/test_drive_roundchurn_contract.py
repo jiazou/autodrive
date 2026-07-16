@@ -1,0 +1,1438 @@
+"""Contract pins for the R5-R9 round-churn spec batch (run r5r9-roundchurn).
+
+Pins the five Tier-C clauses + the refutation-ledger artifacts + the D-9 wiring:
+
+  * R5 class-sweep fix-round contract in drive-implement / drive-finalize / drive-review
+    (AC1);
+  * R6 delta-focused re-review PROMPT form: eligibility + security carve-out (AC2), the
+    delta-prompt composition + fail-closed deltaBase + terminal invariant (AC3), the
+    suite-rerun ban bounded to eligible rounds (AC4), the zero-new-artifact-shapes
+    allowlist + the D-38 forbidden-vocabulary negative (AC5 / AC3.iv);
+  * R7 refutation ledger: five hard bounds, count-tags-not-prose, the no-injection clause
+    at both harden/finalize read sites (AC6), the committed seed ledger with EXECUTED
+    hermetic repros in both directions (AC7), the structural no-injection negative (AC17);
+  * D-9 wiring: the activation-aware ship promotion step (AC11) and the 4-file
+    enumeration sweep across every § C site (AC12);
+  * R8 design author-verification gates (AC13);
+  * R9 pin-depth mutation-survival semantics (AC14);
+  * A-D21 drive-design detached-worktree guard repair (AC18).
+
+Discipline per the batch's own R9 standard: each [M] pin is section/block-bound to the
+clause it guards (a file-wide token match does not satisfy it) and mutation-verified
+(delete the clause -> red; restore -> green).
+"""
+import re
+import subprocess
+
+import pytest
+
+from _helpers import REPO_ROOT
+
+CMDS = REPO_ROOT / ".claude" / "commands"
+
+REVIEW = CMDS / "drive-review.md"
+IMPLEMENT = CMDS / "drive-implement.md"
+FINALIZE = CMDS / "drive-finalize.md"
+HARDEN = CMDS / "drive-harden.md"
+PLAN = CMDS / "drive-plan.md"
+DESIGN = CMDS / "drive-design.md"
+SHIP = CMDS / "drive-ship.md"
+DRIVE = CMDS / "drive.md"
+ENFORCE = REPO_ROOT / "docs" / "drive-enforcement.md"
+CLAUDE_MD = REPO_ROOT / "CLAUDE.md"
+README = REPO_ROOT / "README.md"
+LEDGER = REPO_ROOT / ".harness" / "codex-refutations.md"
+CONFORMANCE = REPO_ROOT / "bin" / "drive-conformance.sh"
+PREFLIGHT = REPO_ROOT / "bin" / "drive-base-preflight.sh"
+
+BEGIN_SCOPE = "----- BEGIN SUBAGENT SCOPE -----"
+END_SCOPE = "----- END SUBAGENT SCOPE -----"
+
+
+def _text(p):
+    return p.read_text(encoding="utf-8")
+
+
+def _norm(s):
+    """Collapse all whitespace to single spaces (insertion/reflow-tolerant matching)."""
+    return re.sub(r"\s+", " ", s)
+
+
+def _section(text, header_re, *, stop_re=r"^#{1,4}\s"):
+    """The lines from the header matching `header_re` up to (excl.) the next heading."""
+    lines = text.splitlines()
+    start = next((i for i, ln in enumerate(lines) if re.search(header_re, ln)), None)
+    assert start is not None, f"section /{header_re}/ not found"
+    end = next(
+        (j for j in range(start + 1, len(lines)) if re.search(stop_re, lines[j])),
+        len(lines),
+    )
+    return "\n".join(lines[start:end])
+
+
+def _scope_blocks(text):
+    """Every `BEGIN SUBAGENT SCOPE`..`END SUBAGENT SCOPE` block (exclusive of markers)."""
+    blocks, lines, cur, inside = [], text.splitlines(), [], False
+    for ln in lines:
+        if BEGIN_SCOPE in ln:
+            inside, cur = True, []
+            continue
+        if END_SCOPE in ln:
+            if inside:
+                blocks.append("\n".join(cur))
+            inside = False
+            continue
+        if inside:
+            cur.append(ln)
+    assert blocks, "no SUBAGENT SCOPE block found"
+    return blocks
+
+
+def _fenced_blocks(text):
+    """Every ``` fenced block's content (the PROMPT-heredoc dispatch blocks live here).
+    CommonMark fence tracking — same tracker as `_lint_ledger_schema` (a): a 4+-space-
+    indented ``` line is indented CODE, never a toggle."""
+    blocks, cur, inside = [], [], False
+    for ln in text.splitlines():
+        if re.match(r" {0,3}```", ln):
+            if inside:
+                blocks.append("\n".join(cur))
+                cur = []
+            inside = not inside
+            continue
+        if inside:
+            cur.append(ln)
+    return blocks
+
+
+def _review_prompt_heredoc():
+    """drive-review.md's Step-1 PROMPT heredoc body (between <<'PROMPT' and PROMPT)."""
+    lines = _text(REVIEW).splitlines()
+    start = next(
+        (i for i, ln in enumerate(lines) if "codex-prompt-<scope>.txt" in ln and "<<'PROMPT'" in ln),
+        None,
+    )
+    assert start is not None, "drive-review.md Step-1 PROMPT heredoc not found"
+    end = next((j for j in range(start + 1, len(lines)) if lines[j] == "PROMPT"), None)
+    assert end is not None, "PROMPT heredoc terminator not found"
+    return "\n".join(lines[start + 1 : end])
+
+
+def _r6_section():
+    return _section(_text(REVIEW), r"^## Round form on eligible re-reviews")
+
+
+def _r7_section():
+    return _section(_text(REVIEW), r"^## Refutation ledger \(R7\)")
+
+
+# =========================================================================== #
+# AC1 — R5 class-sweep fix-round contract lands in all three files
+# =========================================================================== #
+def test_r5_class_sweep_in_implement():
+    """[S] drive-implement.md's implementer scope carries the class-sweep contract:
+    grep-enumerate siblings, fix ALL in-ownership members in ONE round, class boundary in
+    the commit message, mutation-verify per site, and the D-12 out-of-ownership route
+    (followups + STATUS note; REDESIGN only when the fix itself needs those files)."""
+    scope = _norm(_scope_blocks(_text(IMPLEMENT))[0])
+    assert "Class-sweep fix rounds (R5)" in scope
+    assert "parser/validator/regex/classifier/reader/wording-class" in scope
+    assert "grep-enumerate every sibling site" in scope
+    assert "ACROSS YOUR OWNED FILES" in scope
+    assert "in this one round" in scope
+    assert re.search(r"class boundary.*commit message", scope), (
+        "the class boundary (grep pattern + member list) must be stated in the commit message"
+    )
+    assert "mutation-verify per fixed site" in scope
+    assert re.search(r"RECORD them to `\$RUN_DIR/followups\.md`.*STATUS line", scope), (
+        "out-of-ownership members: record to followups + STATUS-line note"
+    )
+    assert re.search(
+        r"`STATUS: REDESIGN` ONLY when your own fix requires editing those files", scope
+    )
+    assert "NEVER edit them" in scope
+
+
+def test_r5_class_sweep_in_finalize():
+    """[S] drive-finalize.md's Step-3 fix scope carries the run-diff-bounded class sweep,
+    EXPLICITLY including the de-slop wording-class sweep, with the root-cause
+    scope-exception / followups routing for members outside the run diff."""
+    blocks = _scope_blocks(_text(FINALIZE))
+    fixer = _norm(next(b for b in blocks if "Apply ONLY the fix set" in b))
+    assert "Class-sweep fix rounds (R5), bounded to the run-diff scope" in fixer
+    assert "scope-creep HARD GATE" in fixer
+    assert "de-slop wording-class sweep" in fixer
+    assert re.search(r"wording/naming P2 slop item sweeps its WHOLE class", fixer), (
+        "a flagged wording/naming P2 sweeps its whole class in the same round"
+    )
+    assert re.search(r"ONLY when they ARE the root cause of a flagged P1", fixer)
+    assert "scope-widening note" in fixer
+    assert re.search(r"otherwise record them to `\$RUN_DIR/followups\.md`", fixer)
+
+
+def test_r5_codex_r1_enumeration_sentence():
+    """[S] the Step-1 codex round-1 prompt (heredoc BODY) instructs class-member
+    enumeration — one appended sentence; the dispatch mechanics around it untouched."""
+    heredoc = _norm(_review_prompt_heredoc())
+    assert re.search(
+        r"one instance of a class \(parser/validator/regex/classifier/reader/ ?wording\)",
+        heredoc,
+    ), "the codex r1 prompt must name the defect-class list"
+    assert "enumerate ALL members of the class with file:line" in heredoc
+
+
+def test_r5_reviewer_round_n2_checklist_retains_open_ended_hunt():
+    """[S] the Step-2 reviewer scope gains the round-N>=2 class-closure checklist as an
+    ADDITION to (never a replacement of) the open-ended adversarial hunt. Block-bound to
+    the reviewer SUBAGENT SCOPE so the R6 section's near-verbatim codex sibling item
+    cannot satisfy it (the sibling-token vacuity trap)."""
+    scope = _norm(_scope_blocks(_text(REVIEW))[0])
+    assert "Round-N≥2 checklist (slice/phase scopes)" in scope
+    assert "VERIFY each stated class is closed" in scope
+    assert "re-run its boundary grep" in scope
+    assert "IN ADDITION TO, never instead of, your unchanged open-ended adversarial hunt" in scope
+
+
+# =========================================================================== #
+# AC2 — R6 eligibility + the any-touch security carve-out (section-bound)
+# =========================================================================== #
+def test_r6_eligibility_names_the_exclusions():
+    """[M] the R6 section's eligibility list names the code-scope + N>=2 bound and EVERY
+    exclusion: design/phasedesign, harden-regress, the recovery re-dispatch (bound at the
+    recovery ADJUDICATION point, NOT bare marker existence). Mutation-verified: deleting
+    the design/phasedesign exclusion sentence reds."""
+    r6 = _norm(_r6_section())
+    assert re.search(r"`slice <id>` or `phase <P>`.*round N≥2", r6), (
+        "eligibility must bind to a CODE scope at round N>=2"
+    )
+    assert re.search(
+        r"`design`/`phasedesign<P>` scopes are ineligible by construction", r6
+    ), "design/phasedesign scopes must be excluded (audit sole-catcher §3.5)"
+    assert "harden-regress` invocation is ineligible" in r6
+    assert "`finalize` is not a drive-review scope" in r6
+    assert "NOT a stranded-marker recovery re-dispatch" in r6
+    assert "recovery ADJUDICATION point" in r6
+    assert re.search(
+        r"OWN `inflight-review-<scope>\.marker`.*does NOT make the round a recovery re-dispatch",
+        r6,
+    ), "the round's own marker must NOT classify it as a recovery re-dispatch (D-31b)"
+
+
+def test_r6_security_carveout_is_any_touch():
+    """[M] the security exclusion is diff-content-based and ANY-touch: one sensitive file
+    in the scope's --name-only diff makes the WHOLE round ineligible (full-scope codex),
+    independent of the --security-diff effort flag. Mutation-verified: deleting the
+    security-exclusion sentence reds."""
+    r6 = _norm(_r6_section())
+    assert "touches NO security-sensitive path" in r6
+    assert re.search(r"\*\*any\*\* file under `bin/`", r6)
+    assert "gate-hook/installer script" in r6
+    assert "settings/hook config" in r6
+    assert "matcher/parser/classifier" in r6
+    assert "WHOLE round is INELIGIBLE" in r6
+    assert "full-scope codex every round" in r6
+    assert re.search(r"independent of the `--security-diff`", r6)
+
+
+# =========================================================================== #
+# AC3 — R6 delta-prompt composition (descoped, D-38; multi-P1, D-40)
+# =========================================================================== #
+def test_r6_delta_prompt_binds_all_prior_p1s():
+    """[M] AC3(i): the appended block LEADS with the delta focus and binds ALL prior-round
+    P1s — per-P1 fix delta + consumer surface, class boundary only where the fix commit
+    DECLARED one. Mutation-verified: deleting the lead-with-delta sentence reds."""
+    r6 = _norm(_r6_section())
+    assert "binds to ALL of the prior round's P1s" in r6
+    assert 'never a singular "the prior finding"' in r6
+    assert "LEADS with the delta focus" in r6
+    assert "review FIRST the fix delta" in r6
+    assert re.search(r"`git diff <deltaBase>\.\.<tip>`", r6)
+    assert "FOR EACH prior-round P1" in r6
+    assert "consumer surface" in r6 and "callers/readers of the changed symbols" in r6
+    assert re.search(r"where that P1's fix commit DECLARED a class boundary", r6)
+    assert "other fixes legitimately do not" in r6
+
+
+def test_r6_conditional_class_closure_item():
+    """[M] AC3(i): the class-closure checklist item is CONDITIONAL — included only when
+    >=1 prior-round fix declared a boundary; an undeclared-class P1 gets NO boundary grep.
+    Section-bound: the R5 Step-2 checklist sibling (same file, near-verbatim) cannot
+    satisfy this. Mutation-verified: deleting the R6 item (R5 sibling intact) reds."""
+    r6 = _norm(_r6_section())
+    assert "CONDITIONAL class-closure checklist item" in r6
+    assert "included only when ≥1 prior-round fix declared a boundary" in r6
+    assert "for each declared class boundary, verify it is closed (re-run that boundary grep)" in r6
+    assert re.search(r"declared no class gets the delta \+ consumer-surface treatment and NO boundary grep", r6)
+
+
+def test_r6_full_scope_license_verbatim():
+    """[M] AC3(i): the full-scope license lands VERBATIM, with 'scope' bound to the FULL
+    reviewed diff — never the delta focus's slice (the narrow reading would revive the
+    refuted settled-scope prohibition). Mutation-verified: deleting the license reds."""
+    r6 = _norm(_r6_section())
+    assert "you MAY flag any P1 anywhere in scope" in r6
+    assert "the FULL reviewed diff of the scope" in r6
+    assert "never the delta focus's slice of it" in r6
+    assert "settled-scope prohibition" in r6
+
+
+def test_r6_delta_base_fails_closed():
+    """[M] AC3(ii): deltaBase = the reviewed-sha of review-<scope>-(N-1).md; a missing
+    file or missing/non-40-hex sha makes the round NOT eligible (the stronger full-scope
+    form). Mutation-verified: deleting the fail-closed sentence reds."""
+    r6 = _norm(_r6_section())
+    assert re.search(
+        r"`deltaBase` = the `reviewed-sha:` of `review-<scope>-\(N-1\)\.md`", r6
+    )
+    assert re.search(r"missing/non-40-hex sha ⇒ NOT eligible", r6)
+    assert "fail closed to the normal full prompt" in r6
+
+
+def test_r6_claude_full_scope_and_terminal_invariant():
+    """[M] AC3(iii): the Claude voice runs FULL-scope every round and carries the terminal
+    pass (including the CONVERGED round); the codex voice keeps today's tier-table
+    semantics, with the degraded-CONVERGED precedent cited. Mutation-verified: deleting
+    the terminal-invariant sentence reds."""
+    r6 = _norm(_r6_section())
+    assert "The Claude voice runs FULL-scope every round" in r6
+    assert "the terminal full-scope pass is the CLAUDE voice's" in r6
+    assert re.search(r"including the round that records CONVERGED", r6)
+    assert "tier-table semantics UNCHANGED" in r6
+    assert "degraded pass contributes zero P1" in r6
+    assert "degraded-round CONVERGED" in r6
+    # accounting + §3.3 freshness statement ride the same section
+    assert "counted INSIDE cap-8" in r6
+    assert "FRESH dual-voice dispatch" in r6
+
+
+def test_r6_forbidden_vocabulary_absent():
+    """[M] AC3(iv) — the D-38 construction guard: the landed R6 section contains NONE of
+    the retired two-pass machinery's vocabulary (case-insensitive). Mutation-verified per
+    class: inserting each token into the section reds."""
+    r6 = _r6_section().lower()
+    for tok in (
+        "conf=(",
+        "tmp/codex-pass1",
+        "promotion",
+        "promotes",
+        "widen",
+        "pass 2",
+        "pass-2",
+        "terminal-at-pass-1",
+    ):
+        assert tok not in r6, f"retired two-pass vocabulary {tok!r} must not appear in the R6 section"
+
+
+# =========================================================================== #
+# AC4 — the suite-rerun ban, bounded to eligible rounds (section-bound)
+# =========================================================================== #
+def test_r6_suite_rerun_ban_bounded_to_eligible_rounds():
+    """[M] the ban sentence + its eligibility bounding co-occur INSIDE the R6 section:
+    eligible rounds spot-run only the pinning tests; ineligible/security rounds keep
+    today's prompt with no ban. Mutation-verified: deleting the ban reds; moving it
+    outside the eligibility bound reds (the co-occurrence breaks)."""
+    r6 = _norm(_r6_section())
+    assert "do NOT re-run the full test suites — spot-run only the tests pinning your prior findings" in r6
+    assert "The ban applies ONLY on eligible rounds" in r6
+    assert re.search(r"ineligible/security rounds keep today's prompt, with no ban", r6)
+
+
+# =========================================================================== #
+# AC5 — zero new artifact shapes (ABSOLUTE, D-38) — the allowlist check
+# =========================================================================== #
+# The batch's OWN new-artifact allowlist (the only filenames any landed clause may
+# introduce). Pre-existing shapes the clauses reference are baseline, not introductions.
+# ONE canonical spelling tuple — (root, unrooted spelling), every placeholder variant
+# explicit — from which BOTH allowlist grammars derive (the unrooted-mention regex here
+# and the rooted normalized-name set below), so the two cannot drift apart.
+_NEW_ARTIFACT_FAMILY_SPELLINGS = (
+    ("$RUN_DIR", "codex-refuted-<scope>.md"),
+    ("$RUN_DIR", "codex-refuted-*.md"),
+    ("$RUN_DIR", "codex-refutations-pending.md"),
+    (".harness", "codex-refutations.md"),
+    ("$RUN_DIR", "verify-design-claims-design.md"),
+    ("$RUN_DIR", "verify-design-claims-phase<P>.md"),
+    ("$RUN_DIR", "verify-design-claims-*.md"),
+)
+
+_NEW_ARTIFACT_ALLOWLIST_RE = re.compile(
+    "|".join(re.escape(s) for _, s in _NEW_ARTIFACT_FAMILY_SPELLINGS)
+)
+
+# ROOT-ANCHORED BOUNDARY CAPTURE (the extraction-blindness class closed by CONSTRUCTION,
+# never another token-pattern patch): every occurrence of a run/repo artifact ROOT
+# (`$RUN_DIR/`, `${RUN_DIR}/`, `.harness/`) captures the ENTIRE following path token up
+# to a hard boundary (whitespace, backtick, quote, paren, brace, comma) — extension or
+# not, placeholder or not. An artifact literal cannot be spelled past this capture
+# without leaving the roots where run/repo artifacts live (the pre-existing
+# EXTENSIONLESS `$RUN_DIR/completedAt` lands in the BASELINE below, not a blind spot).
+# Bare-name mentions (an artifact named without its root) stay OUT of scope — a general
+# bare-name grammar would false-red ordinary prose; that direction is covered by the R6
+# section pins + review.
+_ROOTED_CAPTURE_RE = re.compile(r"(\$RUN_DIR|\$\{RUN_DIR\}|\.harness)/([^\s`'\"(){},]*)")
+
+
+def _is_directory_or_glob_mention(path):
+    """The ONE explicit non-file filter: a rooted mention whose tail is the root itself
+    (``), the bare scratch dir (`tmp`/`tmp/`), a worktree dir path (`wt`/`wt/...` —
+    worktrees hold repo files, not run artifacts), or the dir-glob `*` (drive-ship.md's
+    "other `.harness/*`"). Corpus-verified: these are the ONLY non-file rooted mentions
+    across the seven specs; no filter is minted for a context with zero rooted
+    occurrences (a dead filter would be untestable; the scan stays strictly tighter)."""
+    return path in ("", "*", "tmp", "tmp/", "wt") or path.startswith("wt/")
+
+
+def _normalize_rooted(tok):
+    """Placeholder-segment normalization, shared by the scan and the frozen baseline
+    (same-function symmetry): `<scope>`/`<P>`/`<sliceId>`/`<N>`/`<runId>`-style
+    placeholders and the `*` glob collapse to `@`; the bare `-N.` round placeholder
+    likewise — placeholder RESPELLINGS of one family test as one name. NON-LOSSY
+    otherwise (D-44): sentence punctuation is NOT stripped here — the membership
+    helper below tests the raw form and the single-final-period-stripped form
+    EXPLICITLY, never silently collapsing a deviant spelling (`completedAt..`) onto
+    a baseline name."""
+    tok = re.sub(r"<[A-Za-z][A-Za-z0-9]*>", "@", tok)
+    tok = tok.replace("*", "@")
+    tok = re.sub(r"-N(?=\.)", "-@", tok)
+    return tok
+
+
+def _rooted_artifact_names(text):
+    """Every rooted artifact-name literal in `text`, root-canonicalized (`${RUN_DIR}` →
+    `$RUN_DIR`) + placeholder-normalized (otherwise raw); directory/glob mentions
+    removed by the one named filter."""
+    out = set()
+    for root, path in _ROOTED_CAPTURE_RE.findall(text):
+        if _is_directory_or_glob_mention(path):
+            continue
+        root = "$RUN_DIR" if root.startswith("$") else ".harness"
+        out.add(_normalize_rooted(f"{root}/{path}"))
+    return out
+
+
+def _is_known_artifact_name(tok):
+    """Membership under the D-44 non-lossy rule: a capture passes iff its
+    (placeholder-normalized) RAW form is a member, OR — for a sentence-final-period
+    spelling only — the form with exactly ONE trailing period removed is.
+    `$RUN_DIR/followups.md.` (prose sentence end) passes via the stripped form;
+    `$RUN_DIR/completedAt..` strips to `completedAt.`, which is no member ⇒ RED —
+    the two forms are membership-tested separately, never silently collapsed."""
+    known = _ROOTED_BASELINE_NORM | _ROOTED_ALLOWLIST_NORM
+    return tok in known or (tok.endswith(".") and tok[:-1] in known)
+
+
+# The rooted NORMALIZED spellings of the batch's four allowlisted shapes, derived from
+# the same canonical tuple as `_NEW_ARTIFACT_ALLOWLIST_RE` (codex-refuted's `<scope>`/`*`
+# respellings collapse to one `@` form; the `verify-design-claims-*` family form covers
+# a future rooted glob spelling).
+_ROOTED_ALLOWLIST_NORM = {
+    _normalize_rooted(f"{root}/{spelling}")
+    for root, spelling in _NEW_ARTIFACT_FAMILY_SPELLINGS
+}
+
+# The PRE-BATCH baseline inventory: _rooted_artifact_names() over ALL ELEVEN owned prose
+# surfaces (the seven drive-*.md specs + drive.md + README.md + CLAUDE.md +
+# docs/drive-enforcement.md — D-44 extended set) at d41b73e (the batch's base), frozen so
+# the test needs no git at runtime (a shallow CI clone has no d41b73e object).
+# Re-derivation executed against d41b73e: 56/56 exact (zero missing, zero extra;
+# baseline ∩ allowlist = ∅). Maintenance path: a later batch that LEGITIMATELY introduces
+# an artifact extends the allowlist above (or, once shipped and baseline, this inventory)
+# in the same reviewed commit.
+_ROOTED_BASELINE_NORM = {
+    "$RUN_DIR/.tmp.@",
+    "$RUN_DIR/.tmp.state.json.$$",
+    "$RUN_DIR/auto-resume-scheduled-@.marker",
+    "$RUN_DIR/checkpoint-claimed-<$CLAUDE_CODE_SESSION_ID>-@.marker",
+    "$RUN_DIR/checkpoint-claimed-@-@.marker",
+    "$RUN_DIR/checkpoint-complete.marker",
+    "$RUN_DIR/codex-attempts-@.jsonl",
+    "$RUN_DIR/codex-harden-@.log",
+    "$RUN_DIR/codex-harden-@.log.stranded",
+    "$RUN_DIR/codex-harden-@.md",
+    "$RUN_DIR/codex-harden-@.md.stranded",
+    "$RUN_DIR/codex-raw-@.log",
+    "$RUN_DIR/codex-raw-@.log.stranded",
+    "$RUN_DIR/codex-raw-finalize.log",
+    "$RUN_DIR/codex-raw-finalize.log.stranded",
+    "$RUN_DIR/codex-review-@.md",
+    "$RUN_DIR/codex-review-@.md.stranded",
+    "$RUN_DIR/codex-review-design.md",  # post-base main 97ff2bb (Gate-A derivation) names the design-scope siblings
+    "$RUN_DIR/codex-review-finalize.md",
+    "$RUN_DIR/codex-review-finalize.md.stranded",
+    "$RUN_DIR/completedAt",
+    "$RUN_DIR/decisions.md",
+    "$RUN_DIR/design-phase@.md",
+    "$RUN_DIR/design.md",
+    "$RUN_DIR/event-log.jsonl",
+    "$RUN_DIR/finalize-todo.md",
+    "$RUN_DIR/followups.md",
+    "$RUN_DIR/harden-@-@.md",
+    "$RUN_DIR/inflight-@-@.marker",
+    "$RUN_DIR/inflight-@.marker",
+    "$RUN_DIR/inflight-review-@.marker",
+    "$RUN_DIR/inflight-review-finalize.marker",
+    "$RUN_DIR/redesign-@-r@.marker",
+    "$RUN_DIR/retention-gc.log",
+    "$RUN_DIR/review-@-@.md",
+    "$RUN_DIR/review-design-@.md",  # ditto (97ff2bb)
+    "$RUN_DIR/review-finalize-@.md",
+    "$RUN_DIR/review-phase@-@.md",
+    "$RUN_DIR/state.json",
+    "$RUN_DIR/task.md",
+    "$RUN_DIR/tmp/codex-harden-@.md.tmp.$$",
+    "$RUN_DIR/tmp/codex-prior-@.md",
+    "$RUN_DIR/tmp/codex-prior-finalize.md",
+    "$RUN_DIR/tmp/codex-prompt-@.txt",
+    "$RUN_DIR/tmp/codex-prompt-finalize.txt",
+    "$RUN_DIR/tmp/codex-review-@.md.tmp.$$",
+    "$RUN_DIR/tmp/codex-review-finalize.md.tmp.$$",
+    "$RUN_DIR/tmp/helper-@.$x",
+    "$RUN_DIR/tmp/helper-@.$x.stranded",
+    "$RUN_DIR/tmp/helper-@.err",
+    "$RUN_DIR/tmp/helper-@.out",
+    "$RUN_DIR/tmp/helper-finalize.$x",
+    "$RUN_DIR/tmp/helper-finalize.$x.stranded",
+    "$RUN_DIR/tmp/helper-finalize.err",
+    "$RUN_DIR/tmp/helper-finalize.out",
+    "$RUN_DIR/verify.md",
+    ".harness/decisions.md",
+    ".harness/followups.md",
+}
+
+# Baseline path shapes (pre-existing families) the R6 section may name.
+_R6_BASELINE = {
+    "codex-review-<scope>.md",
+    "review-<scope>-N.md",
+    "review-<scope>-(N-1).md",
+    "tmp/codex-prompt-<scope>.txt",
+    "tmp/codex-prior-<scope>.md",
+    "inflight-review-<scope>.marker",
+}
+
+
+# The D-44 scanned surface set: ALL owned prose surfaces — the seven stage specs plus
+# drive.md, README.md, CLAUDE.md, and docs/drive-enforcement.md.
+_SCAN_SURFACES = (REVIEW, IMPLEMENT, FINALIZE, HARDEN, PLAN, DESIGN, SHIP,
+                  DRIVE, README, CLAUDE_MD, ENFORCE)
+
+
+def test_new_artifact_names_stay_within_the_allowlist():
+    """AC5(a), root-anchored + shape-agnostic, RE-BOUND by D-44. Best-effort inventory:
+    exotic future spellings may evade this scan; the LOAD-BEARING allowlist enforcement
+    is the executed behavioral suites (AC9/AC10), the four-shape allowlist scan, and
+    dual-voice review. Completeness findings against this scan route to followups, not
+    P1s (D-44).
+
+    What it checks: every `$RUN_DIR/`-, `${RUN_DIR}/`-, or `.harness/`-rooted artifact
+    literal across ALL ELEVEN owned prose surfaces — with or without an extension,
+    placeholder or concrete — must be in the frozen d41b73e baseline inventory or the
+    batch's four-shape allowlist, with the raw and sentence-period-stripped forms
+    membership-tested SEPARATELY (non-lossy, D-44). Standing executed probes:
+    extensionless `$RUN_DIR/refutation-cache` => RED; brace-form `${RUN_DIR}/x.md` =>
+    RED; `$RUN_DIR/refutation-cache.md` and `$RUN_DIR/bogus-artifact.md` => RED;
+    `$RUN_DIR/completedAt..` (lossy-collapse) => RED; `$RUN_DIR/rogue-round3` in
+    drive.md (omitted surface) => RED; the clean tree => GREEN twice (deterministic —
+    no network, no git at runtime). Supplementary: unrooted mentions of the two new
+    families must still match an allowlisted shape."""
+    unrooted_re = re.compile(r"(?:codex-refut|verify-design-claims)[A-Za-z0-9<>*().-]*\.\w+")
+    for md in _SCAN_SURFACES:
+        text = _text(md)
+        # the root-anchored inverted check: rooted names ⊆ baseline ∪ allowlist
+        for tok in sorted(_rooted_artifact_names(text)):
+            assert _is_known_artifact_name(tok), (
+                f"{md.name}: rooted artifact literal {tok!r} (normalized) is neither in "
+                f"the frozen pre-batch baseline nor the batch's four-shape allowlist "
+                f"(a batch legitimately introducing an artifact must consciously extend "
+                f"the allowlist here; scan completeness gaps route to followups per D-44)"
+            )
+        # supplementary shape validation for unrooted family mentions
+        for tok in unrooted_re.findall(text):
+            assert _NEW_ARTIFACT_ALLOWLIST_RE.fullmatch(tok), (
+                f"{md.name}: {tok!r} is outside the batch's new-artifact allowlist"
+            )
+
+
+def test_r6_section_introduces_no_new_filename():
+    """AC5(b): the landed R6 section names ONLY baseline artifact shapes — every
+    `<scope>`-family filename it mentions is a pre-existing family, and the review-file
+    family appears only with the canonical placeholder suffixes N / (N-1) (a concrete or
+    novel suffix would be a new artifact shape; the retired tmp/codex-pass1 family is
+    covered by the AC3.iv forbidden set)."""
+    r6 = _r6_section()
+    for m in re.finditer(
+        r"[A-Za-z0-9_$/.()<>*-]*<scope>[A-Za-z0-9_$/.()<>*-]*\.(?:md|txt|log|jsonl|marker)\b",
+        r6,
+    ):
+        tok = m.group(0).lstrip("$/").removeprefix("RUN_DIR/")
+        assert tok in _R6_BASELINE, (
+            f"the R6 section may not introduce the artifact filename {tok!r} (zero new shapes)"
+        )
+    # the review-file family appears only with canonical placeholder suffixes
+    for m in re.finditer(r"review-<scope>-([^\s`]+?)\.md", r6):
+        assert m.group(1) in ("N", "(N-1)"), (
+            f"review-<scope>-{m.group(1)}.md: non-placeholder review suffix in the R6 section"
+        )
+
+
+# =========================================================================== #
+# AC6 — R7 five hard bounds + count-tags + the no-injection clause (3 sites)
+# =========================================================================== #
+def test_r7_five_bounds_present():
+    """[M] the R7 section states all five bounds; bound 1 in its TWO-FORM wording
+    (executable repro OR run-local doc-anchored cites-as-replay; COMMITTED entries ALWAYS
+    executable). Mutations verified: deleting bound 2, bound 5, or the
+    committed-always-executable half each reds."""
+    r7 = _norm(_r7_section())
+    # bound 1 (two-form + replay-on-re-flag + executed-red-defeats)
+    assert "REPLAYABLE check" in r7
+    assert "doc-anchored artifact cites" in r7 and "re-reading IS the replay" in r7
+    assert "COMMITTED entries ALWAYS carry an executable hermetic `env -i` line" in r7
+    assert "RE-EXECUTES the recorded check" in r7
+    assert "VOIDS the entry" in r7
+    assert "executed red in the faithful env ALWAYS defeats the ledger" in r7
+    # bound 2 (voice independence + review-enrichment license extending the pinned rule)
+    assert "NEVER injected into harden/finalize auditor prompts" in r7
+    assert "prior-round enrichment" in r7
+    assert "EXTENDS, and does not reword" in r7
+    # the applicable-entries discovery binding
+    assert "Applicable entries = those in" in r7
+    assert "whose Finding/Qualifier matches the re-flagged finding" in r7
+    assert "greps BOTH files before composing a re-audit prompt" in r7
+    # bound 3
+    assert "finding-specific" in r7
+    assert 'never class-level "X-like findings are settled"' in r7
+    # bound 4
+    assert "P1→P2 downgrade requires the coordinator's OWN executed reproduction" in r7
+    assert "fail-safe direction" in r7
+    assert re.search(r"threat-model arm applies only to verbatim `docs/drive-enforcement\.md`", r7)
+    # bound 5
+    assert "repro timeout leaves the finding UN-refuted" in r7
+    assert "mints nothing and voids nothing" in r7
+    # the three artifacts
+    assert "codex-refuted-<scope>.md" in r7
+    assert "codex-refutations-pending.md" in r7
+    assert ".harness/codex-refutations.md" in r7
+
+
+def test_r7_count_tags_not_prose_in_step3():
+    """[M] Step 3 (Combine) derives the codex verdict by COUNTING BLOCKING/MAJOR severity
+    tags — never the prose summary — failing closed to the tags on conflict.
+    Mutation-verified: deleting the fail-closed half reds."""
+    step3 = _norm(_section(_text(REVIEW), r"^## Step 3\b"))
+    assert "Count tags, not prose" in step3
+    assert re.search(r"COUNTING the BLOCKING/MAJOR severity tags in `codex-review-<scope>\.md`", step3)
+    assert "never its prose summary line" in step3
+    assert "tag-vs-prose conflict, fail closed to the tags" in step3
+
+
+def test_r7_no_injection_clause_in_harden_and_finalize():
+    """[M] the D-11 no-injection clause is stated where the executing agents read — BOTH
+    drive-harden.md's and drive-finalize.md's Step-1 CRITICAL BOUNDARY sentences, naming
+    all three refutation paths. Mutation-verified: deleting either clause reds."""
+    for md, voice in ((HARDEN, "harden's voices"), (FINALIZE, "finalize's voices")):
+        step1 = _norm(_section(_text(md), r"^## Step 1\b"))
+        assert "must NEVER include" in step1 and "refutation-ledger content" in step1, (
+            f"{md.name}: Step 1 must carry the no-injection clause"
+        )
+        for path_tok in (
+            "codex-refuted-*.md",
+            "codex-refutations-pending.md",
+            ".harness/codex-refutations.md",
+        ):
+            assert path_tok in step1, f"{md.name}: the ban must name {path_tok}"
+        assert f"{voice} stay independent of do-not-re-raise steers" in step1
+
+
+# =========================================================================== #
+# AC17 — the no-injection ban is STRUCTURALLY verifiable (negative pin)
+# =========================================================================== #
+def test_no_refutation_tokens_inside_harden_finalize_prompts():
+    """[M] within drive-harden.md's and drive-finalize.md's PROMPT heredoc fences and
+    SUBAGENT SCOPE blocks, the tokens `codex-refuted` / `codex-refutations` are ABSENT
+    (the D-11 ban clause naming those paths sits OUTSIDE the prompt blocks).
+    Mutation-verified: pasting a refutation path into a heredoc reds."""
+    for md in (HARDEN, FINALIZE):
+        text = _text(md)
+        for i, block in enumerate(_fenced_blocks(text) + _scope_blocks(text)):
+            low = block.lower()
+            assert "codex-refuted" not in low and "codex-refutations" not in low, (
+                f"{md.name}: refutation-ledger content leaked into prompt/scope block {i}"
+            )
+
+
+# =========================================================================== #
+# AC7 — the committed ledger: header, seeds, and EXECUTED hermetic repros
+# =========================================================================== #
+_LEDGER_ENTRY_RE = re.compile(
+    r"^## (CR-\d+) — .*?(?=^## CR-\d+ — |\Z)", re.MULTILINE | re.DOTALL
+)
+
+
+def _lint_ledger_schema(text):
+    """The ONE canonical ledger-schema grammar (class boundary: ledger structural
+    drift). Validates ALL structural elements OUTSIDE the fenced schema template:
+
+    (a) CommonMark-correct fence tracking: an up-to-3-space-indented ``` line IS a
+        fence toggle; a 4+-space-indented backtick line is an indented CODE BLOCK and
+        toggles NOTHING (a 4-space ``` must never desync the tracker and exempt a
+        deviant heading).
+    (b) Every unfenced heading-shaped line (`^ {0,3}#{1,6}[ \\t]`) that mentions `CR-`
+        must be the EXACT column-0 h2 schema form `## CR-<n> — ` — one rule closes the
+        en-dash / `CR-3a` / missing-space / indented / h1–h6 / tab-after-hash deviants
+        together (heading drift red loudly; a deviant heading starts no entry match, so
+        its body would otherwise be absorbed into the previous entry and its
+        obligations silently skipped).
+    (c) Every entry body must contain the bound-1 hermetic repro line AND a
+        schema-form `— expected:` declaration line. Dash-variant spellings of the
+        declaration (`-- expected:` / `– expected:` (en-dash) / `- expected:`) are
+        REJECTED loudly, never silently tolerated — a declaring-but-misspelled entry
+        reds HERE and never reaches the executor's parse (closes the silent rc-only
+        degradation by construction).
+    (d) Entry ids are UNIQUE — a duplicate `CR-<n>` reds loudly. This is the BACKSTOP
+        for the promotion-collision class (a post-rebase base append and a
+        verbatim-promoted pending entry can both carry the same id): pending-file ids
+        are PROVISIONAL and ship's promotion RE-DERIVES them from the live ledger's max
+        (drive-ship.md § Ship worktree + ledger promotion), so a duplicate reaching
+        this lint means the promotion contract was violated.
+    (e) Every unfenced VOID annotation line carries the id-carrying form
+        `> **VOID CR-<n> (<runId>, <date>):** …` AND its id matches an existing entry
+        id — association is CHECKED, never inferred from position (an id-less or
+        dangling-id VOID reds loudly)."""
+    # (a) + (b): line-wise, with CommonMark fence tracking; collect VOID lines for (e).
+    inside_fence = False
+    void_lines = []
+    for ln in text.splitlines():
+        if re.match(r" {0,3}```", ln):
+            inside_fence = not inside_fence
+            continue
+        if inside_fence:
+            continue
+        if re.match(r" {0,3}#{1,6}[ \t]", ln) and "CR-" in ln:
+            assert re.match(r"## CR-\d+ — ", ln), (
+                f"ledger heading drift (schema-lint (b)): {ln!r} does not match the "
+                f"column-0 B-3 schema `## CR-<n> — ` — a deviant heading would "
+                f"silently escape per-entry validation"
+            )
+        if re.match(r" {0,3}> \*\*VOID\b", ln):
+            void_lines.append(ln)
+    # (c) + (d): per entry body (splitting is sound now that (b) passed).
+    entries = list(_LEDGER_ENTRY_RE.finditer(text))
+    assert entries, "schema-lint: no `## CR-<n> — ` entries found in the ledger"
+    seen_ids = set()
+    for m in entries:
+        entry_id, body = m.group(1), m.group(0)
+        assert entry_id not in seen_ids, (
+            f"duplicate ledger entry id {entry_id} (schema-lint (d)) — pending-file ids "
+            f"are PROVISIONAL; ship's promotion must re-derive CR-<n> from the live "
+            f"ledger's max at promotion time"
+        )
+        seen_ids.add(entry_id)
+        assert re.search(r"^- repro \(hermetic\): `env -i [^`]+`", body, re.MULTILINE), (
+            f"{entry_id}: committed entries must ALWAYS carry an executable hermetic "
+            f"`env -i` repro line (bound 1; schema-lint (c))"
+        )
+        deviant = re.search(r"^\s*(?:--|–|-)\s*expected:", body, re.MULTILINE)
+        assert not deviant, (
+            f"{entry_id}: deviant `expected:` spelling {deviant.group(0).strip()!r} — "
+            f"the schema form is the em-dash `— expected: <exact output/exit>`; "
+            f"deviants are rejected loudly, never silently degraded to rc-only "
+            f"(schema-lint (c))"
+        )
+        assert re.search(r"^\s*— expected: \S", body, re.MULTILINE), (
+            f"{entry_id}: missing the schema-form `— expected: <exact output/exit>` "
+            f"declaration line (schema-lint (c))"
+        )
+    # (e): every VOID annotation is id-carrying and names an existing entry.
+    for ln in void_lines:
+        m = re.match(r" {0,3}> \*\*VOID CR-(\d+) \(", ln)
+        assert m, (
+            f"VOID annotation {ln!r} lacks the id-carrying form "
+            f"`> **VOID CR-<n> (<runId>, <date>):** …` (schema-lint (e))"
+        )
+        vid = f"CR-{m.group(1)}"
+        assert vid in seen_ids, (
+            f"VOID annotation names {vid}, which matches no `## CR-<n>` entry in this "
+            f"ledger (schema-lint (e)) — the id must reference the voided entry"
+        )
+
+
+def _ledger_repro_commands():
+    """Every `## CR-<n>` entry's (repro command, declared oracle) pair, keyed by entry
+    id — GROWTH-TOLERANT: a future CR-3 promotion EXTENDS the executed coverage
+    instead of redding AC7. Runs `_lint_ledger_schema` FIRST (the single grammar
+    guarantees each form exists); this extractor then keeps its exact-form parse.
+    Asserts the two D-27 seeds (CR-1/CR-2) are present. The entry-schema TEMPLATE in
+    the header's fenced example is not an entry (extraction anchors on the column-0
+    `## CR-<n> — ` headings; the template heading's `<n>` is non-digit and it sits
+    inside the fence)."""
+    text = _text(LEDGER)
+    _lint_ledger_schema(text)
+    cmds = {}
+    for m in _LEDGER_ENTRY_RE.finditer(text):
+        entry_id, body = m.group(1), m.group(0)
+        repro = re.search(r"^- repro \(hermetic\): `(env -i [^`]+)`", body, re.MULTILINE)
+        decl = re.search(r"^\s*— expected:\s*(.+?)\s*$", body, re.MULTILINE)
+        assert repro and decl, f"{entry_id}: lint-guaranteed forms missing (internal)"
+        cmds[entry_id] = (repro.group(1), decl.group(1))
+    assert "CR-1" in cmds and "CR-2" in cmds, (
+        f"the two D-27 seed entries (CR-1, CR-2) must be present; found {sorted(cmds)}"
+    )
+    return cmds
+
+
+def _assert_declared_result(entry_id, cmd, expected, proc):
+    """Compare an executed repro against its declared `— expected:` oracle (B-3 schema:
+    `— expected: <exact output/exit>`; replay rule: "A differing result (output/exit)
+    ⇒ the entry is VOID"). Recognized serializations (combinable):
+    - `exit <N>` binds the exit code;
+    - a double-quoted "literal" binds stdout EXACTLY: stdout must equal the literal,
+      tolerating exactly ONE trailing newline (the shell convention) — never a
+      whitespace-insensitive strip (` X ` vs "X" must RED, not pass under a .strip()).
+      An output-only declaration also requires exit 0 (an entry wanting a nonzero
+      exit must declare it).
+    A declaration matching NEITHER form fails CLOSED — loud red, never a silent
+    rc-only fallback (a bare-word `— expected: READY` must RED, never fall through
+    to an rc==0 check that lets `stdout=WRONG` pass)."""
+    assert expected is not None, (
+        f"{entry_id}: no declaration reached the executor (the schema-lint requires one)"
+    )
+    m_exit = re.search(r"\bexit\s+(\d+)\b", expected)
+    m_out = re.search(r'"([^"]*)"', expected)
+    assert m_exit or m_out, (
+        f"{entry_id}: unrecognized declared-oracle serialization {expected!r} — "
+        f"recognized forms: `exit <N>` and/or a double-quoted stdout literal "
+        f"(failing CLOSED; no silent rc-only fallback)"
+    )
+    if m_exit:
+        want_rc = int(m_exit.group(1))
+        assert proc.returncode == want_rc, (
+            f"{entry_id}: declared `exit {want_rc}` but got rc={proc.returncode} "
+            f"(a differing result VOIDS the entry): {cmd!r} stderr={proc.stderr!r}"
+        )
+    else:
+        assert proc.returncode == 0, (
+            f"{entry_id}: output-only declaration implies exit 0, got "
+            f"rc={proc.returncode}: {cmd!r} stderr={proc.stderr!r}"
+        )
+    if m_out:
+        lit = m_out.group(1)
+        assert proc.stdout in (lit, lit + "\n"), (
+            f"{entry_id}: declared output {lit!r} but got {proc.stdout!r} — the "
+            f"comparison is EXACT (one trailing newline tolerated), and a differing "
+            f"result VOIDS the entry: {cmd!r}"
+        )
+
+
+def test_committed_ledger_header_and_seed_entries():
+    """[M] .harness/codex-refutations.md exists with the purpose header (usage rule:
+    REVIEW re-audit prompts ONLY; replay rule: re-execute verbatim, differing result =>
+    VOID, executed red always defeats; timeout mints nothing) and the two D-27 seeds."""
+    text = _text(LEDGER)
+    norm = _norm(text)
+    assert "enrich REVIEW re-audit prompts ONLY — NEVER harden/finalize auditor prompts" in norm
+    assert "re-execute the recorded `env -i` line verbatim from the repo root" in norm
+    assert "the entry is VOID" in norm
+    assert "executed red in the faithful env ALWAYS defeats an entry" in norm
+    assert "repro timeout refutes nothing and voids nothing" in norm
+    # void-recording mechanics: id-carrying append-only annotation, never a heading
+    # (the id makes any mis-placement self-describing and greppable)
+    assert "Record a void by appending" in norm
+    assert "`> **VOID CR-<n> (<runId>, <date>):** <observed differing result>`" in norm
+    assert "never a new `## CR-<n>` heading" in norm
+    assert re.search(r"^## CR-1 — ", text, re.MULTILINE), "seed CR-1 missing"
+    assert re.search(r"^## CR-2 — ", text, re.MULTILINE), "seed CR-2 missing"
+    assert "codex-reflags-preship-absent-ledger" in norm  # CR-1 recurrence evidence
+    assert "anywhere in scope" in norm  # CR-2 anchors the landed R6 clause
+
+
+def test_committed_ledger_repros_execute_green():
+    """[M] AC7 (green direction): EVERY committed entry's recorded `env -i ... sh -c ...`
+    line is EXECUTED from the repo root and validated against its DECLARED `— expected:`
+    oracle — exit code and/or exact quoted output (the B-3 schema declares
+    `— expected: <exact output/exit>` and voids on "A differing result (output/exit)").
+    The schema-lint requires a declaration per entry and the executor fails CLOSED on
+    an unrecognized serialization (no silent rc-only fallback). The entries are
+    replayable as written (a drift in any anchored token reds the suite here rather
+    than at replay time), and a future promotion joins the coverage automatically."""
+    for entry_id, (cmd, expected) in _ledger_repro_commands().items():
+        proc = subprocess.run(
+            cmd, shell=True, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=60
+        )
+        _assert_declared_result(entry_id, cmd, expected, proc)
+
+
+def test_committed_seed_repros_red_direction(tmp_path):
+    """[M] AC7 (red direction — anti-vacuity): each SEED's grep chain FAILS against a
+    mutated tree whose guarded clause is deleted, proving the repro binds the real clause
+    (green-at-HEAD is not vacuous). CR-1: strip the ship promotion clause; CR-2: strip
+    the landed full-scope license. Bound to the two D-27 SEEDS by id — a future CR-3's
+    repro is exercised by the green-direction test, not force-fit into this mutated
+    tree."""
+    mutations = {
+        # seed 1: the promotion contract clause is deleted from drive-ship.md
+        ".claude/commands/drive-ship.md": ("Promote the run ledgers", ""),
+        # seed 2: the landed R6 full-scope license is deleted from drive-review.md
+        ".claude/commands/drive-review.md": ("anywhere in scope", ""),
+    }
+    # mirror ONLY the repo-relative files each seed greps, mutated
+    for rel, (old, new) in mutations.items():
+        src = REPO_ROOT / rel
+        dst = tmp_path / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        assert old in _text(src), f"{rel}: expected the guarded token {old!r} at HEAD"
+        dst.write_text(_text(src).replace(old, new), encoding="utf-8")
+    # unmutated second halves so ONLY the guarded clause's absence can red each chain
+    for rel in ("CLAUDE.md", "docs/efficiency-audit-2026-07-08.md"):
+        dst = tmp_path / rel
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        dst.write_text(_text(REPO_ROOT / rel), encoding="utf-8")
+    cmds = _ledger_repro_commands()
+    for entry_id in ("CR-1", "CR-2"):
+        cmd = cmds[entry_id][0]
+        proc = subprocess.run(
+            cmd, shell=True, cwd=str(tmp_path), capture_output=True, text=True,
+            timeout=60,
+        )
+        assert proc.returncode != 0, (
+            f"{entry_id}: repro must RED once its guarded clause is deleted "
+            f"(vacuity probe): {cmd!r}"
+        )
+
+
+# =========================================================================== #
+# Promotion re-derives CR-<n> from the live ledger (collision class)
+# =========================================================================== #
+# Two schema-valid entries that BOTH carry the id CR-3: the first simulates another
+# run's refutation landing on the base FIRST (present in the rebased committed ledger),
+# the second is this run's pending entry promoted VERBATIM (only the ids collide; each
+# entry is individually schema-clean).
+_BASE_APPENDED_CR3 = """
+## CR-3 — "another run's refutation (landed on base first)" — REFUTED (other-run, 2026-07-15)
+- recurrence: collision fixture.
+- finding (specific): the base-appended entry occupying CR-3 after the auto-rebase.
+- evidence: collision fixture.
+- repro (hermetic): `env -i PATH=/usr/bin:/bin sh -c 'true'`
+    — expected: exit 0
+- scope qualifiers: collision fixture.
+"""
+_PENDING_PROVISIONAL_CR3 = """
+## CR-3 — "this run's pending entry (provisional id)" — REFUTED (this-run, 2026-07-15)
+- recurrence: collision fixture.
+- finding (specific): the staged entry whose provisional id must be re-derived.
+- evidence: collision fixture.
+- repro (hermetic): `env -i PATH=/usr/bin:/bin sh -c 'true'`
+    — expected: exit 0
+- scope qualifiers: collision fixture.
+"""
+_PENDING_PROVISIONAL_CR4 = """
+## CR-4 — "this run's SECOND pending entry (order fixture)" — REFUTED (this-run, 2026-07-15)
+- recurrence: order fixture.
+- finding (specific): the second staged entry — takes the NEXT re-derived id after the first.
+- evidence: order fixture.
+- repro (hermetic): `env -i PATH=/usr/bin:/bin sh -c 'true'`
+    — expected: exit 0
+- scope qualifiers: order fixture.
+"""
+_PENDING_VOIDED_CR1 = """
+## CR-1 — "voided-in-run pending entry (provisional id)" — REFUTED (this-run, 2026-07-15)
+- recurrence: void fixture.
+- finding (specific): the staged entry DEFEATED in-run before promotion.
+- evidence: void fixture.
+- repro (hermetic): `env -i PATH=/usr/bin:/bin sh -c 'true'`
+    — expected: exit 0
+- scope qualifiers: void fixture.
+> **VOID CR-1 (this-run, 2026-07-15):** replay exited 1 at re-flag
+"""
+
+
+def _renumber_pending_per_promotion_contract(ledger_text, pending_text):
+    """drive-ship.md's promotion rule, EXECUTED (the reference implementation of the
+    contract this test pins): a pending entry (its `## CR-<n> — ` heading to the next
+    heading or EOF) carrying an unfenced `> **VOID` annotation line is DEFEATED and
+    SKIPPED — never promoted, never renumbered; for the live remainder, next id =
+    (the live committed ledger's current max `## CR-<n>`, via grep) + 1, assigned
+    sequentially in pending-file order — the pending file's ids are PROVISIONAL and
+    are never appended verbatim. An absent or entry-less ledger has max 0 (first
+    promoted entry = CR-1)."""
+    live_max = max(
+        (int(m.group(1)) for m in re.finditer(r"^## CR-(\d+) — ", ledger_text, re.MULTILINE)),
+        default=0,
+    )
+
+    def _has_unfenced_void(entry):
+        inside_fence = False
+        for ln in entry.splitlines():
+            if re.match(r" {0,3}```", ln):
+                inside_fence = not inside_fence
+                continue
+            if not inside_fence and re.match(r" {0,3}> \*\*VOID\b", ln):
+                return True
+        return False
+
+    heads = list(re.finditer(r"^## CR-\d+ — ", pending_text, re.MULTILINE))
+    bounds = [m.start() for m in heads] + [len(pending_text)]
+    out = [pending_text[: bounds[0]]]  # preamble, byte-preserved
+    next_id = live_max
+    for i in range(len(heads)):
+        entry = pending_text[bounds[i] : bounds[i + 1]]
+        if _has_unfenced_void(entry):
+            continue  # DEFEATED entry: skipped, never renumbered
+        next_id += 1
+        out.append(re.sub(r"^## CR-\d+ — ", f"## CR-{next_id} — ", entry, count=1))
+    return "".join(out)
+
+
+def test_promotion_rederivation_contract_pinned():
+    """[M] the provisional/renumber contract is stated at BOTH read sites —
+    drive-ship.md's activation-aware promotion step (RE-DERIVE from the live ledger's
+    max, +1 sequential, pending ids PROVISIONAL, never a staged number verbatim) and
+    drive-review.md's R7 pending-file bullet. Mutation-verified: deleting either
+    clause reds."""
+    promo = _norm(_section(_text(SHIP), r"^##\s+Ship worktree \+ ledger promotion\b"))
+    assert "RE-DERIVING each entry's `CR-<n>` id from the LIVE committed ledger" in promo
+    assert "next id = (the ledger's current max `## CR-<n>`, via grep) + 1" in promo
+    assert "assigned sequentially in pending-file order" in promo
+    assert "PROVISIONAL by contract" in promo
+    assert "NEVER append a staged/remembered number verbatim" in promo
+    r7 = _norm(_r7_section())
+    assert "Entry ids in this file are PROVISIONAL" in r7
+    assert "RE-DERIVES each `CR-<n>` from the live committed ledger's max at promotion time" in r7
+    assert "never collides by construction" in r7
+
+
+def test_promotion_renumbering_prevents_ledger_id_collision():
+    """[M] after the base-preflight's auto-rebase, the committed ledger can already
+    hold the id a pending entry staged — a verbatim append trips the schema lint at
+    ship time with no normal-resume repair (promotion commits before the suite;
+    resume SKIPs an existing ledger commit). Both directions, executed:
+    - BACKSTOP: the naive verbatim append => the lint reds loudly with the
+      duplicate-id message;
+    - CONTRACT: applying drive-ship.md's re-derivation rule => unique ids, lint green,
+      the promoted entry's content preserved (only its id changes)."""
+    rebased_ledger = _text(LEDGER) + _BASE_APPENDED_CR3
+    # backstop direction: verbatim append of the provisional id ⇒ duplicate ⇒ loud red
+    with pytest.raises(AssertionError, match=r"duplicate ledger entry id CR-3"):
+        _lint_ledger_schema(rebased_ledger + _PENDING_PROVISIONAL_CR3)
+    # contract direction: re-derive from the live max (3) ⇒ CR-4; no collision
+    promoted = rebased_ledger + _renumber_pending_per_promotion_contract(
+        rebased_ledger, _PENDING_PROVISIONAL_CR3
+    )
+    _lint_ledger_schema(promoted)
+    ids = [m.group(1) for m in _LEDGER_ENTRY_RE.finditer(promoted)]
+    assert ids == ["CR-1", "CR-2", "CR-3", "CR-4"], f"expected unique sequential ids, got {ids}"
+    assert "this run's pending entry (provisional id)" in promoted, (
+        "renumbering must preserve the promoted entry's content — only the id changes"
+    )
+
+
+# =========================================================================== #
+# Promotion base cases, lint trigger ring, fence-tracker alignment
+# =========================================================================== #
+def test_promotion_two_pending_entries_sequential_in_file_order():
+    """[M] with TWO pending entries, re-derived ids are assigned sequentially in
+    PENDING-FILE ORDER — live max 3 ⇒ the FIRST pending entry becomes CR-4 and the
+    SECOND CR-5 (order preservation, not just uniqueness); the promoted ledger lints
+    green."""
+    rebased_ledger = _text(LEDGER) + _BASE_APPENDED_CR3
+    promoted = rebased_ledger + _renumber_pending_per_promotion_contract(
+        rebased_ledger, _PENDING_PROVISIONAL_CR3 + _PENDING_PROVISIONAL_CR4
+    )
+    _lint_ledger_schema(promoted)
+    entries = {m.group(1): m.group(0) for m in _LEDGER_ENTRY_RE.finditer(promoted)}
+    assert list(entries) == ["CR-1", "CR-2", "CR-3", "CR-4", "CR-5"], (
+        f"expected unique sequential ids, got {sorted(entries)}"
+    )
+    assert "this run's pending entry (provisional id)" in entries["CR-4"], (
+        "the FIRST pending entry must take live_max+1 (pending-file order preserved)"
+    )
+    assert "this run's SECOND pending entry (order fixture)" in entries["CR-5"], (
+        "the SECOND pending entry must take live_max+2 (pending-file order preserved)"
+    )
+
+
+def test_promotion_first_entry_on_absent_or_entryless_ledger():
+    """[M] the promotion formula is bound at the empty base — an absent or entry-less
+    committed ledger has max 0, so a driven repo's FIRST-ever promotion mints CR-1
+    (drive-ship.md creates the missing file with the B-3 schema header before
+    appending). Both halves checked: the spec clause and the executed empty-base
+    renumbering."""
+    promo = _norm(_section(_text(SHIP), r"^##\s+Ship worktree \+ ledger promotion\b"))
+    assert "An absent or entry-less ledger has max 0" in promo
+    assert "the first promoted entry = CR-1" in promo
+    assert "create the missing file with the B-3 schema header" in promo
+    # behavioral half: an entry-less ledger promotes the first pending entry as CR-1
+    renumbered = _renumber_pending_per_promotion_contract("", _PENDING_PROVISIONAL_CR3)
+    ids = re.findall(r"^## (CR-\d+) — ", renumbered, re.MULTILINE)
+    assert ids == ["CR-1"], f"first promotion on an entry-less ledger must mint CR-1, got {ids}"
+
+
+def test_promotion_skips_voided_pending_entries():
+    """[M] a pending entry carrying an unfenced `> **VOID CR-<n> …**` annotation (its
+    own provisional id) is DEFEATED — promotion SKIPS it: never promoted, never
+    renumbered, so no VOID annotation carrying a provisional id can cross into the
+    committed ledger and mis-void the live entry that happens to hold that id.
+    Executed: live ledger CR-1..CR-2 + one voided pending entry + one live pending
+    entry ⇒ the output holds ONLY the live entry, renumbered to CR-3; the voided
+    entry and its VOID line are absent; the merged ledger lints green. The skip
+    clause is pinned in drive-ship.md's promotion step (deleting it reds)."""
+    live = _text(LEDGER)
+    renumbered = _renumber_pending_per_promotion_contract(
+        live, _PENDING_VOIDED_CR1 + _PENDING_PROVISIONAL_CR3
+    )
+    ids = re.findall(r"^## (CR-\d+) — ", renumbered, re.MULTILINE)
+    assert ids == ["CR-3"], f"only the un-voided entry may promote (as CR-3), got {ids}"
+    assert "this run's pending entry (provisional id)" in renumbered
+    assert "voided-in-run pending entry" not in renumbered, (
+        "the DEFEATED (voided) pending entry must be SKIPPED at promotion"
+    )
+    assert "**VOID" not in renumbered, (
+        "no VOID annotation may ride a promotion into the committed ledger"
+    )
+    merged = live + renumbered
+    _lint_ledger_schema(merged)
+    assert [m.group(1) for m in _LEDGER_ENTRY_RE.finditer(merged)] == [
+        "CR-1", "CR-2", "CR-3",
+    ]
+    # the spec half: drive-ship.md's promotion step states the skip
+    promo = _norm(_section(_text(SHIP), r"^##\s+Ship worktree \+ ledger promotion\b"))
+    assert "is DEFEATED and is SKIPPED at promotion — never promoted, never renumbered" in promo
+    assert "only live (un-voided) pending entries are promoted and renumbered" in promo
+
+
+def test_ledger_lint_heading_trigger_covers_all_heading_forms():
+    """[M] lint (b)'s trigger covers the WHOLE heading permutation ring — h1..h6 and
+    tab-after-hash forms — since each also starts no entry, so its body would absorb
+    silently into the previous entry. Executed probes: each deviant form REDS on a
+    scratch ledger; the clean ledger (and the lint-safe `> **VOID` annotation form
+    inside an entry) stays green."""
+    clean = _text(LEDGER)
+    _lint_ledger_schema(clean)  # green baseline
+    for deviant in (
+        "# CR-9 — x",       # h1
+        "##### CR-9 — x",   # h5
+        "##\tCR-9 — x",     # tab-after-hash
+        "## CR-1 VOID (someRun, 2026-07-16)",  # the void-HEADING anti-form
+    ):
+        with pytest.raises(AssertionError, match="heading drift"):
+            _lint_ledger_schema(clean + "\n" + deviant + "\n")
+    # the mandated void-recording form is an annotation line INSIDE the entry — green
+    # (EOF-appended = inside the LAST entry, CR-2; the id-carrying form)
+    _lint_ledger_schema(clean + "\n> **VOID CR-2 (someRun, 2026-07-16):** repro exited 1 at re-flag\n")
+
+
+def test_void_annotation_id_binding():
+    """[M] the VOID annotation form carries the target entry id
+    (`> **VOID CR-<n> (<runId>, <date>):** …`) and lint rule (e) makes the
+    association CHECKED, not position-implied. Executed probes:
+    - mid-file: a VOID line inside CR-1 BEFORE the `## CR-2` heading ⇒ lint GREEN
+      (annotating a non-terminal entry is rule-conformant — no rewrite forced);
+    - dangling id: a VOID naming CR-9 on the clean 2-entry ledger ⇒ red loudly;
+    - id-less form: `> **VOID (<runId>…` ⇒ red loudly (cannot dodge (e))."""
+    clean = _text(LEDGER)
+    void_cr1 = "> **VOID CR-1 (someRun, 2026-07-16):** repro exited 1 at re-flag\n\n"
+    mid = clean.replace("## CR-2 — ", void_cr1 + "## CR-2 — ", 1)
+    assert mid != clean, "mid-file fixture: the ## CR-2 anchor must exist"
+    _lint_ledger_schema(mid)  # green: id-carrying VOID inside a non-terminal entry
+    with pytest.raises(AssertionError, match=r"schema-lint \(e\)"):
+        _lint_ledger_schema(
+            clean + "\n> **VOID CR-9 (someRun, 2026-07-16):** repro exited 1\n"
+        )
+    with pytest.raises(AssertionError, match=r"schema-lint \(e\)"):
+        _lint_ledger_schema(
+            clean + "\n> **VOID (someRun, 2026-07-16):** repro exited 1\n"
+        )
+
+
+def test_fenced_blocks_tracker_is_commonmark():
+    """[M] `_fenced_blocks` must NOT toggle on a 4+-space-indented ``` line
+    (CommonMark: indented code, not a fence) — a tracker that toggles there lets the
+    fence TAIL escape the AC17 leak scan (a NARROWING, fail-unsafe direction).
+    Executed both ways: the indented line stays inside the block; an
+    up-to-3-space-indented ``` still toggles (aligned with the ledger lint's
+    tracker)."""
+    text = "\n".join(
+        [
+            "prose before",
+            "```",
+            "inside line",
+            "    ```",  # CommonMark: indented CODE, not a fence toggle
+            "fence tail",  # must stay INSIDE the block (else the leak scan narrows)
+            "```",
+            "prose after",
+        ]
+    )
+    joined = "\n".join(_fenced_blocks(text))
+    assert "fence tail" in joined, (
+        "a 4-space-indented ``` line ended fence tracking early — the fence tail "
+        "escaped the block (pre-CommonMark toggle)"
+    )
+    assert "prose after" not in joined
+    # an up-to-3-space-indented ``` IS a toggle (CommonMark), same as the lint tracker
+    assert _fenced_blocks("\n".join(["   ```", "in2", "   ```"])) == ["in2"]
+
+
+# =========================================================================== #
+# AC11 — the activation-aware ship promotion step (both branches)
+# =========================================================================== #
+def test_activation_aware_promotion_step():
+    """[M] drive-ship.md's promotion section: the `-s` pending check, the LIVE-gate probe
+    (enforcement-worktree conformance grep), the admitted branch (same single ledger
+    commit) AND the graceful-degrade branch (run-local + Gate-B surfacing, never a push
+    false-block). Mutation-verified: deleting the absent-branch reds."""
+    promo = _norm(_section(_text(SHIP), r"^##\s+Ship worktree \+ ledger promotion\b"))
+    assert "activation-aware refutation promotion" in promo
+    assert "codex-refutations-pending.md" in promo
+    assert re.search(r"is non-empty \(`\[ -s", promo), "the pending check must key on `-s`"
+    assert "probe the LIVE gate" in promo
+    assert "grep -qF '.harness/codex-refutations.md' ~/.claude/drive-enforcement-worktree/bin/drive-conformance.sh" in promo
+    assert re.search(r"Admitted.*SAME single ledger commit", promo), (
+        "the admitted branch must append inside the SAME single ledger commit"
+    )
+    assert re.search(r"leave the entries run-local", promo), "the graceful-degrade branch"
+    assert "pending-activation followup at Gate B" in promo
+    assert "never a push false-block" in promo
+
+
+# =========================================================================== #
+# AC12 — every § C enumeration site is 4-file (and no stale 3-file wording)
+# =========================================================================== #
+def test_enumeration_sites_name_the_fourth_ledger():
+    """[S] each D-9 wiring site's enumeration names `.harness/codex-refutations.md`:
+    the two bin/ array declarations, drive-ship.md (precondition #3 + promote step +
+    ship-conformance), drive.md's two enumerations, drive-finalize.md's obligation #5,
+    docs/drive-enforcement.md's two sites, CLAUDE.md's committed-ledgers sentence, and
+    README.md's repo-layout + committed-.harness sentences."""
+    tok = ".harness/codex-refutations.md"
+    # sites 1-2: the array declarations
+    for sh, decl in ((CONFORMANCE, "SHIP_LEDGER_ALLOWLIST"), (PREFLIGHT, "LEDGER_ALLOWLIST")):
+        m = re.search(rf"^{decl}=\((.*?)\)\s*$", _text(sh), re.MULTILINE)
+        assert m and tok in m.group(1), f"{sh.name}: {decl} must contain {tok}"
+    # site 3: the pendingLedgers conditional
+    assert re.search(
+        r'\[ -s "\$RUN_DIR/codex-refutations-pending\.md" \] && pendingLedgers\+=\("\.harness/codex-refutations\.md"\)',
+        _text(PREFLIGHT),
+    ), "the pendingLedgers conditional must mirror the finalize-todo form"
+    # sites 4-7: drive-ship.md
+    ship = _text(SHIP)
+    pre = _norm(_section(ship, r"^##\s+Preconditions\b"))
+    assert tok in pre, "drive-ship.md precondition #3's allowlist enumeration"
+    promo = _norm(_section(ship, r"^##\s+Ship worktree \+ ledger promotion\b"))
+    assert "now 4 entries" in promo and tok in promo
+    conf = _norm(_section(ship, r"^##\s+Ship conformance\b"))
+    assert "4-file" in conf
+    # sites 8-9: drive.md's two SHIP_LEDGER_ALLOWLIST enumerations
+    for ln in _text(DRIVE).splitlines():
+        if "SHIP_LEDGER_ALLOWLIST` {" in ln:
+            assert "codex-refutations.md" in ln, f"drive.md enumeration missing 4th entry: {ln!r}"
+    assert _text(DRIVE).count("codex-refutations.md") >= 2, "both drive.md sites must update"
+    # site 10: drive-finalize.md obligation #5
+    assert tok in _norm(_text(FINALIZE)), "drive-finalize.md's allowlist enumeration"
+    # sites 11-12: docs/drive-enforcement.md
+    enforce = _norm(_text(ENFORCE))
+    assert "the exact four files" in enforce and tok in enforce
+    assert "single 4-file ledger commit" in enforce
+    # site 13: CLAUDE.md committed cross-task ledgers
+    claude_norm = _norm(_text(CLAUDE_MD))
+    assert re.search(
+        r"committed\*?\*? cross-task ledgers stay in the repo: `\.harness/decisions\.md`, `\.harness/followups\.md`, `\.harness/codex-refutations\.md`",
+        claude_norm,
+    ), "CLAUDE.md's committed-ledger enumeration must name the third .harness ledger"
+    # site 14: README.md — repo layout bullet + the committed-.harness sentence
+    readme_norm = _norm(_text(README))
+    assert "`.harness/codex-refutations.md` -- append-only durable codex-refutation ledger" in readme_norm
+    assert re.search(
+        r"holds only the cross-task ledgers \(`decisions\.md`, `followups\.md`, `codex-refutations\.md`\)",
+        readme_norm,
+    ), "README's committed-.harness sentence must name the three ledgers"
+
+
+def test_no_stale_three_file_wording_remains():
+    """[S] no live-gate-describing site still says 3-file / three files / now 3 entries
+    in the allowlist context (the negative half of AC12; scoped to the wiring files)."""
+    for p in (SHIP, DRIVE, ENFORCE, FINALIZE):
+        text = _text(p)
+        assert "3-file" not in text, f"{p.name}: stale '3-file' allowlist wording"
+        assert "now 3 entries" not in text, f"{p.name}: stale 'now 3 entries' wording"
+        assert "exact three files" not in text, f"{p.name}: stale 'exact three files' wording"
+
+
+# =========================================================================== #
+# AC13 — R8 design author-verification gates
+# =========================================================================== #
+def test_r8_plan_transcript_always_written_and_gated():
+    """[M] drive-plan.md: the planner ALWAYS writes verify-design-claims-design.md (the
+    three-category no-claims declaration when none), ships calibration inputs for
+    classifier/matcher rules, and the coordinator existence-checks it BEFORE round 1
+    (consuming no counter). Mutation-verified: deleting the existence check reds."""
+    text = _text(PLAN)
+    scope = _norm(_scope_blocks(text)[0])
+    assert "verify-design-claims-design.md" in scope
+    assert "ARTIFACT-shaped transcript" in scope
+    assert "EVERY citation, quoted snippet, and empirical claim" in scope
+    assert "no citations / no quoted snippets / no empirical claims" in scope
+    assert "ALWAYS written" in scope
+    assert "calibration script" in scope and "imprecision budget" in scope
+    assert re.search(r"Never a prose \"?verified\"? attestation", scope)
+    step2 = _norm(_section(text, r"^## Step 2\b"))
+    assert re.search(
+        r"CHECK `\$RUN_DIR/verify-design-claims-design\.md` exists non-empty", step2
+    )
+    assert "send the author back" in step2
+    assert "consumes no counter" in step2
+
+
+def test_r8_plan_revision_leg_revalidation():
+    """[M] the PLAN-path transcript cannot go stale: every post-P1 design.md revision
+    re-verifies the transcript BEFORE the next round (added/changed claims verified +
+    appended; coverage re-affirmed at the revised text; the pre-round check re-fires).
+    Mutation-verified: deleting the revalidation sentence reds."""
+    step2 = _norm(_section(_text(PLAN), r"^## Step 2\b"))
+    assert "RE-VERIFIES the transcript BEFORE the next round" in step2
+    assert "verified and appended" in step2
+    assert "re-affirmed against the REVISED text" in step2
+    assert "re-fires each round" in step2
+
+
+def test_r8_design_transcript_and_revision_leg():
+    """[M] drive-design.md: the author writes verify-design-claims-phase<P>.md (ALWAYS;
+    rewritten in place on revision legs), the coordinator existence-checks pre-round-1,
+    and a revision leg CONSUMES a phaseDesign[<P>].round tick, mints NO new artifact
+    family, and re-enters as a FULL fresh dual-voice round. Mutation-verified: deleting
+    the consumes-a-round-tick clause reds; deleting the existence check reds."""
+    text = _text(DESIGN)
+    scope = _norm(_scope_blocks(text)[0])
+    assert "verify-design-claims-phase<P>.md" in scope
+    assert "ALWAYS" in scope and "rewritten in place on revision legs" in scope
+    # the author-side coverage mandate — the callee half of the pre-round check's
+    # coverage arm (caller/callee symmetry; delete it => red)
+    assert "re-affirming its coverage statement against the revised design" in scope
+    assert "no citations / no quoted snippets / no empirical claims" in scope
+    assert "calibration script" in scope and "imprecision budget" in scope
+    step2 = _norm(_section(text, r"^## Step 2\b"))
+    assert re.search(
+        r"CHECK `\$RUN_DIR/verify-design-claims-phase<P>\.md` exists non-empty", step2
+    )
+    assert "consumes no counter" in step2
+    assert "CONSUMES a `phaseDesign[<P>].round` tick" in step2
+    assert "mints NO new artifact family" in step2
+    assert "FULL fresh dual-voice round" in step2
+
+
+def test_r8_pre_round_check_is_revision_bound():
+    """[M] the coordinator's pre-round transcript check verifies existence +
+    non-emptiness + CURRENT-REVISION coverage at BOTH sites — the coverage arm sits
+    INSIDE the check clause (the D-42 check half), and a stale-coverage transcript
+    fails the check exactly as a missing file does. Mutation-verified: deleting the
+    revision-coverage arm at either site reds (the author-side revalidation narration
+    alone cannot satisfy these pins)."""
+    for md, transcript in (
+        (PLAN, r"verify-design-claims-design\.md"),
+        (DESIGN, r"verify-design-claims-phase<P>\.md"),
+    ):
+        step2 = _norm(_section(_text(md), r"^## Step 2\b"))
+        assert re.search(
+            rf"CHECK `\$RUN_DIR/{transcript}` exists non-empty AND[^;]*"
+            rf"coverage statement is re-affirmed at the CURRENT revision",
+            step2,
+        ), f"{md.name}: the pre-round check must bind coverage INSIDE the check clause"
+        assert (
+            "missing, empty, or coverage not re-affirmed at the current revision "
+            "⇒ send the author back" in step2
+        ), f"{md.name}: the check's failure branch must include the stale-coverage case"
+
+
+def test_r8_reviewer_calibration_and_conditional_transcript_duty():
+    """[M] drive-review.md (DV-2): the design/phasedesign reviewers run the author's
+    calibration script (precision) PLUS their own independent recall probe, and the
+    transcript duty is CONDITIONAL — claims-bearing => spot-check >=1 claim; a no-claims
+    declaration => verify the declaration against the design doc (a found claim is a P1
+    against the transcript). Pinned in BOTH voices' prompts. Mutation-verified: deleting
+    the no-claims arm reds."""
+    scope = _norm(_scope_blocks(_text(REVIEW))[0])
+    assert "RUN its calibration script against its corpus (precision)" in scope
+    assert "independent recall probe" in scope
+    assert "the author's script inherits the rule's blind spots" in scope
+    assert "claims-bearing transcript ⇒ spot-check ≥1 claim" in scope
+    assert "VERIFY THAT DECLARATION against the design doc itself" in scope
+    assert "any found falsifies the declaration and is a P1 against the transcript" in scope
+    heredoc = _norm(_review_prompt_heredoc())
+    assert "RUN its calibration script against its corpus (precision)" in heredoc
+    assert "independent recall probe" in heredoc
+    assert "verify-design-claims-*.md" in heredoc
+    assert "spot-check >=1 claim" in heredoc
+    assert "VERIFY THAT DECLARATION against the design doc itself" in heredoc
+
+
+# =========================================================================== #
+# AC14 — R9 pin-depth mutation-survival semantics
+# =========================================================================== #
+def test_r9_mutation_survival_severity_semantics():
+    """[M] the Step-2 Severity block defines pin existence by MUTATION SURVIVAL (vacuous
+    pin = NO pin = stays P1; could-be-stronger = P2) with the fail-closed-surface
+    carve-out where exclusivity/composed-order gaps STAY P1. Mutation-verified: deleting
+    the carve-out sentence reds."""
+    scope = _norm(_scope_blocks(_text(REVIEW))[0])
+    assert "MUTATION SURVIVAL" in scope
+    assert "reds on deletion/partial-revert of the exact clause it guards" in scope
+    assert "vacuous pin = NO pin = stays P1" in scope
+    assert re.search(r"[\"“]Could be stronger[\"”].*= P2", scope)
+    assert "permutation/exclusivity/composed-order" in scope
+    assert "EXCEPT on fail-closed gate surfaces" in scope
+    assert "drive-conformance contracts, gate hooks, drive-retention safety clauses" in scope
+    assert "exclusivity/composed-order gaps STAY P1" in scope
+
+
+def test_r9_demotion_requires_shown_red_in_step3():
+    """[M] Step 3: demoting a codex BLOCKING/MAJOR on pin depth requires SHOWING the
+    executed core-mutation red — an executed artifact, not an assertion (preserves
+    count-tags-not-prose). Mutation-verified: deleting the rule reds."""
+    step3 = _norm(_section(_text(REVIEW), r"^## Step 3\b"))
+    assert "Demoting a codex BLOCKING/MAJOR on pin depth" in step3
+    assert "SHOWING the executed core-mutation red" in step3
+    assert "not an assertion" in step3
+
+
+def test_r9_pin_depth_per_ac_required_in_design_and_flagged_by_reviewers():
+    """[S] drive-design.md's write list REQUIRES the `Pin depth per AC` section
+    (mutation-verified vs smoke fixed at design time; token-sweep + green-full-suite as
+    the default migration pattern), and BOTH phasedesign reviewer prompts flag P2 a phase
+    design whose ACs lack the assignments."""
+    scope = _norm(_scope_blocks(_text(DESIGN))[0])
+    assert "Pin depth per AC" in scope and "REQUIRED section" in scope
+    assert "mutation-verified" in scope and "smoke" in scope
+    assert "gate-adjacent / fail-closed surfaces" in scope
+    assert "token-sweep + green-full-suite" in scope
+    review_scope = _norm(_scope_blocks(_text(REVIEW))[0])
+    assert "flag P2 a phase design whose ACs lack the `Pin depth per AC` assignments" in review_scope
+    heredoc = _norm(_review_prompt_heredoc())
+    assert "flag P2 when the ACs lack the 'Pin depth per AC' assignments" in heredoc
+
+
+# =========================================================================== #
+# AC18 — drive-design.md detached-worktree guard repaired (A-D21)
+# =========================================================================== #
+def test_design_guard_compares_the_frozen_tip_sha():
+    """[M] the drive-design.md subagent FIRST-ACTION guard compares `git rev-parse HEAD`
+    to the passed frozen tip SHA; the invocation header names the worktree DETACHED and
+    the coordinator passes the SHA. Mutation-verified: restoring the branch-name form
+    reds (via the negative below)."""
+    text = _text(DESIGN)
+    header = _norm(text.split(BEGIN_SCOPE, 1)[0])
+    assert "DETACHED at the `featureBranch` tip" in header
+    assert "--detach" in header
+    assert "frozen 40-hex tip SHA" in header or "frozen 40-hex `featureBranch` tip SHA" in header
+    scope = _norm(_scope_blocks(text)[0])
+    assert re.search(r"`git rev-parse HEAD` equals the frozen tip SHA", scope), (
+        "the guard must compare rev-parse HEAD to the passed tip SHA"
+    )
+    assert "HEAD is not that SHA" in scope
+
+
+def test_design_guard_has_no_branch_name_check():
+    """[M] the NEGATIVE half (bound to drive-design.md ONLY — the implement/harden/
+    finalize guards legitimately keep the branch-name form on their branch-checked-out
+    worktrees): drive-design.md no longer requires `--abbrev-ref HEAD` to equal
+    `featureBranch` — a check a detached HEAD can NEVER pass (it prints `HEAD`)."""
+    assert "abbrev-ref" not in _text(DESIGN), (
+        "drive-design.md must not carry an --abbrev-ref branch-name guard (detached worktree)"
+    )

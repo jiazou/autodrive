@@ -38,7 +38,7 @@ set -u
 # SHIP_LEDGER_ALLOWLIST — MUST stay byte-identical to bin/drive-conformance.sh's
 # SHIP_LEDGER_ALLOWLIST (the append-only ledger files the single ship commit may touch). A
 # drift test (test/drive-base-preflight.test.sh) asserts the two lists match.
-LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md" "TODO.md")
+LEDGER_ALLOWLIST=(".harness/decisions.md" ".harness/followups.md" "TODO.md" ".harness/codex-refutations.md")
 
 RUN_DIR="${1:-}"
 [ -n "$RUN_DIR" ] || { echo "usage: drive-base-preflight.sh <RUN_DIR>" >&2; exit 2; }
@@ -164,6 +164,7 @@ done
 # ledgers, where the base almost always appends (a real conflict) rather than edits mid-file.
 pendingLedgers=(".harness/decisions.md" ".harness/followups.md")
 [ -s "$RUN_DIR/finalize-todo.md" ] && pendingLedgers+=("TODO.md")
+[ -s "$RUN_DIR/codex-refutations-pending.md" ] && pendingLedgers+=(".harness/codex-refutations.md")
 baseChanged=$(git diff --name-only "$baseSha".."$currentBase" 2>/dev/null || true)
 pendingLedgerConflict=false
 for pl in "${pendingLedgers[@]}"; do

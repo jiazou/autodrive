@@ -245,8 +245,8 @@ verdict / merge / gate.
     `bin/drive-conformance.sh`'s `--mode ship` `codex_present` check and `drive-ship.md`
     precondition #3, so all three finalize-CONVERGED surfaces use the IDENTICAL criterion),
     AND its `reviewed-sha` (call it
-    `R`) is an ANCESTOR of the current `featureBranch` tip with `R..tip` ⊆ the 3-file
-    `SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`}
+    `R`) is an ANCESTOR of the current `featureBranch` tip with `R..tip` ⊆ the 4-file
+    `SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`, `.harness/codex-refutations.md`}
     and ≤ 1 commit — the SAME tolerant (a)(b)(c) ancestor + allowlist + `≤ 1 commit`
     criterion the `--mode ship` gate uses, NOT strict `reviewed-sha == tip`. Finalize
     CONVERGED → `stage = verify`; otherwise (no finalize artifact, a FINDINGS terminal
@@ -1625,8 +1625,8 @@ rebirth signalled before ship is consumed and handed off (Gate B precedence stil
 Run the SHIP stage (`/drive-ship` — `~/.claude/commands/drive-ship.md`) on `featureBranch`
 (marker `inflight-ship.marker`): promote
 `$RUN_DIR/decisions.md`+`followups.md` into the repo ledgers (and
-`$RUN_DIR/finalize-todo.md` → repo-root `TODO.md` when present) — the 3-file
-`SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`},
+`$RUN_DIR/finalize-todo.md` → repo-root `TODO.md` when present) — the 4-file
+`SHIP_LEDGER_ALLOWLIST` {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`, `.harness/codex-refutations.md`},
 run the full suite
 (red → retry once → STOP), build the **single** commit + PR, **Gate B** (approve
 diff), then push/open PR. → `lastGate = "B"`, `stage = done` → then run the `## Completion`

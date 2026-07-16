@@ -635,7 +635,7 @@ def test_finalize_scope_creep_gate_and_arch_todo():
 def test_ship_spec_finalize_precondition_and_promotion():
     """drive-ship.md: a Finalize-CONVERGED precondition that is TOLERANT (NOT strict
     `== tip`), remediation that names `/drive-finalize`, promotion of `finalize-todo.md`
-    -> `TODO.md`, and the 3-entry `SHIP_LEDGER_ALLOWLIST` surfaced at Gate B. Pins AC43
+    -> `TODO.md`, and the 4-entry `SHIP_LEDGER_ALLOWLIST` surfaced at Gate B. Pins AC43
     (ship half)."""
     text = _text(DRIVE_SHIP)
     norm = _norm(text)
@@ -673,7 +673,7 @@ def test_ship_spec_finalize_precondition_and_promotion():
         "tip would FALSE-STOP a resumed ship); weakening it to strict == tip must red"
     )
 
-    # ---- ledger promotion + 3-entry allowlist. ---------------------------------------- #
+    # ---- ledger promotion + 4-entry allowlist. ---------------------------------------- #
     # SECTION-BOUNDED to `## Ship worktree + ledger promotion` (drive-ship.md:41). The bare
     # tokens (`finalize-todo.md`, `TODO.md`, `SHIP_LEDGER_ALLOWLIST`, `.harness/...`) recur in
     # `## Build the PR` + `## Ship conformance`, so a file-wide check stays GREEN even if the
@@ -692,10 +692,14 @@ def test_ship_spec_finalize_precondition_and_promotion():
         "the ledger-promotion section must name the SHIP_LEDGER_ALLOWLIST constant it keeps "
         "in sync (the single ledger commit's allowlist)"
     )
-    # The 3-entry allowlist contents, pinned WITHIN the promotion section.
+    # The 4-entry allowlist contents, pinned WITHIN the promotion section.
     assert (
         "TODO.md" in promo and ".harness/decisions.md" in promo and ".harness/followups.md" in promo
-    ), "the 3-entry ledger allowlist {.harness/decisions.md, .harness/followups.md, TODO.md}"
+        and ".harness/codex-refutations.md" in promo
+    ), (
+        "the 4-entry ledger allowlist {.harness/decisions.md, .harness/followups.md, "
+        "TODO.md, .harness/codex-refutations.md}"
+    )
     # And the SINGLE-commit discipline (the promotion lands in the one ledger commit).
     assert re.search(r"SINGLE commit\b|single commit\b", promo), (
         "the promotion must land in the SINGLE ledger commit (R..tip ≤1 commit ⊆ allowlist)"

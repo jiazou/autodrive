@@ -109,7 +109,10 @@ passive Claude reviewer spawned WHILE it runs), **including its outcome tier TAB
 Step 1 — the `OK` / `CODEX_KILLED_TIMEOUT` / `CODEX_UNAVAILABLE` / `HELPER_ERROR` tier), but with the
 **harden 2-lens prompt** below instead of the conformance prompt. CRITICAL BOUNDARY: pass PATHS +
 git refs only — never any implementer's or harden-fixer's notes/rationale (preserves
-the reviewer's independent judgment, exactly as conformance review does).
+the reviewer's independent judgment, exactly as conformance review does). The auditor
+prompts (the codex prompt file + the reviewer scope below) must NEVER include
+refutation-ledger content (`$RUN_DIR/codex-refuted-*.md`, `$RUN_DIR/codex-refutations-pending.md`,
+`.harness/codex-refutations.md`) — harden's voices stay independent of do-not-re-raise steers.
 
 Codex FIRST (run `bin/drive-codex.sh` from the MAIN context via `Bash(run_in_background:true)`,
 NEVER inside a subagent that waits on it). First `mkdir -p "$RUN_DIR/tmp"` (TMPDIR-namespaced). The

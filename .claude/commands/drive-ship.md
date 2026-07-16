@@ -41,8 +41,9 @@ main tree. NOT gstack `/ship` (auto-pushes): wait at **Gate B** before `push`/PR
    (highest-N) is `## Verdict: CONVERGED`, its first `## AppliedEdits:` line reads
    exactly `## AppliedEdits: no` (a fix round is non-terminal), a non-empty
    `$RUN_DIR/codex-review-finalize.md` exists, AND its `reviewed-sha R` is an
-   ANCESTOR of the current `featureBranch` tip with `R..tip` ≤1 commit ⊆ the 3-file
-   ledger allowlist `{.harness/decisions.md, .harness/followups.md, TODO.md}` — i.e.
+   ANCESTOR of the current `featureBranch` tip with `R..tip` ≤1 commit ⊆ the 4-file
+   ledger allowlist `{.harness/decisions.md, .harness/followups.md, TODO.md,
+   .harness/codex-refutations.md}` — i.e.
    `R == tip` (first ship entry, pre-ledger) OR `R..tip` is exactly the single ledger
    commit (a resume after ship's ledger commit). This precondition must TOLERATE the
    one ledger commit because a resumed ship re-enters this check AFTER the
@@ -129,7 +130,7 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
   here AFTER it already landed. Determine state from git BEFORE appending: let `R` =
   finalize's `reviewed-sha` (precondition #3). If `R..featureBranch` tip is already
   exactly the single ledger commit (`R` is the tip's parent AND the tip touches only the
-  3-file `SHIP_LEDGER_ALLOWLIST`), the ledger was already promoted on a prior crashed
+  4-file `SHIP_LEDGER_ALLOWLIST`), the ledger was already promoted on a prior crashed
   attempt → **SKIP** the append+commit below (re-appending would DUPLICATE entries and a
   second commit would break the `R..tip ≤1 commit` ship-gate invariant). Append+commit
   ONLY when the tip is still AT `R` (`R == tip`, pre-ledger). The forward path (first
@@ -140,7 +141,28 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
   SKIP path above, skip the audit too, since its entries already rode the original commit).
   Then append this run's
   `$RUN_DIR/decisions.md` + `$RUN_DIR/followups.md` entries to the repo's
-  `.harness/decisions.md` + `.harness/followups.md` (the cross-task ledgers). Then,
+  `.harness/decisions.md` + `.harness/followups.md` (the cross-task ledgers). Then the
+  **activation-aware refutation promotion**: **if** `$RUN_DIR/codex-refutations-pending.md`
+  is non-empty (`[ -s … ]` — durable refutation adjudications staged for promotion),
+  probe the LIVE gate for the 4th allowlist entry —
+  `grep -qF '.harness/codex-refutations.md' ~/.claude/drive-enforcement-worktree/bin/drive-conformance.sh`.
+  Admitted (the grep succeeds) ⇒ promote the pending entries into
+  `.harness/codex-refutations.md`, RE-DERIVING each entry's `CR-<n>` id from the LIVE
+  committed ledger at promotion time: next id = (the ledger's current max `## CR-<n>`,
+  via grep) + 1, assigned sequentially in pending-file order. A pending entry that
+  carries an unfenced `> **VOID CR-<n> …**` annotation is DEFEATED and is SKIPPED at
+  promotion — never promoted, never renumbered (the run-local file keeps the record);
+  only live (un-voided) pending entries are promoted and renumbered. An absent or entry-less
+  ledger has max 0 (the first promoted entry = CR-1; create the missing file with the
+  B-3 schema header — the ledger's purpose/usage header + entry-schema block — before
+  appending). The pending file's ids are
+  PROVISIONAL by contract — a post-rebase base append may already occupy them (the
+  base-preflight auto-rebases when the base advanced this ledger), so NEVER append a
+  staged/remembered number verbatim; renumber, then `git add` the file so the
+  renumbered entries ride the SAME single ledger
+  commit below. Absent, or the probe fails (e.g. the enforcement worktree is missing) ⇒
+  leave the entries run-local and surface the pending-activation followup at Gate B
+  (graceful degrade — never a push false-block). Then,
   **if** `$RUN_DIR/finalize-todo.md` is non-empty (finalize produced architectural
   findings), promote it into the driven project's repo-root `TODO.md` (append under
   its dated run heading; if `TODO.md` does not exist, create it from the
@@ -149,11 +171,14 @@ standalone `/drive-ship` precondition STOP self-sufficient.)
   and stays out of the commit. `git commit` all of the above on `featureBranch` as a
   SINGLE commit. (Slice subagents wrote to `$RUN_DIR`; this is where it lands in the
   repo.) **This commit MUST touch EXACTLY the ledger files — `.harness/decisions.md`,
-  `.harness/followups.md`, and repo-root `TODO.md` when finalize produced
-  architectural findings — and nothing else, as a single commit.** Those three paths
+  `.harness/followups.md`, repo-root `TODO.md` when finalize produced architectural
+  findings, and `.harness/codex-refutations.md` when pending refutations exist AND the
+  live gate admits it — and nothing else, as a single commit.** (The conditional members
+  stay conditional: `TODO.md` iff finalize-todo, `codex-refutations` iff
+  pending+activated.) Those paths
   are the ship gate's ledger allowlist (`SHIP_LEDGER_ALLOWLIST` in
-  `bin/drive-conformance.sh`, now 3 entries: `{.harness/decisions.md,
-  .harness/followups.md, TODO.md}`). The ship invariant tolerates one post-review
+  `bin/drive-conformance.sh`, now 4 entries: `{.harness/decisions.md,
+  .harness/followups.md, TODO.md, .harness/codex-refutations.md}`). The ship invariant tolerates one post-review
   commit only if `R..tip` is a subset of that allowlist; staging any other file
   (incl. other `.harness/*`), or splitting into >1 commit, makes the ship conformance
   check fail. Keep this in sync with the `SHIP_LEDGER_ALLOWLIST` constant.
@@ -202,7 +227,7 @@ routine** — set `state.waiting="stop:suite-red"`, then emit the run graph (rea
 Before surfacing the PR for approval, run `bin/drive-conformance.sh $RUN_DIR --mode
 ship` and proceed only if it reports clean — it verifies all shipped **code** was
 covered by a converged, SHA-bound review (∃ the CONVERGED finalize review with
-`reviewed-sha R` that is an ancestor of tip with `R..tip` ≤1 commit ⊆ the 3-file
+`reviewed-sha R` that is an ancestor of tip with `R..tip` ≤1 commit ⊆ the 4-file
 ledger allowlist — NOT strict `R == tip`, since ship's own ledger commit sits one
 commit past finalize's reviewed-sha — AND ≥1 counting phase-integration review as a
 precondition). On a violation, run `/drive-finalize` so its `reviewed-sha` covers the

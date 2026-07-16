@@ -156,6 +156,9 @@ passive Claude reviewer spawned WHILE it runs), **including its outcome tier TAB
 Step 1 — the `OK` / `CODEX_KILLED_TIMEOUT` / `CODEX_UNAVAILABLE` / `HELPER_ERROR` tier), with the
 finalize 3-lens prompt below. CRITICAL BOUNDARY: pass PATHS + git refs only — never any
 implementer's or finalizer's notes/rationale (preserves the reviewer's independent judgment).
+The auditor prompts (the codex prompt file + the reviewer scope below) must NEVER include
+refutation-ledger content (`$RUN_DIR/codex-refuted-*.md`, `$RUN_DIR/codex-refutations-pending.md`,
+`.harness/codex-refutations.md`) — finalize's voices stay independent of do-not-re-raise steers.
 
 Codex FIRST (run `bin/drive-codex.sh` from the MAIN context via `Bash(run_in_background:true)`,
 NEVER inside a subagent that waits on it). First `mkdir -p "$RUN_DIR/tmp"` (TMPDIR-namespaced). The
@@ -353,6 +356,16 @@ improvement outside the diff → `$RUN_DIR/followups.md`, skip it.
   and skip — VETOED).
 - Lens 3 bugs: fix them; add a test that FAILS against the pre-fix code, then passes.
 - Lens 2 gaps: add the named tests, driving real production wiring (not stubbed state).
+**Class-sweep fix rounds (R5), bounded to the run-diff scope (the scope-creep HARD GATE
+above unchanged):** when a P1 is a parser/validator/regex/classifier/reader/wording-class
+defect, grep-enumerate every sibling site of the same input shape across the run diff and
+fix ALL of them in this one round; state the class boundary (the grep pattern + the
+file:line member list) in the commit message, and mutation-verify per fixed site. This
+EXPLICITLY includes the de-slop wording-class sweep: a flagged wording/naming P2 slop
+item sweeps its WHOLE class in the same round, not one instance per round. Class members
+outside the run diff: edit them ONLY when they ARE the root cause of a flagged P1 (the
+existing scope-exception — append the scope-widening note to `$RUN_DIR/decisions.md`);
+otherwise record them to `$RUN_DIR/followups.md` and skip.
 Do NOT create any `TODO.md` — architectural findings go to the durable
 `$RUN_DIR/finalize-todo.md` OUTSIDE the worktree (the ship stage materializes the driven
 `TODO.md`), so `git add -A` does not touch it.
@@ -452,7 +465,8 @@ DEPENDS on each being honored:
 5. **Ship TODO promotion + allowlist [AC17].** drive-ship.md promotes
    `$RUN_DIR/finalize-todo.md` → repo-root `TODO.md` within its single ledger-promotion
    commit; `SHIP_LEDGER_ALLOWLIST` is EXTENDED to include `TODO.md` (so the one ship commit
-   touching {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`} stays ≤1 commit ⊆
+   touching {`.harness/decisions.md`, `.harness/followups.md`, `TODO.md`,
+   `.harness/codex-refutations.md`} stays ≤1 commit ⊆
    allowlist); Gate B surfaces it from the durable `$RUN_DIR` copy. drive-ship.md's
    remediation prose moves off "rerun the final phase review" onto "re-run `/drive-finalize`
    so its reviewed-sha covers the shipped tip." If `finalize-todo.md` is absent (no
