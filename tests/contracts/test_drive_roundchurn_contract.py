@@ -18,8 +18,8 @@ Pins the five Tier-C clauses + the refutation-ledger artifacts + the D-9 wiring:
   * A-D21 drive-design detached-worktree guard repair (AC18).
 
 Discipline per the batch's own R9 standard: each [M] pin is section/block-bound to the
-clause it guards (a file-wide token match does not satisfy it), and each was
-mutation-verified at implement (delete the clause -> red; restore -> green).
+clause it guards (a file-wide token match does not satisfy it) and mutation-verified
+(delete the clause -> red; restore -> green).
 """
 import re
 import subprocess
@@ -342,36 +342,43 @@ def test_r6_suite_rerun_ban_bounded_to_eligible_rounds():
 # =========================================================================== #
 # The batch's OWN new-artifact allowlist (the only filenames any landed clause may
 # introduce). Pre-existing shapes the clauses reference are baseline, not introductions.
-_NEW_ARTIFACT_ALLOWLIST_RE = re.compile(
-    r"codex-refuted-(<scope>|\*)\.md"
-    r"|codex-refutations-pending\.md"
-    r"|codex-refutations\.md"
-    r"|verify-design-claims-(design|phase<P>|\*)\.md"
+# ONE canonical spelling tuple — (root, unrooted spelling), every placeholder variant
+# explicit — from which BOTH allowlist grammars derive (the unrooted-mention regex here
+# and the rooted normalized-name set below), so the two cannot drift apart.
+_NEW_ARTIFACT_FAMILY_SPELLINGS = (
+    ("$RUN_DIR", "codex-refuted-<scope>.md"),
+    ("$RUN_DIR", "codex-refuted-*.md"),
+    ("$RUN_DIR", "codex-refutations-pending.md"),
+    (".harness", "codex-refutations.md"),
+    ("$RUN_DIR", "verify-design-claims-design.md"),
+    ("$RUN_DIR", "verify-design-claims-phase<P>.md"),
+    ("$RUN_DIR", "verify-design-claims-*.md"),
 )
 
-# ROOT-ANCHORED BOUNDARY CAPTURE (round-2 RESTRUCTURE of the extraction-blindness class
-# — codex r1 #2 `.md`-stem bypass, codex r2 #1 extensionless bypass; closed by
-# CONSTRUCTION, never another token-pattern patch): every occurrence of a run/repo
-# artifact ROOT (`$RUN_DIR/`, `${RUN_DIR}/`, `.harness/`) captures the ENTIRE following
-# path token up to a hard boundary (whitespace, backtick, quote, paren, brace, comma) —
-# extension or not, placeholder or not. An artifact literal cannot be spelled past this
-# capture without leaving the roots where run/repo artifacts live (the pre-existing
+_NEW_ARTIFACT_ALLOWLIST_RE = re.compile(
+    "|".join(re.escape(s) for _, s in _NEW_ARTIFACT_FAMILY_SPELLINGS)
+)
+
+# ROOT-ANCHORED BOUNDARY CAPTURE (the extraction-blindness class closed by CONSTRUCTION,
+# never another token-pattern patch): every occurrence of a run/repo artifact ROOT
+# (`$RUN_DIR/`, `${RUN_DIR}/`, `.harness/`) captures the ENTIRE following path token up
+# to a hard boundary (whitespace, backtick, quote, paren, brace, comma) — extension or
+# not, placeholder or not. An artifact literal cannot be spelled past this capture
+# without leaving the roots where run/repo artifacts live (the pre-existing
 # EXTENSIONLESS `$RUN_DIR/completedAt` lands in the BASELINE below, not a blind spot).
-# The `${RUN_DIR}` alternation subsumes round-2 Claude MINOR-2; bare-name mentions (an
-# artifact named without its root) stay OUT of scope per that reviewer's false-red
-# rationale — a general bare-name grammar would false-red ordinary prose; that direction
-# is covered by the R6 section pins + review.
+# Bare-name mentions (an artifact named without its root) stay OUT of scope — a general
+# bare-name grammar would false-red ordinary prose; that direction is covered by the R6
+# section pins + review.
 _ROOTED_CAPTURE_RE = re.compile(r"(\$RUN_DIR|\$\{RUN_DIR\}|\.harness)/([^\s`'\"(){},]*)")
 
 
 def _is_directory_or_glob_mention(path):
-    """The ONE explicit non-file filter (named, per the round-2 directive): a rooted
-    mention whose tail is the root itself (``), the bare scratch dir (`tmp`/`tmp/`), a
-    worktree dir path (`wt`/`wt/...` — worktrees hold repo files, not run artifacts), or
-    the dir-glob `*` (drive-ship.md's "other `.harness/*`"). Corpus-verified: these are
-    the ONLY non-file rooted mentions across the seven specs; the directive's
-    anticipated state-json-key context has ZERO rooted occurrences, so no filter is
-    minted for it (a dead filter would be untestable; the scan stays strictly tighter)."""
+    """The ONE explicit non-file filter: a rooted mention whose tail is the root itself
+    (``), the bare scratch dir (`tmp`/`tmp/`), a worktree dir path (`wt`/`wt/...` —
+    worktrees hold repo files, not run artifacts), or the dir-glob `*` (drive-ship.md's
+    "other `.harness/*`"). Corpus-verified: these are the ONLY non-file rooted mentions
+    across the seven specs; no filter is minted for a context with zero rooted
+    occurrences (a dead filter would be untestable; the scan stays strictly tighter)."""
     return path in ("", "*", "tmp", "tmp/", "wt") or path.startswith("wt/")
 
 
@@ -380,10 +387,10 @@ def _normalize_rooted(tok):
     (same-function symmetry): `<scope>`/`<P>`/`<sliceId>`/`<N>`/`<runId>`-style
     placeholders and the `*` glob collapse to `@`; the bare `-N.` round placeholder
     likewise — placeholder RESPELLINGS of one family test as one name. NON-LOSSY
-    otherwise (D-44, codex r3 #1): sentence punctuation is NOT stripped here — the
-    membership helper below tests the raw form and the single-final-period-stripped
-    form EXPLICITLY, never silently collapsing a deviant spelling (`completedAt..`)
-    onto a baseline name."""
+    otherwise (D-44): sentence punctuation is NOT stripped here — the membership
+    helper below tests the raw form and the single-final-period-stripped form
+    EXPLICITLY, never silently collapsing a deviant spelling (`completedAt..`) onto
+    a baseline name."""
     tok = re.sub(r"<[A-Za-z][A-Za-z0-9]*>", "@", tok)
     tok = tok.replace("*", "@")
     tok = re.sub(r"-N(?=\.)", "-@", tok)
@@ -414,25 +421,22 @@ def _is_known_artifact_name(tok):
     return tok in known or (tok.endswith(".") and tok[:-1] in known)
 
 
-# The rooted NORMALIZED spellings of the batch's four allowlisted shapes (codex-refuted's
-# `<scope>`/`*` respellings collapse to one `@` form; the `verify-design-claims-*` family
-# form is included for a future rooted glob spelling).
+# The rooted NORMALIZED spellings of the batch's four allowlisted shapes, derived from
+# the same canonical tuple as `_NEW_ARTIFACT_ALLOWLIST_RE` (codex-refuted's `<scope>`/`*`
+# respellings collapse to one `@` form; the `verify-design-claims-*` family form covers
+# a future rooted glob spelling).
 _ROOTED_ALLOWLIST_NORM = {
-    "$RUN_DIR/codex-refuted-@.md",
-    "$RUN_DIR/codex-refutations-pending.md",
-    "$RUN_DIR/verify-design-claims-design.md",
-    "$RUN_DIR/verify-design-claims-phase@.md",
-    "$RUN_DIR/verify-design-claims-@.md",
-    ".harness/codex-refutations.md",
+    _normalize_rooted(f"{root}/{spelling}")
+    for root, spelling in _NEW_ARTIFACT_FAMILY_SPELLINGS
 }
 
 # The PRE-BATCH baseline inventory: _rooted_artifact_names() over ALL ELEVEN owned prose
 # surfaces (the seven drive-*.md specs + drive.md + README.md + CLAUDE.md +
 # docs/drive-enforcement.md — D-44 extended set) at d41b73e (the batch's base), frozen so
-# the test needs no git at runtime (a shallow CI clone has no d41b73e object). Round-3
-# re-derivation executed at implement: 56/56 exact (zero missing, zero extra; baseline ∩
-# allowlist = ∅). Maintenance path: a later batch that LEGITIMATELY introduces an
-# artifact extends the allowlist above (or, once shipped and baseline, this inventory)
+# the test needs no git at runtime (a shallow CI clone has no d41b73e object).
+# Re-derivation executed against d41b73e: 56/56 exact (zero missing, zero extra;
+# baseline ∩ allowlist = ∅). Maintenance path: a later batch that LEGITIMATELY introduces
+# an artifact extends the allowlist above (or, once shipped and baseline, this inventory)
 # in the same reviewed commit.
 _ROOTED_BASELINE_NORM = {
     "$RUN_DIR/.tmp.@",
@@ -511,8 +515,7 @@ _SCAN_SURFACES = (REVIEW, IMPLEMENT, FINALIZE, HARDEN, PLAN, DESIGN, SHIP,
 
 
 def test_new_artifact_names_stay_within_the_allowlist():
-    """AC5(a), root-anchored + shape-agnostic, RE-BOUND by D-44 (the pre-announced
-    descope fired on the 3rd extraction-blindness finding). Best-effort inventory:
+    """AC5(a), root-anchored + shape-agnostic, RE-BOUND by D-44. Best-effort inventory:
     exotic future spellings may evade this scan; the LOAD-BEARING allowlist enforcement
     is the executed behavioral suites (AC9/AC10), the four-shape allowlist scan, and
     dual-voice review. Completeness findings against this scan route to followups, not
@@ -524,11 +527,11 @@ def test_new_artifact_names_stay_within_the_allowlist():
     batch's four-shape allowlist, with the raw and sentence-period-stripped forms
     membership-tested SEPARATELY (non-lossy, D-44). Standing executed probes:
     extensionless `$RUN_DIR/refutation-cache` => RED; brace-form `${RUN_DIR}/x.md` =>
-    RED; the r1 pair (`$RUN_DIR/refutation-cache.md`, `$RUN_DIR/bogus-artifact.md`)
-    stay RED; r3's `$RUN_DIR/completedAt..` (lossy-collapse) => RED; r3's
-    `$RUN_DIR/rogue-round3` in drive.md (omitted surface) => RED; the clean tree =>
-    GREEN twice (deterministic — no network, no git at runtime). Supplementary:
-    unrooted mentions of the two new families must still match an allowlisted shape."""
+    RED; `$RUN_DIR/refutation-cache.md` and `$RUN_DIR/bogus-artifact.md` => RED;
+    `$RUN_DIR/completedAt..` (lossy-collapse) => RED; `$RUN_DIR/rogue-round3` in
+    drive.md (omitted surface) => RED; the clean tree => GREEN twice (deterministic —
+    no network, no git at runtime). Supplementary: unrooted mentions of the two new
+    families must still match an allowlisted shape."""
     unrooted_re = re.compile(r"(?:codex-refut|verify-design-claims)[A-Za-z0-9<>*().-]*\.\w+")
     for md in _SCAN_SURFACES:
         text = _text(md)
@@ -589,7 +592,7 @@ def test_r7_five_bounds_present():
     assert "NEVER injected into harden/finalize auditor prompts" in r7
     assert "prior-round enrichment" in r7
     assert "EXTENDS, and does not reword" in r7
-    # harden-1 (codex #1 actionable half): the applicable-entries discovery binding
+    # the applicable-entries discovery binding
     assert "Applicable entries = those in" in r7
     assert "whose Finding/Qualifier matches the re-flagged finding" in r7
     assert "greps BOTH files before composing a re-audit prompt" in r7
@@ -664,15 +667,13 @@ _LEDGER_ENTRY_RE = re.compile(
 
 
 def _lint_ledger_schema(text):
-    """The ONE canonical ledger-schema grammar (round-4 RESTRUCTURE — the accumulating
-    per-element drift guards folded into a single validator; class boundary: ledger
-    structural drift). Validates ALL structural elements OUTSIDE the fenced schema
-    template:
+    """The ONE canonical ledger-schema grammar (class boundary: ledger structural
+    drift). Validates ALL structural elements OUTSIDE the fenced schema template:
 
     (a) CommonMark-correct fence tracking: an up-to-3-space-indented ``` line IS a
         fence toggle; a 4+-space-indented backtick line is an indented CODE BLOCK and
-        toggles NOTHING (codex r4 #2, reproduced: a 4-space ``` desynced the old
-        tracker and exempted a deviant heading).
+        toggles NOTHING (a 4-space ``` must never desync the tracker and exempt a
+        deviant heading).
     (b) Every unfenced heading-shaped line (`^ {0,3}#{1,6}[ \\t]`) that mentions `CR-`
         must be the EXACT column-0 h2 schema form `## CR-<n> — ` — one rule closes the
         en-dash / `CR-3a` / missing-space / indented / h1–h6 / tab-after-hash deviants
@@ -686,15 +687,15 @@ def _lint_ledger_schema(text):
         reds HERE and never reaches the executor's parse (closes the silent rc-only
         degradation by construction).
     (d) Entry ids are UNIQUE — a duplicate `CR-<n>` reds loudly. This is the BACKSTOP
-        for the phase-r1 collision class (reproduced: a post-rebase base append and a
-        verbatim-promoted pending entry both numbered CR-3): pending-file ids are
-        PROVISIONAL and ship's promotion RE-DERIVES them from the live ledger's max
+        for the promotion-collision class (a post-rebase base append and a
+        verbatim-promoted pending entry can both carry the same id): pending-file ids
+        are PROVISIONAL and ship's promotion RE-DERIVES them from the live ledger's max
         (drive-ship.md § Ship worktree + ledger promotion), so a duplicate reaching
         this lint means the promotion contract was violated.
     (e) Every unfenced VOID annotation line carries the id-carrying form
         `> **VOID CR-<n> (<runId>, <date>):** …` AND its id matches an existing entry
-        id — association is CHECKED, never inferred from position (harden-2, D-46; an
-        id-less or dangling-id VOID reds loudly)."""
+        id — association is CHECKED, never inferred from position (an id-less or
+        dangling-id VOID reds loudly)."""
     # (a) + (b): line-wise, with CommonMark fence tracking; collect VOID lines for (e).
     inside_fence = False
     void_lines = []
@@ -755,13 +756,13 @@ def _lint_ledger_schema(text):
 
 def _ledger_repro_commands():
     """Every `## CR-<n>` entry's (repro command, declared oracle) pair, keyed by entry
-    id — GROWTH-TOLERANT (codex r1 MAJOR-1): a future CR-3 promotion EXTENDS the
-    executed coverage instead of redding AC7. Runs `_lint_ledger_schema` FIRST (the
-    single grammar guarantees each form exists); this extractor then keeps its
-    exact-form parse. Asserts the two D-27 seeds (CR-1/CR-2) are present. The
-    entry-schema TEMPLATE in the header's fenced example is not an entry (extraction
-    anchors on the column-0 `## CR-<n> — ` headings; the template heading's `<n>` is
-    non-digit and it sits inside the fence)."""
+    id — GROWTH-TOLERANT: a future CR-3 promotion EXTENDS the executed coverage
+    instead of redding AC7. Runs `_lint_ledger_schema` FIRST (the single grammar
+    guarantees each form exists); this extractor then keeps its exact-form parse.
+    Asserts the two D-27 seeds (CR-1/CR-2) are present. The entry-schema TEMPLATE in
+    the header's fenced example is not an entry (extraction anchors on the column-0
+    `## CR-<n> — ` headings; the template heading's `<n>` is non-digit and it sits
+    inside the fence)."""
     text = _text(LEDGER)
     _lint_ledger_schema(text)
     cmds = {}
@@ -784,12 +785,12 @@ def _assert_declared_result(entry_id, cmd, expected, proc):
     - `exit <N>` binds the exit code;
     - a double-quoted "literal" binds stdout EXACTLY: stdout must equal the literal,
       tolerating exactly ONE trailing newline (the shell convention) — never a
-      whitespace-insensitive strip (codex r4 #1, reproduced: ` X ` vs "X" passed
-      under .strip(); it now REDS). An output-only declaration also requires exit 0
-      (an entry wanting a nonzero exit must declare it).
+      whitespace-insensitive strip (` X ` vs "X" must RED, not pass under a .strip()).
+      An output-only declaration also requires exit 0 (an entry wanting a nonzero
+      exit must declare it).
     A declaration matching NEITHER form fails CLOSED — loud red, never a silent
-    rc-only fallback (codex r4 #1, reproduced: bare-word `— expected: READY` fell
-    through to rc==0 and `stdout=WRONG` passed; it now REDS)."""
+    rc-only fallback (a bare-word `— expected: READY` must RED, never fall through
+    to an rc==0 check that lets `stdout=WRONG` pass)."""
     assert expected is not None, (
         f"{entry_id}: no declaration reached the executor (the schema-lint requires one)"
     )
@@ -831,8 +832,8 @@ def test_committed_ledger_header_and_seed_entries():
     assert "the entry is VOID" in norm
     assert "executed red in the faithful env ALWAYS defeats an entry" in norm
     assert "repro timeout refutes nothing and voids nothing" in norm
-    # harden-1/2 void-recording mechanics: id-carrying append-only annotation, never a
-    # heading (the id makes any mis-placement self-describing and greppable — D-46)
+    # void-recording mechanics: id-carrying append-only annotation, never a heading
+    # (the id makes any mis-placement self-describing and greppable)
     assert "Record a void by appending" in norm
     assert "`> **VOID CR-<n> (<runId>, <date>):** <observed differing result>`" in norm
     assert "never a new `## CR-<n>` heading" in norm
@@ -845,13 +846,12 @@ def test_committed_ledger_header_and_seed_entries():
 def test_committed_ledger_repros_execute_green():
     """[M] AC7 (green direction): EVERY committed entry's recorded `env -i ... sh -c ...`
     line is EXECUTED from the repo root and validated against its DECLARED `— expected:`
-    oracle — exit code and/or exact quoted output (codex r3 #3, IMPLEMENT arm; the B-3
-    schema declares `— expected: <exact output/exit>` and voids on "A differing result
-    (output/exit)"). The schema-lint requires a declaration per entry and the executor
-    fails CLOSED on an unrecognized serialization (round 4 — no silent rc-only
-    fallback). The entries are replayable as written (a drift in any anchored token reds
-    the suite here rather than at replay time), and a future promotion joins the
-    coverage automatically."""
+    oracle — exit code and/or exact quoted output (the B-3 schema declares
+    `— expected: <exact output/exit>` and voids on "A differing result (output/exit)").
+    The schema-lint requires a declaration per entry and the executor fails CLOSED on
+    an unrecognized serialization (no silent rc-only fallback). The entries are
+    replayable as written (a drift in any anchored token reds the suite here rather
+    than at replay time), and a future promotion joins the coverage automatically."""
     for entry_id, (cmd, expected) in _ledger_repro_commands().items():
         proc = subprocess.run(
             cmd, shell=True, cwd=str(REPO_ROOT), capture_output=True, text=True, timeout=60
@@ -898,12 +898,12 @@ def test_committed_seed_repros_red_direction(tmp_path):
 
 
 # =========================================================================== #
-# Phase-r1 — promotion re-derives CR-<n> from the live ledger (collision class)
+# Promotion re-derives CR-<n> from the live ledger (collision class)
 # =========================================================================== #
 # Two schema-valid entries that BOTH carry the id CR-3: the first simulates another
 # run's refutation landing on the base FIRST (present in the rebased committed ledger),
-# the second is this run's pending entry promoted VERBATIM (the reproduced bug — only
-# the ids collide; each entry is individually schema-clean).
+# the second is this run's pending entry promoted VERBATIM (only the ids collide; each
+# entry is individually schema-clean).
 _BASE_APPENDED_CR3 = """
 ## CR-3 — "another run's refutation (landed on base first)" — REFUTED (other-run, 2026-07-15)
 - recurrence: collision fixture.
@@ -931,29 +931,57 @@ _PENDING_PROVISIONAL_CR4 = """
     — expected: exit 0
 - scope qualifiers: order fixture.
 """
+_PENDING_VOIDED_CR1 = """
+## CR-1 — "voided-in-run pending entry (provisional id)" — REFUTED (this-run, 2026-07-15)
+- recurrence: void fixture.
+- finding (specific): the staged entry DEFEATED in-run before promotion.
+- evidence: void fixture.
+- repro (hermetic): `env -i PATH=/usr/bin:/bin sh -c 'true'`
+    — expected: exit 0
+- scope qualifiers: void fixture.
+> **VOID CR-1 (this-run, 2026-07-15):** replay exited 1 at re-flag
+"""
 
 
 def _renumber_pending_per_promotion_contract(ledger_text, pending_text):
     """drive-ship.md's promotion rule, EXECUTED (the reference implementation of the
-    contract this test pins): next id = (the live committed ledger's current max
-    `## CR-<n>`, via grep) + 1, assigned sequentially in pending-file order — the
-    pending file's ids are PROVISIONAL and are never appended verbatim. An absent or
-    entry-less ledger has max 0 (first promoted entry = CR-1)."""
+    contract this test pins): a pending entry (its `## CR-<n> — ` heading to the next
+    heading or EOF) carrying an unfenced `> **VOID` annotation line is DEFEATED and
+    SKIPPED — never promoted, never renumbered; for the live remainder, next id =
+    (the live committed ledger's current max `## CR-<n>`, via grep) + 1, assigned
+    sequentially in pending-file order — the pending file's ids are PROVISIONAL and
+    are never appended verbatim. An absent or entry-less ledger has max 0 (first
+    promoted entry = CR-1)."""
     live_max = max(
         (int(m.group(1)) for m in re.finditer(r"^## CR-(\d+) — ", ledger_text, re.MULTILINE)),
         default=0,
     )
-    counter = {"next": live_max}
 
-    def _sub(m):
-        counter["next"] += 1
-        return f"## CR-{counter['next']} — "
+    def _has_unfenced_void(entry):
+        inside_fence = False
+        for ln in entry.splitlines():
+            if re.match(r" {0,3}```", ln):
+                inside_fence = not inside_fence
+                continue
+            if not inside_fence and re.match(r" {0,3}> \*\*VOID\b", ln):
+                return True
+        return False
 
-    return re.sub(r"^## CR-\d+ — ", _sub, pending_text, flags=re.MULTILINE)
+    heads = list(re.finditer(r"^## CR-\d+ — ", pending_text, re.MULTILINE))
+    bounds = [m.start() for m in heads] + [len(pending_text)]
+    out = [pending_text[: bounds[0]]]  # preamble, byte-preserved
+    next_id = live_max
+    for i in range(len(heads)):
+        entry = pending_text[bounds[i] : bounds[i + 1]]
+        if _has_unfenced_void(entry):
+            continue  # DEFEATED entry: skipped, never renumbered
+        next_id += 1
+        out.append(re.sub(r"^## CR-\d+ — ", f"## CR-{next_id} — ", entry, count=1))
+    return "".join(out)
 
 
 def test_promotion_rederivation_contract_pinned():
-    """[M] phase-r1: the provisional/renumber contract is stated at BOTH read sites —
+    """[M] the provisional/renumber contract is stated at BOTH read sites —
     drive-ship.md's activation-aware promotion step (RE-DERIVE from the live ledger's
     max, +1 sequential, pending ids PROVISIONAL, never a staged number verbatim) and
     drive-review.md's R7 pending-file bullet. Mutation-verified: deleting either
@@ -971,13 +999,12 @@ def test_promotion_rederivation_contract_pinned():
 
 
 def test_promotion_renumbering_prevents_ledger_id_collision():
-    """[M] phase-r1 codex MAJOR (REPRODUCED before fixing: rc=1, `duplicate ledger
-    entry id CR-3`): after the base-preflight's auto-rebase, the committed ledger can
-    already hold the id a pending entry staged — a verbatim append trips the schema
-    lint at ship time with no normal-resume repair (promotion commits before the suite;
+    """[M] after the base-preflight's auto-rebase, the committed ledger can already
+    hold the id a pending entry staged — a verbatim append trips the schema lint at
+    ship time with no normal-resume repair (promotion commits before the suite;
     resume SKIPs an existing ledger commit). Both directions, executed:
-    - BACKSTOP: the naive verbatim append (the reproduced bug) => the lint reds loudly
-      with the duplicate-id message;
+    - BACKSTOP: the naive verbatim append => the lint reds loudly with the
+      duplicate-id message;
     - CONTRACT: applying drive-ship.md's re-derivation rule => unique ids, lint green,
       the promoted entry's content preserved (only its id changes)."""
     rebased_ledger = _text(LEDGER) + _BASE_APPENDED_CR3
@@ -997,11 +1024,11 @@ def test_promotion_renumbering_prevents_ledger_id_collision():
 
 
 # =========================================================================== #
-# Harden-1 — promotion base cases, lint trigger ring, fence-tracker alignment
+# Promotion base cases, lint trigger ring, fence-tracker alignment
 # =========================================================================== #
 def test_promotion_two_pending_entries_sequential_in_file_order():
-    """[M] harden-1: with TWO pending entries, re-derived ids are assigned sequentially
-    in PENDING-FILE ORDER — live max 3 ⇒ the FIRST pending entry becomes CR-4 and the
+    """[M] with TWO pending entries, re-derived ids are assigned sequentially in
+    PENDING-FILE ORDER — live max 3 ⇒ the FIRST pending entry becomes CR-4 and the
     SECOND CR-5 (order preservation, not just uniqueness); the promoted ledger lints
     green."""
     rebased_ledger = _text(LEDGER) + _BASE_APPENDED_CR3
@@ -1022,11 +1049,11 @@ def test_promotion_two_pending_entries_sequential_in_file_order():
 
 
 def test_promotion_first_entry_on_absent_or_entryless_ledger():
-    """[M] harden-1: the promotion formula is bound at the empty base — an absent or
-    entry-less committed ledger has max 0, so a driven repo's FIRST-ever promotion mints
-    CR-1 (drive-ship.md creates the missing file with the B-3 schema header before
-    appending). Executed: pre-fix the reference impl raised ValueError on the empty
-    max(); the drive-ship.md clause is pinned AFTER the formula sentence."""
+    """[M] the promotion formula is bound at the empty base — an absent or entry-less
+    committed ledger has max 0, so a driven repo's FIRST-ever promotion mints CR-1
+    (drive-ship.md creates the missing file with the B-3 schema header before
+    appending). Both halves checked: the spec clause and the executed empty-base
+    renumbering."""
     promo = _norm(_section(_text(SHIP), r"^##\s+Ship worktree \+ ledger promotion\b"))
     assert "An absent or entry-less ledger has max 0" in promo
     assert "the first promoted entry = CR-1" in promo
@@ -1037,36 +1064,68 @@ def test_promotion_first_entry_on_absent_or_entryless_ledger():
     assert ids == ["CR-1"], f"first promotion on an entry-less ledger must mint CR-1, got {ids}"
 
 
+def test_promotion_skips_voided_pending_entries():
+    """[M] a pending entry carrying an unfenced `> **VOID CR-<n> …**` annotation (its
+    own provisional id) is DEFEATED — promotion SKIPS it: never promoted, never
+    renumbered, so no VOID annotation carrying a provisional id can cross into the
+    committed ledger and mis-void the live entry that happens to hold that id.
+    Executed: live ledger CR-1..CR-2 + one voided pending entry + one live pending
+    entry ⇒ the output holds ONLY the live entry, renumbered to CR-3; the voided
+    entry and its VOID line are absent; the merged ledger lints green. The skip
+    clause is pinned in drive-ship.md's promotion step (deleting it reds)."""
+    live = _text(LEDGER)
+    renumbered = _renumber_pending_per_promotion_contract(
+        live, _PENDING_VOIDED_CR1 + _PENDING_PROVISIONAL_CR3
+    )
+    ids = re.findall(r"^## (CR-\d+) — ", renumbered, re.MULTILINE)
+    assert ids == ["CR-3"], f"only the un-voided entry may promote (as CR-3), got {ids}"
+    assert "this run's pending entry (provisional id)" in renumbered
+    assert "voided-in-run pending entry" not in renumbered, (
+        "the DEFEATED (voided) pending entry must be SKIPPED at promotion"
+    )
+    assert "**VOID" not in renumbered, (
+        "no VOID annotation may ride a promotion into the committed ledger"
+    )
+    merged = live + renumbered
+    _lint_ledger_schema(merged)
+    assert [m.group(1) for m in _LEDGER_ENTRY_RE.finditer(merged)] == [
+        "CR-1", "CR-2", "CR-3",
+    ]
+    # the spec half: drive-ship.md's promotion step states the skip
+    promo = _norm(_section(_text(SHIP), r"^##\s+Ship worktree \+ ledger promotion\b"))
+    assert "is DEFEATED and is SKIPPED at promotion — never promoted, never renumbered" in promo
+    assert "only live (un-voided) pending entries are promoted and renumbered" in promo
+
+
 def test_ledger_lint_heading_trigger_covers_all_heading_forms():
-    """[M] harden-1 (F-8(a)): lint (b)'s trigger covers the WHOLE heading permutation
-    ring — h1..h6 and tab-after-hash forms — since each also starts no entry, so its
-    body would absorb silently into the previous entry. Executed probes: each deviant
-    form REDS on a scratch ledger; the clean ledger (and the lint-safe `> **VOID`
-    annotation form inside an entry) stays green."""
+    """[M] lint (b)'s trigger covers the WHOLE heading permutation ring — h1..h6 and
+    tab-after-hash forms — since each also starts no entry, so its body would absorb
+    silently into the previous entry. Executed probes: each deviant form REDS on a
+    scratch ledger; the clean ledger (and the lint-safe `> **VOID` annotation form
+    inside an entry) stays green."""
     clean = _text(LEDGER)
     _lint_ledger_schema(clean)  # green baseline
     for deviant in (
-        "# CR-9 — x",       # h1 (pre-widening: silently absorbed)
-        "##### CR-9 — x",   # h5 (pre-widening: silently absorbed)
-        "##\tCR-9 — x",     # tab-after-hash (pre-widening: silently absorbed)
-        "## CR-1 VOID (someRun, 2026-07-16)",  # the void-HEADING anti-form (P2-1 probe)
+        "# CR-9 — x",       # h1
+        "##### CR-9 — x",   # h5
+        "##\tCR-9 — x",     # tab-after-hash
+        "## CR-1 VOID (someRun, 2026-07-16)",  # the void-HEADING anti-form
     ):
         with pytest.raises(AssertionError, match="heading drift"):
             _lint_ledger_schema(clean + "\n" + deviant + "\n")
     # the mandated void-recording form is an annotation line INSIDE the entry — green
-    # (EOF-appended = inside the LAST entry, CR-2; id-carrying form per D-46)
+    # (EOF-appended = inside the LAST entry, CR-2; the id-carrying form)
     _lint_ledger_schema(clean + "\n> **VOID CR-2 (someRun, 2026-07-16):** repro exited 1 at re-flag\n")
 
 
 def test_void_annotation_id_binding():
-    """[M] harden-2 (D-46; the codex void finding's actionable residual — the
-    append-only-contradiction half is REFUTED, RF-2): the VOID annotation form carries
-    the target entry id (`> **VOID CR-<n> (<runId>, <date>):** …`) and lint rule (e)
-    makes the association CHECKED, not position-implied. Executed probes:
+    """[M] the VOID annotation form carries the target entry id
+    (`> **VOID CR-<n> (<runId>, <date>):** …`) and lint rule (e) makes the
+    association CHECKED, not position-implied. Executed probes:
     - mid-file: a VOID line inside CR-1 BEFORE the `## CR-2` heading ⇒ lint GREEN
       (annotating a non-terminal entry is rule-conformant — no rewrite forced);
     - dangling id: a VOID naming CR-9 on the clean 2-entry ledger ⇒ red loudly;
-    - stale id-less r1 form: `> **VOID (<runId>…` ⇒ red loudly (cannot dodge (e))."""
+    - id-less form: `> **VOID (<runId>…` ⇒ red loudly (cannot dodge (e))."""
     clean = _text(LEDGER)
     void_cr1 = "> **VOID CR-1 (someRun, 2026-07-16):** repro exited 1 at re-flag\n\n"
     mid = clean.replace("## CR-2 — ", void_cr1 + "## CR-2 — ", 1)
@@ -1083,18 +1142,19 @@ def test_void_annotation_id_binding():
 
 
 def test_fenced_blocks_tracker_is_commonmark():
-    """[M] harden-1 (F-8(c) sharpened): `_fenced_blocks` must NOT toggle on a 4+-space-
-    indented ``` line (CommonMark: indented code, not a fence) — pre-fix the fence TAIL
-    escaped the AC17 leak scan (a NARROWING, fail-unsafe direction). Executed both ways:
-    the indented line stays inside the block; an up-to-3-space-indented ``` still
-    toggles (aligned with the ledger lint's tracker)."""
+    """[M] `_fenced_blocks` must NOT toggle on a 4+-space-indented ``` line
+    (CommonMark: indented code, not a fence) — a tracker that toggles there lets the
+    fence TAIL escape the AC17 leak scan (a NARROWING, fail-unsafe direction).
+    Executed both ways: the indented line stays inside the block; an
+    up-to-3-space-indented ``` still toggles (aligned with the ledger lint's
+    tracker)."""
     text = "\n".join(
         [
             "prose before",
             "```",
             "inside line",
             "    ```",  # CommonMark: indented CODE, not a fence toggle
-            "fence tail",  # pre-fix this ESCAPED the block (leak-scan narrowing)
+            "fence tail",  # must stay INSIDE the block (else the leak scan narrows)
             "```",
             "prose after",
         ]
@@ -1241,8 +1301,8 @@ def test_r8_design_transcript_and_revision_leg():
     scope = _norm(_scope_blocks(text)[0])
     assert "verify-design-claims-phase<P>.md" in scope
     assert "ALWAYS" in scope and "rewritten in place on revision legs" in scope
-    # harden-2 (D-46): the author-side coverage mandate — the callee half of the
-    # pre-round check's coverage arm (caller/callee symmetry; delete it => red)
+    # the author-side coverage mandate — the callee half of the pre-round check's
+    # coverage arm (caller/callee symmetry; delete it => red)
     assert "re-affirming its coverage statement against the revised design" in scope
     assert "no citations / no quoted snippets / no empirical claims" in scope
     assert "calibration script" in scope and "imprecision budget" in scope
@@ -1257,13 +1317,12 @@ def test_r8_design_transcript_and_revision_leg():
 
 
 def test_r8_pre_round_check_is_revision_bound():
-    """[M] harden-1 (codex #3): the coordinator's pre-round transcript check verifies
-    existence + non-emptiness + CURRENT-REVISION coverage at BOTH sites — the coverage
-    arm sits INSIDE the check clause (the D-42 check half; pre-fix it landed
-    existence-only, so a stale transcript survived a design revision), and a
-    stale-coverage transcript fails the check exactly as a missing file does.
-    Mutation-verified: deleting the revision-coverage arm at either site reds (the
-    author-side revalidation narration alone cannot satisfy these pins)."""
+    """[M] the coordinator's pre-round transcript check verifies existence +
+    non-emptiness + CURRENT-REVISION coverage at BOTH sites — the coverage arm sits
+    INSIDE the check clause (the D-42 check half), and a stale-coverage transcript
+    fails the check exactly as a missing file does. Mutation-verified: deleting the
+    revision-coverage arm at either site reds (the author-side revalidation narration
+    alone cannot satisfy these pins)."""
     for md, transcript in (
         (PLAN, r"verify-design-claims-design\.md"),
         (DESIGN, r"verify-design-claims-phase<P>\.md"),
@@ -1358,7 +1417,7 @@ def test_design_guard_compares_the_frozen_tip_sha():
     text = _text(DESIGN)
     header = _norm(text.split(BEGIN_SCOPE, 1)[0])
     assert "DETACHED at the `featureBranch` tip" in header
-    assert re.search(r"git worktree add ?--detach", header) or "--detach" in header
+    assert "--detach" in header
     assert "frozen 40-hex tip SHA" in header or "frozen 40-hex `featureBranch` tip SHA" in header
     scope = _norm(_scope_blocks(text)[0])
     assert re.search(r"`git rev-parse HEAD` equals the frozen tip SHA", scope), (

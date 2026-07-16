@@ -30,9 +30,7 @@ Produce the detailed design for phase `<P>`. Do NOT implement anything.
 `cd` fails or HEAD is not that SHA, STOP with `STATUS: BLOCKED — wrong cwd` instead of reading —
 do NOT design against the wrong tree.** (The worktree is DETACHED at the `featureBranch` tip by
 design, so there is no branch name to check — compare the SHA.) The Agent tool does NOT set your
-cwd, so you begin in the
-MAIN repo, and "the actual code in this worktree" below would otherwise read the wrong tree (the
-main repo's `main`, not the run's real prior-phase code). You author only design docs into the
+cwd — you begin in the MAIN repo. You author only design docs into the
 absolute `$RUN_DIR` (never edit repo code), so this is a READ-correctness guard, not a commit guard.
 
 Read (current versions yourself):

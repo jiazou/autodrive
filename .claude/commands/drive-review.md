@@ -88,9 +88,9 @@ and report CONVERGED/FINDINGS.
 
 On an ELIGIBLE round (below), the CODEX voice's prompt leads with the prior round's fix
 delta instead of the full-scope-first framing. Everything else about the round is
-byte-identical to any other round: ONE codex dispatch per round via the unchanged Step-1
-block, the same gate-visible `--marker` path `codex-review-<scope>.md`, the same
-snapshot → quarantine → dispatch ordering, Step-3 post-process, degradation tiers, and
+byte-identical to any other round: the unchanged Step-1 dispatch block, the same
+gate-visible `--marker` path `codex-review-<scope>.md`, the same snapshot →
+quarantine → dispatch ordering, Step-3 post-process, degradation tiers, and
 Adopt/recovery mechanics. This form changes PROMPT CONTENT ONLY — no artifact, marker,
 counter, or gate text changes anywhere, and it names NO new filename of any kind.
 

@@ -673,7 +673,7 @@ def test_ship_spec_finalize_precondition_and_promotion():
         "tip would FALSE-STOP a resumed ship); weakening it to strict == tip must red"
     )
 
-    # ---- ledger promotion + 3-entry allowlist. ---------------------------------------- #
+    # ---- ledger promotion + 4-entry allowlist. ---------------------------------------- #
     # SECTION-BOUNDED to `## Ship worktree + ledger promotion` (drive-ship.md:41). The bare
     # tokens (`finalize-todo.md`, `TODO.md`, `SHIP_LEDGER_ALLOWLIST`, `.harness/...`) recur in
     # `## Build the PR` + `## Ship conformance`, so a file-wide check stays GREEN even if the
