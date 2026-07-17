@@ -1,125 +1,80 @@
 # Project: Autonomous Engineering Pipeline (`/drive`)
 
-`/drive` coordinates the pipeline: **gstack for planning**, **harness-owned stages
-for execution**. It advances autonomously between two human gates (A, B) and
-non-decision STOPs.
+`/drive` coordinates the pipeline: **gstack for planning**, **harness-owned stages for
+execution** — autonomous between two human gates (A, B) and non-decision STOPs.
 
 ## Operating rules (canonical, imported)
-
-Canonical operating rules live in `OPERATING.md` (imported here, and by the
-machine-global `~/CLAUDE.md`):
 
 @OPERATING.md
 
 ## Pipeline
 
-`/drive <task>` runs:
+`/drive <task>` runs the stages below — design progressively refined: high-level plan
+→ per-phase detailed design → per-slice assumption check.
 
 ```
 PLAN (gstack brain)
 0. Premises (human; never auto-decided)
-1. /drive-plan: planner authors a HIGH-LEVEL design (goal · approach · ordered ## Phases —
-   no slice/interface detail) → autoplan reviews → dual-voice design review converges
-   (no P1) → Gate A
-
-EXECUTE (harness-owned) — for each PHASE in order (design is progressively refined: the
-high-level plan → a detailed per-phase design → a per-slice assumption check):
-2. /drive-design phase — author the phase's DETAILED design (interfaces, edge cases, slice
-   breakdown) against the REAL prior-phase code; dual-voice review converges (cap 8); no
-   human gate. Populates this phase's slices.
-3. /drive-implement per slice — independent slices run in PARALLEL (file-ownership scoped).
-   FIRST validates the slice's assumptions vs reality (deps' real code/comments, decisions,
-   logs): hold → implement; minor drift → adapt; BIG divergence → STATUS: REDESIGN, which
-   re-runs the phase design (step 2) with review and re-derives the affected slices.
-4. /drive-review per slice — Claude subagent + codex; converged = no P1; cap 8
-   then a phase-integration /drive-review over the assembled phase
-5. /drive-harden phase — after the phase review converges: a mutating find→fix→verify
-   pass over the assembled phase to add missing tests, fix logic bugs (de-slop is
-   DEFERRED to the final aggregate /drive-finalize stage)
-   (own cap 3; re-runs the conformance review as a regression guard); then advance
-6. /drive-finalize — ONCE after all phases hardened, BEFORE verify: an aggregate quality
-   pass over the whole-run diff (baseRef..featureBranch) that LEADS with de-slop (moved out
-   of per-phase harden) + a whole-run logic-bug/missing-test sweep; routes architectural
-   findings to the driven project's TODO.md; emits the ship gate's terminal SHA-bound review
-   artifact (own cap 3)
+1. /drive-plan: HIGH-LEVEL design (goal · approach · ordered ## Phases; no slice detail) → autoplan + dual-voice review converge (no P1) → Gate A
+EXECUTE (harness-owned) — per PHASE, in order:
+2. /drive-design phase — DETAILED design (interfaces, edge cases, slices) vs the REAL prior-phase code; dual-voice review (cap 8); no human gate
+3. /drive-implement per slice — slices run in PARALLEL under file ownership; FIRST validate assumptions vs reality: hold → implement; drift → adapt; BIG divergence → STATUS: REDESIGN → re-run the phase design (step 2), re-derive the slices
+4. /drive-review per slice — Claude subagent + codex; converged = no P1; cap 8; then a phase-integration /drive-review
+5. /drive-harden phase — after the phase review converges: a mutating find→fix→verify for missing tests + logic bugs (de-slop deferred to the aggregate finalize stage); own cap 3; then advance
+6. /drive-finalize — ONCE after all phases hardened, BEFORE verify: whole-run (baseRef..featureBranch) de-slop + logic-bug/missing-test sweep; architectural findings → TODO.md; emits the ship gate's terminal SHA-bound review (own cap 3)
 7. verify — qa-only / browse (optional), after finalize
 8. /drive-ship ONCE → Gate B → push
 ```
 
-The stage commands (`/drive-plan`, `/drive-design`, `/drive-implement`, `/drive-review`, `/drive-harden`, `/drive-finalize`, `/drive-ship`) are single-sourced
-runners that `/drive` invokes in order; you can also step them manually within an
-existing run (a new task is a new run-id).
-
-## Why this shape
-
-gstack skills split into two classes:
-- **Advisory** (`plan-*-review`, `autoplan`, `codex`) — gstack's sweet spot;
-  `/drive` drives them autonomously.
-- **Operational / terminal** (gstack `/review`, `/ship`, `/qa`) — fix-first /
-  auto-push / test-fix. They resist passive autonomous wrapping, so the harness
-  **owns** implement / review / ship directly (calling the codex CLI, git, and
-  the test runner).
-
-The implementer/reviewer/planner roles are generic `Agent` subagents:
-**sequential phases**, with **independent slices fanned out in parallel** via file
-ownership — no parallel-team framework needed (rationale: `.harness/decisions.md`
-D1).
+The stage commands are single-sourced runners `/drive` invokes in order; you can also
+step them manually within an existing run (a new task is a new run-id).
 
 ## Decision policy (the coordinator's brain)
 
 Auto-answer intermediate questions with autoplan's **6 Decision Principles**:
-1) completeness, 2) boil-lakes (in blast radius AND < 1 day CC effort),
-3) pragmatic, 4) DRY, 5) explicit-over-clever, 6) bias-to-action.
-
-Classify every decision:
+1) completeness, 2) boil-lakes (in blast radius AND < 1 day CC effort), 3) pragmatic,
+4) DRY, 5) explicit-over-clever, 6) bias-to-action. Classify every decision:
 - **Mechanical** → decide silently; log to `.harness/decisions.md`.
 - **Taste** → decide with a recommendation; log; surface at the next gate.
 - **User-Challenge** → never auto-decide; surface immediately with full context
   (what you'd do, why, what you might be missing, the cost if wrong).
 
 **Non-decision STOPs** (red tests, merge conflicts, implement BLOCKED, review
-non-convergence) pause regardless — they are facts, not judgments the principles
-can answer.
-
-If `AskUserQuestion` is unavailable, report `BLOCKED — AUQ unavailable` rather
-than silently auto-deciding a Taste/Challenge.
+non-convergence) pause regardless — facts, not judgments. If `AskUserQuestion` is
+unavailable, report `BLOCKED — AUQ unavailable` instead of auto-deciding a
+Taste/Challenge.
 
 ## Human checkpoints (the only ones)
 
 - **Premises** (Stage 0) — what problem to solve.
 - **Gate A** — autoplan's terminal approval gate (after plan).
 - **Gate B** — approve the diff before push (ship).
-- Plus dynamic surfacing of **Taste** (at gates) and **User-Challenge**
-  (immediately).
+- Plus dynamic surfacing of **Taste** (at gates) and **User-Challenge** (immediately).
 
-**Deterministic context-clear handoffs (fresh context per leg).** Beyond the gates, `/drive`
-checkpoints, runs `/decant`, clears context, and resumes in a FRESH session at two
-deterministic **seams**: **after Gate A approval** (→ Execute starts fresh) and **after each
-phase advance** (→ the next phase's design, or Finalize after the last phase, starts fresh).
-These reuse the existing **rebirth** checkpoint-and-handoff routine (drive.md § I1 steps 2–6,
-trigger class B) — they are NOT a new mechanism; the durable run-state lives in `$RUN_DIR`
-(paths, not context) and the handoff emits the minimal succinct prompt (`/drive <runId>`).
-The context-pressure rebirth (class A, Stop-hook-triggered) remains as a
-safety net for any single leg that overflows its window. **Decant runs at every context-clear
-boundary** (I1 step 5.5) — distilling the outgoing leg's learnings before they are lost — plus
-once at the true run-wrap (after Gate B). Clearing context = a fresh session; the handoff
-is human-initiated by design: you paste `/drive <runId>` at each `═══` boundary; the installed
-Stop hook re-arms autonomy WITHIN each leg.
+**Deterministic context-clear handoffs (fresh context per leg).** `/drive`
+checkpoints, runs `/decant`, clears context, and resumes FRESH at two **seams** —
+**after Gate A approval** and **after each phase advance** — reusing the **rebirth**
+checkpoint-and-handoff routine (drive.md § I1 steps 2–6, trigger class B); the durable
+run-state lives in `$RUN_DIR` (paths, not context). The context-pressure rebirth
+(class A, Stop-hook-triggered) stays as the safety net for a leg that overflows its
+window. **Decant runs at every context-clear boundary** (I1 step 5.5), plus once at
+the true run-wrap (after Gate B). The handoff is human-initiated by design — you paste
+the emitted minimal prompt `/drive <runId>` at each `═══` boundary; the installed Stop
+hook re-arms autonomy WITHIN each leg.
 
-No other pauses. Not for ambiguous design choices, not for severity calls — the
-6 principles decide and the decision is logged.
+No other pauses — not ambiguous design choices, not severity calls; the 6 principles
+decide and the decision is logged.
 
 ## Invariants
 
 - Pass file **paths** between subagents, not file contents.
 - Never include the implementer's notes/rationale in the reviewer's prompt — the
-  reviewer judges the code against the spec on its own merits.
-- **Every review — the design review and every code review — runs both a Claude
-  reviewer subagent AND codex.** A review is **converged** only when neither voice
-  has an open **P1** (BLOCKING or MAJOR); P2/P3 are logged, not blocking.
-- Each slice/phase implement→review loop caps at **8** rounds (own counter — a slice's
-  `reviewCount`, a phase's `phaseReview[<P>].round`). Beyond that, surface the
-  disagreement with what each side asserts.
+  reviewer judges the code against the spec.
+- **Every review — design and code — runs both a Claude reviewer subagent AND
+  codex.** **Converged** = no open **P1** from either voice (BLOCKING or MAJOR);
+  P2/P3 logged, not blocking.
+- Each slice/phase implement→review loop caps at **8** rounds (own counters:
+  `reviewCount`, `phaseReview[<P>].round`); beyond that, surface the disagreement.
 - **Each phase ends with a HARDEN pass** (after its review converges, before
   `featureBranch` advances): a mutating find→fix→verify over the assembled phase for
   missing tests and logic bugs (de-slop is deferred to `/drive-finalize`) — *beyond*
@@ -144,14 +99,13 @@ No other pauses. Not for ambiguous design choices, not for severity calls — th
   files and run in parallel; a slice never writes outside its owned files.
 - Run codex from the **main** context (background + per-scope log), never inside a
   subagent that waits on it.
-- The coordinator operates on git **refs + worktrees** only — it **never mutates
-  the user's main working tree**. A run starts from a clean tree on a fresh
+- The coordinator operates on git **refs + worktrees** only — **never mutating the
+  user's main working tree**; a run starts from a clean tree on a fresh
   `featureBranch` (from `baseRef`).
 - Each parallel slice runs in its **own coordinator-created worktree** on a
-  `slice/<runId>/<id>` branch cut from the frozen `phaseBaseSha = rev-parse
-  featureBranch`. The phase integration branch is **rebuilt idempotently** from
-  `phaseBaseSha` each assembly — that rebuild *is* the conflict/crash rollback
-  (never `git merge --abort`).
+  `slice/<runId>/<id>` branch cut from the frozen `phaseBaseSha`. The phase
+  integration branch is **rebuilt idempotently** from `phaseBaseSha` each assembly —
+  that rebuild *is* the conflict/crash rollback (never `git merge --abort`).
 - All per-run artifacts live in the external **`$RUN_DIR`** (absolute,
   worktree-reachable); the committed repo ledgers are promoted at ship.
 
@@ -208,6 +162,5 @@ wt/                          -- per-slice + integration + ship worktrees
 
 The **committed** cross-task ledgers stay in the repo: `.harness/decisions.md`,
 `.harness/followups.md`, `.harness/codex-refutations.md` (durable codex-refutation
-adjudications). Read `.harness/decisions.md` at the start of a task to
-stay consistent; the coordinator promotes a run's `$RUN_DIR` ledgers into them at
-ship.
+adjudications). Read `.harness/decisions.md` at the start of a task to stay consistent; the
+coordinator promotes a run's `$RUN_DIR` ledgers into them at ship.
