@@ -15,7 +15,7 @@ execution** — autonomous between two human gates (A, B) and non-decision STOPs
 ```
 PLAN (gstack brain)
 0. Premises (human; never auto-decided)
-1. /drive-plan: HIGH-LEVEL design (goal · approach · ordered ## Phases; no slice detail) → autoplan + dual-voice review converge (no P1) → Gate A
+1. /drive-plan: HIGH-LEVEL design (goal · approach · ordered ## Phases; no slice/interface detail) → autoplan + dual-voice review converge (no P1) → Gate A
 EXECUTE (harness-owned) — per PHASE, in order:
 2. /drive-design phase — DETAILED design (interfaces, edge cases, slices) vs the REAL prior-phase code; dual-voice review (cap 8); no human gate
 3. /drive-implement per slice — slices run in PARALLEL under file ownership; FIRST validate assumptions vs reality: hold → implement; drift → adapt; BIG divergence → STATUS: REDESIGN → re-run the phase design (step 2), re-derive the slices
@@ -103,7 +103,8 @@ decide and the decision is logged.
   user's main working tree**; a run starts from a clean tree on a fresh
   `featureBranch` (from `baseRef`).
 - Each parallel slice runs in its **own coordinator-created worktree** on a
-  `slice/<runId>/<id>` branch cut from the frozen `phaseBaseSha`. The phase
+  `slice/<runId>/<id>` branch cut from the frozen `phaseBaseSha` (= `rev-parse
+  featureBranch` at phase start). The phase
   integration branch is **rebuilt idempotently** from `phaseBaseSha` each assembly —
   that rebuild *is* the conflict/crash rollback (never `git merge --abort`).
 - All per-run artifacts live in the external **`$RUN_DIR`** (absolute,

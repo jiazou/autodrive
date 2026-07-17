@@ -37,7 +37,7 @@ section).
   17,138 → 15,682 B (−8.5% vs live pre-write; −25.7% vs the 21,109 B run-setup
   baseline the audit used — the live file had been independently compacted mid-park),
   82 entries conserved, all 8 promotion markers byte-identical, every hook ≤110 B
-  linted with a file-sourced symptom token; CLAUDE.md 13,309 → 11,300 B (−15.1%;
+  linted with a file-sourced symptom token; CLAUDE.md 13,309 → 11,357 B (−14.7%;
   all pin suites green, frozen blocks byte-identical; the ≥20% floor was not
   reachable without touching frozen spans — surfaced at Gate B). (b) OPERATING.md
   still pending OQ1/D13, so N1 stays open. Measured at the slice tip,
