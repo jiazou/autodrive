@@ -52,15 +52,16 @@ Taste/Challenge.
 - Plus dynamic surfacing of **Taste** (at gates) and **User-Challenge** (immediately).
 
 **Deterministic context-clear handoffs (fresh context per leg).** `/drive`
-checkpoints, runs `/decant`, clears context, and resumes FRESH at two **seams** —
-**after Gate A approval** and **after each phase advance** — reusing the **rebirth**
-checkpoint-and-handoff routine (drive.md § I1 steps 2–6, trigger class B); the durable
-run-state lives in `$RUN_DIR` (paths, not context). The context-pressure rebirth
-(class A, Stop-hook-triggered) stays as the safety net for a leg that overflows its
-window. **Decant runs at every context-clear boundary** (I1 step 5.5), plus once at
-the true run-wrap (after Gate B). The handoff is human-initiated by design — you paste
-the emitted minimal prompt `/drive <runId>` at each `═══` boundary; the installed Stop
-hook re-arms autonomy WITHIN each leg.
+checkpoints, runs `/decant`, clears context, and resumes FRESH at two
+**seams** — **after Gate A approval** and **after each phase advance** —
+reusing the **rebirth** checkpoint-and-handoff routine (drive.md § I1 steps
+2–6, trigger class B); the durable run-state lives in `$RUN_DIR` (paths, not
+context). The context-pressure rebirth (class A, Stop-hook-triggered) stays
+as the safety net for a leg that overflows its window. **Decant runs at
+every context-clear boundary** (I1 step 5.5), plus once at the true run-wrap
+(after Gate B). The handoff is human-initiated by design — you paste the
+emitted minimal prompt `/drive <runId>` at each `═══` boundary; the
+installed Stop hook re-arms autonomy WITHIN each leg.
 
 No other pauses — not ambiguous design choices, not severity calls; the 6 principles
 decide and the decision is logged.
@@ -104,9 +105,9 @@ decide and the decision is logged.
   `featureBranch` (from `baseRef`).
 - Each parallel slice runs in its **own coordinator-created worktree** on a
   `slice/<runId>/<id>` branch cut from the frozen `phaseBaseSha` (= `rev-parse
-  featureBranch` at phase start). The phase
-  integration branch is **rebuilt idempotently** from `phaseBaseSha` each assembly —
-  that rebuild *is* the conflict/crash rollback (never `git merge --abort`).
+  featureBranch` at phase start). The phase integration branch is **rebuilt
+  idempotently** from `phaseBaseSha` each assembly — that rebuild *is* the
+  conflict/crash rollback (never `git merge --abort`).
 - All per-run artifacts live in the external **`$RUN_DIR`** (absolute,
   worktree-reachable); the committed repo ledgers are promoted at ship.
 
@@ -162,6 +163,7 @@ wt/                          -- per-slice + integration + ship worktrees
 ```
 
 The **committed** cross-task ledgers stay in the repo: `.harness/decisions.md`,
-`.harness/followups.md`, `.harness/codex-refutations.md` (durable codex-refutation
-adjudications). Read `.harness/decisions.md` at the start of a task to stay consistent; the
-coordinator promotes a run's `$RUN_DIR` ledgers into them at ship.
+`.harness/followups.md`, `.harness/codex-refutations.md` (durable
+codex-refutation adjudications). Read `.harness/decisions.md` at the start of a
+task to stay consistent; the coordinator promotes a run's `$RUN_DIR` ledgers
+into them at ship.
