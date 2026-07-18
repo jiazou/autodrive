@@ -20,10 +20,10 @@ section).
   newest heading: NO → YES. Report-pinned legacy metric (`^### ` shape):
   newest in-window entry 2026-06-11 → 2026-07-06 (= file newest);
   beyond-window 51 → 0. Measured at the slice tip, pre-ship-promotion.
-- [ ] **N1** — machine-global per-dispatch baseline diet (audit §1.1a/§2 N1), three
+- [x] **N1** — machine-global per-dispatch baseline diet (audit §1.1a/§2 N1), three
   surfaces: (a) MEMORY.md diet — **external** (outside the repo; no repo diff);
-  (b) OPERATING.md conciseness pass — **agent-authorship pending user decision
-  (OQ1/D13)**, user-voice; coordinates with and EXCLUDES pre-existing C5's clauses
+  (b) OPERATING.md conciseness pass — **DONE** (was OQ1/D13 agent-authorship, resolved
+  CONSERVATIVE dial), user-voice; coordinates with and EXCLUDES pre-existing C5's clauses
   (§ Fable 5 audit below, base :553-556 — C5 owns the specific stale-rule
   relaxations incl. OPERATING.md:44, with its AC13-pinned fenced codex blocks as
   carve-outs for both; audit §3 matrix row); (c) CLAUDE.md trim — repo diff, strings
@@ -39,9 +39,17 @@ section).
   82 entries conserved, all 8 promotion markers byte-identical, every hook ≤110 B
   linted with a file-sourced symptom token; CLAUDE.md 13,309 → 11,357 B (−14.7%;
   all pin suites green, frozen blocks byte-identical; the ≥20% floor was not
-  reachable without touching frozen spans — surfaced at Gate B). (b) OPERATING.md
-  still pending OQ1/D13, so N1 stays open. Measured at the slice tip,
-  pre-ship-promotion.
+  reachable without touching frozen spans — surfaced at Gate B). (b) DONE
+  (2026-07-18, run operating-diet-20260718-140021, PR #98): OPERATING.md 20,031 →
+  19,911 B (−120 B / −0.60%; ≈−30 uncached tok/dispatch, bytes/4 proxy). OQ1/D13
+  resolved to the CONSERVATIVE dial (preserve exact operative phrasing; cut only
+  narration/redundancy). FINDING: OPERATING.md is at its conservative FLOOR — the
+  adversarial (codex) voice contested BOTH candidate cuts the whole-file walk found
+  (one restored as genuinely ambiguous, one kept via overrule-with-evidence, D-exec-1);
+  a material per-dispatch lever now needs the AGGRESSIVE dial (reword operative clauses
+  for density), a separate user authorization. C5 carve-out left byte-identical; the
+  AC13 fenced block is not in OPERATING.md (no fenced blocks). All three surfaces
+  (a)+(b)+(c) shipped → N1 CLOSED.
 - [ ] **N3** — drive.md § "Run setup & resume" narration trim (39% of the per-leg
   spec weight; audit §1.2/§2 N3). Spec-trim sequencing (binding): land WITH or AFTER
   the pending R5–R9 one-batch spec edit (§ "/drive efficiency plan R1–R9" below,
