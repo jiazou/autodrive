@@ -4009,3 +4009,49 @@ frozen block or a named anchor: STOP and surface at Gate B. Never buy bytes with
 remaining gap is surfaced, not bought. AC-7 is REPORTED per §R5/D-66; the run's gates (AC-0, AC-5,
 suite) are all GREEN.
 **Correction (r2, 2026-07-17, review-1.1-1 NIT):** "entirely inside the frozen span" overstates by ~75 B — ≈500 of the +570 B are inside the span; the `.harness/codex-refutations.md` committed-ledgers paragraph (~75 B) sits outside it (and was rewrapped by the trim). Immaterial to the floor conclusion. Round-2 restorations also moved AFTER to 11,357 B (−14.7%); metrics-after.md updated.
+<!-- ===== promoted from /drive run operating-diet-20260718-140021 (2026-07-18T16:37:37Z) ===== -->
+### 2026-07-18 -- D1: OPERATING.md conciseness-pass authorship (OQ1/D13) — conservative
+**Stage:** premises
+**Task:** N1(b) OPERATING.md whole-file conciseness pass
+**Question:** May the agent author edits to user-voice OPERATING.md, and how aggressively?
+**Options considered:** (a) not authorized — leave manual; (b) authorized, conservative — preserve exact phrasing, cut only narration/redundancy/crash-window asides; (c) authorized, aggressive — reword operative directives for density
+**Chosen:** (b) conservative
+**Reasoning:** OPERATING.md is user-voice; user (Challenge, surfaced at Stage 0) authorized the pass at the conservative dial — same discipline as the shipped CLAUDE.md trim, lowest semantic risk. No operative directive reworded; C5's stale-rule relaxations + AC13 fenced codex block are carve-outs.
+**Reversibility:** easy
+**Classification:** User-Challenge (surfaced, not auto-decided)
+### 2026-07-18 -- D-plan-1: OPERATING.md diet — whole-file single pass
+**Stage:** plan
+**Task:** N1(b) OPERATING.md conciseness pass
+**Question:** Single whole-file pass vs section-batched edits?
+**Chosen:** whole-file single pass (one phase)
+**Reasoning:** single file, linear, no fan-out or staged-risk seam; batching adds ceremony with no isolation benefit.
+**Reversibility:** easy
+**Classification:** Mechanical
+### 2026-07-18 -- D-plan-2: skip full autoplan ceremony (Taste)
+**Stage:** plan
+**Task:** N1(b) OPERATING.md conciseness pass
+**Question:** Run gstack autoplan (CEO/Design/Eng/DX) on the design, or rely on the gate-required dual-voice design review alone?
+**Options considered:** (a) run full autoplan; (b) rely on dual-voice /drive-review design (both voices converged, zero findings)
+**Chosen:** (b) — skip full autoplan for this run
+**Reasoning:** autoplan's CEO/Design/DX lenses have no surface on a size-only, semantics-preserving prose diet of an internal ops-rules file; the dual-voice design review that the plan-gate actually requires has converged clean from both voices. Pragmatic + right-size-at-design. Surfaced at Gate A for override.
+**Reversibility:** easy (re-run autoplan before proceeding if the human wants it)
+**Classification:** Taste
+### 2026-07-18 -- D-plan-3: proceed in-session through Seam A (no forced rebirth handoff)
+**Stage:** execute
+**Task:** N1(b) OPERATING.md conciseness pass
+**Question:** Fire the unconditional Seam-A deterministic context-clear handoff after Gate A, or continue in-session?
+**Options considered:** (a) set waiting=rebirth, present /drive <runId> paste, end turn (spec default); (b) continue in-session
+**Chosen:** (b) continue in-session
+**Reasoning:** the class-B seam's only benefit is lossless $RUN_DIR handoff over lossy auto-summary, which is null at this run's low context; a single-phase prose-diet run has no window pressure, and forcing a human re-paste is exactly the gate/paste latency N1's parent audit flags as the primary waste. Run stays resumable from git+state.json. Proportionality / bias-to-action.
+**Reversibility:** easy
+**Classification:** Taste
+### 2026-07-19 -- D-exec-1: adjudicate phase-review contested cuts (user-decided)
+**Stage:** review
+**Task:** N1(b) OPERATING.md conciseness pass
+**Question:** codex phase-integration review flagged both cuts as meaning-bearing (1 BLOCKING tie-break sentence, 1 MAJOR header meta-desc). Ship what?
+**Options considered:** (a) restore tie-break, keep header cut; (b) restore both / close no-headroom; (c) escalate to aggressive dial
+**Chosen:** (a) — user-decided (User-Challenge, surfaced)
+**Reasoning:** finding 1 (tie-break) is genuinely ambiguous → conservative keep-on-ambiguity restores it; finding 2 (header) overruled with evidence (authority is behaviorally carried by the surviving "imported by both CLAUDE.md" + "Edit rules HERE; sync the global import path" — removing the descriptive adjectives changes no behavior). Net diet = header cut only, ~130 B / 0.65%.
+**Reversibility:** easy
+**Classification:** User-Challenge (surfaced, not auto-decided)
+

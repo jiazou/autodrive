@@ -1,8 +1,7 @@
 # Operating rules — how my Claude works
 
-Canonical, portable operating config for your Claude — the single source of truth
-for the universal behavioral rules. Both the harness `CLAUDE.md` and the machine-global
-`~/CLAUDE.md` import it. Edit rules HERE; sync the global import path on each new machine.
+Both the harness `CLAUDE.md` and the machine-global `~/CLAUDE.md` import it.
+Edit rules HERE; sync the global import path on each new machine.
 
 ## General working principles (how I work)
 - **Investigate with evidence before implementing.** Read real artifacts and reproduce actual behavior — don't fix from assumptions. For risky/hard-to-reverse changes, validate root cause + approach and get sign-off before coding; scale rigor to stakes.
