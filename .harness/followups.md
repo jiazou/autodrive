@@ -1392,3 +1392,116 @@ Finalize r2 codex #2 residual (D-49, probe-executed no-crash/silent-absorb): the
 
 ## F-16 — CR-2 seed entry: add the full-scope-invariant replay leg
 Finalize r3 codex #6 (D-50): CR-2's recorded hermetic repro anchors the descoped clause but not the Claude full-scope-invariant leg of the original refutation. Add a second repo-relative grep leg to the committed entry in a future run (moving the tip for it now would force another finalize re-bind). D-32's in-suite executed green/red repros remain the binding guard.
+
+## /drive run baseline-diet-20260713-214819 — followups (2026-07-18T12:58:52Z)
+
+# Follow-ups — run baseline-diet-20260713-214819
+
+Out-of-scope discoveries.
+
+- [P2] MEMORY.md's `drive-md-has-contract-pin-tests` entry uses a VARIANT promotion marker
+  ("**domain instance of canonical autodrive/OPERATING.md "run the suite before pushing"**
+  (promoted 2026-06-21)") that does NOT match the exact string decant greps
+  (skills/decant/SKILL.md:78-81 -> `**promoted to canonical autodrive/OPERATING.md**`).
+  decant's promoted-dedup check is blind to that entry and can re-propose an
+  already-promoted rule. Fix belongs to decant/OPERATING, not N1.
+- [P3] The audit's §3/§4.8 cite `drive.md:194-206` for the finalize-CONVERGED rule. At HEAD
+  (d41b73e) that text has MOVED — re-derived by its pinned string ("all three
+  finalize-CONVERGED surfaces use the IDENTICAL criterion") it now sits later in drive.md
+  (drive.md changed since ce12c42; CLAUDE.md and drive-ship.md did not, so their cites hold).
+  Whoever executes N3 must re-derive that delta boundary rather than trust the stale range.
+- [P2] `test/drive-codex.test.sh` AC-H5/H6 is LOAD-FLAKY. The fake writes a byte every
+  0.05s while the watchdog stall-kills after 0.5s of zero growth (`--poll-secs 0.1
+  --stall-secs 0.5`) — only a 10x margin. On a loaded box the fake's `sleep 0.05` loop is
+  starved past 0.5s, the watchdog spuriously stall-kills, the retry recovers (so AC-H5 still
+  sees token `OK`) but the `codex-raw-h5.killed-1.log` quarantine file survives and AC-H6
+  fails. REPRODUCED this run: red when run concurrently with a second full suite + a codex
+  exec; GREEN 3/3 on a quiet machine (evidence: $RUN_DIR/suite-baseline.log:95 vs
+  codex-suite-quiet-{1,2,3}.log). CI is macOS and can be similarly loaded. Fix: widen the
+  stall margin for this positive-observation case (or make the fake's growth wall-clock
+  independent). Not N1's work.
+
+## From /autoplan dual-voice review (2026-07-13)
+
+- [P1] **decant's delete-gate reads the INDEX descriptions.** `skills/decant/SKILL.md:74-77`:
+  "Duplicate filenames or near-duplicate **descriptions** = … **delete one**" — a DESTRUCTIVE gate
+  keyed on description similarity, over an unversioned dir, with zero test coverage. The N1(a)
+  compression narrows that margin (the 4-entry spec-pin cluster all reduce toward "a pin can pass
+  vacuously"). TESTED: the gate HELD (both indexes returned NO DUPLICATES), so this is a narrowed
+  margin, not a proven break — but it is OPERATING's own "destructive gate before the decisive
+  check" pattern. Fix: point decant Step 1/3 at the per-file frontmatter `description:` fields
+  (65/65 have one) rather than the index. Out of scope this run (decant's spec is excluded).
+- [P2] **/drive-retro §3 reads the index descriptions and never opens the memory files** — for
+  retro the description IS the content, not a pointer. Same fix as above; contract-pinned at
+  tests/contracts/test_drive_retro_contract.py:263, so it is a spec change, not a prose tweak.
+- [P2] **decant has no write-time byte budget.** The MEMORY.md usage header (D-10) is the
+  in-boundary ratchet; the durable fix is a per-entry budget + index cap in decant's SKILL.md
+  (one directive: `- [Title](file.md) — <trigger>`, ≤ ~110 B).
+- [P2] **A run ABORT leaves MEMORY.md rewritten with the repo clean.** The C2 pre-diet copy is
+  the compensating control; an aborting operator must know to restore it. THE RESTORE COMMAND
+  (diet written 2026-07-17, slice 1.1):
+  `cp -p /Users/jiazou/.claude/projects/-Users-jiazou-workspace-autodrive/MEMORY.md.pre-diet.20260717T195928 /Users/jiazou/.claude/projects/-Users-jiazou-workspace-autodrive/memory/MEMORY.md`
+  (NOTE: restoring after any later /decant write would erase that decant's index lines — diff first.)
+- [P3] **Restructure WHAT is always-loaded, not just how densely it is written.** CLAUDE.md's
+  Pipeline, $RUN_DIR inventory, and finalize/harden mechanics are COORDINATOR-ONLY, yet ride every
+  implementer/reviewer/generic dispatch, while drive.md already carries them per-leg. Moving them
+  out is a bigger lever than any compression (est. a further 5-8 kB) but it is a relocation +
+  4-suite pin migration that collides with N3's drive.md sequencing. New TODO item, not this run.
+  (Both CEO voices raised it independently.)
+- [P3] **Usage census, for whoever revisits N1.** The memory index is injected into ~100% of
+  subagent dispatches but a memory FILE is actually opened in only ~1.5% of them (12/788), vs 73%
+  of top-level sessions — cost is ~16:1 concentrated in the stratum that never opens a file. Either
+  the always-loaded surface is over-provisioned there, or its value is precisely that it delivers
+  the lesson WITHOUT a file open (a tool-call census cannot distinguish these). Unresolved; it is
+  the crux of OQ-3.
+
+## From the phase-1 detailed design (2026-07-14)
+
+- [P2] **decant's marker grep is blind to the VARIANT marker form.** `skills/decant/SKILL.md:78-81`
+  greps the exact literal `**promoted to canonical autodrive/OPERATING.md**`, so the
+  `drive-md-has-contract-pin-tests` entry's `**domain instance of canonical autodrive/OPERATING.md
+  "run the suite before pushing"** (promoted 2026-06-21)` marker is INVISIBLE to it and the
+  already-promoted rule can be re-proposed. Phase 1 PRESERVES that marker byte-identical (D-41) but
+  does NOT fix decant's grep — decant's Step 3 marker bullet is outside the re-point's carve-out
+  (D-33). Fix: widen the grep to `**…canonical autodrive/OPERATING.md…**`. (Same root as the existing
+  [P2] on this entry; the preservation half is now done, the detection half is not.)
+- [P3] **`/drive-retro`'s `Overlap` dedup now costs N file reads.** Post-re-point (D-43), retro must
+  open a linked memory FILE to declare an overlap, because a ≤110 B hook is a trigger, not the lesson.
+  With 71 memory files that is a real per-run cost. The contract bounds it (the index enumerates
+  candidates; only candidates are opened), but a durable fix — a cheap on-disk overlap cache, or a
+  `descriptions:` sidecar regenerated by decant — belongs to decant/retro, not N1.
+
+## From the phase-1 design, round 2 (2026-07-14)
+
+- [P1] **A `/drive` run CANNOT fix its own live consumers — the deployed-copy asymmetry is a HARNESS
+  gap, not just an N1 one.** `~/.claude/skills/decant` symlinks into the MAIN working tree, so the live
+  skill runs whatever branch that tree has checked out (`main`), while `/drive`'s invariant forbids
+  touching that tree. Any run whose product changes a LIVE consumer's behaviour (a skill, a command, a
+  hook) therefore ships the hazard before the guard whenever the hazard's own surface is external /
+  unversioned. Generalize: `/drive` should DETECT this class (does the run edit a file that is symlinked
+  into `~/.claude/`? does it also mutate an external surface that consumer reads?) and surface it at
+  Gate A, not discover it at phase-design review. Root cause of D-47/D-48.
+- [P2] **decant's destructive dedup gate has ZERO test coverage and no `bin/` implementation** — it is
+  prose an agent interprets, over an unversioned directory, with an irreversible `delete one` action.
+  AC-12 adds a CONTRACT pin (the bullet names the memory FILES' content) but nothing can test the
+  BEHAVIOUR, because there is no executable. The durable fix is to give decant's dedup a real
+  implementation (`bin/decant-dedup.sh` or equivalent) with a threshold, a dry-run default, and a
+  confirm gate — then the parity gate (AC-8) would test the artifact instead of a stand-in.
+- [P2] **`$RUN_DIR/before/` is not a durable rollback artifact and should not be described as one.**
+  `bin/drive-retention.sh` trashes the whole run dir at `AGE_DAYS=14`, and the snapshot is only as fresh
+  as run-setup (measured: 66 files vs the live 72 by phase-design time). Any run that mutates an external
+  unversioned surface needs a snapshot OUTSIDE `$RUN_DIR`. Consider making that a harness primitive.
+- [P3] (harden-1-1) CLAUDE.md Pipeline stage-3 line says "drift → adapt" where
+  drive-implement.md:48 qualifies it as "**minor drift** … → adapt". The in-line contrast with
+  "BIG divergence → STATUS: REDESIGN" keeps the trichotomy readable, so no consumer contradiction —
+  cosmetic precision loss only. If a later trim touches the line, restore "minor".
+
+## slop (deferred to finalize)
+- CLAUDE.md:107 — ragged 43-char line (`featureBranch` at phase start). The phase`) left dangling by the r2 phaseBaseSha insertion; rewrap the bullet to the file's ~80-col convention.
+- CLAUDE.md:166 — 91-char rewrapped line (`…to stay consistent; the`) exceeds the file's ~80-col wrap convention.
+- CLAUDE.md:62 — 92-char line in the det-handoff paragraph (`…the installed Stop`), same wrap-convention drift.
+- MEMORY.md:34,38,44,49,60 — 5 of 69 authored hooks end with a terminal period while the rest do not; inconsistent punctuation (external artifact — normalize only under a fresh AC-5 run if touched).
+- MEMORY.md:75 — anecdotal "failed 4x" + awkward pseudo-quotation (codex)
+- MEMORY.md:78 — motivational/meta narration "so it binds you when you are invested." (codex)
+- MEMORY.md:83 — vague quoted phrase "ever-more-pathological structural inputs." (codex)
+- MEMORY.md:86 — conversational prediction "the next audit re-flags it." (codex)
