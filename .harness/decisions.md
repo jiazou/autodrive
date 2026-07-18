@@ -2899,3 +2899,1113 @@ Classification: Mechanical.
 ## D-51 — Ship auto-rebase executed: tree-identity proof (D48 precedent) + sanctioned reviewed-sha re-bind
 - **Classification:** Mechanical (the preflight's auto-rebase branch, each gate fail-closed)
 - Scratch-merge (main 8e53466 + branch 05e1d14) FULL suite green → rebase --onto replayed 10 commits clean → post-rebase tree 35d62a8d… IDENTICAL to the suite-validated scratch-merge tree (tree-identity ⇒ per-file blob identity for every file; the two overlap files drive-ship.md/CLAUDE.md absorb main's edits exactly as the validated merge did — the committed-D48 ledger-product precedent, applied here because main touched two files the run also owns). reviewed-sha re-bound 05e1d14→0bcc5c9 in review-finalize-3.md (code byte-identical, review holds). Preflight re-confirmed post-rebase.
+
+## /drive run baseline-diet-20260713-214819 — decisions (2026-07-18T12:58:52Z)
+
+# Decisions — run baseline-diet-20260713-214819
+
+Append-only. One `## D-<n>` entry per decision.
+
+## D-1 — One phase, one commit-bearing unit; the external MEMORY.md write rides inside it
+Classification: Mechanical
+Forced by drive.md:344-345 (a slice with an empty `git rev-list phaseBaseSha..slice` is
+re-dispatched forever). The repo edits (CLAUDE.md, TODO.md) guarantee the non-empty
+rev-list; the external MEMORY.md write is carried by the same unit and made reviewable via
+`$RUN_DIR/memory-diet.diff`.
+
+## D-2 — MEMORY.md diet is COMPRESS-ONLY: no index entry is deleted
+Classification: Taste
+65 index entries map 1:1 onto 65 memory files (zero dead links, zero orphans) — there is no
+mechanically-dead entry to prune; a prune would be a judgment that a lesson is worthless.
+Compression captures ~95% of the available savings (descriptions are 15,659 B of the
+21,109 B index). Asymmetry decides: a wrong prune silently removes a lesson from the
+retrieval surface of an UNVERSIONED file; compression keeps every memory addressable.
+Pruning is already decant's job (SKILL.md step 3).
+Risk if wrong: ~0.5-1.0 kB left on the table, recoverable by a later decant pass.
+
+## D-3 — The 6 promotion-marker entries compress to link + marker only; marker text verbatim
+Classification: Mechanical / DRY
+Their rule already rides the baseline inside the always-loaded OPERATING.md, so the
+description is duplicated weight. `skills/decant/SKILL.md:78-81` greps
+`**promoted to canonical autodrive/OPERATING.md**` in the INDEX as "the authoritative
+signal" that a rule is promoted — deleting the entry or the marker would make decant
+re-propose an already-promoted rule.
+
+## D-4 — The new MEMORY.md is authored from the immutable snapshot, never by incremental edit
+Classification: Mechanical
+Authoring from `$RUN_DIR/before/memory/MEMORY.md` makes the diet idempotent under slice
+re-dispatch (a re-run cannot double-compress) and the AFTER metric reproducible. Immediately
+before the write, re-diff live vs snapshot and carry forward any entries appended mid-run
+(decant appends at every context-clear boundary).
+
+## D-5 — The three [V]/veto-owned CLAUDE.md blocks are frozen as WHOLE BLOCKS
+Classification: Mechanical
+FINALIZE bullet (§4.8 veto / D26 3-surface identity), HARDEN bullet (TODO.md:189's open [V]
+fix owns CLAUDE.md:127), state.json inventory entry (TODO.md:291's open [V] fix owns
+CLAUDE.md:166). Freezing the whole block, not just the cited clause, guarantees N1(c)
+neither preempts nor relocates the prose those items cite. Cost: 2,285 B (18%) stays on the
+table.
+
+## D-6 — Pin migration by token sweep with the full suite as the arbiter; target zero test edits
+Classification: Mechanical
+Canonical rule (OPERATING.md, promoted from memory spec-pin-migration-enumeration-treadmill):
+grep the anchors across ALL pin suites and gate on a green full `bin/run-tests.sh` — never
+per-line pin enumeration. All four real pins are satisfiable by an anchor-preserving trim.
+
+## D-7 — Metric = static proxy (comparator) + P2 rerun (corroborator, D22 caveat stated)
+Classification: Mechanical
+Recorded in `$RUN_DIR/metrics-after.md` AND inline in TODO.md's N1 checkbox as a
+`DONE (date):` block — the repo's own precedent (TODO.md:17-22, N2/QW1's DONE block).
+
+## D-8 — The unit emits `$RUN_DIR/memory-diet.diff` so the external surface is reviewable
+Classification: Taste
+A change that never appears in `git diff` is invisible to the dual-voice review; the
+immutable snapshot makes a unified diff free.
+
+---
+# AMENDMENTS — /autoplan dual-voice review (2026-07-13)
+Four voices (CEO ×2, Eng ×2, DX ×2) reviewed design.md. Seven P1-class defects found; design.md
+is revised. The entries below AMEND D-1..D-8 above (append-only: prior entries stand as written,
+these supersede where they conflict).
+
+## D-1a — AMENDS D-1: the cited mechanism was wrong; the decision stands on stronger grounds
+Classification: Mechanical
+`git rev-list` occurs exactly ONCE in drive.md (:344), under `## Run setup & resume` — the RESUME
+reconcile, not the normal path. The normal per-slice loop (drive.md:1466-1467) is `DONE` →
+`awaiting_review` with NO commit check. So a commit-less slice does not "re-dispatch forever": on
+the normal path it is promoted with an EMPTY diff → the reviewer reviews nothing → converges
+VACUOUSLY → merges as a no-op (worse than a wedge — it looks like success). The re-dispatch loop
+bites only on resume (which this run will hit). One commit-bearing unit closes both.
+
+## D-2a — AMENDS D-2: two of the three arguments are struck; the conclusion survives
+Classification: Taste — CONTESTED at Gate A (see OQ-3)
+STRUCK: (i) "no mechanically-dead entry (65↔65, zero dead links)" — a live link proves referential
+integrity, NOT value. (ii) "compression captures ~95% of savings" — only true if the choice is
+binary; it is not. (iii) "pruning requires reading 58 memory files — the lake we must not boil" —
+a faithful compression reads them anyway (D-4a), so the cost is sunk.
+SURVIVES: the asymmetry — a wrong prune silently de-indexes a lesson on an UNVERSIONED file, and
+retrieval parity is now MEASURED (16/16 A/B, 8 adversarial), not assumed.
+COUNTER ON THE RECORD: a dud hook is arguably worse than a deleted entry (it burns bytes in every
+dispatch AND fakes coverage). The hook rule + retrieval A/B + uniqueness lint are what answer that.
+
+## D-4a — AMENDS D-4: the primitive was INVERTED
+Classification: Mechanical
+Snapshot-authoring has two defects: (1) it compresses a summary of a summary, and one is already
+WRONG (the index says "Run BOTH" while two-conformance-test-suites.md says "the bash side is NOT
+one file … run ALL test/*.test.sh") — so hooks must be authored from the memory FILE (frontmatter
++ body), not the index line; (2) it silently REVERTS mid-run decant edits — decant does not only
+append, it MODIFIES (adds promotion markers, SKILL.md:126-127) and DELETES (dedup, :77).
+CORRECTED: the compression is a pure function C applied entry-by-entry to the LIVE file, idempotent
+by construction — C(C(x)) == C(x), enforced by "leave any description already ≤ ~120 B verbatim".
+Re-dispatch idempotency holds; decant's edits are picked up by construction; the snapshot demotes
+to the BEFORE baseline + backup. The 6-marker set is derived at WRITE time from LIVE, never from
+the snapshot (a mid-run decant can make it 7).
+
+## D-5a — AMENDS D-5: right conclusion, wrong reason
+Classification: Mechanical
+Freezing does NOT preserve line numbers — any trim above the blocks shifts every cite below (and
+the canonical rule `inherited-line-cites-are-historical` says re-derive by anchor string anyway).
+What whole-block freezing actually guarantees is that the ANCHOR TEXT survives verbatim so the two
+open [V] items can find their target. Frozen ≠ endorsed: the HARDEN block is KNOWN-DEFECTIVE
+(it claims a veto drive-harden.md does not implement).
+
+## D-9 — Drop the [[wikilink]] relational tails from the INDEX
+Classification: Mechanical / DRY
+Verified `index ∖ body = ∅` — all 24 index edges already exist in the memory-file bodies. Dropping
+them loses ZERO graph edges, recovers 1,591 B, and funds the trigger budget. 28 entries carry a
+tail averaging 56 B; one is 100 B — the entire hook budget, leaving nothing for a trigger. This is
+the configuration the 16/16 retrieval A/B validated.
+
+## D-10 — Add a 1-line usage header to MEMORY.md; it is the RATCHET
+Classification: Mechanical
+Without it the diet decays to nothing. /decant rewrites MEMORY.md at EVERY context-clear boundary
+(twice in this run) and imposes NO size/format budget (verified: no byte/size/cap/length rule in
+its SKILL.md). Measured: 19,072 → 21,109 B in ONE DAY (~2 kB/day; 47 memory files born in July's
+first 13 days). An 8-10 kB cut regrows in ~1-2 weeks into a MIXED index (terse old, verbose new) —
+worse than either. decant READS MEMORY.md before writing (SKILL.md:36), so a ~90 B header rule is
+in-context for every future writer. This is the only change in the run still working in 6 months.
+
+## D-11 — Durable backup OUTSIDE $RUN_DIR before the first write
+Classification: Mechanical
+D-2's stated recovery path EXPIRES: `$RUN_DIR/before/memory/` is the sole pre-diet copy of an
+unversioned file, and bin/drive-retention.sh TRASHES the whole run dir once done + 14 days old
+(AGE_DAYS=14; Step 5 `$TRASH_CMD "$dir"`). Write `MEMORY.md.bak.<ts>` next to the live file — the
+repo's own proven pattern (install-operating-rules.sh's ~/CLAUDE.md.bak.<ts>, pinned at
+test_install_operating_rules.py:128). Also: a run ABORT reverts the repo and leaves MEMORY.md
+rewritten (git rollback does not roll back an external write).
+
+## D-12 — Acceptance is restructured; bytes are REPORTED, never GATED
+Classification: Mechanical
+"Green suite + byte delta" could not see its own contract: ZERO tests read MEMORY.md (so for 62%
+of in-scope bytes a green suite is structurally incapable of failing, and the byte metric IMPROVES
+with the damage), and NONE of CLAUDE.md's 8 core invariants is pinned by any test. Added: a
+mechanical conservation gate, mutation-verification of the 3 section-bound pins, a
+directive-conservation census, a retrieval A/B (neutral cwd; ship iff AFTER ≥ BEFORE), and a hook
+uniqueness lint. Gating on bytes would pressure the implementer to strip triggers — the one failure
+nothing else can see.
+
+## D-13 — OQ-3 RESOLVED AT GATE A: measure both candidate indexes, ship the winner
+Classification: User-Challenge — ANSWERED BY THE USER (never auto-decided)
+Both CEO voices recommended changing the user's stated direction (compress -> move). Surfaced at
+Gate A. The user chose NEITHER lever on taste: build BOTH candidates (C = compressed hooks
+~12.5 kB; M = titles-only 5,131 B + all 65 descriptions moved VERBATIM to an on-demand
+memory/INDEX.md), run the retrieval A/B over {BEFORE, C, M} from a neutral cwd over 20 gold
+scenarios, and SHIP IFF recall >= BEFORE. Both hold -> ship the SMALLER (M). Only one holds ->
+ship it. Neither -> ship neither and STOP. Report all three recall numbers regardless.
+Rationale: converts a taste war into a measurement; the A/B harness already exists and is
+validated (16/16 on C).
+
+## D-14 — OQ-1 RESOLVED AT GATE A: collapse CLAUDE.md's Pipeline block to one line per stage
+Classification: Taste — ANSWERED BY THE USER
+Saves ~1.0-1.2 kB (the single biggest CLAUDE.md lever). BINDING: the five facts the block uniquely
+owns must survive — progressive design refinement; parallel slices under file ownership; the
+REDESIGN back-edge; the verify tooling (qa-only/browse); stage commands as steppable single-sourced
+runners. Pin-safety is NOT automatic: structural contract #3 requires `\d+\. .*\/drive-harden`,
+`\d+\. .*\/drive-finalize`, `\d+\. verify` (lowercase, FIRST token, no IGNORECASE, no fallback
+carrier) in ascending order.
+
+## D-15 — Shipping M REQUIRES re-pointing decant + drive-retro at the per-file frontmatter
+Classification: Mechanical (Principle 2 — in blast radius AND small; Principle 1 — completeness)
+/decant (SKILL.md:74-77) runs a DESTRUCTIVE dedup gate keyed on near-duplicate index DESCRIPTIONS,
+and /drive-retro §3 dedups proposals against them; neither opens the memory files. Candidate C
+NARROWS that gate's input (tested by autoplan: the gate HELD); candidate M REMOVES it entirely.
+So M cannot ship without re-pointing both consumers at the per-file frontmatter `description:`
+field (65/65 carry one). Planned as a CONDITIONAL slice, mandatory iff M wins — not unconditional,
+because C provably does not break the gate, so under C the re-point stays a logged follow-up.
+Shipping M without it would break a destructive gate on an unversioned dir (OPERATING's
+"destructive gate before the decisive check" pattern) — no byte win justifies that.
+
+## D-16 — Acceptance gains a >=20% material-reduction FLOOR (never a ceiling)
+Classification: Mechanical
+Gates 1-6 are all CONSERVATION gates — every one is satisfiable by changing nothing, so a 100-byte
+trim would pass them all and deliver none of the goal (codex MAJOR). A FLOOR closes that. A
+CEILING would not be safe (it pressures the implementer to strip triggers to hit a number — the one
+failure nothing detects), but a floor cannot be gamed that way: the only routes to hitting it by
+damaging the artifact are stripping triggers or deleting directives, and both are blocked by the
+uniqueness lint, the retrieval A/B, and the directive census.
+
+## D-17 — The acceptance suite runs on a QUIET machine; pytest is the attribution discriminator
+Classification: Mechanical
+test/drive-codex.test.sh AC-H6 is load-flaky (0.05s write loop vs a 0.5s stall-kill margin).
+Reproduced at base: RED under concurrent load, GREEN 3/3 isolated (203 passes each). Binding: the
+acceptance run has no concurrent subagent suite and no concurrent codex. pytest is 100% green on
+main@d41b73e and is the layer this trim risks, so ANY pytest red is caused BY the trim. Never wave
+a red away by category — re-run it quiet. Both directions bite: a false red burns fix rounds; a
+category-waiver lets a real pin regression through.
+
+## D-18 — RE-DECIDED at round 2: build a VALID behavioural probe, then decide C vs M
+Classification: User-Challenge — RE-SURFACED and ANSWERED BY THE USER
+The Gate-A premises were falsified by round 2, and the error was in MY framing: I told the user M
+was a cheap, zero-loss, fully-reversible move decided by a ~15-min A/B. All three were wrong.
+(i) The A/B was INVALID — it asked "which file(s) would you open?", INSTRUCTING the very hop whose
+absence is M's only named risk (both voices found this independently; it is a vibes-gate —
+memory dont-make-the-model-the-meter). (ii) M STRIPS the 6 promotion markers (they live in the
+description tail), breaking decant's authoritative already-promoted signal; the frontmatter is not
+a valid alternative target (0/65 files carry the marker). Retaining them costs +393 B => M is
+~5,583 B, not 5,131 B. (iii) M creates a new external, unversioned, SOLE-carrier file with no
+backup or abort coverage.
+New measured evidence: a memory FILE is opened in 6/792 = 0.8% of SUBAGENT dispatches vs
+46/65 = 70.8% of top-level sessions. Subagents do not hop -- and that is measured WITH the
+descriptions in context, i.e. the index is already delivering the lesson passively, which is
+exactly what M removes. Subagents are 92% of the corpus and carry the token cost.
+Re-surfaced to the user with the corrected picture. The user chose: BUILD THE VALID PROBE, THEN
+DECIDE. The probe scores LESSON APPLIED (deterministic per-scenario predicates, no mention of
+memory, no instruction to open a file), never "file opened", over three arms {BEFORE, C, M}.
+Ceiling guard: all three at 100% => non-discriminating => ship C, log M unproven.
+
+## D-19 — The decant/retro dedup re-point is UNCONDITIONAL (round-2 correction of D-15)
+Classification: Mechanical — CORRECTED
+D-15 exempted C on the grounds that "the gate held on the current corpus". Round 2 killed that:
+hook rule 5 REQUIRES every hook to carry a token appearing in no other hook, so C
+STRUCTURALLY GUARANTEES near-duplicate descriptions can never exist again -- decant's destructive
+dedup gate is not narrowed by C, it is PERMANENTLY DEAD. So the re-point ships with whichever
+candidate wins. The replacement input must be PARITY-GATED behaviourally (run the dedup over OLD
+and NEW inputs, assert the same duplicate set) -- a static path-swap is not evidence, because the
+frontmatter description is NOT the index description (0/65 exact matches).
+Full consumer set (the design found 2 of 6): decant SKILL.md :36, :74-77, :78-81, :126-128;
+drive-retro.md :55-56, :180 (pinned at test_drive_retro_contract.py:263).
+
+## D-20 — Structural contract #3a: the NEGATIVE clause (D-14's collapse hard-reds without it)
+Classification: Mechanical — a defect I introduced at Gate A
+`_step_no` is line-scoped and FIRST-MATCH. CLAUDE.md is green today only by a line-wrap accident:
+stage 5's `/drive-finalize` mention sits on a CONTINUATION line (no `N. ` prefix), invisible to the
+scanner. D-14's collapse to one line per stage moves it ONTO the numbered line => n_finalize=5 =>
+`assert n_harden < n_finalize` becomes 5<5 => HARD RED. REPRODUCED against the real assertion.
+Critically, ALL THREE of contract #3's positive "Required shapes" still MATCH the red-ing text, so
+an implementer obeying the contract to the letter still reds. Added the negative clause: NO numbered
+Pipeline line may carry a LATER stage's `/drive-*` token. Mutation-verify before the suite run.
+Note: codex CLEARED this; Claude caught it; the REAL PATH (running the assertion) adjudicated.
+
+## D-21 — Acceptance gates are DISJOINT per candidate; the 6 markers stay in MEMORY.md
+Classification: Mechanical
+Round-2 BLOCKING: the acceptance applied the hook gates (uniqueness lint, hook non-empty)
+UNCONDITIONALLY while D-13 mandated shipping M -- but M has no hooks, so the design mandated
+shipping a candidate its own binding gate forbids. A hard deadlock. Now: hook gates are C-ONLY;
+M gets a verbatim-1:1 conservation gate over all 65 descriptions plus the same .bak/atomic-rename/
+re-read treatment as MEMORY.md; and BOTH candidates must keep the 6 promotion markers byte-identical
+IN MEMORY.md itself.
+
+## D-22 — The behavioural probe is PRE-REGISTERED, REPEATED (k=3) and judged by NON-INFERIORITY
+Classification: Mechanical (round-3 BLOCKING from codex — accepted)
+A deterministic PREDICATE does not make a stochastic EXPERIMENT rigorous. Two holes: (i) one run
+per (scenario, arm) with a bare "score >= BEFORE" lets SAMPLING LUCK select a worse arm; (ii) the
+scenario/predicate manifest was not frozen before the arms ran, so it was POST-HOC SELECTABLE
+(author a predicate after seeing an arm's output and you have silently chosen the answer).
+Fixes, all binding: the manifest (scenarios, prompts, predicates, k, decision rule) is FROZEN and
+sha256-recorded BEFORE any arm runs; a broken scenario is DROPPED AND DISCLOSED, never rewritten
+mid-flight; k=3 repetitions per (scenario, arm); ship iff NON-INFERIOR within a pre-registered
+margin delta AND not strictly worse on any pre-registered STRATUM (an aggregate must not launder a
+stratum-level regression). Ceiling => non-discriminating => proves nothing => ship C as the stated
+policy fallback, log M UNPROVEN. Honest power note recorded: ~20 scenarios x k=3 is a SCREEN for a
+gross regression, not a proof.
+
+## D-23 — The M deadlock fix is PROPAGATED to the conservation gate (incomplete-fix, round 3)
+Classification: Mechanical
+Round 2 made Acceptance #5 candidate-disjoint but the fix was applied at ONE site: the binding
+external-write CONSERVATION GATE still demanded "hook rule 5 (uniqueness)" unconditionally, so M --
+which has no hooks -- remained unshippable by a SECOND binding section. This is exactly OPERATING's
+"propagate each fix everywhere the claim appears" rule, missed twice in this run. The gate is now
+CANDIDATE-AWARE (BOTH / C-only / M-only) and the per-candidate gate set is SINGLE-SOURCED there;
+Acceptance #5 references it rather than restating a second, weaker copy.
+
+## D-24 — C is gated on the FULL hook lint, not just uniqueness
+Classification: Mechanical (round-3 MAJOR)
+The hook rule binds 7 clauses but only clause 5 (uniqueness) was gated, and the behavioural probe
+samples only ~20 of 65 entries -- so C could ship with 45 unchecked hooks. Now gated over ALL 65:
+non-empty, <=110 B, >=1 literal symptom token, uniqueness, and the 6 marker-collapsed entries
+hook-less with non-empty titles. Rules 3/4/6 (adds-beyond-the-title, not-self-sufficient,
+authored-from-the-file) are JUDGEMENT clauses, not lintable -- enforced by the directive-census
+reviewer and the probe. The lintable/judgement split is now stated explicitly rather than left
+implicit.
+
+## D-24a — decant + drive-retro are IN SCOPE (stale out-of-scope text superseded)
+Classification: Mechanical (round-3 MAJOR)
+Surviving stale prose still listed "changes to decant's own spec" as out of scope and both consumer
+fixes as follow-ups, contradicting the now-unconditional re-point. An implementer could have read it
+as a licence to ship with the destructive dedup consumer broken. Superseded in place.
+
+## D-25 — The probe's BASELINE CONTEXT is pinned; scored strata EXCLUDE baseline-carried lessons
+Classification: Mechanical (round-3 BLOCKING — accepted)
+"A NEUTRAL cwd" is not a specification. Verified: ~/.claude/CLAUDE.md is EMPTY (0 B) and
+/Users/jiazou/CLAUDE.md (which imports OPERATING.md) is reached ONLY by the ancestor walk from cwd --
+so whether OPERATING.md is injected FLIPS on where the scratch project sits. An arm scored without
+OPERATING.md measures a system that does not exist. BINDING: the scratch project reproduces the REAL
+dispatch prefix (OPERATING.md + CLAUDE.md + the pointer), and ONLY MEMORY.md (+ memory/INDEX.md for
+M) is swapped between arms.
+Worse: the old stratum (i) was "the 6 marker-collapsed entries" -- which are EXACTLY the 6 whose
+lessons were PROMOTED INTO OPERATING.md (verified 6/6). OPERATING.md rides every dispatch, so those
+cells score IDENTICALLY in all three arms: they measure the BASELINE, not the index, and their
+per-stratum gate clause can never fire. That is ~30% of an admittedly under-powered screen spent on
+cells that cannot move. BINDING RULE: an entry is scoreable only if its lesson exists ONLY in the
+memory file. The 6 promoted entries are re-used as an explicit POSITIVE CONTROL (all arms must pass;
+a failure means the HARNESS is broken), reported separately and counted in NO arm's score.
+Load-bearing because PRE-REGISTRATION freezes the manifest: a stratum broken at freeze time is
+permanently broken for this run.
+
+## D-26 — The stratum-level floor gets a NOISE MARGIN and a MINIMUM n
+Classification: Mechanical (round-3 MAJOR — a contradiction I introduced myself)
+The per-stratum floor was added with ZERO noise margin, two lines after the design established that
+"losing by noise is not enough to block". At ~6 scenarios/stratum x k=3, ONE flipped trial marks a
+candidate "strictly worse" => ship neither => STOP => the run delivers ZERO on 62% of the in-scope
+bytes. A noise-triggered failure of the whole run. Now: a stratum gates only if it holds >=5
+scenarios; it blocks only if the candidate is worse by MORE than the margin delta; and if the drop
+rule guts a stratum below min-n, that stratum is DISCLOSED AS UNMEASURED and the decision escalates
+to Gate B rather than being resolved by an under-powered gate.
+
+## D-27 — Contract #3a is FILE-scoped, not Pipeline-scoped
+Classification: Mechanical (round-3 MINOR, but a real correctness trap)
+`_step_no` iterates `for ln in lines` over the WHOLE FILE. So ANY numbered line anywhere in
+CLAUDE.md carrying `/drive-finalize` before the real stage-6 line trips the order assert -- not just
+lines inside the Pipeline block. Generalised. Also added the two ABSENCE pins contract #6 omitted
+(`3-lens`, `three hardening lenses`), and a 3rd /drive-retro consumer site (its own frontmatter
+:2, whose description names the memory index).
+
+## D-28 — ANTI-TREADMILL STOPPING RULE for the probe
+Classification: Taste (stated in advance, so it binds)
+The behavioural probe has now failed review THREE rounds running (invalid instrument -> stochastic
+and post-hoc-selectable -> broken strata + unpinned baseline context). That is the calibration-
+treadmill signature (memory: calibration-treadmill-restructure-not-patch), and guard-patching a gate
+that keeps failing does not converge. BINDING: if round 4 surfaces ANOTHER probe-DESIGN P1, the probe
+is DESCOPED -- ship C (the measured-safe candidate that preserves passive delivery), log M as
+UNPROVEN with the honest finding that validly measuring it needs a real study, and do not spend a
+5th round. C alone still delivers the bulk of the win (MEMORY.md 21.1 -> ~12.5 kB).
+
+## D-29 — D-28 FIRES: candidate M and the behavioural probe are DESCOPED; this run ships C only
+Classification: Taste — executing a stopping rule STATED IN ADVANCE (D-28) and pre-announced to the user
+Round 4 surfaced another probe-DESIGN P1 (codex: the positive control added in round 3 reintroduces a
+ZERO-NOISE gate -- 54 stochastic trials, no pass threshold -- contradicting the experiment's own noise
+model). codex explicitly invoked D-28. The probe failed review in FOUR consecutive rounds, each fix
+introducing the next defect: the calibration-treadmill signature.
+TENSION RECORDED HONESTLY: the OTHER voice certified the probe's DECISION RULE sound (luck, ceiling
+and scenario-selection all closed -- "no path left"). Validity was not the whole question. M costs
+~180 probe calls PLUS a new external unversioned sole-carrier file, its own gate set, and 3 consumer
+breakages -- to buy ~6 kB. The probe existed solely to justify M; drop M => the probe has no purpose.
+DECISIVE TELL: BOTH of round 4's P1s evaporate under the descope, i.e. the complexity was M's, not
+the diet's.
+SHIPS: C (MEMORY.md 21,109 -> ~12,500 B) + the CLAUDE.md trim (12,739 -> ~9,400 B) = baseline 53,735
+-> ~40,300 B (-25%, ~ -3.3k uncached tok/dispatch). M becomes a follow-on WITH the reviewer-certified
+probe design attached (one open defect: give the positive control a noise-tolerant threshold).
+RESIDUAL, STATED NOT PAPERED OVER: whether a 110 B trigger changes behaviour as reliably as a 240 B
+description is UNMEASURED. C degrades passive delivery (less text); it does not eliminate it (M did).
+
+## D-30 — M is superseded WHOLESALE in one block, not hunted site-by-site
+Classification: Mechanical — a STRUCTURAL fix to this run's own recurring failure
+This run failed to propagate a fix site-by-site FOUR times (the marker-stripping M; the conservation
+gate's unconditional hook rule 5; the stale out-of-scope text; the follow-ups list). Removing M by
+editing 900+ lines would have been a fifth instance. Instead: ONE authoritative SUPERSEDING AMENDMENT
+at the top of design.md declares every M/probe statement below HISTORICAL AND NON-BINDING, and wins
+on conflict. Invalidating wholesale cannot miss a site by construction.
+
+## D-31 — TOKEN is DEFINED; the uniqueness lint was VACUOUS without it
+Classification: Mechanical (round-4 MINOR, but a real C-gate hole)
+The hook lint required ">=1 token appearing in no other hook" while never defining "token" -- so the
+gate asserted nothing (this repo's named failure class: spec-pin-mutation-verify /
+default-masked-pin-is-vacuous). Now defined once: TOKEN = a maximal [A-Za-z0-9_./$-]{3,} run,
+lower-cased, stop-words removed; SYMPTOM TOKEN = a TOKEN that ALSO appears VERBATIM in the linked
+memory FILE (which makes hook rule 2 checkable as written). The lint must itself be MUTATION-VERIFIED
+(strip a symptom token, duplicate another hook's tokens -- both must RED).
+
+## D-32 — The follow-ups list gave the implementer the REFUTED target for a destructive gate
+Classification: Mechanical (round-4 MAJOR — the 4th incomplete propagation)
+The Out-of-scope FRAMING was corrected in round 3, but the ENUMERATED ITEMS it points at were not:
+the implementer-facing "Follow-ups this run creates" list still said "log it, don't build it" for the
+decant delete-gate re-point, and prescribed pointing decant at the per-file frontmatter
+`description:` -- a target the doc REFUTES elsewhere on evidence (0/65 exact matches). Two mutually
+exclusive instructions for the same change, with the WRONG one in the implementer-facing list, over a
+DESTRUCTIVE untested unversioned delete-gate. Corrected in place; the target is the memory FILES'
+content, behaviourally parity-gated.
+
+## D-33 — CARVE-OUT VIOLATION caught in review: decant SKILL.md Step 1 is FROZEN
+Classification: Mechanical — a violation of the USER'S BINDING CONSTRAINT, caught by the round-4 review
+TODO.md carries an OPEN [V] item that OWNS skills/decant/SKILL.md :41, :43, :140 (the
+git-grep-the-memory-dir bug, the "0 new entries -> skip to step 5" mis-jump, the UPSTREAM binding) --
+i.e. Step 1's inventory prose. The user's premise FORBIDS preempting open [V] fixes. The decant
+re-point as scoped would have rewritten exactly that prose.
+RESOLUTION: the re-point is SCOPED to decant's DESTRUCTIVE dedup gate (SKILL.md:74-77) + /drive-retro
+(:55-56, :180, frontmatter :2). Step 1 (:36-44) is FROZEN, untouched.
+This is sound, not a dodge: Step 1 is NON-destructive (it only LISTS entries), and under C the
+descriptions still exist as <=110 B hooks, so Step 1 keeps working -- degraded in richness, not
+broken. The gate C ACTUALLY breaks is the DESTRUCTIVE dedup at :74-77, which is precisely what the
+re-point fixes. Freezing Step 1 honours the carve-out AND leaves the [V] item its target.
+
+## D-34 — The C hook lint was SELF-CONTRADICTORY and would have RED C by construction
+Classification: Mechanical (round-4 MAJOR)
+Clause (1) demanded "hook non-empty" over ALL 65 entries while clause (4) required the
+marker-collapsed entries to carry NO hook. The lint could never pass. Fixed by PARTITIONING: clauses
+1-3 quantify over the HOOK-BEARING entries only; clause 4 governs the marker-collapsed set.
+Also fixed in the same clause: the marker-collapsed SET is now DERIVED FROM THE LIVE PRE-WRITE INDEX,
+never hardcoded to 6 -- "exactly 6" contradicted D-4a (decant runs TWICE inside this run and can
+promote a 7th). The assertion is "every marker present in the live pre-write index survives
+byte-identical, on its own entry", not a magic number.
+
+## D-35 — Contract #6's CLAUDE.md absence-pin cite was WRONG (:273,278 -> :826,830)
+Classification: Mechanical (round-4 MAJOR)
+The round-3 text cited test_drive_finalize_contract.py:273,278 for CLAUDE.md's `3-lens` /
+`three hardening lenses` absence pins. Those lines are a DIFFERENT test asserting on
+drive-harden.md (they also carry a `Reduce AI slop` pin CLAUDE.md does not have). The CLAUDE.md
+absence pins live inside test_claudemd_pipeline_and_invariant at :826/:830. A wrong cite in a BINDING
+contract sends the implementer to verify the wrong assertion.
+
+## D-36 — SYMPTOM TOKEN redefined as a BACKTICKED LITERAL; the first definition was VACUOUS
+Classification: Mechanical (round-5 BLOCKING — the only mechanical guard on the only shipping surface)
+Round 4 defined SYMPTOM TOKEN as "a TOKEN that also appears verbatim in the memory file". REPRODUCED
+as broken in BOTH directions against the real corpus:
+ - FALSE GREEN (load-bearing): [A-Za-z0-9_./$-]{3,} matches any ordinary word, so a PURE SUMMARY hook
+   ("Run the suite the right way on this machine; the obvious command fails.") PASSES via
+   run/suite/command -- all of which appear in the linked file. The clause that exists to FORBID
+   summaries waves them through. Worse: the doc's own mandated mutation-verify ("strip the symptom
+   token -> must RED") IS that input, and it stayed GREEN -- the gate could not fail its own
+   falsification test.
+ - FALSE RED: lower-casing the token then matching case-SENSITIVELY against the file makes $TMPDIR --
+   the design's OWN rule-2 example -- unmatchable, along with CODEX_UNAVAILABLE, ConnectionRefused.
+FIX: SYMPTOM TOKEN := a BACKTICKED literal in the hook whose contents appear verbatim, WITH ORIGINAL
+CASING, in the linked memory FILE. Lower-cased TOKEN is retained for the UNIQUENESS clause only. The
+new definition passes its own mutation-verify.
+This is the repo's named failure class (spec-pin-mutation-verify / default-masked-pin-is-vacuous):
+a gate that cannot fail is not a gate. It mattered MORE after the descope, which made this clause the
+sole mechanical defence of MEMORY.md -- a surface where the design itself says a green suite is
+"structurally incapable of failing" and the byte metric "improves monotonically with the damage".
+
+## D-37 — The dedup parity gate was DEFAULT-MASKED; it now seeds a positive control
+Classification: Mechanical (round-5 MINOR, real)
+The parity gate asserted "the dedup over the OLD input and the NEW input produces the same duplicate
+set". Today the true duplicate set is EMPTY -- and a COMPLETELY DEAD re-point also produces an empty
+set. Equality alone therefore proves nothing (default-masked-pin-is-vacuous). FIX: seed a KNOWN
+near-duplicate pair into a scratch corpus and assert BOTH inputs DETECT it, and that parity still
+holds.
+
+## D-38 — Headline metrics CORRECTED: -22% / -3.0k tok, not -25% / -3.3k
+Classification: Mechanical (round-5 MINOR — my arithmetic error, reported to the user uncorrected)
+The amendment's table did not add up. MEMORY.md 21,109 -> ~12,500 (-8,609) and CLAUDE.md
+12,739 -> ~9,400 (-3,339) give a baseline of 53,735 -> 41,787 B = -22%, ~13.4k -> ~10.4k tok,
+i.e. ~ -3.0k uncached tokens per dispatch. The claimed "~40,300 B / -25% / -3.3k" was wrong and had
+already been quoted to the user; corrected everywhere.
+
+## D-39 — Two gates still cited the DESCOPED probe; D-10's ratchet header was in NO gate
+Classification: Mechanical (round-5 MINORs)
+The >=20% floor's rationale still named the behavioural probe as a live enforcer after the descope
+(the hard gates are now the full hook lint + the directive census + the dual-voice review of
+memory-diet.diff). And D-10's usage header -- which D-10 itself calls "the only change in the run
+that is still working in 6 months", the ratchet against decant's measured ~2 kB/day regrowth -- was
+in no gate at all, so an implementer could silently drop it. Both wired into the conservation gate.
+
+## D-40 — ONE slice, not two dep-chained slices (phase-1 detailed design)
+Classification: Mechanical
+The hook contract (index entry = <=110 B trigger; "open the linked file before acting") is NEW in this
+phase and CO-AUTHORED by the producer (MEMORY.md hooks + the D-10 header that states the rule) and the
+consumers (the decant/retro re-point, which exists BECAUSE of that rule). The shared-contract rule puts
+producer and consumer of a phase-new contract in ONE review unit: split, a reviewer scoped to
+`git diff phaseBaseSha..S_repoint` sees a consumer change with no cause in its own diff -- the precise
+way a shared contract silently fails to transfer. The alternative seam is dep-chained (ZERO fan-out, so
+it buys no parallelism) and its "foundation" verifies with the SAME parity gate + suite run as its
+dependents -- design.md's own test for "not a foundation". D-1 also requires a commit-bearing unit (the
+external MEMORY.md write produces no commit/diff; a commit-less slice converges VACUOUSLY on an empty
+diff). design.md's sequencing intent is preserved exactly, as step order INSIDE the slice.
+
+## D-41 — The VARIANT promotion marker is PRESERVED; MARKER is a superset of decant's grep
+Classification: Mechanical (completeness; in blast radius AND trivial)
+The LIVE index carries 6 CANONICAL markers AND 1 VARIANT: `drive-md-has-contract-pin-tests` ends with
+`**domain instance of canonical autodrive/OPERATING.md "run the suite before pushing"** (promoted
+2026-06-21)` -- a form decant's exact grep is already blind to (an open followups [P2]). A naive C
+transform would have DESTROYED it: silently un-promoting the entry and mooting the very followup that
+exists to make decant SEE it. So: MARKER_SPAN := the bold run matching
+`\*\*[^*]*canonical autodrive/OPERATING\.md[^*]*\*\*` THROUGH END OF LINE (verified: all 7 are
+line-terminal, so the span captures the marker AND its date/PR suffix as one byte-identical unit).
+CANONICAL-marker entries collapse to link + marker (D-3, hook rule 7). The VARIANT-marker entry stays
+HOOK-BEARING with its 108 B marker span re-appended byte-identical; its <=110 B budget is measured on
+the hook only. The conservation gate asserts EVERY MARKER_SPAN in the live pre-write file survives
+byte-identical -- a strict superset of D-3/D-21's canonical-only assertion, so it can never under-count.
+
+## D-42 — The idempotence predicate IS the hook lint, not a byte threshold
+Classification: Mechanical
+D-4 makes C idempotent via "leave any description already <= ~120 B verbatim"; D-24/D-34's lint budget
+is <=110 B. These CONTRADICT on the real corpus: one live entry's description is 117 B (`Bash local
+same-line expansion gotcha`) -- left verbatim by D-4, it REDS lint clause 1. And a 103 B *summary* left
+verbatim would RED clause 2. FIX: the idempotence predicate is the FULL HOOK LINT itself --
+C(x) = x IFF x already passes (<=110 B AND >=1 backticked SYMPTOM TOKEN AND discriminative). One
+predicate, one source of truth; C(C(x)) == C(x) still holds BY CONSTRUCTION because C's output always
+passes the lint. Same failure class as D-34 (a gate that reds correct work by construction), caught here
+before it could burn a fix round.
+
+## D-43 — /drive-retro's re-point sites CORRECTED: `:180` is NOT one
+Classification: Mechanical (a real correctness trap)
+design.md lists the retro consumer sites as `:55-56`, `:180`, frontmatter `:2`. Verified against the
+REAL file at d41b73e: `:180` is the PROPOSALS-ONLY NEVER-WRITE INVARIANT ("never edit OPERATING.md,
+CLAUDE.md, TODO.md, MEMORY.md/auto-memory, skill or command files ..."), and `MEMORY.md/auto-memory` is
+PINNED there by test_drive_retro_contract.py:453 (test_proposals_only_invariant). Re-pointing it would
+DELETE A WRITE-PROHIBITION and RED a live pin. The real read-the-descriptions sites are §3 `:52-59`
+(the FIXED READ-ONLY dedup-reference set, pinned at :263 -- the ONE pin that migrates) and §7 `:166-167`
+(the **Overlap** field), plus the frontmatter `:2`. An implementer following the design's site list
+would have broken a protected surface.
+
+## D-44 — The hook lint's IMPRECISION BUDGET is stated, not papered over
+Classification: Mechanical (names what the verification does NOT check -- OPERATING, at design time)
+Lint clause (2) is a mechanical FLOOR: it forbids a hook carrying no backticked literal (mutation-
+verified -- that pure-summary input is exactly what defeated the round-4 definition, D-36). It does NOT
+certify the literal is a genuine SYMPTOM token rather than a quoted prose phrase. Measured against the
+real corpus: 5 hook-bearing entries have linked files with ZERO code-span literals
+(prose-before-auq-when-exploratory, dedup-treadmill-exhaustive-matrix,
+reaudit-prompt-carries-known-adjudications, supersede-wholesale-not-site-by-site,
+preannounce-the-stopping-rule), so their token MUST be a verbatim prose phrase -- the weakest form of
+the clause. BINDING: that live-derived "literal-poor" set is enumerated in metrics-after.md and routed
+EXPLICITLY to both review voices as the judgement hot-spots. Hook QUALITY (rules 3/4/6) stays a
+judgement clause enforced by the directive census + the dual-voice review of memory-diet.diff -- NOT by
+a 6th redefinition of TOKEN. D-36 already restructured this definition once; a third pass is the
+calibration treadmill (memory: calibration-treadmill-restructure-not-patch).
+
+## D-45 — Scratch corpora live OUTSIDE the worktree, under $RUN_DIR/tmp
+Classification: Mechanical
+tests/contracts/test_skill_frontmatter.py::test_skill_md_discovery_count rglobs the REPO ROOT and
+asserts EXACTLY 5 SKILL.md -- so a scratch/fixture SKILL.md written inside the worktree REDS the suite;
+and a subagent `git add -A` has previously swept `.tmp*/` pytest scratch into a branch (1,497 files).
+D-37's dedup parity gate REQUIRES a seeded scratch corpus, so this is a live hazard, not a hypothetical.
+BINDING: the parity corpus, the lint scratch and every temp artifact live under $RUN_DIR/tmp
+(pre-created), TMPDIR is set in every dispatch (a nonexistent TMPDIR has cascaded mktemp failures into
+fixture fallbacks that DELETED a worktree), and commits stage EXPLICIT PATHS, never `-A`.
+
+## D-46 — The D-10 header carries BOTH a reader clause and a WRITER budget
+Classification: Mechanical
+D-10 calls the usage header "the RATCHET" against decant's measured ~2 kB/day regrowth and justifies it
+by "decant READS MEMORY.md before writing it, so a header rule is in-context for every future writer".
+But D-10's own quoted text -- "Hooks are triggers, not answers — open the linked file before acting. If
+two hooks look close, open both." -- is READER-FACING ONLY: it imposes no size or format budget on the
+writer, so AS WRITTEN it cannot be the ratchet it claims to be. The header therefore carries BOTH
+clauses (reader + "New entries: ONE line, `- [Title](file.md) — <trigger>`, <=110 B after the em-dash").
+The reader clause stays BYTE-STABLE because it is the conservation gate's grep anchor
+(`Hooks are triggers, not answers`). Cost ~210 B: bytes are REPORTED not GATED (D-12), and it does not
+threaten the >=20% floor.
+
+## D-47 — USER-CHALLENGE: may the diet go live BEFORE its guard is live on `main`?
+Classification: User-Challenge — NEVER auto-decided (a silent, irreversible data-loss trade-off)
+The decant re-point CANNOT protect this run (D-48). The MEMORY.md diet goes live INSTANTLY (external,
+unversioned); its guard ships via git and arrives only after merge AND a checkout update. So every
+in-run /decant reads main's OLD destructive delete-gate against a signal the diet just halved.
+OPTIONS:
+ (1) DESCOPE surface (a) — this run ships CLAUDE.md + the guard + TODO.md; the diet becomes a follow-on
+     run gated on the guard being live. Closes the hazard COMPLETELY. Cost: delivers ~3.3 kB of ~11.9 kB;
+     the largest surface waits for a second run + Gate B.
+ (2) SHIP BOTH with controls C1-C3. Does NOT close prevention: an unbounded post-run window resting on
+     C1's prose. Worst case: a memory file is silently deleted — recoverable from C2 IF someone acts on
+     C3's alarm.
+ (3) LAND THE GUARD FIRST (RECOMMENDED) — the re-point + its pins go out as their own small PR to main;
+     the user pulls; THEN the diet is written inside this same run. Closes the hazard COMPLETELY and
+     still delivers the full lever. Cost: one extra PR + a human `git pull`; breaks /drive's
+     one-PR-per-run shape.
+REJECTED ON ANALYSIS (recorded so it is not re-proposed): "defer the external write until after Gate B"
+— drive.md runs a wrap-/decant AFTER Gate B, so ship-time does not close the window; the TODO/metrics
+ACs would run post-ship outside the reviewed diff; and the external surface would then ship UNREVIEWED,
+violating D-8/AC-11. Strictly worse than option 3.
+RECOMMENDATION: option 3. It is the only option that both closes an irreversible, silent data-loss path
+AND delivers the whole 11.9 kB, and its cost (one small PR + a pull) is far below descoping the biggest
+surface or accepting an unbounded window. It is also what OPERATING prescribes for this shape ("defer
+the destructive action until after the decisive stage").
+
+## D-48 — RETRACTED: "the decant re-point protects THIS run." It CANNOT.
+Classification: Mechanical — reproduced on the REAL path, not argued
+`~/.claude/skills/decant` is a SYMLINK into the MAIN working tree (/Users/jiazou/workspace/autodrive/
+skills/decant), which is on `main` @ d41b73e — so the live skill runs MAIN'S BRANCH, and main's
+SKILL.md:75-77 still carries the destructive "near-duplicate descriptions ... delete one" bullet. The
+re-point lands on drive/baseline-diet-...; /drive's own invariant forbids mutating the user's main
+working tree; and MEMORY.md is EXTERNAL + UNVERSIONED, so the diet goes live the instant it is written
+while the guard waits for merge AND a checkout update (memory: deployed-copy-follows-checkout). drive.md
+:913 (I1 step 5.5) mandates /decant at EVERY context-clear boundary — one already fired this run.
+=> Every in-run /decant reads the OLD destructive gate against a halved signal.
+CONSEQUENCE — codex MAJOR #3 (split S1 consumer-repoint -> S2 diet for staged-risk) is OVERRULED WITH
+EVIDENCE: a slice seam cannot close a hazard that lives in ANOTHER CHECKOUT. S1's re-point would sit
+un-deployed on the run's branch while the live decant still reads main, so the ordering buys ZERO in-run
+safety while LOOKING like protection — strictly worse than no control, because it would retire the
+concern. codex's CONCERN is VALIDATED and PROMOTED (the guard IS a foundation that must be live before
+the diet is safe), but its MECHANISM is wrong: the foundation must LAND ON MAIN AND BE PULLED — a
+DEPLOYMENT boundary, not a slice boundary. That is D-47 option 3.
+
+## D-49 — The guard must ship through the SAME CHANNEL as the hazard => the control stack C1-C4
+Classification: Mechanical — the generalizable rule this run produced
+The hazard ships via the external file (instant, machine-wide); a guard shipped via git arrives late BY
+CONSTRUCTION. So the in-run controls must be branch-independent:
+ C1 PREVENTION (in-channel): decant Step 1 (SKILL.md:36 — verified, and FROZEN) READS MEMORY.md, so the
+    D-10 header reaches every decant on ANY branch. It gains an explicit anti-dedup clause ("NEVER dedup
+    or delete an entry by comparing hooks ... open BOTH linked files and compare their CONTENT"). Honest
+    limit: prose, not a gate — an agent may ignore it. Same enforcement class as the re-point; the
+    difference is that it ARRIVES.
+ C2 RECOVERY: THE DESIGNED ARTIFACT WAS THE WRONG CLASS (missed by both review voices).
+    `MEMORY.md.bak.<ts>` backs up the INDEX; the destructive gate deletes a memory FILE — so even moved
+    out of the scanned directory (Claude MAJOR #3: necessary, INSUFFICIENT) it cannot restore one.
+    Required: a FULL memory-DIRECTORY snapshot (every *.md + the index) + a sha256 manifest, stored
+    OUTSIDE $RUN_DIR (bin/drive-retention.sh trashes the run dir at AGE_DAYS=14) AND OUTSIDE the memory
+    dir (decant `ls`es it). $RUN_DIR/before/memory/ is NOT this control: it is stale (66 files vs the
+    live 72) and it expires.
+ C3 DETECTION: AC-13's manifest diff, re-run after the write, at every subsequent stage boundary, and at
+    Gate B. One-directional (assert NO DISAPPEARANCE), so a concurrent decant APPEND stays green — which
+    is what makes it non-vacuous against a live writer. Any loss => surface LOUDLY + restore from C2.
+ C4 SOURCE FIX: the re-point + AC-12's pins. Protects FUTURE runs only.
+RESIDUAL, NAMED: an unbounded post-run prevention window (from the diet going live until the re-point is
+merged AND pulled) resting on C1's prose alone. Nothing in this run's control can close it — only
+DEPLOYMENT ORDER can (D-47).
+
+## D-50 — Lint clause 2 gains a live-derived SOURCE CONSTRAINT (no TOKEN redefinition)
+Classification: Mechanical (codex MAJOR #4 + Claude MINOR — both accepted)
+Hook rule 6 authors the hook FROM the file, so a bare "backticked literal appears verbatim in the file"
+check is satisfiable by backticking A WORD OF YOUR OWN SUMMARY PROSE — it appears in the file BY
+CONSTRUCTION. The clause that exists to forbid summaries would wave them through for ANY of the entries,
+not just the 5 literal-poor ones; D-44's routing of only those 5 to the reviewers reads as if the other
+60 are mechanically certified. They were not.
+FIX (no redefinition of TOKEN): add a SOURCE CONSTRAINT — if the linked FILE contains >=1 backtick
+code-span, the hook's SYMPTOM TOKEN MUST BE one of THAT FILE's code-span literals (live-derived); only a
+file with ZERO code-spans (live-derived — today 5) may fall back to a verbatim prose phrase. Moves 60/65
+(live-derived) from judgement to gate and leaves the disclosed remainder for review. The stop-word set is
+ENUMERATED (clause 3 only) — an unenumerated set makes the clause unreproducible.
+D-44's STOPPING RULE HOLDS: TOKEN is NOT redefined. D-36 already restructured that definition once; a
+third pass is the calibration treadmill.
+
+## D-51 — RETRACTED: "C forces hook uniqueness, so it permanently kills decant's dedup gate."
+Classification: Mechanical — reproduced FALSE against the live corpus
+Running this design's OWN clause-3 predicate (the D-31/D-36 TOKEN definition, verbatim) over the live
+hook-bearing entries: 0/65 uniqueness failures on the FULL descriptions AND 0/65 on 110 B truncations.
+RULE-5 UNIQUENESS ALREADY HOLDS PRE-C. C forces nothing new, so it cannot "permanently kill" the gate on
+the strength of that property, and E4's predicted sibling-cluster collisions are DEAD SPEC.
+THE TRUE ARGUMENT IS THE INVERSE, AND IT IS WORSE: decant's bullet keys on "near-duplicate DESCRIPTIONS"
+— an LLM's JUDGEMENT, not a token test. C shrinks the signal that judgement runs on from a ~250 B mean
+description to a <=110 B trigger: strictly less discriminating information, over exactly the sibling
+clusters the design names. C makes the destructive, irreversible delete-gate MORE TRIGGER-HAPPY, NOT
+INERT. That is why the re-point is must-have, and why "nothing gates it" (Claude BLOCKING #1 / codex
+BLOCKING #2 => AC-12) is a DATA-LOSS PATH, not a paperwork gap. Clause 3 is retained as a FREE
+REGRESSION GUARD that nothing may lean on; metrics-after.md reports each hook's unique token so both
+voices can see it is a floor, not a filter.
+SUPERSEDED WHOLESALE (D-19, design-phase1 §1.4, E4) in ONE authoritative block, per
+supersede-wholesale-not-site-by-site: this run has already failed site-by-site propagation FOUR times.
+
+## D-52 — D-47 RESOLVED BY THE HUMAN: Option 3 — land the guard FIRST, on `main`, before the diet is written
+
+**Classification: User-Challenge (answered by the human — NOT auto-decided).**
+
+Asked via AskUserQuestion at phasedesign1 round 2 (event-log `ask` id D-47). The human chose
+**Option 3**: the decant/retro re-point + its pins ship as their own PR to `main`; the human merges
+and `git pull`s; **only then** is the MEMORY.md diet written. Rejected: Option 2 (ship both, accept an
+unbounded unmonitored post-run window) and Option 1 (descope the MEMORY.md diet to a follow-on).
+
+**Structural consequence (Mechanical, decided by the coordinator):** `/drive` ships **once per run**
+(one Gate B → one PR). Two PRs therefore require **two runs**. So:
+
+- **Run G (new, lean) = the GUARD** — `skills/decant/SKILL.md` (the destructive dedup bullet only;
+  Step 1 `:36-44` and `:140` stay FROZEN per D-33), `.claude/commands/drive-retro.md` (frontmatter `:2`,
+  §3, §7 — `:180` UNTOUCHED per D-43), the one migrating pin in
+  `tests/contracts/test_drive_retro_contract.py`, and the NEW mutation-verified
+  `tests/contracts/test_decant_dedup_contract.py` (AC-12). Ships **PR-A**. Its detailed design already
+  exists — §1.4, §1.5, AC-8, AC-9, AC-12 of this run's `design-phase1.md` — and is REUSED, not re-authored.
+- **This run (baseline-diet) = the DIET only** — `CLAUDE.md`, `TODO.md`, and the external `MEMORY.md`.
+  Its phase-1 slice set becomes **S1 = DIET** (the GUARD unit is excised to Run G). Ships **PR-B**.
+- This run **PARKS at a non-decision STOP** (`stop:awaiting-guard-live`) until PR-A is merged AND the
+  human's main checkout is updated — the sync point the human explicitly accepted. Its base is then
+  re-pointed at the new `main` before implement.
+
+**Why a hand-rolled PR-A was rejected:** memory `invoke-real-stage-not-inline` — open-coding a ship
+"because it's a small change" silently skips the load-bearing gates (diverged-base preflight, CI-wait,
+conformance) and has already cost this repo a merge conflict + a CI-red. Run G goes through the real
+stages, where the PreToolUse enforcement chain makes review-by-omission impossible by construction.
+
+## D-53 — The park's release condition is AC-0, a MECHANICAL check on the DEPLOYED ARTIFACT
+Classification: Mechanical
+Option 3 (D-52) reduces the run's entire safety to ONE claim: "the guard is live before the diet is
+written." Two tempting proxies BOTH fail:
+ - "PR-A is merged" -- MERGED != LIVE. `~/.claude/skills/decant` symlinks into the MAIN WORKING TREE,
+   so the running skill follows THAT TREE'S CHECKOUT, not origin/main (memory:
+   deployed-copy-follows-checkout).
+ - "the human says they pulled" -- OPERATING: "An actor's self-reported 'done' is not evidence it
+   happened. Gate irreversible/consequential actions on truth derived independently of the actor's
+   self-report -- the artifact the work must produce."
+So AC-0 reads the artifact the running /decant ACTUALLY resolves and greps it for the re-pointed
+bullet, FAILING CLOSED:
+    LIVE_SKILL="$(readlink -f ~/.claude/skills/decant)/SKILL.md"
+    grep -q '<re-pointed anchor>' "$LIVE_SKILL" || STOP "guard NOT live -- do not write"
+It runs IMMEDIATELY BEFORE THE EXTERNAL WRITE, not at run-resume: the user's checkout can move in
+between. Verified 2026-07-14: the check correctly returns NOT-LIVE (PR-A has not shipped), i.e. it is
+genuinely falsifiable and currently, correctly, red.
+
+## D-54 — The control stack is RE-DERIVED, not inherited: C1 CUT, C3/AC-13 CUT, C2 KEPT but NARROWED
+Classification: Mechanical (proportionality — OPERATING: "gate edge-hardening on evidence the failure
+occurs"; "review-churn and over-design are the same failure")
+Option 3 closes the hazard AT THE SOURCE: once the guard is live the deployed dedup compares memory-FILE
+CONTENT, so the diet's <=110 B hooks are INVISIBLE to the destructive gate. Every control built for the
+un-guarded world was therefore re-asked one question -- "under Option 3, does a real failure still
+occur?" -- rather than kept by inertia.
+ C1 (the MEMORY.md header's anti-dedup clause) -- CUT. The live gate no longer reads hooks at all, so C1
+   would be a SECOND COPY of the guard's own instruction in the SAME ENFORCEMENT CLASS (prose): DRY
+   violation, not defence-in-depth. Its only surviving usability concern is ALREADY CARRIED by D-10's
+   ORIGINAL clause 1 ("If two hooks look close, open both"), which predates the hazard and stands on its
+   own merit. A control that no longer prevents anything is slop.
+ C3 / AC-13 (memory-dir integrity manifest) -- CUT, on TWO independent grounds.
+   (i) Its hazard is closed at source.
+   (ii) IT NEVER WORKED FOR THE RACE I CLAIMED IT COVERED -- self-caught on re-review, and retracted.
+        Round 2 asserted "a decant write inside the hash->rename gap is caught by AC-13's manifest diff".
+        FALSE: the manifest is taken PRE-WRITE and is ONE-DIRECTIONAL (no-disappearance), so an entry
+        that ARRIVES DURING the write is in neither the manifest nor the installed file.
+        AC-5's cross-check against the LIVE MEMORY DIRECTORY catches it and is STRICTLY STRONGER:
+        decant writes the memory FILE first (SKILL.md:96-97, Step 4), so a clobbered index line => the
+        file survives with no entry => ORPHAN => AC-5 REDS; and a deleted file => DEAD LINK => AC-5 REDS.
+        Undetectable remainder: a clobbered MARKER addition -- NOT data loss (worst case an
+        already-promoted rule is re-proposed once) and already the logged [P2]. Not worth a subsystem.
+ C2 -- KEPT, but NARROWED from "full memory-DIRECTORY snapshot + sha256 manifest" to "a durable pre-write
+   copy of MEMORY.md", outside $RUN_DIR and one level ABOVE the memory dir.
+   The DIRECTORY half had exactly one justification (recovering a decant file-delete) -- closed at source
+   -- and NOTHING ELSE CONSUMES IT: the diff, the lint, the conservation gate and the reviewers all read
+   the LIVE files.
+   The INDEX half survives on THREE pre-hazard, EVIDENCED merits: (1) D-11's ABORT EXPOSURE -- a run
+   ABORT (cap-8 STOP, red tests, BLOCKED, user kill) is a ROUTINE /drive event and git rollback does not
+   roll back an external write; (2) AC-11's review baseline (memory-diet.diff is diffed against it);
+   (3) AC-5's conservation baseline. $RUN_DIR/before/memory/ can serve NONE of the three: it is STALE
+   (66 files vs the live 72) AND it expires (bin/drive-retention.sh, AGE_DAYS=14).
+   Claude MAJOR #3 STILL STANDS: the copy goes ABOVE the memory dir, because the re-point does NOT change
+   decant's duplicate-FILENAME `ls` half.
+
+## D-55 — The "unbounded post-run prevention window" residual is RETRACTED; a bounded one replaces it
+Classification: Mechanical
+D-49 named an UNBOUNDED post-run prevention window (from the diet going live until the re-point is merged
+and pulled). Option 3 CLOSES it: the guard lands FIRST, so once PR-A is merged and pulled it is live by
+default, forever, on every branch cut from main.
+What remains is strictly smaller, and is NAMED, NOT BUILT FOR: if the human checks out a PRE-PR-A ref in
+the MAIN WORKING TREE while the diet is live, the deployed skill reverts to the old gate. That is a
+FOUR-WAY CONJUNCTION (pre-PR-A checkout AND a decant fires in that window AND it judges two <=110 B hooks
+near-duplicate AND it deletes) with NO EVIDENCE any link occurs, and it shrinks toward nil as PR-A ages
+into every branch. Building for it would be exactly the over-design D-54 just cut. C2 remains the
+recovery path for the index; the memory FILES are covered by nothing, and that is the accepted, stated
+trade.
+
+## D-56 — ANTI-TREADMILL: gates must be EXECUTED in the design, not prescribed; + a pre-announced stopping rule
+
+**Classification: Mechanical (method), pre-announced BEFORE round 3 so it binds under sunk cost.**
+
+**The recurring class, named:** every P1 in rounds 1 and 2 that was not a premise error is the same
+defect — *an acceptance gate that cannot actually FAIL (vacuous) or cannot actually PASS
+(unsatisfiable)*. R1: the re-point gated by nothing; AC-8 authored-to-pass with no referent; AC-11
+not falsifiable. R2: **AC-0** (unbound placeholder anchor ⇒ vacuous PASS on the pre-PR-A file, AND
+false-RED on a line-wrapped bullet, AND invalid shell); **AC-5** (byte-identical map vs. permitted
+additions ⇒ unsatisfiable); AC-10 (no falsifiability row); AC-11 (a "path" that is not a path).
+This is the signature in memory `calibration-treadmill-restructure-not-patch` +
+`prescribed-mutation-verify-is-not-executed`: **writing "mutation-verify this" into a spec does not
+make the gate falsifiable.** Guard-patching one gate per round will not converge.
+
+**THE RESTRUCTURE (binding from round 3):** a gate does not exist in this design until its
+**literal, runnable text** is present AND the design author has **EXECUTED it against the real tree
+and pasted the real output**, demonstrating **both directions**:
+  1. it **GREENs** on the true current state, and
+  2. it **REDs** under a concrete stated mutation.
+**No placeholders** (`<anchor string>`), no "the implementer will bind this", no prose predicates.
+A criterion that cannot show both transcripts is **not a gate** — it is demoted to REPORTED.
+
+**PRE-ANNOUNCED STOPPING RULE (fires without further deliberation):** *if round 4 surfaces another P1
+of this class*, the gate set is **DESCOPED to the load-bearing minimum** — **AC-0** (the safety
+release condition) and **`bin/run-tests.sh` green** — frozen verbatim from their round-3
+executed transcripts. **Every other criterion is demoted from GATE to REPORTED** (bytes, census,
+floor, lint → evidence in `metrics-after.md`, not pass/fail). **We do not spend a 5th round.** The
+run's value is the diet + a green suite + no data loss; the rest is scaffolding, and scaffolding is
+not worth an unbounded review loop.
+
+**Cross-run contract created (and it is co-authored, so it must be pinned HERE):** AC-0's predicate
+depends on a **byte-stable SENTINEL that Run G emits** into `skills/decant/SKILL.md`. Run G is the
+PRODUCER, this run is the CONSUMER. The sentinel's exact literal is specified in this design and
+Run G's acceptance MUST include *"emits the sentinel byte-for-byte"*. A prose anchor lifted from the
+re-pointed bullet is FORBIDDEN — R2 proved every such anchor already matches the pre-PR-A file.
+
+## D-57 — CROSS-RUN CONTRACT: the SENTINEL Run G must emit (AC-0's predicate)
+Classification: Mechanical (co-authored contract — pinned in the CONSUMER's design per D-56)
+AC-0's round-2 predicate was the literal placeholder `<the re-pointed bullet's anchor string>`, bound
+nowhere. BOTH voices BLOCKED. Reproduced: every prose anchor an implementer would lift from the bullet
+(`memory`, `delete one`, `Duplicate filenames`, `near-duplicate`, `overlapping concepts`, `the project
+memory directory`) ALREADY MATCHES THE PRE-PR-A FILE -- and the design itself says the re-point does NOT
+change decant's duplicate-FILENAME half, so those tokens survive PR-A BY DESIGN. AC-0 would have gone
+GREEN with the guard NOT live, and the irreversible external write would have proceeded. Also reproduced:
+the real bullet is line-WRAPPED across 3 physical lines, so a prose `grep -q` never matches => false-RED
+=> a blocked implementer loosens the pattern into the vacuous pass.
+THE CONTRACT (Run G = PRODUCER, this run = CONSUMER):
+  SENTINEL (must be PRESENT), a code-span on ONE physical line:
+      `decant-dedup-input: memory-file-content (v1)`
+  OLD CLAUSE (must be ABSENT):
+      near-duplicate descriptions
+Run G replaces the destructive bullet with the EXACT text pinned in design-phase1.md §1.4 (it does not
+re-author it), and Run G's AC-12 MUST assert the bullet byte-for-byte.
+codex proposed the absence literal `already saved it; delete one.` -- OVERRULED WITH EVIDENCE: the
+re-point KEEPS the duplicate-FILENAME delete (the diet never changes filenames), so that clause SURVIVES
+by design and asserting its absence would FALSE-RED forever (executed against the re-pointed file:
+MATCHES). The absence literal must be the description-keying that actually dies.
+AC-0 is now two-sided `grep -qF`, EXECUTED four ways (RED today / RED on sentinel+old-clause / GREEN on
+the re-pointed file / RED on a missing path). The GREEN direction -- which round 2 could not produce --
+is proven.
+
+## D-58 — Gates are EXECUTED or DEMOTED; AC-2, AC-10 and lint clause 3 become REPORTED
+Classification: Mechanical (D-56's method, applied)
+Under D-56 a criterion that cannot show BOTH transcripts is not a gate. Applying it honestly:
+ GATES (each executed against the real tree, both directions, scripts persisted in $RUN_DIR):
+   AC-0 (ac0-guard-live.sh) · AC-1 (hook-lint.py) · AC-3 + AC-4 (the REAL pytest) ·
+   AC-5 (ac5-conservation.py) · AC-6 (git diff, SHA base) · AC-7 (byte floor) · AC-9 (bin/run-tests.sh) ·
+   AC-11 (grep over the recorded prompt).
+ DEMOTED TO REPORTED:
+   AC-2 (directive census) -- whether a claim SURVIVED A REWORDING is a JUDGEMENT: a literal grep
+     false-REDs on a legitimate reword; a loose one passes on a deletion. No RED transcript exists.
+     It stays REQUIRED as reviewer-enforced evidence; it does not pass/fail the slice.
+   AC-10 (metrics) -- D-12 already says bytes are REPORTED, never GATED. codex's "no falsifiability row"
+     finding was correct BECAUSE THE CATEGORY WAS WRONG: there is no mutation that must RED it. The one
+     byte GATE is AC-7's floor.
+   AC-1 clause 3 (uniqueness) -- Retraction 1 measured 0 failures on the real corpus at any hook length;
+     the mutation reds via clause 2, not clause 3. It cannot fail on realistic input, so it is a REPORTED
+     regression guard, not a gate. Nothing may lean on it.
+Also executed and corrected: AC-11's fifth "path" is now a real FILE ($RUN_DIR/literal-poor.md); AC-7's
+headroom sum re-derived to 3,007-3,107 B (round 2 stated ~3,100-3,250 -- wrong; the gate arithmetic
+itself was and is exact: 12,739 -> <=10,191, cut >=2,548).
+DISCLOSED (not gated): D-50's quality cost, measured live -- 5 literal-poor entries (0 code-spans =>
+backticked verbatim prose phrase allowed) + 11 code-span-poor (1-2 spans => D-50 may force a weaker
+trigger than the best available) + 49 ample. The 16 are routed to both review voices.
+
+## D-59 — AC-6's diff base is an EXPLICIT SHA; the park release does a BRANCH op, not a ref move
+Classification: Mechanical (Claude MAJOR — reproduced)
+state.json carries "baseRef": "main" -- a SYMBOLIC ref -- and featureBranch has ZERO commits, cut from the
+OLD main. So `git diff main..HEAD` RE-POINTS ITSELF the instant the human pulls PR-A, and AC-6's
+file-ownership assertion then lists Run G's own files (skills/decant/SKILL.md, drive-retro.md, the new
+test) and REDS A CORRECT WORKTREE -- accusing the implementer of touching files they never touched.
+Reproduced end-to-end in a scratch repo mirroring the real topology.
+BINDING: at park release the run performs the BRANCH operation, not just a ref move:
+    git fetch origin
+    git branch -f drive/baseline-diet-20260713-214819 origin/main   # free: zero commits
+    DIET_BASE=$(git rev-parse origin/main)                          # freeze phaseBaseSha/baseSha
+AC-6 runs with <baseRef> = $DIET_BASE (an explicit SHA), NEVER the symbolic `main`. Executed: symbolic
+base => FALSE-RED (4 files); SHA base => GREEN (exactly {CLAUDE.md, TODO.md}); touching a Run G file =>
+RED (correct).
+
+## D-60 — The race/orphan argument is RE-FOUNDED on an order-INDEPENDENT invariant
+Classification: Mechanical (codex MAJOR + Claude MINOR — accepted)
+Round 2 grounded AC-5's race detection on "decant writes the memory FILE first (SKILL.md:96-97, Step 4)".
+WITHDRAWN: decant's SKILL.md NEVER INSTRUCTS AN INDEX-LINE WRITE AT ALL, so no ordering between the file
+and the index can be derived from it. The premise was unsupported by the evidence offered for it.
+THE CORRECT GROUND IS STRONGER AND ORDER-INDEPENDENT:
+    our rename() replaces MEMORY.md and NOTHING ELSE -- it can NEVER touch a memory FILE.
+Therefore a concurrent new-entry write can only ever lose its INDEX LINE; its FILE persists on disk =>
+ORPHAN => AC-5 REDS, regardless of decant's write order. (Executed: transcript (5).)
+RESIDUAL NAMED: if AC-5 samples BETWEEN decant's file-write and its index-append, a LEGITIMATE addition
+presents as an orphan. Remediation is identical either way (re-add the index line), so it is a TRUE
+POSITIVE of "index and dir disagree", not a false RED. Binding: RE-SAMPLE ONCE (re-read the live dir +
+installed bytes) before declaring an orphan.
+Also retracted: "AC-5 is strictly stronger than AC-13" -- FALSE. AC-13 sampled at EVERY stage boundary;
+AC-5 runs ONCE, at write time, so a memory-file deletion at a LATER boundary (the Seam-B decant, the
+wrap-decant after Gate B) is outside AC-5's temporal domain. The AC-13 CUT still stands, but on ground (i)
+alone (Option 3 closes the hazard at source; a control that prevents nothing is slop). The uncovered
+temporal scope is named, per OPERATING's "name what a verification deliberately does not check".
+
+## D-61 — AC-0's ACCEPTANCE path takes NO ARGUMENT; the fixture bypass is structurally closed
+Classification: Mechanical (codex BLOCKING r3 — reproduced)
+Round 3's script took `LIVE_SKILL="${1:-<deployed>}"`. codex killed it: a two-line fixture the IMPLEMENTER
+AUTHORS releases the park --
+    printf 'harmless\n`decant-dedup-input: memory-file-content (v1)`\n' > fixture.md
+    bash ac0-guard-live.sh fixture.md   =>   AC-0 GREEN   rc=0   (the guard is NOT live)
+-- and the round-3 GREEN transcript was itself produced through that override, which is how it hid.
+OPERATING: "could the actor pass this verification WITHOUT doing the work?" Answer was YES, on the ONE
+control standing between this run and an irreversible machine-global write.
+FIX (structural, not a patch): the ACCEPTANCE invocation is `bash ac0-guard-live.sh` with NO ARGUMENTS; it
+resolves the deployed artifact ITSELF. A bare positional argument is REFUSED (rc=2). Probing lives behind
+an explicitly different `--probe <path>` flag that prints a PROBE banner and can never be the acceptance
+run. BINDING: any argument means it is not the acceptance run.
+The GREEN direction is now proven THROUGH THE ACCEPTANCE PATH by simulating the real deployment (a $HOME
+whose .claude/skills/decant symlinks to a checkout carrying the re-pointed bullet) -- not by an override.
+Executed: RED today / GREEN on the simulated re-pointed deployment / RED when it reverts / REFUSED rc=2 on
+the bypass / RED on missing path / RED with $HOME unset.
+Note there is no "fake" target that passes acceptance while decant reads something else: the gate resolves
+EXACTLY the path the runtime resolves. Re-pointing the symlink changes what decant ACTUALLY runs.
+
+## D-62 — D-58's AC-2 demotion is REVERSED: AC-2a (EXISTENCE) is a GATE; AC-2b (SEMANTIC) is REPORTED
+Classification: Mechanical — I RETRACT my own D-58 reasoning (Claude MAJOR r3 + coordinator)
+D-58 demoted AC-2 WHOLESALE because "semantic survival under rewording is a judgement: a literal grep
+false-REDs on a legitimate reword, and a loose one passes on a deletion." That is correct for SEMANTIC
+survival -- and WRONG for the hazard AC-2 actually cites. AC-2's own text names the hazard as DELETION
+("a trim could DELETE an entire invariant, keep the suite green, and improve the byte metric").
+DELETION IS AN EXISTENCE QUESTION, AND EXISTENCE IS COUNTABLE. I considered only two instruments (a literal
+grep, a loose grep) and missed the third: A COUNT.
+Executed ($RUN_DIR/ac2-count.py, counts LIVE-DERIVED from BEFORE):
+  (0) GREEN on the true CLAUDE.md      {'pipeline stages': 9, 'Invariants bullets': 12, '$RUN_DIR': 18}
+  (1) RED   delete one Invariants bullet   Invariants bullets: 11 != 12
+  (2) GREEN legitimate REWORD of it        -- REFUTES my stated demotion reason
+  (3) RED   drop a $RUN_DIR entry          $RUN_DIR inventory: 17 != 18
+LOAD-BEARING: after the demotion the only control was a census WRITTEN BY THE SAME ACTOR WHOSE WORK IT
+AUDITS, and every automated signal points the WRONG way -- the suite stays GREEN (pinned_in=0 for all 8
+core invariants, verified by me) and AC-7 IMPROVES, because the byte metric REWARDS deleting an invariant.
+AC-2a is the only signal pointing the right way.
+NOT THE STOPPING-RULE CLASS: D-56 fires on a gate that cannot FAIL or cannot PASS. This is the INVERSE --
+a GATEABLE criterion wrongly demoted -- and D-56's remedy would DELETE AC-2 entirely, which is precisely
+the wrong move. The rule does not fire here.
+
+## D-63 — Every claimed gate is PERSISTED as runnable text (codex BLOCKING r3)
+Classification: Mechanical — my own D-56 rule, applied correctly against me
+Round 3 asserted AC-3/4, AC-6, AC-7 and AC-11 as gates but persisted only PROSE TRANSCRIPTS (and AC-9
+"borrowed" AC-3/4's absent RED). Under D-56 those gates DID NOT EXIST. codex is right. But both voices
+independently RE-EXECUTED them and they passed, so they are demonstrably executable => PERSIST, do not
+demote (demoting what is executable is the D-62 error in the other direction).
+Persisted in $RUN_DIR, and the acceptance run invokes THESE FILES, never a paraphrase:
+  ac0-guard-live.sh · hook-lint.py · ac2-count.py · ac34-pins.sh · ac5-conservation.py ·
+  ac6-ownership.sh · ac7-floor.sh · ac11-review-wiring.sh
+ac34-pins.sh drives the REAL pytest and restores the worktree on exit (verified clean). ac6-ownership.sh
+REFUSES a symbolic base (main/origin/main/HEAD) outright, so D-59 cannot be mis-followed into a false-RED.
+AC-9's RED direction is now ac34-pins.sh's mutations (they red the same suite) -- no longer borrowed.
+They survive an indefinite park: retention's only destructive tiers are codex-raw-*.log and wt/ children.
+
+## D-64 — AC-5 is keyed on the (title, file) PAIR MULTISET; the entry-count check is implemented
+Classification: Mechanical (MAJOR, both voices)
+`m[title] = file` OVERWRITES duplicate titles, so a real DROP could hide behind a dict collision, and the
+entry-count check was declared but never written. The ORPHAN clause happened to catch the attack -- relying
+on that is luck, and Claude said so.
+FIX: Counter over (title, file) PAIRS + the count check. Executed against the attack that defeats BOTH a
+dict AND a bare count (PRE has two entries titled 'Twin' -> different files; POST keeps one and adds a
+filler, preserving the count 73->73): the CONSERVATION clause now REDs it directly.
+Seven transcripts, on a SELF-RESTORING corpus rebuilt from the live dir each run (round 3's fixture had
+drifted, so its GREEN no longer reproduced -- codex caught that too).
+
+## D-65 — clause 3's demotion is propagated INTO the script; clause 2's degenerate literal closed;
+##         D-59 extended to the WORKTREE
+Classification: Mechanical (MAJOR + MINORs, both voices)
+ - CLAUSE 3: the design said REPORTED; hook-lint.py still exit(1)-ed, so a token collision FALSE-RED AC-1.
+   Worse, an implementer told "it is non-gating" would EDIT THE PERSISTED GATE -- the one thing that must
+   not happen. A demotion that lives only in prose is not a demotion. Now: clause 3 emits `AC-1 WARN [3]`
+   to stderr and NEVER fails (executed: collision -> WARN, rc=0).
+ - CLAUSE 2: for the 5 literal-poor files `file_spans` is empty, so D-50's source-constraint elif
+   SHORT-CIRCUITED and a degenerate literal ` the ` passed (codex reproduced it). Closed: a literal is
+   usable only if >=8 chars AND carrying >=1 non-stopword token (executed: ` the ` -> RED).
+ - D-59: `git branch -f` re-points the ref but STRANDS THE DETACHED WORKTREE on the old base, so AC-6
+   re-includes Run G's files and false-REDs. Step 1 now moves the WORKTREE too, and handles the rc=128 case
+   (git branch -f fails loudly if the branch is checked out in a worktree -- today it is checked out
+   nowhere, and it fails toward RED).
+ - NIT: `$RUN_DIR/before/memory/` does NOT "expire" -- bin/drive-retention.sh never touches history. That
+   half of C2's argument is WITHDRAWN; the STALENESS half (66 files vs the live 72) carries it alone, so C2
+   stands unchanged. Upside: it is also why the eight gate scripts survive an indefinite park.
+ - NIT: the cross-run handoff to Run G was not bound to an artifact (this run PARKS, so Run G runs FIRST,
+   while this design lives only in an uncommitted $RUN_DIR). Written: $RUN_DIR/RUN-G-BRIEF.md -- scope, the
+   exact replacement bullet, the SENTINEL contract, and Run G's acceptance, verbatim. Fail-closed either
+   way: if Run G re-authors the bullet, the sentinel changes and AC-0 REDs => this run parks.
+
+## D-66 — THE D-56 STOPPING RULE FIRES: gate set descoped; AC-0 hardened (repoRoot-anchored) and frozen
+
+**Classification: Mechanical (the pre-announced D-56 rule executing; surfaced at Gate B).**
+
+Round 4's review surfaced four BLOCKING, all of the pre-named "gate that cannot fail / false-REDs on
+correct input" class: (1) **AC-0 $HOME bypass** — the sanctioned no-arg acceptance greened under a
+faked $HOME (BOTH voices reproduced it; codex corroborated in its partial log before an OpenAI
+content-filter refusal on the env-injection test content); (2) **ac6-ownership** false-REDs when the
+state.json inventory padding is trimmed (AC-6 vs AC-7 contradiction); (3) **ac11-review-wiring**
+false-REDs (demands the C2 copy inside $RUN_DIR while §1.6 mandates it outside); (4) **ac34-pins**
+false-REDs (anchors on pre-trim Pipeline text the mandatory collapse deletes). Per **D-56**, this is
+the decisive round and the rule FIRES — **no 5th review round.**
+
+**Retained GATES (load-bearing; block the run):**
+- **AC-0** — the safety release condition. HARDENED this round and re-anchored on **repoRoot**
+  (state.json, authoritative/write-once) instead of $HOME (actor-controllable). The coordinator
+  verified all six directions by execution: RED today · round-3 bare-positional REFUSED (rc=2) ·
+  round-4 $HOME bypass now RED · faked-HOME+correct-state exact vector RED · genuine re-pointed
+  deployment GREEN · symlink divergence RED. Frozen at this hardened version (`ac0-guard-live.sh`).
+- **AC-5** — conservation (`ac5-conservation.py`). RETAINED as a GATE (not descoped): it is
+  data-integrity for the irreversible write, and BOTH voices found NO bypass. Not brittle scaffolding.
+- **`bin/run-tests.sh` green on a QUIET machine** (D-17) — carries the CLAUDE.md contract-pin
+  protection (AC-3/AC-4's pins run INSIDE the suite, so demoting the standalone `ac34-pins.sh`
+  mutation harness loses no pin coverage).
+
+**DEMOTED to REPORTED (run, output recorded in `metrics-after.md`, surfaced at Gate B, NON-blocking):**
+AC-1/`hook-lint.py`, AC-2a/AC-2b census (`ac2-count.py`), AC-3/AC-4 (`ac34-pins.sh` — the suite
+still runs the real pins), AC-6 ownership (`ac6-ownership.sh` — the repo diff {CLAUDE.md, TODO.md} is
+human-reviewed at Gate B regardless), AC-7 ≥20% floor (`ac7-floor.sh` — the real number is reported
+and I surface it at Gate B), AC-11 wiring. **The three round-4 false-RED BLOCKINGs (ac6/ac11/ac34) are
+resolved by demotion — the run does not gate on brittle scaffolding; their fixes are not attempted.**
+
+**Why this is convergence, honestly:** the run's value is the diet + a green suite + no data loss +
+no silently-dropped memory entry. That is exactly {AC-0, AC-5, suite}, all verified clean. The demoted
+checks were verification of size/census CLAIMS, which D-12 already says are REPORTED, not GATED. This is
+convergence-by-descope under a rule pre-committed at round 2 (D-56) — logged, and surfaced at Gate B so
+the human sees precisely what is gated vs reported before the push.
+
+## D-67 — Design synced to the D-66 descope: §R5 is the authoritative FINAL gate set
+Classification: Mechanical (recording D-66 into the implementer-facing design; no gate re-opened)
+The design doc (design-phase1.md) now carries an authoritative §R5 block that WINS ON CONFLICT over §R4
+and every AC section: the FINAL gate set is {AC-0 (hardened, repoRoot-anchored), AC-5, bin/run-tests.sh
+green on a QUIET machine}. All other checks (hook-lint.py, ac2-count.py, ac34-pins.sh, ac6-ownership.sh,
+ac7-floor.sh, ac11-review-wiring.sh) are DEMOTED to REPORTED: they still RUN, their output goes to
+metrics-after.md and is surfaced at Gate B, but they do not pass/fail the slice. The three round-4
+false-RED BLOCKINGs (ac6/ac11/ac34) are resolved BY DEMOTION and NOT fixed (D-56 anti-treadmill).
+AC-0 description in the doc now mirrors the coordinator's hardened, frozen ac0-guard-live.sh: the SENTINEL
+grep reads the repoRoot-anchored canonical skill (state.json repoRoot, write-once per D-7), and $HOME is
+used ONLY to assert the deployed symlink resolves to that repoRoot skill (a faked $HOME makes LIVE!=CANON
+=> RED, it cannot fabricate a pass). The round-4-era "there is no fake target that passes this" claim in
+§R4.1 is RETRACTED in §R5 and at its own site (the $HOME swap WAS such a target). Verified by execution:
+acceptance RED today; round-3 bare-positional REFUSED rc=2; round-4 $HOME bypass RED; faked-HOME +
+correct-DRIVE_STATE (the exact r4 vector) RED via the symlink-resolution check; genuine re-pointed
+deployment GREEN.
+S1 acceptance updated: gates = {AC-0, AC-5, suite-green}; everything else REPORTED. RUN-G-BRIEF.md is
+unaffected by the descope (Run G still emits the sentinel byte-for-byte into skills/decant/SKILL.md, which
+IS repoRoot/skills/decant/SKILL.md — the exact path AC-0 reads).
+
+## D-68 — AC-0 re-hardened to a HARD ABSOLUTE PATH; the two solo fixes both had holes an env could open
+
+**Classification: Mechanical (security-gate hardening; the load-bearing safety control).**
+
+The coordinator "fixed" AC-0 twice SOLO and both had a bypass an adversarial voice found:
+- round-4 fix (repoRoot-anchored): a **no-op** — `STATE` defaulted to `$HOME/.claude/harness-runs/…`,
+  so a faked `$HOME` (with `DRIVE_STATE` unset = the REAL acceptance env) moved state + repoRoot +
+  the symlink TOGETHER into a fake tree; `[ "$LIVE" = "$CANON_R" ]` passed on two fakes → GREEN with
+  the guard not live. The coordinator's own 6-direction check MISSED it (it only tested faked-HOME +
+  *correct* DRIVE_STATE — the one sub-case that reds). **A self-designed check passes on paths the real
+  failure never takes** (OPERATING, verbatim). Reproduced by the adversarial Claude pass AND by the
+  coordinator against the real script before acting.
+
+**Final design (this D):** `ac0-guard-live.sh` greps a **HARD ABSOLUTE LITERAL**
+`/Users/jiazou/.claude/skills/decant/SKILL.md` (what the real /decant resolves), with `export
+PATH=/usr/bin:/bin` (closes the tool-shadow variant) and `--probe` DELETED (closes the
+indistinguishable-green variant). NO `$HOME` / `$DRIVE_STATE` / repoRoot derivation — every
+env-derived form reintroduced the class. Retargeting the real symlink or editing the real file is a
+VISIBLE reconfiguration of what /decant runs = DOING THE WORK, not a bypass; a wrong machine/user →
+file absent → RED (fail-closed). Coordinator-verified 6 directions incl. the confirmed bypass now RED;
+**re-submitted to the adversarial voice for a THIRD attack before convergence** — a solo re-fix of a
+security gate is not self-certifying (OPERATING: the adversarial pass is the load-bearing voice for
+gates; a self-check is not a second opinion).
+
+**Lesson (candidate for memory / the retro):** when the SAME actor authors and verifies a security
+gate's fix, the verification inherits the author's blind spot. Gate the fix on an INDEPENDENT
+adversarial execution, and prefer a HARD CONSTANT over any actor-supplied input ($HOME, argv, env,
+even a state file whose PATH is env-derived) for the load-bearing resolution.
+
+## D-69 — AC-0 FINAL: absolute tool paths + coordinator-runs-it-from-a-clean-env (the treadmill's structural end)
+
+**Classification: Mechanical (security-gate architecture; converged with the adversarial voice).**
+
+The 3rd adversarial attack defeated the PATH reset via **shell-function shadow** (`BASH_ENV` sources a
+`grep()`/`readlink()` at bash startup — BEFORE the PATH-reset line; `export -f grep` imports one) —
+function lookup precedes PATH, so the reset was irrelevant. THREE more green-without-work bypasses.
+
+**Two-part structural resolution (proposed AND verified by the adversarial voice; re-verified by the
+coordinator):**
+1. **Absolute tool paths** — `/usr/bin/readlink`, `/usr/bin/grep`. A command word containing a slash
+   is NOT subject to function/alias/builtin/PATH lookup (POSIX) — it execve's the binary directly, so
+   the function-shadow class cannot fire. This is a language GUARANTEE, not a heuristic. Plus defensive
+   `unset -f grep readlink` + `unset BASH_ENV ENV GREP_OPTIONS`. Verified: ATTACK B/C/D + a kitchen-sink
+   dirty env ALL → RED; clean-env acceptance REDs today; green logic on a re-pointed fixture → GREEN.
+2. **The COORDINATOR runs AC-0 from a CLEAN env** `env -i PATH=/usr/bin:/bin bash ac0-guard-live.sh`,
+   as the park-RELEASE precondition — **NOT the implement subagent.** Root cause of the whole treadmill:
+   a gate that runs inside the ACTOR's own shell is omission-proof, not forgery-proof (the actor controls
+   its shell; it can shadow a tool or `echo GREEN`). Moving execution to the coordinator's clean env
+   removes actor-controls-the-shell at the root. This is the SAME doctrine as the drive-enforcement model
+   (CLAUDE.md: "omission-proof, NOT forgery-proof").
+
+**S1 external-write protocol (BINDING):** before authorizing/performing the irreversible MEMORY.md
+write, the COORDINATOR runs `env -i PATH=/usr/bin:/bin bash $RUN_DIR/ac0-guard-live.sh`; GREEN (rc 0)
+is the release condition, RED (rc 1) keeps the run PARKED. The implement subagent never self-certifies
+AC-0.
+
+**Convergence rationale (why this is not a 4th-round treadmill):** the fix rests on a PROVABLE POSIX
+guarantee (not an empirical "seems to work"); it was authored by the independent adversarial voice, which
+built the patched variant and verified all attacks RED; the coordinator independently reproduced that;
+and the residual (an actor with full shell control can still forge) is the accepted, doctrine-level
+boundary closed by out-of-band clean-env execution. Both voices agree. AC-0 is CONVERGED.
+
+## D-70 — Design synced to the CONVERGED AC-0 (D-69): coordinator-runs-clean-env; env derivation removed
+Classification: Mechanical (recording D-69 into the implementer-facing design; AC-0 not re-opened)
+design-phase1.md's AC-0 section (in §R5) and the §1.6 external-write protocol now mirror the frozen,
+converged $RUN_DIR/ac0-guard-live.sh:
+ - HARD-ABSOLUTE deployed path DEPLOYED='/Users/jiazou/.claude/skills/decant/SKILL.md' and ABSOLUTE tool
+   paths (/usr/bin/grep, /usr/bin/readlink) -- a slash-containing command word skips
+   function/alias/builtin/PATH lookup (POSIX guarantee), defeating the BASH_ENV / export -f shell-function
+   shadow that beats a mere PATH reset (function lookup precedes PATH). Plus unset -f grep readlink +
+   unset BASH_ENV ENV GREP_OPTIONS. NO $HOME / $DRIVE_STATE / repoRoot derivation -- every env-derived
+   form reintroduced a bypass (r3 argv, r4 $HOME, r4-fix repoRoot-via-$HOME-state).
+ - EXECUTION MODEL (D-69, load-bearing): the COORDINATOR runs AC-0 from a CLEAN ENV
+   `env -i PATH=/usr/bin:/bin bash $RUN_DIR/ac0-guard-live.sh` as the park-RELEASE precondition, NOT the
+   implement subagent. A gate inside the actor's own shell is omission-proof, not forgery-proof; moving it
+   to the coordinator's clean env removes actor-controls-the-shell at the root (same doctrine as
+   drive-enforcement). §1.6 step (0a) now binds this: GREEN(rc0)=release, RED(rc1)=stay parked; the
+   subagent never self-certifies.
+ - RESIDUAL stated, not over-built: AC-0 is omission-proof, not forgery-proof; an actor with full shell
+   control could still forge; the clean-env coordinator execution is the out-of-band backstop and the
+   ultimate authority. No further gate hardening is added.
+Verified by execution (clean env): acceptance RED today; bare-positional REFUSED rc=2; ATTACK B (BASH_ENV
+grep()) RED; ATTACK C (export -f grep) RED; kitchen-sink dirty env RED; GREEN-logic on a re-pointed fixture
+GREEN. Retracted wholesale: all "repoRoot-anchored" / "$HOME-anchored" / "no fake target passes" phrasing.
+S1 acceptance unchanged in substance (gates = {AC-0, AC-5, suite}); only AC-0's mechanism/execution updated.
+RUN-G-BRIEF.md unaffected: Run G still emits the sentinel byte-for-byte into skills/decant/SKILL.md, which
+the deployed symlink /Users/jiazou/.claude/skills/decant/SKILL.md resolves to.
+
+## D-71 — Live-drift adaptation at implement time: MEMORY.md was independently compacted mid-park; every count re-derived (E1 held)
+**[Mechanical — minor drift, adapted; slice 1.1, 2026-07-17]**
+Between the design freeze (23,818 B / 71 entries / 24 wikilink tails, 2026-07-14) and the write
+(17,138 B / 82 entries / 0 tails / 8 marker lines, sha `f983732c…`), the live index was compacted by
+concurrent sessions while gaining 11 entries. Exactly the E1 premise: all counts were re-derived live
+(canonical 7, VARIANT 1 — `drive-md-has-contract-pin-tests`, verbatim fixed-points 5, authored hooks
+69, literal-poor 8 vs the design's 5). The C transform applied unchanged; AC-5 GREEN on the installed
+bytes; AC-1 GREEN with 0 uniqueness warnings. BOTH baselines reported (HANDOFF): run-setup 21,109 B
+(floor basis → −25.7% GREEN) and live pre-write 17,138 B (→ −8.5%; floor RED, REPORTED — the live
+file's prior compaction consumed the headroom the floor assumed; hooks were never truncated for bytes).
+A pre-existing sha-identical C2-style copy `MEMORY.md.pre-diet.20260717T083815` was found (earlier
+dispatch, write never happened); a fresh C2 copy `MEMORY.md.pre-diet.20260717T195928` is the binding
+baseline, the older copy left in place.
+
+## D-72 — CLAUDE.md floor (AC-7) not reachable without touching frozen content; stopping rule applied, surfaced at Gate B
+**[Taste — surfaced at the next gate; slice 1.1, 2026-07-17]**
+Trim landed 13,309 → 11,300 B (−15.1%; vs the design base 12,739 → −11.3%) with the full census
+preserved (ac2-count GREEN 9/12/21, census-claudemd.md) and all pin suites green. The ≥20% floor
+(≤10,647 B) was NOT reached: since the floor was computed the file gained +570 B (r5r9 batch) entirely
+inside `ac6-ownership.sh`'s frozen span (`state.json`…`wt/`, ≈1.9 kB byte-identical — a stricter
+freeze than the design's 1,046 B state.json entry, which also retires the designed 382 B
+padding-collapse lever). Per the design's own rule ("If the floor cannot be reached WITHOUT touching a
+frozen block or a named anchor: STOP and surface at Gate B. Never buy bytes with a directive") the
+remaining gap is surfaced, not bought. AC-7 is REPORTED per §R5/D-66; the run's gates (AC-0, AC-5,
+suite) are all GREEN.
+**Correction (r2, 2026-07-17, review-1.1-1 NIT):** "entirely inside the frozen span" overstates by ~75 B — ≈500 of the +570 B are inside the span; the `.harness/codex-refutations.md` committed-ledgers paragraph (~75 B) sits outside it (and was rewrapped by the trim). Immaterial to the floor conclusion. Round-2 restorations also moved AFTER to 11,357 B (−14.7%); metrics-after.md updated.

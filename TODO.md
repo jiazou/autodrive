@@ -33,6 +33,15 @@ section).
   ce12c42) stays VERBATIM — carve-outs per audit §4.8 — and the trim must not
   regress C4's landed rewording or preempt the open CLAUDE.md [V] fixes (audit §3
   matrix).
+  (a)+(c) DONE (2026-07-17, run baseline-diet-20260713-214819): MEMORY.md (external)
+  17,138 → 15,682 B (−8.5% vs live pre-write; −25.7% vs the 21,109 B run-setup
+  baseline the audit used — the live file had been independently compacted mid-park),
+  82 entries conserved, all 8 promotion markers byte-identical, every hook ≤110 B
+  linted with a file-sourced symptom token; CLAUDE.md 13,309 → 11,357 B (−14.7%;
+  all pin suites green, frozen blocks byte-identical; the ≥20% floor was not
+  reachable without touching frozen spans — surfaced at Gate B). (b) OPERATING.md
+  still pending OQ1/D13, so N1 stays open. Measured at the slice tip,
+  pre-ship-promotion.
 - [ ] **N3** — drive.md § "Run setup & resume" narration trim (39% of the per-leg
   spec weight; audit §1.2/§2 N3). Spec-trim sequencing (binding): land WITH or AFTER
   the pending R5–R9 one-batch spec edit (§ "/drive efficiency plan R1–R9" below,
