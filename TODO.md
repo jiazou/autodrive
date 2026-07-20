@@ -50,16 +50,29 @@ section).
   for density), a separate user authorization. C5 carve-out left byte-identical; the
   AC13 fenced block is not in OPERATING.md (no fenced blocks). All three surfaces
   (a)+(b)+(c) shipped → N1 CLOSED.
-- [ ] **N3** — drive.md § "Run setup & resume" narration trim (39% of the per-leg
-  spec weight; audit §1.2/§2 N3). Spec-trim sequencing (binding): land WITH or AFTER
-  the pending R5–R9 one-batch spec edit (§ "/drive efficiency plan R1–R9" below,
-  global constraint 2) so the overlapping pin-suite migration is paid once. Delta
-  boundary (binding; locations as-of ce12c42): in-file narration ONLY — beyond
-  followups' known cross-file rebirth-prose item (audit §3 row) AND EXCLUDING the
-  veto-covered passages at drive.md:500-504 (+ sibling drive-review.md:222-225) and
-  drive.md:194-206 — carve-outs per audit §4.8. Trim only outside those pins, or pay
-  their migration deliberately INSIDE the R5–R9 batch — never as a standalone trim
-  (audit §2 N3 delta boundary, §4.8).
+- [x] **N3** — drive.md § "Run setup & resume" narration trim — **CLOSED NOT VIABLE**
+  at the CONSERVATIVE dial (run `effic-n3-20260719-181819`). No trim landed; no repo
+  code changed. The premise was refuted empirically, not abandoned on effort.
+  **Measured:** the section is ~93% operative — an executed calibration vetoes 322 of
+  347 asides as OPERATIVE, leaving 25 cut-eligible clauses of 217 (25 further declared
+  NO-TOUCH). Adjudicating the 22 legal aside spans one by one: 8 newline-spanning
+  (illegal — fail both the ledger gate and the deletion-only predicate), 1 inside the
+  V1 veto, 4 named FALSE-NARRATION by the classifier's own calibration, 5 mis-extracted
+  em-dash fragments whose full construct is operative. **4 genuine cuts remain: 88
+  characters, 0.17%** — and each leaves an empty `()` behind, because the aside matcher
+  captures inner text only (`PAREN = \(([^()]{12,})\)`, offsets from `m.start(1)`), so
+  a declared span can never include its own delimiters. Implement returned
+  `STATUS: REDESIGN` and made no edit rather than degrade the file.
+  **Therefore:** a CONSERVATIVE (deletion-only) prose diet cannot reduce this section
+  meaningfully. Any future attempt needs the **AGGRESSIVE dial** (rewording operative
+  clauses — a separate user authorization) and should treat this run's numbers as its
+  starting evidence. The delta-boundary/sequencing constraints above are moot: R5–R9
+  shipped in PR #96, and zero pin migration was ever required.
+  **Durable artifacts:** `.harness/decisions.md` (D-1…D-48 for this run) and
+  `.harness/followups.md` (F-9…F-11). The runnable gate machinery (classifier +
+  corpus + calibration, per-clause ledger gate, pin-survival and deletion-only
+  checkers, mutation harnesses) lives in the run dir, not the repo — rebuild from the
+  ledger if the AGGRESSIVE dial is ever authorized.
 - [ ] **CI workflow `concurrency:` cancel-in-progress** (demoted from quick-win by D8;
   audit §1.3). Full constraint list (binding): per-ref group key; cancellation on
   PR events ONLY (never push-to-main); validate with `actionlint` PLUS one observed

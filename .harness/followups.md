@@ -1505,3 +1505,258 @@ Out-of-scope discoveries.
 - MEMORY.md:78 — motivational/meta narration "so it binds you when you are invested." (codex)
 - MEMORY.md:83 — vague quoted phrase "ever-more-pathological structural inputs." (codex)
 - MEMORY.md:86 — conversational prediction "the next audit re-flags it." (codex)
+
+---
+
+# Run effic-n3-20260719-181819 — N3 narration trim (CLOSED NOT VIABLE)
+
+# Run followups — effic-n3
+
+## R5–R9 (PR #96) independent re-audit — P2 refinements (this run's re-audit; none block N3)
+- [F] R6 delta-prompt wiring clarity: the delta-append (`cat >>` after the base heredoc) is
+  specified only in drive-review.md § Round form, not echoed in the Step-1 fenced dispatch block
+  (declared "byte-identical"); a coordinator following Step 1 mechanically may skip it → R6's
+  codex-time savings unrealized (inertness risk). No correctness/safety harm (falls back to full
+  prompt). Most-actionable of the set. Evidence: dual-voice re-audit 2026-07-19.
+- [F] R7 CR-2 seed (.harness/codex-refutations.md:60-76) pre-refutes the R6-full-scope-re-audit
+  sole-catcher via a doc-grep proxy (`grep -q "anywhere in scope"`) that stays green under a genuine
+  future narrowing elsewhere in the file. Narrow: codex-voice only; Claude voice independent; bound-2
+  keeps it out of harden/finalize. Tighten the CR-2 repro to bind the actual delta clause.
+- [F] R8 autoplan pre-round-1 transcript staleness: the re-affirm clause (drive-plan.md ~L106) is
+  scoped to "on every round after a post-P1 revision"; an autoplan (step 2a) pre-round-1 rewrite
+  that ADDS a claim to a claims-bearing design escapes the reviewer spot-check. Backstop: general
+  adversarial review + the no-claims declaration path is covered. Consider extending the re-affirm
+  gate to any pre-round-1 design.md revision (autoplan included).
+- [F] AC18 detached-worktree guard one-sided SHA contract: drive-design.md asserts the coordinator
+  "passes the frozen 40-hex tip SHA" but drive.md step-6 invokes /drive-design with cwd only and
+  never computes `git rev-parse featureBranch`. Mitigant: the stage self-derives in main context.
+  Make the SHA provenance explicit (compute in main context, pass it) or drop the "passed" framing.
+- [F] R5 out-of-ownership routing: uses `STATUS: REDESIGN` where TODO said "BLOCKED/ownership-widening";
+  functionally faithful (terminology). Probabilistic catch relies on the phase-integration fresh
+  review re-finding the class member; consider an explicit coordinator step on the STATUS note.
+- Ratified (not a defect): R6 "Accounting" counts delta rounds INSIDE cap-8 (OPPOSITE the TODO R6
+  bullet's "do NOT increment cap-8") — correct supersession; a delta-round cap-8 exemption would
+  break the cap-8 sole-catcher (TODO:539).
+
+## Phase-1 design stage — out-of-scope discoveries (none block phase 1)
+- [F] `design.md` states the § "Run setup & resume" section is 50,902 bytes; measured
+  `wc -c` on the frozen baseline is **50,903** (623 lines). Off-by-one, immaterial. The
+  50,436 figure that also appears in analysis is Unicode CHARACTERS, not bytes — the section
+  carries multibyte glyphs (→ ≠ ⊆ ∈ −). Worth normalizing the unit in future size claims.
+- [F] `design.md` estimates "~10 pin suites / ~57 in-section verbatim pins". Measured: **14**
+  suites carry in-section literals; 219 distinct literals, of which 49 are the >=30-char prose
+  class that "~57" appears to mean. Recommend future designs derive rather than estimate.
+- [F] The pin suites' STRUCTURAL enumeration constraint (index/order/nesting of the resume
+  sub-bullets — see D-3) is undocumented anywhere in the repo's own docs. Any future edit to
+  drive.md's Resume list — not just this trim — can red `test_rebirth_handshake.py` without
+  touching a single pinned sentence. Consider a comment in drive.md at the `- **Resume:**`
+  bullet, or a line in `docs/`, warning that the sub-bullet enumeration is contract-pinned.
+- [F] Pin coverage of the section is only **8.2%** of bytes (4,158 of 50,436). The contract
+  suites are therefore a weak oracle for this section's operative content — consistent with
+  design.md's reason for requiring gates 2 and 3, and worth remembering when anyone claims
+  "the suite protects drive.md".
+
+## Added by the round-2 phase-1 design revision leg
+
+- [F] `classifier-corpus.tsv`'s 50 gold labels are ONE author's adjudication. A second,
+  independent labeler (or a codex labeling pass adjudicated against the first) would make the
+  40% false-NARRATION figure a measurement rather than a single-voice reading. Not blocking:
+  the design routes cut authority away from the classifier precisely because its accuracy is
+  unproven, so a labeling error cannot license a bad cut.
+- [F] 25 of 217 baseline clauses cannot be bound by a tiling token set and are declared
+  NO-TOUCH by `ledger_gate.py`. They are concentrated in heavily-backticked state-machine
+  prose. If trim yield comes out near zero, revisiting the tiling (e.g. character-n-gram
+  fallback candidates) would recover some of them — but only with a fresh mutation proof.
+- [F] The measured aside space of this section is 347 asides of which 322 trip a disqualifier
+  and ~40% of the remaining 25 are operative on inspection. That is strong evidence that
+  `## Run setup & resume` is close to irreducible under the CONSERVATIVE dial, and worth
+  citing if an AGGRESSIVE-dial authorization is ever requested: the yield is not being lost to
+  a timid rule, it is not there.
+- [F] Round 1's Gate-2 worked-example token map had 3 of 9 tokens not matching the baseline
+  (`NOT -p`, `never reuse`, `never re-derived`) — written without being executed. The general
+  lesson (a hand-transcribed token map is a vibes-gate; GENERATE it from the artifact with
+  counts attached) generalizes beyond this run and may be worth a memory entry at retro.
+- [F] ~~`$RUN_DIR/decisions.md` DUPLICATE-NUMBERING collision at D-12/D-13.~~ **CLOSED at
+  phasedesign1 round 5.** The colliding stopping-rule/human-overrule pair was renumbered to
+  D-18/D-19, and every id in the ledger is now unique -- verified mechanically, not by
+  reading: `check-decisions-sync.py` enumerates the ledger's ids and `grep '^## D-' | uniq -d`
+  reports no duplicates. The design's §6 parenthetical asserting the collision was itself
+  stale and has been corrected.
+- [F] The GREEN direction found that BOTH review voices recommended an AC11 predicate ("zero
+  `+` lines") that is wrong in the accepting direction. Generalizable lesson for retro: a
+  reviewer-proposed fix is a hypothesis, and a fix to a GATE must itself be executed in both
+  directions before adoption — the reviewer who finds a real one-sided gate is not thereby
+  right about the replacement. Related to memory `premise-proposed-fix-is-a-hypothesis`,
+  but the new content is specifically about *gate* fixes and the accepting direction.
+- [F] A mutation arm can be a silent no-op when the text it mutates WRAPS in the source
+  (`BASE.replace("...before continuing", "")` matched nothing because the real text is
+  `...before\n    continuing`). Every arm now asserts its own precondition. Candidate memory
+  at retro: "a mutation arm must assert the mutation actually applied" — a false-PASS arm is
+  worse than a missing one, and this is the second time in this run that a wrapped-literal
+  assumption produced a wrong result (the first was the raw-only pin inventory).
+
+- [F] `derive-pin-inventory.py` requires a `<repo-root>` argv that `design-phase1.md` §1.2's prose
+  omits. Harmless in isolation, but it is the realistic path to the zero-row-inventory vacuous
+  AC5 pass reported as MAJOR in `review-phasedesign1-3.md`. Document the argv in §1.2.
+- [F] `check-pin-survival.py` tolerates CRLF line endings, silently carrying `\r` into field
+  values. Benign at baseSha (the trailing field is an integer and `int('2\r')` parses), but it is
+  a latent corruption path for any future consumer of the TSV. Out of scope for phase 1.
+
+## Revision leg 3 (review round 4)
+
+**Two entries above are now CLOSED by this leg, recorded rather than silently dropped:**
+- CLOSED — the `derive-pin-inventory.py` `<repo-root>` argv is now documented in
+  `design-phase1.md` §1.2, and the AC5 non-vacuity floor (D-22) converts a wrong-root
+  invocation from a silent vacuous pass into a hard red.
+- CLOSED — `check-pin-survival.py` now refuses CRLF outright (§1.6 grammar), so the latent
+  `\r`-in-field corruption path is gone rather than merely benign.
+
+**New, out of scope for phase 1:**
+- [F] `ledger_gate.py`'s `locate_span` was O(n^2) per span (all-substrings scan) and timed out
+  the 182-variant class sweep at 2 min. Rewritten linear via a collapsed-offset map; the sweep
+  now completes in 35.8s. Worth a general note: gate helpers written for one-shot use become
+  hot paths the moment a class sweep exists, so the sweep is also a performance test.
+- [F] Three cut-eligible asides (of 25) are skipped by arm 4b because their text is not uniquely
+  locatable within its clause, so they fail closed and cost yield. If a future leg wants that
+  yield back, the fix is to declare spans by explicit byte offset rather than by text — a
+  strictly larger interface change than this phase needs, and yield is not gated (D-7).
+- [F] `classify-aside.py`'s disqualifier classes are now load-bearing inside a security gate
+  (D-21/D-24), which raises the bar on every class, not just class 1. Classes 2-10 have not had
+  the equivalent whole-vocabulary sweep that class 1 just received. Nothing is known to escape
+  them, but "nothing known" is exactly the state class 1 was in before this leg.
+- [F] The design's §4 pin-depth table carried a DUPLICATE `AC4` row with two different depth
+  labels (`mutation-verified` and `mutation-verified, BOTH directions`). Removed this leg; worth
+  a de-slop lens over the other tables at finalize, since a duplicated row survived three review
+  rounds and two reviewers.
+- [F] `negation-sweep.py` runs the full three-population sweep in ~105s, dominated by one
+  `check-pin-survival.py` SUBPROCESS per variant that reaches AC5. Only variants already
+  green at Gate 2 and AC11 reach it, so the survivor count is unaffected — this is runtime,
+  not correctness. If AC5 grows an importable entry point the sweep should call it in
+  process. Not done here: AC5's required `<min-keep>` floor lives in the CLI contract by
+  design (D-22), and adding an importable path to a gate purely to speed up a design-time
+  sweep is the wrong trade.
+- [F] The pre-D-24 `classify-aside.py` class-1 regex was overwritten in place and never
+  preserved, so the round-4 claim "3 of the 91 attacks still passed without the broadening"
+  cannot be re-run and was withdrawn (D-24, D-26). Generalizable for retro: when a decision's
+  justification is a BEFORE/AFTER measurement, the BEFORE artifact must be preserved (a
+  `.pre-D-NN` copy or a git-tracked gate dir) or the justification becomes unfalsifiable the
+  moment it is applied.
+
+## Revision leg 5 (review round 6)
+
+**New, out of scope for phase 1:**
+
+- **F-9 — require a sub-clause declared cut to be ASIDE-SHAPED, not an arbitrary byte
+  range.** Round-5 codex showed the negation class has an irreducibly LEXICAL residue:
+  `bypass`, `omit`, `preclude` and `forgo` classify `NARRATION`, so a clause whose negation
+  is carried by one of them is outside class 1 entirely, and deleting that word survives
+  Gate 2 (executed: `tmp/bypass-probe.txt`). D-30 bounds the closure claim instead of
+  extending the vocabulary, because vocabulary extension is the treadmill D-24 already paid
+  for. The STRUCTURAL elimination is available but is a real change to the cut model: the
+  design's actual work unit is the whole NARRATION clause and the sub-clause **aside**
+  (arm 4b's 22 accepted cuts are all aside-shaped), yet the gate accepts any byte range
+  whose bytes classify NARRATION. Constraining a sub-clause cut to a span that
+  `classify-aside.py`'s own extractor emits would remove the bare-mid-clause-word shape as
+  a class, with no word list. Deliberately NOT built on this leg: it changes the cut model
+  at round 6 of cap 8, and a forward fix whose own review surfaces a new regression is
+  net-negative. Reach on the frozen baseline today is **zero occurrences**, so nothing
+  ships broken. Verify against arm 4b's 22/22 before adopting.
+
+- **F-10 — the classifier's class-1 vocabulary has no completeness oracle.** Class 1 is a
+  hand-maintained regex whose under-firing is a semantics change (its own comment says so),
+  but nothing measures its recall against the negation force actually present in a baseline.
+  Two rounds have now found members it missed (`cannot`, D-24; the morpheme axis, D-28) and
+  a third class it still misses (implicit-negation verbs, D-30). A recall probe — sample
+  operative clauses, label negation force by hand, measure class-1 recall — would turn
+  "we broadened it again" into a number. Related to `calibrate-classifier.sh`, which
+  measures PRECISION (false-NARRATION) only.
+
+**Closed by this leg, recorded rather than silently dropped:**
+
+- The round-4 followup asking whether the sweep's populations were derived or asserted is
+  superseded: they are derived from match offsets (D-29) and the derivation itself is now
+  the thing under test, with a fourth population (PMORPH) covering the axis no prior
+  population could see.
+
+## [F] audit-citations.py: SUPERSEDED rule covers only glob citations (round-6 review) — CLOSED
+`audit-citations.py` — the glob branch rejected members carrying a `SUPERSEDED` banner while
+the non-glob branch checked existence only. **Closed in-leg (D-37), not deferred**: the rule
+now applies to both branches, reporting rather than failing when the design's own citing line
+marks the artifact retired, and requiring EVERY citing line to disclose. Mutation-verified.
+
+## [F] derive-pin-inventory.py raises IndexError on a missing `<repo-root>` argv
+Running it with no argument dies with a bare `IndexError: list index out of range` traceback
+instead of printing its documented usage line. It fails CLOSED (exit 1), so this is
+diagnosis quality only — the same class as the round-5 NIT on `check-decisions-sync.py`'s
+empty-ledger path, and NOT a safety gap. Deliberately NOT fixed this leg: round 7 of a cap-8
+design review is the wrong place to open new surface. One-line guard when next touched.
+
+## [F] `_disclosed` is line-scoped, not sentence-scoped
+`audit-citations.py::_disclosed` decides whether a superseded citation is disclosed by
+scanning the LINES containing the citation for `supersed|retired`. A disclosure that sits in
+the citing sentence but wraps onto the PREVIOUS line reads as undisclosed, so the check errs
+toward FAILING — the safe direction, and it costs only a prose re-wrap to satisfy. Stated
+here rather than left as an unmeasured imprecision; tighten to sentence scope only if a real
+citation ever trips it.
+
+## [F] No cited evidence producer may leave a tracked artifact modified — CLOSED in-leg (D-39)
+Round-7 [MAJOR]. `tmp/audit-mutations.sh` restored `design-phase1.md` from a backup it never
+created and destroyed the round-7 revision while reporting rc=0; the class sweep found
+`tmp/decisions-sync-mutations.sh` doing the same to `decisions.md`, including a `: >` truncation
+with no trap. Both now snapshot at entry into `$TMPDIR`, restore via `trap … EXIT INT TERM`,
+and assert `cmp -s` byte-identity at exit. Stale backups deleted.
+
+**Residual, for whoever owns the harness conventions after this run:** this was the SECOND
+environment/robustness defect class found in these harnesses (after `mkdtemp(dir=here)`, D-36),
+and both were found by review rather than by any gate. The harnesses have no gate of their own.
+A cheap standing check — run each cited producer, assert every tracked artifact's hash is
+unchanged and that scratch stayed under `$TMPDIR` — would have caught both classes mechanically.
+Worth adding when the harness set is next touched; deliberately NOT built at round 8 of cap 8.
+
+## [F] `design-phase1.md` cannot be certified byte-identical to the round-7 revision
+The round-7 file was destroyed (D-39) and re-emitted from the author's context plus 388 design
+lines captured in `codex-raw-phasedesign1.log`. §6's D-29/D-30 bullets were re-derived from
+`decisions.md` (D-42). The codex log covers ~388 of ~1,330 lines, so any round-6-leg content in
+the uncovered remainder that the author also never read would be invisible to both recovery
+sources. The restored file passes every gate and every claim in the transcript was re-executed
+against it, but **completeness is not provable**. Flagged for the human at the gate rather than
+absorbed silently. Mitigation if it matters: diff §6 and §1.3 against `decisions.md` and the
+round-6 review's quoted excerpts.
+
+## F-11 — harness reporting/diagnostic P2s (from phasedesign1 round 8)
+Carried rather than spending a review round; none is a gate the implementer runs.
+1. `mutate-ledger-check.sh` PASS banner prints self-referential ratios
+   (`arm4a {g4_pass}/{g4_pass}`, arm4b, arm5) — tautologically N/N, evidences nothing.
+   Print the EXPECTED denominator.
+2. A neutered gate fails by Python TRACEBACK, not a designed FAIL verdict — fail-closed
+   but a poor diagnostic.
+3. The provenance wording "all results produced with `$RUN_DIR` at `dr-xr-xr-x`" is true
+   but misleading: scratch silently goes to the platform temp dir via `mkdtemp` fallback,
+   so the run is NOT constrained as implied. Narrow the claim.
+4. `mutate-ledger-check.sh:15` is `set -uo pipefail` with no `-e` — hygiene, not vacuity.
+5. Two dangling `§` cross-refs (Claude r8 P2) vs codex "none found" — UNADJUDICATED.
+6. Restoration completeness: ~940 design lines were never covered by the recovery
+   sources; internally coherent per both voices, but byte-completeness UNREFUTED, not
+   cleared.
+
+## [F] Harness self-check pattern should be standard for every evidence producer — PARTIALLY closed
+The repair leg added a SELF-CHECK arm to `mutate-ledger-check.sh` (sabotage itself, refuse to
+certify unless the sabotaged run fails) and work assertions to `mutate-gates-check.sh`,
+`negation-sweep.py`, `tmp/sweep-5c.py` and both restore harnesses. Only the ledger harness has
+the *self-invoking* self-check; the others have work assertions but no self-sabotage arm.
+Generalising the self-check to all of them is the remaining work.
+
+## [F] Frozen count pins are a maintenance liability
+`mutate-ledger-check.sh` pins 217/217/216/3/3/22/15 and `negation-sweep.py` pins populations
+89/91/134/89, both keyed on the frozen baseline's sha256. This is correct for a frozen artifact
+and it is what makes silent drift detectable — but if the baseline is ever re-frozen, the pins
+must be RE-DERIVED from a fresh run, never edited until they match. Editing a pin to match an
+observed value converts the assertion back into a tautology (memory
+`frozen-inventory-pins-stale-on-base-advance`).
+
+## [F] D-45 asserts arm 4b's 22/22 was measured in ISOLATION — not re-examined this leg
+Implement's REDESIGN reports that arm 4b measured Gate 2 alone, that AC11 was never composed
+onto those same 22 outputs (8 of which allegedly fail it), and that the output prose was never
+inspected. This leg re-derived arm 4b AS SPECIFIED and reproduces 22/22; it did NOT validate
+the specification. If D-45 holds, the composition gap is a real hole that eight review rounds
+missed, and it belongs to whatever supersedes this design.
